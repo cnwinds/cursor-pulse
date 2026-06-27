@@ -1,0 +1,68 @@
+dingtalk:
+  app_key: ${DINGTALK_APP_KEY}
+  app_secret: ${DINGTALK_APP_SECRET}
+  robot_code: ${DINGTALK_ROBOT_CODE}
+  group_open_conversation_id: ${DINGTALK_GROUP_ID}
+
+collection:
+  period_format: "%Y-%m"
+  start_day: 1
+  start_time: "09:00"
+  deadline_day: 3
+  deadline_time: "18:00"
+  daily_check_time: "10:00"
+  report_day: 4
+  report_time: "11:00"
+  timezone: "Asia/Shanghai"
+
+storage:
+  database_url: "sqlite:///data/pulse.db"
+  raw_files_dir: "data/raw"
+
+admin:
+  dingtalk_user_ids: []  # 管理员 userid 列表
+
+llm:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+  timeout_seconds: 60
+  vision_enabled: false
+  vision_model: "gpt-4o"
+  confidence_threshold: 0.75
+  review_low_confidence: true
+
+bot:
+  name: dingtalk  # dingtalk | feishu | wecom
+
+object_storage:
+  enabled: false
+  endpoint_url: ""
+  bucket: ""
+  prefix: "pulse/raw"
+
+cursor_teams:
+  enabled: false
+  api_base_url: "https://api.cursor.com"
+
+web:
+  host: "127.0.0.1"
+  port: 8080
+  # jwt_secret / admin_token 建议通过 JWT_SECRET、ADMIN_WEB_TOKEN 注入
+  # dingtalk_oauth_redirect_uri: "http://localhost:5173/login/callback"
+  # cors_origins: ["http://localhost:5173"]
+
+tenant:
+  slug: "default"
+  name: "Default Team"
+
+alerts:
+  enabled: true
+  member_events_spike_pct: 100
+  team_events_spike_pct: 50
+  member_cost_spike_usd: 10
+
+integrations:
+  webhook_url: ""
+  webhook_secret: ""
+  push_on_report: true

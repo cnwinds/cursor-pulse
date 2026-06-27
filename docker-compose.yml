@@ -1,0 +1,11 @@
+services:
+  pulse:
+    build: .
+    container_name: cursor-pulse
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config/config.yaml:ro
+    working_dir: /app

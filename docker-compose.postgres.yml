@@ -1,0 +1,29 @@
+# 使用 Postgres 启动（覆盖 SQLite）
+# 用法：docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cursor-pulse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pulse
+      POSTGRES_USER: pulse
+      POSTGRES_PASSWORD: pulse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulse -d pulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pulse:
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://pulse:pulse@db:5432/pulse
+
+volumes:
+  pgdata:
