@@ -17,6 +17,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/pending-approval',
+      name: 'pending-approval',
+      component: () => import('@/views/PendingApprovalView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: () => import('@/layouts/MainLayout.vue'),
       children: [
@@ -27,16 +33,28 @@ const router = createRouter({
           meta: { permission: 'settings:read', title: '概览' },
         },
         {
-          path: 'members',
-          name: 'members',
-          component: () => import('@/views/MembersView.vue'),
-          meta: { permission: 'members:read', title: '成员' },
+          path: 'accounts',
+          name: 'accounts',
+          component: () => import('@/views/AccountsView.vue'),
+          meta: { permission: 'accounts:read', title: '账号台账' },
         },
         {
-          path: 'submissions',
-          name: 'submissions',
-          component: () => import('@/views/SubmissionsView.vue'),
-          meta: { permission: 'submissions:read', title: '提交进度' },
+          path: 'tool-tips',
+          name: 'tool-tips',
+          component: () => import('@/views/ToolTipsView.vue'),
+          meta: { permission: 'knowledge:read', title: '技巧知识库' },
+        },
+        {
+          path: 'access-requests',
+          name: 'access-requests',
+          component: () => import('@/views/AccessRequestsView.vue'),
+          meta: { permission: 'requests:read', title: '工具申请' },
+        },
+        {
+          path: 'ingestions',
+          name: 'ingestions',
+          component: () => import('@/views/IngestionsView.vue'),
+          meta: { permission: 'submissions:read', title: '摄取记录' },
         },
         {
           path: 'metrics',
@@ -90,7 +108,7 @@ const router = createRouter({
           path: 'users',
           name: 'users',
           component: () => import('@/views/UsersView.vue'),
-          meta: { permission: 'admin:users', title: '账号权限' },
+          meta: { permission: 'admin:users', title: '用户与权限' },
         },
         {
           path: 'forbidden',

@@ -13,13 +13,21 @@
           <el-icon><Odometer /></el-icon>
           <span>概览</span>
         </el-menu-item>
-        <el-menu-item v-if="auth.hasPermission('members:read')" index="/members">
-          <el-icon><User /></el-icon>
-          <span>成员</span>
+        <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/accounts">
+          <el-icon><Wallet /></el-icon>
+          <span>账号台账</span>
         </el-menu-item>
-        <el-menu-item v-if="auth.hasPermission('submissions:read')" index="/submissions">
+        <el-menu-item v-if="auth.hasPermission('requests:read')" index="/access-requests">
+          <el-icon><Tickets /></el-icon>
+          <span>工具申请</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('knowledge:read')" index="/tool-tips">
+          <el-icon><Reading /></el-icon>
+          <span>技巧知识库</span>
+        </el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('submissions:read')" index="/ingestions">
           <el-icon><Document /></el-icon>
-          <span>提交进度</span>
+          <span>摄取记录</span>
         </el-menu-item>
         <el-menu-item v-if="auth.hasPermission('metrics:read')" index="/metrics">
           <el-icon><DataLine /></el-icon>
@@ -55,7 +63,7 @@
         </el-menu-item>
         <el-menu-item v-if="auth.hasPermission('admin:users')" index="/users">
           <el-icon><Key /></el-icon>
-          <span>账号</span>
+          <span>用户管理</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
