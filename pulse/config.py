@@ -110,6 +110,10 @@ class PersonaConfig(BaseModel):
     work_end: str = "18:00"
 
 
+class CredentialConfig(BaseModel):
+    encryption_key: str = ""
+
+
 class MemoryConfig(BaseModel):
     evolution_enabled: bool = True
     evolution_day_of_week: int = 6
@@ -138,6 +142,7 @@ class AppConfig(BaseModel):
     integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    credentials: CredentialConfig = Field(default_factory=CredentialConfig)
 
 
 class EnvSettings(BaseSettings):
@@ -168,6 +173,7 @@ class EnvSettings(BaseSettings):
     s3_enabled: str = ""
     cursor_teams_api_key: str = ""
     bot_platform: str = ""
+    pulse_credential_encryption_key: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -258,6 +264,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.cursor_teams.enabled = True
     if env.bot_platform:
         cfg.bot.name = env.bot_platform
+
+    cfg.credentials.encryption_key = env.pulse_credential_encryption_key
 
     if not cfg.dingtalk.group_open_conversation_id:
         from pulse.bot.dingtalk.group_store import load_persisted_group_id
