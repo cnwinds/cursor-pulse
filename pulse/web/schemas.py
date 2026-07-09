@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class PasswordLoginBody(BaseModel):
-    dingtalk_user_id: str
+    username: str = "admin"
     password: str
 
 
@@ -28,7 +28,10 @@ class PrincipleCreateBody(BaseModel):
     origin: str | None = None
 
 
-class PortalGrantBody(BaseModel):
-    portal_role: str | None = None
+class PortalApproveBody(BaseModel):
+    portal_role: str
     portal_permissions: list[str] | None = None
-    display_name: str | None = None
+
+
+class BindCredentialBody(BaseModel):
+    api_key: str
