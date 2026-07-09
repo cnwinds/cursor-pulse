@@ -183,11 +183,6 @@ _PARAM_SCHEMAS: dict[str, dict] = {
         "properties": {"prefix": {"type": "string", "description": "摄取 ID 前 8 位"}},
         "required": ["prefix"],
     },
-    "confirm_submission": {
-        "type": "object",
-        "properties": {"prefix": {"type": "string", "description": "摄取 ID 前 8 位"}},
-        "required": ["prefix"],
-    },
 }
 
 
@@ -364,9 +359,6 @@ def _confirm_ingestion(ctx: AdminContext, args: dict) -> ToolResult:
         message=f"✅ 已确认摄取 {ing.id[:8]}，数据已计入统计。",
         capability="submissions:review",
     )
-
-
-_confirm_submission = _confirm_ingestion
 
 
 DEFAULT_ROUTER = AdminToolRouter()

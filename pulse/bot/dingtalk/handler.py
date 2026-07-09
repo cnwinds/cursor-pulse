@@ -274,7 +274,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         finally:
             session.close()
 
-    async def _begin_cursor_usage_submission(
+    async def _begin_cursor_usage_ingestion(
         self,
         parsed: ParsedCsv,
         incoming: dingtalk_stream.ChatbotMessage,
@@ -513,7 +513,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             else:
                 self.reply_text(f"用量文件解析失败：{exc}", incoming)
             return
-        await self._begin_cursor_usage_submission(
+        await self._begin_cursor_usage_ingestion(
             parsed,
             incoming,
             user_id,
@@ -540,7 +540,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             else:
                 self.reply_text(f"解析失败：{exc}", incoming)
             return
-        await self._begin_cursor_usage_submission(
+        await self._begin_cursor_usage_ingestion(
             parsed,
             incoming,
             user_id,
@@ -637,7 +637,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 threshold = llm.confidence_threshold
                 if result.confidence >= threshold and result.records:
                     parsed = ParsedCsv(records=result.records, summary=result.summary)
-                    await self._begin_cursor_usage_submission(
+                    await self._begin_cursor_usage_ingestion(
                         parsed,
                         incoming,
                         user_id,
@@ -656,7 +656,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                     and self.pulse_config.llm.review_low_confidence
                 ):
                     parsed = ParsedCsv(records=result.records, summary=result.summary)
-                    await self._begin_cursor_usage_submission(
+                    await self._begin_cursor_usage_ingestion(
                         parsed,
                         incoming,
                         user_id,
@@ -790,7 +790,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 self.reply_text(detail, incoming)
         except Exception as exc:
             session.rollback()
-            logger.exception("Vendor screenshot submission failed")
+            logger.exception("Vendor screenshot ingestion failed")
             msg = f"截图用量保存失败：{exc}"
             if is_group:
                 self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)
@@ -928,7 +928,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 self.reply_text(detail, incoming)
             return True
         except Exception as exc:
-            logger.exception("Submission import failed")
+            logger.exception("Ingestion import failed")
             session.rollback()
             if channel == "group":
                 self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)

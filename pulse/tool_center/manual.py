@@ -178,7 +178,7 @@ class ManualUsageService:
             breakdown_by_model=breakdown_by_model,
         )
 
-        submission = repo.save_manual_ingestion(
+        ingestion = repo.save_manual_ingestion(
             member=member,
             period=period,
             account_id=account.id,
@@ -192,7 +192,7 @@ class ManualUsageService:
             upgrade_notify=upgrade_notify,
             source_type=source_type,
         )
-        return submission, account, summary
+        return ingestion, account, summary
 
     def submit_explicit(
         self,
@@ -222,7 +222,7 @@ class ManualUsageService:
             metric_unit=unit,
             breakdown_by_model=breakdown_by_model,
         )
-        submission = repo.save_manual_ingestion(
+        ingestion = repo.save_manual_ingestion(
             member=member,
             period=period,
             account_id=account_id,
@@ -231,7 +231,7 @@ class ManualUsageService:
             raw_text=raw_text,
             upgrade_notify=upgrade_notify,
         )
-        return submission, account, summary
+        return ingestion, account, summary
 
     def _resolve_account(
         self,

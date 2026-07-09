@@ -86,7 +86,7 @@ def run_command(
         try:
             command = parse_manual_usage_text(text)
             svc = ManualUsageService(repo.session, repo.team_id)
-            submission, account, summary = svc.submit_for_member(
+            ingestion, account, summary = svc.submit_for_member(
                 member=member,
                 period=period_default,
                 command=command,
