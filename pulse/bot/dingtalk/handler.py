@@ -15,47 +15,23 @@ from pulse.bot.dingtalk.files import (
     normalize_incoming_text,
 )
 from pulse.bot.commands import CURSOR_BIND_GUIDE
-from pulse.bot.pending_submission import PendingIngestionStore, PendingUsageIngestion
 from pulse.bot.dingtalk.group_store import save_group_binding
 from pulse.bot.dingtalk.messenger import DingTalkMessenger
 from pulse.config import AppConfig
-from pulse.extract.csv_parser import parse_usage_events_csv, parse_usage_events_file
 from pulse.extract.text_parser import looks_like_usage_csv
-from pulse.domain import ParsedCsv
-from pulse.extract.period_split import split_parsed_by_period
-from pulse.extract.summary import (
-    format_auto_split_notice,
-    format_extraction_confidence_note,
-    format_group_ack,
-    format_group_submit_private_footer,
-    format_pool_spend_note,
-    format_split_period_confirmation,
-)
+from pulse.extract.summary import format_group_ack
 from pulse.llm.client import build_llm_client
-from pulse.llm.vision import extract_usage_from_screenshot, extract_vendor_usage_from_screenshot
+from pulse.llm.vision import extract_vendor_usage_from_screenshot
 from pulse.tool_center.manual import (
     ManualUsageCommand,
     ManualUsageService,
     looks_like_manual_usage,
     pick_account_for_screenshot,
 )
-from pulse.tool_center.account_pick import (
-    can_proxy_submit_for_others,
-    filter_cursor_accounts,
-    find_cursor_account_in_pool,
-    format_cursor_account_choice_prompt,
-    looks_like_account_selection_cancel,
-    parse_account_selection_text,
-    parse_proxy_member_name,
-    resolve_member_by_display_name,
-)
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.periods import current_period
 from pulse.tool_center.knowledge import looks_like_tip
-from pulse.storage.models import Member, UsageSummary
-from pulse.storage.repository import Repository, input_type_from_source_type, source_type_from_input_type
 from pulse.tenant.context import team_repository
-from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +50,6 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         self.messenger = messenger
         if logger:
             self.logger = logger
-        pending_path = Path(config.storage.raw_files_dir) / "pending_ingestions.json"
-        self._pending_store = PendingIngestionStore(pending_path)
 
     def _send_user_detail(
         self,
@@ -91,213 +65,6 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             self.messenger.send_oto_text(user_id, detail)
         else:
             self.reply_text(detail, incoming)
-
-    async def _try_complete_pending_account_selection(
-        self,
-        text: str,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        is_group: bool,
-    ) -> bool:
-        pending = self._pending_store.get(user_id)
-        if not pending:
-            return False
-
-        if looks_like_account_selection_cancel(text):
-            self._pending_store.clear(user_id)
-            reply = "已取消本次用量提交。需要时请重新发送文件。"
-            if is_group:
-                self.reply_text(format_group_ack(user_name), incoming)
-                self.messenger.send_oto_text(user_id, reply)
-            else:
-                self.reply_text(reply, incoming)
-            return True
-
-        session = self.session_factory()
-        try:
-            team, repo = team_repository(session, self.pulse_config)
-            tool_repo = ToolCenterRepository(session, team.id)
-            submitter = repo.get_or_create_member(user_id, user_name)
-            is_proxy_admin = can_proxy_submit_for_others(self.pulse_config, submitter)
-            candidates = [
-                account
-                for account_id in pending.account_ids
-                if (account := tool_repo.get_account(account_id))
-            ]
-            selected = parse_account_selection_text(text, candidates)
-            proxy_target_name: str | None = None
-
-            if not selected and is_proxy_admin:
-                selected = find_cursor_account_in_pool(text, tool_repo.list_active_accounts())
-                if not selected:
-                    proxy_name = parse_proxy_member_name(text)
-                    if proxy_name:
-                        target = resolve_member_by_display_name(
-                            repo.list_active_members(),
-                            proxy_name,
-                        )
-                        if not target:
-                            reply = (
-                                f"未找到成员「{proxy_name}」，请核对姓名后重试。\n\n"
-                                f"{format_cursor_account_choice_prompt(candidates, admin_hint=True)}"
-                            )
-                            if is_group:
-                                self.reply_text(format_group_ack(user_name), incoming)
-                                self.messenger.send_oto_text(user_id, reply)
-                            else:
-                                self.reply_text(reply, incoming)
-                            return True
-
-                        target_accounts = filter_cursor_accounts(
-                            tool_repo.get_primary_accounts_for_member(target.id)
-                        )
-                        if not target_accounts:
-                            reply = (
-                                f"「{target.display_name}」尚未配置 Cursor 主使用人账号，"
-                                "请先在台账中添加。\n\n"
-                                f"{format_cursor_account_choice_prompt(candidates, admin_hint=True)}"
-                            )
-                            if is_group:
-                                self.reply_text(format_group_ack(user_name), incoming)
-                                self.messenger.send_oto_text(user_id, reply)
-                            else:
-                                self.reply_text(reply, incoming)
-                            return True
-
-                        if len(target_accounts) == 1:
-                            selected = target_accounts[0]
-                            proxy_target_name = target.display_name
-                        else:
-                            self._pending_store.save(
-                                PendingUsageIngestion(
-                                    dingtalk_user_id=pending.dingtalk_user_id,
-                                    user_name=pending.user_name,
-                                    channel=pending.channel,
-                                    source_type=pending.source_type,
-                                    account_ids=[a.id for a in target_accounts],
-                                    created_at=pending.created_at,
-                                    file_path=pending.file_path,
-                                    raw_text=pending.raw_text,
-                                    extraction_confidence=pending.extraction_confidence,
-                                    status=pending.status,
-                                    extra_notes=pending.extra_notes,
-                                    notify_admins_review=pending.notify_admins_review,
-                                )
-                            )
-                            prompt = (
-                                f"管理员代提交：将为 {target.display_name} 记录用量。\n\n"
-                                + format_cursor_account_choice_prompt(
-                                    target_accounts,
-                                    subject_name=target.display_name,
-                                )
-                            )
-                            if is_group:
-                                self.reply_text(format_group_ack(user_name), incoming)
-                                self.messenger.send_oto_text(user_id, prompt)
-                            else:
-                                self.reply_text(prompt, incoming)
-                            return True
-
-            if not selected:
-                prompt = format_cursor_account_choice_prompt(
-                    candidates,
-                    admin_hint=is_proxy_admin,
-                )
-                reply = f"无法识别账号选择，请重新回复。\n\n{prompt}"
-                if is_group:
-                    self.reply_text(format_group_ack(user_name), incoming)
-                    self.messenger.send_oto_text(user_id, reply)
-                else:
-                    self.reply_text(reply, incoming)
-                return True
-
-            allow_proxy = bool(
-                selected.primary_member_id
-                and selected.primary_member_id != submitter.id
-            )
-            if allow_proxy and not is_proxy_admin:
-                reply = "仅账号主使用人可提交用量，如需代提交请联系管理员。"
-                if is_group:
-                    self.reply_text(format_group_ack(user_name), incoming)
-                    self.messenger.send_oto_text(user_id, reply)
-                else:
-                    self.reply_text(reply, incoming)
-                return True
-
-            if allow_proxy and not proxy_target_name and selected.primary_member_id:
-                primary = session.get(Member, selected.primary_member_id)
-                if primary:
-                    proxy_target_name = primary.display_name
-
-            if pending.file_path:
-                parsed = parse_usage_events_file(Path(pending.file_path))
-                raw_source = Path(pending.file_path)
-                raw_text = None
-            elif pending.raw_text:
-                parsed = parse_usage_events_csv(pending.raw_text)
-                raw_source = None
-                raw_text = pending.raw_text
-            else:
-                self._pending_store.clear(user_id)
-                self.reply_text("待提交数据已失效，请重新发送文件。", incoming)
-                return True
-
-            success = await self._submit_parsed(
-                parsed,
-                incoming,
-                user_id,
-                user_name,
-                pending.channel,
-                input_type=input_type_from_source_type(pending.source_type),
-                raw_source=raw_source,
-                raw_text=raw_text,
-                extraction_confidence=pending.extraction_confidence,
-                extra_notes=pending.extra_notes,
-                status=pending.status,
-                notify_admins_review=pending.notify_admins_review,
-                account_id=selected.id,
-                allow_proxy=allow_proxy,
-                proxy_target_name=proxy_target_name,
-            )
-            if success:
-                self._pending_store.clear(user_id)
-            return True
-        except Exception as exc:
-            logger.exception("Pending account selection failed")
-            reply = f"用量保存失败：{exc}"
-            if is_group:
-                self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, reply)
-            else:
-                self.reply_text(reply, incoming)
-            return True
-        finally:
-            session.close()
-
-    async def _begin_cursor_usage_ingestion(
-        self,
-        parsed: ParsedCsv,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        channel: str,
-        *,
-        input_type: str,
-        raw_source: Path | None = None,
-        raw_text: str | None = None,
-        extraction_confidence: float = 1.0,
-        extra_notes: list[str] | None = None,
-        status: str = "confirmed",
-        notify_admins_review: bool = False,
-    ) -> None:
-        self._send_user_detail(
-            incoming=incoming,
-            user_id=user_id,
-            user_name=user_name,
-            channel=channel,
-            detail=CURSOR_BIND_GUIDE,
-        )
 
     async def process(self, callback: dingtalk_stream.CallbackMessage):
         incoming = dingtalk_stream.ChatbotMessage.from_dict(callback.data)
@@ -327,11 +94,6 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
 
         if text and looks_like_tip(text):
             await self._handle_tip(text, incoming, user_id, user_name, is_group)
-            return
-
-        if text and await self._try_complete_pending_account_selection(
-            text, incoming, user_id, user_name, is_group
-        ):
             return
 
         if text and (
@@ -448,23 +210,15 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         user_name: str,
         channel: str,
     ) -> None:
-        try:
-            parsed = parse_usage_events_file(file_path)
-        except Exception as exc:
-            if channel == "group":
-                self.reply_text(f"@{user_name} 解析失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, f"用量文件解析失败：{exc}")
-            else:
-                self.reply_text(f"用量文件解析失败：{exc}", incoming)
-            return
-        await self._begin_cursor_usage_ingestion(
-            parsed,
-            incoming,
-            user_id,
-            user_name,
-            channel,
-            input_type="csv",
-            raw_source=file_path,
+        self._send_user_detail(
+            incoming=incoming,
+            user_id=user_id,
+            user_name=user_name,
+            channel=channel,
+            detail=(
+                "Cursor 已改用 API Key 自动同步，不再接受 CSV 上传。\n\n"
+                f"{CURSOR_BIND_GUIDE}"
+            ),
         )
 
     async def _handle_pasted_csv(
@@ -475,23 +229,15 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         user_name: str,
         channel: str,
     ) -> None:
-        try:
-            parsed = parse_usage_events_csv(text)
-        except Exception as exc:
-            if channel == "group":
-                self.reply_text(f"@{user_name} 解析失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, f"粘贴内容解析失败：{exc}")
-            else:
-                self.reply_text(f"解析失败：{exc}", incoming)
-            return
-        await self._begin_cursor_usage_ingestion(
-            parsed,
-            incoming,
-            user_id,
-            user_name,
-            channel,
-            input_type="text",
-            raw_text=text,
+        self._send_user_detail(
+            incoming=incoming,
+            user_id=user_id,
+            user_name=user_name,
+            channel=channel,
+            detail=(
+                "Cursor 已改用 API Key 自动同步，不再接受 CSV 粘贴。\n\n"
+                f"{CURSOR_BIND_GUIDE}"
+            ),
         )
 
     async def _handle_picture(
@@ -563,8 +309,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             reply = (
                 "📷 截图已收到。您有多个工具账号，无法自动判断工具类型。\n\n"
                 f"请使用手工上报：上报 <工具> <数值>\n"
-                f"可选工具：{'、'.join(vendors)}\n"
-                "或发送 Cursor usage-events.csv 文件。"
+                f"可选工具：{'、'.join(vendors)}"
             )
             if is_group:
                 self.reply_text(format_group_ack(user_name), incoming)
@@ -573,76 +318,17 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 self.reply_text(reply, incoming)
             return
 
-        if llm.vision_enabled and client:
-            try:
-                result = extract_usage_from_screenshot(
-                    dest, client, model=llm.vision_model
-                )
-                threshold = llm.confidence_threshold
-                if result.confidence >= threshold and result.records:
-                    parsed = ParsedCsv(records=result.records, summary=result.summary)
-                    await self._begin_cursor_usage_ingestion(
-                        parsed,
-                        incoming,
-                        user_id,
-                        user_name,
-                        channel,
-                        input_type="screenshot",
-                        raw_source=dest,
-                        extraction_confidence=result.confidence,
-                        extra_notes=[format_extraction_confidence_note(result.confidence)]
-                        + result.warnings,
-                        status="confirmed",
-                    )
-                    return
-                if (
-                    result.records
-                    and self.pulse_config.llm.review_low_confidence
-                ):
-                    parsed = ParsedCsv(records=result.records, summary=result.summary)
-                    await self._begin_cursor_usage_ingestion(
-                        parsed,
-                        incoming,
-                        user_id,
-                        user_name,
-                        channel,
-                        input_type="screenshot",
-                        raw_source=dest,
-                        extraction_confidence=result.confidence,
-                        extra_notes=[
-                            f"截图识别置信度 {result.confidence:.0%} 低于阈值 {threshold:.0%}，已提交管理员审核。"
-                        ]
-                        + result.warnings,
-                        status="pending_review",
-                        notify_admins_review=True,
-                    )
-                    return
-                warn_lines = result.warnings or ["截图内容不完整或置信度不足"]
-                reply = (
-                    "📷 截图已收到，但自动识别置信度不足，暂未入库。\n\n"
-                    f"置信度：{result.confidence:.0%}（阈值 {threshold:.0%}）\n"
-                    + "\n".join(f"· {w}" for w in warn_lines)
-                    + "\n\n请改用 Cursor Dashboard → Usage → Export CSV 后发送文件。"
-                )
-                if is_group:
-                    self.reply_text(format_group_ack(user_name), incoming)
-                    self.messenger.send_oto_text(user_id, reply)
-                else:
-                    self.reply_text(reply, incoming)
-                return
-            except Exception:
-                logger.exception("Vision extraction failed")
-
-        reply = (
-            "📷 截图已收到并保存。\n\n"
-            "当前未启用截图识别（需配置 LLM_API_KEY + VISION_ENABLED=true），"
-            "请从 Cursor Dashboard → Usage → Export CSV 后发送文件（推荐私聊）。"
+        self._send_user_detail(
+            incoming=incoming,
+            user_id=user_id,
+            user_name=user_name,
+            channel=channel,
+            detail=(
+                "📷 截图已收到。Cursor 用量请绑定 API Key 自动同步；"
+                "其他工具请发送对应厂商截图或手工上报。\n\n"
+                f"{CURSOR_BIND_GUIDE}"
+            ),
         )
-        if is_group:
-            self.reply_text(format_group_ack(user_name), incoming)
-            self.messenger.send_oto_text(user_id, reply)
-        else:
-            self.reply_text(reply, incoming)
 
     async def _submit_vendor_screenshot(
         self,
@@ -741,145 +427,6 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 self.messenger.send_oto_text(user_id, msg)
             else:
                 self.reply_text(msg, incoming)
-        finally:
-            session.close()
-
-    async def _submit_parsed(
-        self,
-        parsed,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        channel: str,
-        *,
-        input_type: str,
-        raw_source: Path | None = None,
-        raw_text: str | None = None,
-        extraction_confidence: float = 1.0,
-        extra_notes: list[str] | None = None,
-        status: str = "confirmed",
-        notify_admins_review: bool = False,
-        account_id: str | None = None,
-        allow_proxy: bool = False,
-        proxy_target_name: str | None = None,
-    ) -> bool:
-        session = self.session_factory()
-        team, repo = team_repository(session, self.pulse_config)
-        try:
-            member = repo.get_or_create_member(user_id, user_name)
-            default_period = current_period(self.pulse_config)
-            tool_repo = ToolCenterRepository(session, team.id)
-            account = tool_repo.get_account(account_id) if account_id else None
-
-            raw_dir = Path(self.pulse_config.storage.raw_files_dir)
-            period_ingestions = repo.save_split_ingestions(
-                member=member,
-                parsed=parsed,
-                submit_channel=channel,
-                default_period=default_period,
-                input_type=input_type,
-                raw_source=raw_source,
-                raw_files_dir=raw_dir if raw_source else None,
-                raw_text=raw_text,
-                extraction_confidence=extraction_confidence,
-                status=status,
-                object_storage_config=self.pulse_config.object_storage,
-                team_slug=team.slug,
-                account_id=account_id,
-                upgrade_notify=(
-                    self.messenger.send_oto_text,
-                    list(self.pulse_config.admin.dingtalk_user_ids),
-                )
-                if self.pulse_config.admin.dingtalk_user_ids
-                else None,
-                allow_proxy=allow_proxy,
-            )
-            repo.commit()
-
-            periods = [p for p, _ in period_ingestions]
-            splits = split_parsed_by_period(parsed)
-            period_summaries = [(p, splits[p].summary) for p in periods]
-
-            if notify_admins_review and self.pulse_config.admin.dingtalk_user_ids:
-                for period, ingestion in period_ingestions:
-                    admin_msg = (
-                        f"📋 待审摄取 · {member.display_name} · {period}\n"
-                        f"ID：{ingestion.id[:8]}\n"
-                        f"置信度：{extraction_confidence:.0%}\n"
-                        "管理员可回复：确认 {id前8位} / 拒绝 {id前8位}"
-                    )
-                    for admin_id in self.pulse_config.admin.dingtalk_user_ids:
-                        self.messenger.send_oto_text(admin_id, admin_msg)
-
-            warning = ""
-            if status == "pending_review":
-                warning = "\n\n⏳ 已提交管理员审核，确认后才会计入团队统计。"
-            split_notice = format_auto_split_notice(periods, default_period)
-            if split_notice:
-                warning += "\n\n" + split_notice
-            notes = ""
-            if extra_notes:
-                notes = "\n\n" + "\n".join(extra_notes)
-
-            account_prefix = ""
-            if account:
-                account_prefix = f"账号：{account.account_identifier}\n"
-                if proxy_target_name:
-                    account_prefix = (
-                        f"已代 {proxy_target_name} 提交\n账号：{account.account_identifier}\n"
-                    )
-                account_prefix += "\n"
-
-            detail = (
-                account_prefix
-                + format_split_period_confirmation(user_name, period_summaries, parsed.summary)
-                + warning
-                + notes
-            )
-            if account_id:
-                pool_lines: list[str] = []
-                for period, _ingestion in period_ingestions:
-                    usage_sum = session.scalar(
-                        select(UsageSummary).where(
-                            UsageSummary.account_id == account_id,
-                            UsageSummary.period == period,
-                        )
-                    )
-                    if not usage_sum or (
-                        not usage_sum.estimated_included_spend_usd and not usage_sum.cursor_pools
-                    ):
-                        continue
-                    note = format_pool_spend_note(
-                        pool_spend=float(usage_sum.primary_metric_value),
-                        reported_spend=float(usage_sum.reported_spend_usd or 0),
-                        estimated_included_spend=float(usage_sum.estimated_included_spend_usd or 0),
-                        quota_ratio=usage_sum.quota_usage_ratio,
-                        unit=usage_sum.primary_metric_unit,
-                        cursor_pools=usage_sum.cursor_pools,
-                    ).strip()
-                    if len(period_ingestions) > 1:
-                        pool_lines.append(f"【{period}】\n{note}")
-                    else:
-                        pool_lines.append(note)
-                if pool_lines:
-                    detail += "\n\n" + "\n\n".join(pool_lines)
-            if channel == "group" and len(periods) == 1:
-                detail += "\n\n" + format_group_submit_private_footer()
-            if channel == "group":
-                self.reply_text(format_group_ack(user_name), incoming)
-                self.messenger.send_oto_text(user_id, detail)
-            else:
-                self.reply_text(detail, incoming)
-            return True
-        except Exception as exc:
-            logger.exception("Ingestion import failed")
-            session.rollback()
-            if channel == "group":
-                self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, f"导入失败：{exc}")
-            else:
-                self.reply_text(f"导入失败：{exc}", incoming)
-            return False
         finally:
             session.close()
 

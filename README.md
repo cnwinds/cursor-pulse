@@ -1,6 +1,6 @@
 # Cursor Pulse
 
-钉钉机器人收集团队 Cursor 用量（个人版 CSV），确定性聚合，隐私优先。
+钉钉机器人 + Web 台账管理 AI 工具用量：Cursor 通过 API Key 自动同步，其他工具支持手工/截图提交，确定性聚合，隐私优先。
 
 ## 快速开始
 
@@ -38,7 +38,8 @@ pulse serve
 
 | 场景 | 实现 |
 |------|------|
-| 私聊提交 CSV | Stream 收 file 消息 → 下载 → 私聊回复摘要 |
+| 私聊绑定 Cursor API Key | Stream 收消息 → 加密存储 Key → 每日自动同步 |
+| 私聊提交其他工具用量 | Stream 收 file/截图/文本 → 私聊回复摘要 |
 | 群内 @机器人 提交 | 群内极简确认 + **OTO API** 私聊完整摘要 |
 | 定时群广播 / 截止提醒 | `groupMessages/send` API |
 | 每日缺报催办 | `oToMessages/batchSend` API |
