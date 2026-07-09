@@ -14,6 +14,7 @@ from pulse.bot.dingtalk.files import (
     incoming_message_type,
     normalize_incoming_text,
 )
+from pulse.bot.commands import CURSOR_BIND_GUIDE
 from pulse.bot.pending_submission import PendingIngestionStore, PendingUsageIngestion
 from pulse.bot.dingtalk.group_store import save_group_binding
 from pulse.bot.dingtalk.messenger import DingTalkMessenger
@@ -290,72 +291,13 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         status: str = "confirmed",
         notify_admins_review: bool = False,
     ) -> None:
-        session = self.session_factory()
-        try:
-            team, repo = team_repository(session, self.pulse_config)
-            member = repo.get_or_create_member(user_id, user_name)
-            tool_repo = ToolCenterRepository(session, team.id)
-            cursor_accounts = filter_cursor_accounts(
-                tool_repo.get_primary_accounts_for_member(member.id)
-            )
-            if not cursor_accounts:
-                msg = "未找到 Cursor 主使用人账号，请联系管理员在台账中配置后再提交。"
-                self._send_user_detail(
-                    incoming=incoming,
-                    user_id=user_id,
-                    user_name=user_name,
-                    channel=channel,
-                    detail=msg,
-                )
-                return
-
-            if len(cursor_accounts) == 1:
-                await self._submit_parsed(
-                    parsed,
-                    incoming,
-                    user_id,
-                    user_name,
-                    channel,
-                    input_type=input_type,
-                    raw_source=raw_source,
-                    raw_text=raw_text,
-                    extraction_confidence=extraction_confidence,
-                    extra_notes=extra_notes,
-                    status=status,
-                    notify_admins_review=notify_admins_review,
-                    account_id=cursor_accounts[0].id,
-                )
-                return
-
-            self._pending_store.save(
-                PendingUsageIngestion(
-                    dingtalk_user_id=user_id,
-                    user_name=user_name,
-                    channel=channel,
-                    source_type=source_type_from_input_type(input_type),
-                    account_ids=[a.id for a in cursor_accounts],
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                    file_path=str(raw_source) if raw_source else None,
-                    raw_text=raw_text,
-                    extraction_confidence=extraction_confidence,
-                    status=status,
-                    extra_notes=extra_notes,
-                    notify_admins_review=notify_admins_review,
-                )
-            )
-            prompt = format_cursor_account_choice_prompt(
-                cursor_accounts,
-                admin_hint=can_proxy_submit_for_others(self.pulse_config, member),
-            )
-            self._send_user_detail(
-                incoming=incoming,
-                user_id=user_id,
-                user_name=user_name,
-                channel=channel,
-                detail=prompt,
-            )
-        finally:
-            session.close()
+        self._send_user_detail(
+            incoming=incoming,
+            user_id=user_id,
+            user_name=user_name,
+            channel=channel,
+            detail=CURSOR_BIND_GUIDE,
+        )
 
     async def process(self, callback: dingtalk_stream.CallbackMessage):
         incoming = dingtalk_stream.ChatbotMessage.from_dict(callback.data)
@@ -407,6 +349,8 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             or text.startswith("拒绝 ")
             or text.startswith("申请")
             or text.startswith("审批 ")
+            or text.startswith("绑定")
+            or text.startswith("解绑")
             or looks_like_manual_usage(text)
             or looks_like_query(text)
         ):
@@ -416,8 +360,8 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
         file_path, unsupported_name = self._download_attachment(incoming, raw)
         if unsupported_name:
             self.reply_text(
-                f"收到文件「{unsupported_name}」，但仅支持 Cursor Usage 导出的 CSV 或 Excel（.csv / .xlsx）。\n\n"
-                "请在 Cursor Dashboard → Usage → Export 后发送文件。",
+                f"收到文件「{unsupported_name}」，但仅支持非 Cursor 厂商的用量 CSV/Excel（.csv / .xlsx）。\n\n"
+                f"{CURSOR_BIND_GUIDE}",
                 incoming,
             )
             return
@@ -450,7 +394,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
                 sorted(getattr(incoming, "extensions", {}).keys()),
             )
             self.reply_text(
-                "收到文件但无法识别或下载，请重新私聊发送 Cursor Usage 导出的 .csv / .xlsx 文件。",
+                "收到文件但无法识别或下载。Cursor 请绑定 API Key；其他工具请发送用量 CSV/Excel。",
                 incoming,
             )
 
@@ -490,7 +434,7 @@ class PulseBotHandler(dingtalk_stream.ChatbotHandler):
             logger.exception("Memory conversational handling failed")
             session.rollback()
             self.reply_text(
-                "请发送 Cursor Usage 导出的 CSV 文件，或直接粘贴 CSV 内容。",
+                f"请绑定 Cursor API Key 自动同步用量，或发送非 Cursor 工具的用量文件。\n\n{CURSOR_BIND_GUIDE}",
                 incoming,
             )
         finally:

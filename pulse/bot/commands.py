@@ -1,15 +1,169 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pulse.aggregate.engine import aggregate_period
 from pulse.export.exporter import export_usage_csv
 from pulse.periods import current_period
 from pulse.query.engine import answer_question, looks_like_query
+from pulse.tool_center.manual import looks_like_manual_usage
 from pulse.report.service import generate_report, publish_report_to_group
 from pulse.storage.models import Member, UsageIngestion
 from pulse.storage.repository import Repository
 from sqlalchemy import select
+
+BIND_CURSOR_RE = re.compile(
+    r"^绑定\s*cursor(?:\s+(?P<email>\S+@\S+))?\s+(?:key\s+)?(?P<key>crsr_\S+)$",
+    re.IGNORECASE,
+)
+UNBIND_CURSOR_RE = re.compile(
+    r"^解绑\s*cursor(?:\s+(?P<email>\S+@\S+))?$",
+    re.IGNORECASE,
+)
+
+CURSOR_BIND_GUIDE = (
+    "该 Cursor 账号已支持 API 自动同步，无需上传 CSV。\n\n"
+    "请私聊发送：绑定 cursor key crsr_...\n"
+    "若有多个账号：绑定 cursor 你的邮箱@c.com crsr_...\n\n"
+    "在 Cursor Settings → Integrations 可创建 User API Key。"
+)
+
+
+def _encryption_key(config) -> str:
+    key = (config.credentials.encryption_key or "").strip()
+    if not key:
+        raise ValueError("系统未配置凭证加密密钥，请联系管理员")
+    return key
+
+
+def _can_bind_account(config, member, account) -> bool:
+    if _is_admin(member.dingtalk_user_id, set(config.admin.dingtalk_user_ids)):
+        return True
+    if member.portal_role in ("owner", "operator"):
+        return True
+    return account.primary_member_id == member.id
+
+
+def handle_bind_cursor_command(text: str, user_id: str, config, repo) -> str | None:
+    match = BIND_CURSOR_RE.match(text.strip())
+    if not match:
+        return None
+
+    member = repo.get_or_create_member(user_id, user_id)
+    email = match.group("email")
+    api_key = match.group("key").strip()
+
+    from pulse.tool_center.account_pick import filter_cursor_accounts
+    from pulse.tool_center.repository import ToolCenterRepository
+
+    tool_repo = ToolCenterRepository(repo.session, repo.team_id)
+    if email:
+        needle = email.strip().lower()
+        matches = [
+            a
+            for a in filter_cursor_accounts(tool_repo.list_active_accounts())
+            if a.account_identifier.lower() == needle
+        ]
+        if not matches:
+            return f"未找到 Cursor 账号 {email}"
+        account = matches[0]
+    else:
+        cursor_accounts = filter_cursor_accounts(
+            tool_repo.get_primary_accounts_for_member(member.id)
+        )
+        if not cursor_accounts:
+            return "未找到您名下的 Cursor 主使用人账号，请联系管理员配置台账。"
+        if len(cursor_accounts) > 1:
+            lines = ["您有多个 Cursor 账号，请指定邮箱，例如："]
+            for acc in cursor_accounts:
+                lines.append(f"绑定 cursor {acc.account_identifier} crsr_...")
+            return "\n".join(lines)
+        account = cursor_accounts[0]
+
+    if not _can_bind_account(config, member, account):
+        return "仅账号主使用人或管理员可绑定 API Key。"
+
+    try:
+        enc_key = _encryption_key(config)
+    except ValueError as exc:
+        return str(exc)
+
+    from pulse.ingestion.credentials import CredentialService
+    from pulse.ingestion.sync import CursorSyncService
+
+    cred_service = CredentialService(repo.session, enc_key)
+    try:
+        cred = cred_service.bind_cursor_api_key(
+            account_id=account.id,
+            api_key=api_key,
+            member_id=member.id,
+        )
+        sync_service = CursorSyncService(repo.session, enc_key)
+        result = sync_service.sync_account(account.id, channel="dingtalk")
+        repo.session.flush()
+        return (
+            f"✅ 已绑定 Cursor 账号 {account.account_identifier}（{cred.key_hint}）\n"
+            f"正在同步用量，写入 {result.event_count} 条事件。"
+        )
+    except Exception as exc:
+        repo.session.rollback()
+        return f"绑定失败：{exc}"
+
+
+def handle_unbind_cursor_command(text: str, user_id: str, config, repo) -> str | None:
+    match = UNBIND_CURSOR_RE.match(text.strip())
+    if not match:
+        return None
+
+    member = repo.get_or_create_member(user_id, user_id)
+    email = match.group("email")
+
+    from pulse.tool_center.account_pick import filter_cursor_accounts
+    from pulse.tool_center.repository import ToolCenterRepository
+
+    tool_repo = ToolCenterRepository(repo.session, repo.team_id)
+    if email:
+        needle = email.strip().lower()
+        matches = [
+            a
+            for a in filter_cursor_accounts(tool_repo.list_active_accounts())
+            if a.account_identifier.lower() == needle
+        ]
+        if not matches:
+            return f"未找到 Cursor 账号 {email}"
+        account = matches[0]
+    else:
+        cursor_accounts = filter_cursor_accounts(
+            tool_repo.get_primary_accounts_for_member(member.id)
+        )
+        if not cursor_accounts:
+            return "未找到您名下的 Cursor 账号。"
+        if len(cursor_accounts) > 1:
+            lines = ["您有多个 Cursor 账号，请指定邮箱，例如："]
+            for acc in cursor_accounts:
+                lines.append(f"解绑 cursor {acc.account_identifier}")
+            return "\n".join(lines)
+        account = cursor_accounts[0]
+
+    if not _can_bind_account(config, member, account):
+        return "仅账号主使用人或管理员可解绑 API Key。"
+
+    try:
+        enc_key = _encryption_key(config)
+    except ValueError as exc:
+        return str(exc)
+
+    from pulse.ingestion.credentials import CredentialService
+
+    cred_service = CredentialService(repo.session, enc_key)
+    cred = cred_service.get_credential(account.id)
+    if not cred or cred.status == "revoked":
+        return f"账号 {account.account_identifier} 尚未绑定 API Key。"
+
+    cred_service.revoke(account.id)
+    repo.session.flush()
+    return f"已解绑 Cursor 账号 {account.account_identifier} 的 API Key，自动同步已停止。"
 
 
 def _is_admin(user_id: str, admin_ids: set[str]) -> bool:
@@ -62,22 +216,31 @@ def run_command(
             "可用命令：\n"
             "· 状态 — 查看提交进度\n"
             "· 我的 — 查看本人提交\n"
+            "· 绑定 cursor key crsr_... — 绑定 Cursor API Key\n"
+            "· 解绑 cursor [邮箱] — 解绑 API Key\n"
             "· 报告 [账期] — 生成月报（管理员，发群）\n"
             "· 聚合 [账期] — 重新聚合（管理员）\n"
             "· 成员 — 成员名单（管理员）\n"
             "· 成员 添加 姓名 — 加入催办名单（管理员）\n"
             "· 查询 问题 — 如：查询 谁用得最多\n"
             "· 告警 [账期] — 运行异常检测（管理员）\n"
-            "· 待审 [账期] — 查看待确认截图提交（管理员）\n"
-            "· 确认 ID前缀 / 拒绝 ID前缀 — 审核截图提交\n"
+            "· 待审 [账期] — 查看待确认手工提交（管理员）\n"
+            "· 确认 ID前缀 / 拒绝 ID前缀 — 审核手工提交\n"
             "· 申请 Cursor — 提交 AI 工具试用申请\n"
             "· 审批 通过 ID前缀 / 审批 拒绝 ID前缀 — 主管审批申请\n"
             "· 心得：你的技巧 — 分享本月 AI 使用心得（私聊或群内）\n"
             "· 上报 智谱 85 — 非 Cursor 工具手工上报用量\n"
             "· 智谱/MiniMax/Codex 可发控制台截图自动识别\n"
-            "直接发送 usage-events.csv 或 .xlsx 文件即可提交 Cursor 用量。\n"
-            "若有多个 Cursor 账号，上传后请按提示回复序号或邮箱指定账号。"
+            "Cursor 用量请绑定 API Key 自动同步，无需上传 CSV。"
         )
+
+    bind_reply = handle_bind_cursor_command(text, user_id, config, repo)
+    if bind_reply is not None:
+        return bind_reply
+
+    unbind_reply = handle_unbind_cursor_command(text, user_id, config, repo)
+    if unbind_reply is not None:
+        return unbind_reply
 
     if looks_like_manual_usage(text):
         from pulse.tool_center.manual import ManualUsageService, parse_manual_usage_text
@@ -243,7 +406,7 @@ def run_command(
             return "无权限。"
         parts = text.split()
         period = parts[1] if len(parts) > 1 else period_default
-        pending = repo.list_pending_ingestions(period)
+        pending = repo.list_pending_ingestions(period, manual_only=True)
         if not pending:
             return f"{period} 无待审摄取。"
         lines = [f"⏳ {period} 待审摄取 ({len(pending)})："]
