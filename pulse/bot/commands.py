@@ -7,7 +7,7 @@ from pulse.export.exporter import export_usage_csv
 from pulse.periods import current_period
 from pulse.query.engine import answer_question, looks_like_query
 from pulse.report.service import generate_report, publish_report_to_group
-from pulse.storage.models import Member, Submission
+from pulse.storage.models import Member, UsageIngestion
 from pulse.storage.repository import Repository
 from sqlalchemy import select
 
@@ -49,13 +49,13 @@ def run_command(
         if not member:
             return "你还没有提交过数据。"
         sub = repo.session.scalar(
-            select(Submission)
-            .where(Submission.member_id == member.id, Submission.billing_period == period)
-            .order_by(Submission.submitted_at.desc())
+            select(UsageIngestion)
+            .where(UsageIngestion.member_id == member.id, UsageIngestion.billing_period == period)
+            .order_by(UsageIngestion.ingested_at.desc())
         )
         if not sub:
             return f"{period} 暂无提交记录。"
-        return f"{period} 已于 {sub.submitted_at.isoformat()} 提交（{sub.submit_channel}）。"
+        return f"{period} 已于 {sub.ingested_at.isoformat()} 提交（{sub.channel}）。"
 
     if text in ("帮助", "/help", "help"):
         return (
@@ -70,8 +70,107 @@ def run_command(
             "· 告警 [账期] — 运行异常检测（管理员）\n"
             "· 待审 [账期] — 查看待确认截图提交（管理员）\n"
             "· 确认 ID前缀 / 拒绝 ID前缀 — 审核截图提交\n"
-            "直接发送 usage-events.csv 文件即可提交用量。"
+            "· 申请 Cursor — 提交 AI 工具试用申请\n"
+            "· 审批 通过 ID前缀 / 审批 拒绝 ID前缀 — 主管审批申请\n"
+            "· 心得：你的技巧 — 分享本月 AI 使用心得（私聊或群内）\n"
+            "· 上报 智谱 85 — 非 Cursor 工具手工上报用量\n"
+            "· 智谱/MiniMax/Codex 可发控制台截图自动识别\n"
+            "直接发送 usage-events.csv 或 .xlsx 文件即可提交 Cursor 用量。\n"
+            "若有多个 Cursor 账号，上传后请按提示回复序号或邮箱指定账号。"
         )
+
+    if looks_like_manual_usage(text):
+        from pulse.tool_center.manual import ManualUsageService, parse_manual_usage_text
+
+        member = repo.get_or_create_member(user_id, user_id)
+        try:
+            command = parse_manual_usage_text(text)
+            svc = ManualUsageService(repo.session, repo.team_id)
+            submission, account, summary = svc.submit_for_member(
+                member=member,
+                period=period_default,
+                command=command,
+                submit_channel="dingtalk",
+                repo=repo,
+                upgrade_notify=(
+                    messenger.send_oto_text,
+                    list(config.admin.dingtalk_user_ids),
+                )
+                if messenger and config.admin.dingtalk_user_ids
+                else None,
+            )
+            repo.session.flush()
+            vendor_name = account.vendor.name if account.vendor else command.vendor_slug
+            ratio = summary.get("quota_usage_ratio")
+            ratio_line = f"\n额度使用率：{ratio}%" if ratio is not None else ""
+            return (
+                f"✅ {period_default} {vendor_name} 用量已记录\n"
+                f"账号：{account.account_identifier}\n"
+                f"主指标：{summary['primary_metric_value']} {summary['primary_metric_unit'].upper()}"
+                f"{ratio_line}"
+            )
+        except ValueError as exc:
+            return f"上报失败：{exc}"
+
+    if text.startswith("申请"):
+        from pulse.tool_center.requests import AccessRequestError, AccessRequestService
+        from pulse.tool_center.repository import ToolCenterRepository
+
+        member = repo.get_or_create_member(user_id, user_id)
+        tool_repo = ToolCenterRepository(repo.session, repo.team_id)
+        vendor = tool_repo.get_vendor_by_slug("cursor")
+        if not vendor:
+            return "系统尚未配置 Cursor 厂商，请联系管理员执行 pulse init-v2 --seed"
+        reason = text[len("申请") :].strip() or None
+        svc = AccessRequestService(repo.session, repo.team_id)
+        try:
+            row = svc.create_draft(applicant=member, vendor_id=vendor.id, reason=reason)
+            action = svc.submit(row.id, member)
+            repo.session.flush()
+            extra = ""
+            if row.manager_member_id:
+                mgr = repo.session.get(Member, row.manager_member_id)
+                if mgr:
+                    extra = f"\n已通知主管 {mgr.display_name} 审批（请主管回复：审批 通过 {row.id[:8]}）"
+            return action.message + extra
+        except AccessRequestError as exc:
+            return f"申请失败：{exc}"
+
+    if text.startswith("审批 "):
+        from pulse.tool_center.requests import AccessRequestError, AccessRequestService
+
+        parts = text.split()
+        if len(parts) < 3:
+            return "用法：审批 通过/拒绝 申请ID前8位"
+        decision, prefix = parts[1], parts[2]
+        member = repo.get_member_by_dingtalk_id(user_id)
+        if not member:
+            return "未找到你的成员记录。"
+        svc = AccessRequestService(repo.session, repo.team_id)
+        rows = svc.list_requests(status="pending_manager", admin_view=True)
+        matched = [r for r in rows if r.id.startswith(prefix)]
+        if len(matched) != 1:
+            return f"未找到唯一申请（前缀 {prefix}）"
+        row = matched[0]
+        is_admin_user = _is_admin(user_id, admin_ids)
+        try:
+            if decision in ("通过", "approve"):
+                action = svc.approve(row.id, member, is_admin=is_admin_user)
+            elif decision in ("拒绝", "reject"):
+                action = svc.reject(row.id, member, is_admin=is_admin_user)
+            else:
+                return "决策须为 通过 或 拒绝"
+            repo.session.flush()
+            if action.request.status == "approved" and is_admin_user:
+                try:
+                    assign = svc.assign_trial(row.id)
+                    repo.session.flush()
+                    return assign.message
+                except AccessRequestError:
+                    return action.message + "\n（暂无空闲试用账号，请管理员在后台分配）"
+            return action.message
+        except AccessRequestError as exc:
+            return f"审批失败：{exc}"
 
     if text.startswith("查询 ") or text.startswith("问 "):
         question = text.split(maxsplit=1)[1] if " " in text else ""
@@ -144,35 +243,35 @@ def run_command(
             return "无权限。"
         parts = text.split()
         period = parts[1] if len(parts) > 1 else period_default
-        pending = repo.list_pending_submissions(period)
+        pending = repo.list_pending_ingestions(period)
         if not pending:
-            return f"{period} 无待审提交。"
-        lines = [f"⏳ {period} 待审提交 ({len(pending)})："]
-        for sub in pending[:10]:
-            member = repo.session.get(Member, sub.member_id)
-            name = member.display_name if member else sub.member_id[:8]
-            lines.append(f"· {sub.id[:8]} {name} ({sub.input_type})")
+            return f"{period} 无待审摄取。"
+        lines = [f"⏳ {period} 待审摄取 ({len(pending)})："]
+        for ing in pending[:10]:
+            member = repo.session.get(Member, ing.member_id)
+            name = member.display_name if member else (ing.member_id or "")[:8]
+            lines.append(f"· {ing.id[:8]} {name} ({ing.source_type})")
         return "\n".join(lines)
 
     if text.startswith("确认 "):
         if not is_admin:
             return "无权限。"
         prefix = text.split(maxsplit=1)[1].strip()
-        sub = repo.find_submission_by_id_prefix(prefix)
-        if not sub:
-            return f"未找到提交 {prefix}"
-        repo.confirm_submission(sub.id)
-        return f"✅ 已确认提交 {sub.id[:8]}，数据已计入统计。"
+        ing = repo.find_ingestion_by_id_prefix(prefix)
+        if not ing:
+            return f"未找到摄取 {prefix}"
+        repo.confirm_ingestion(ing.id)
+        return f"✅ 已确认摄取 {ing.id[:8]}，数据已计入统计。"
 
     if text.startswith("拒绝 "):
         if not is_admin:
             return "无权限。"
         prefix = text.split(maxsplit=1)[1].strip()
-        sub = repo.find_submission_by_id_prefix(prefix)
-        if not sub:
-            return f"未找到提交 {prefix}"
-        repo.reject_submission(sub.id)
-        return f"已拒绝并删除提交 {sub.id[:8]}。"
+        ing = repo.find_ingestion_by_id_prefix(prefix)
+        if not ing:
+            return f"未找到摄取 {prefix}"
+        repo.reject_ingestion(ing.id)
+        return f"已拒绝并删除摄取 {ing.id[:8]}。"
 
     if text.startswith("告警") or text.startswith("/alerts"):
         if not is_admin:

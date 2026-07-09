@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from pulse.config import AppConfig
 from pulse.periods import current_period
 from pulse.report.service import get_latest_snapshot
-from pulse.storage.models import AlertLog, ReminderLog
+from pulse.storage.models import AlertLog, ReminderLog, UsageIngestion
+from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.settings_store import effective_config_dict, settings_for_api
 
 
@@ -18,32 +19,44 @@ def build_schedule_plan(config: AppConfig, session: Session, team_id: str) -> di
     collection = effective["collection"]
     memory = effective["memory"]
 
-    jobs = [
-        {
-            "id": "collection_start",
-            "name": "收集开始群通知",
-            "cron": f"每月 {collection['start_day']} 日 {collection['start_time']}",
-            "process": "pulse serve",
-        },
-        {
-            "id": "daily_nudge",
-            "name": "每日私聊催未提交",
-            "cron": f"每天 {collection['daily_check_time']}（账期内）",
-            "process": "pulse serve",
-        },
-        {
-            "id": "deadline_reminder",
-            "name": "截止日群 @全员",
-            "cron": f"每月 {collection['deadline_day']} 日 {collection['deadline_time']}",
-            "process": "pulse serve",
-        },
+    reminders_enabled = bool(collection.get("reminders_enabled", False))
+
+    jobs = []
+    if reminders_enabled:
+        jobs.extend(
+            [
+                {
+                    "id": "collection_start",
+                    "name": "收集开始群通知",
+                    "cron": f"每月 {collection['start_day']} 日 {collection['start_time']}",
+                    "process": "pulse serve",
+                    "enabled": True,
+                },
+                {
+                    "id": "daily_nudge",
+                    "name": "每日私聊催未提交",
+                    "cron": f"每天 {collection['daily_check_time']}（账期内）",
+                    "process": "pulse serve",
+                    "enabled": True,
+                },
+                {
+                    "id": "deadline_reminder",
+                    "name": "截止日群 @全员",
+                    "cron": f"每月 {collection['deadline_day']} 日 {collection['deadline_time']}",
+                    "process": "pulse serve",
+                    "enabled": True,
+                },
+            ]
+        )
+    jobs.append(
         {
             "id": "monthly_report",
             "name": "月报发群",
             "cron": f"每月 {collection['report_day']} 日 {collection['report_time']}",
             "process": "pulse serve",
-        },
-    ]
+            "enabled": True,
+        }
+    )
     if memory.get("evolution_enabled"):
         dow = memory.get("evolution_day_of_week", 6)
         jobs.append(
@@ -58,12 +71,16 @@ def build_schedule_plan(config: AppConfig, session: Session, team_id: str) -> di
     return {
         "timezone": collection["timezone"],
         "current_period": current_period(config),
+        "reminders_enabled": reminders_enabled,
         "collection_window": {
             "start_day": collection["start_day"],
             "deadline_day": collection["deadline_day"],
         },
         "jobs": jobs,
-        "note": "调度任务在 pulse serve 进程中运行；仅 pulse web 时此处为配置预览。",
+        "note": (
+            "调度任务在 pulse serve 进程中运行；仅 pulse web 时此处为配置预览。"
+            + ("" if reminders_enabled else " 用量提交催办已关闭。")
+        ),
     }
 
 
@@ -124,19 +141,35 @@ def build_dashboard_overview(
     period = current_period(config)
     effective = settings_for_api(config, session, team_id)
 
-    active = repo.list_active_members()
-    submitted_ids = repo.get_submitted_member_ids(period)
-    unsubmitted = repo.get_unsubmitted_members(period)
+    tool_repo = ToolCenterRepository(session, team_id)
+    active_accounts = tool_repo.list_active_accounts()
+    submitted_account_ids = tool_repo.get_submitted_account_ids(period)
+    unsubmitted_accounts = tool_repo.get_unsubmitted_accounts(period)
+    missing_primary = tool_repo.accounts_missing_primary()
 
-    member_rows = []
-    for m in active:
-        member_rows.append(
-            {
-                "display_name": m.display_name,
-                "submitted": m.id in submitted_ids,
-                "status": m.status,
-            }
-        )
+    pending_count = len(
+        [
+            a
+            for a in unsubmitted_accounts
+            if session.scalar(
+                select(UsageIngestion.id).where(
+                    UsageIngestion.account_id == a.id,
+                    UsageIngestion.billing_period == period,
+                    UsageIngestion.status == "pending_review",
+                )
+            )
+        ]
+    )
+    submitted_count = len(submitted_account_ids) + pending_count
+
+    member_rows = [
+        {
+            "display_name": a.account_identifier,
+            "submitted": a.id in submitted_account_ids,
+            "status": a.status,
+        }
+        for a in active_accounts[:12]
+    ]
 
     metrics_highlights: dict = {}
     member_costs: list[dict] = []
@@ -147,7 +180,7 @@ def build_dashboard_overview(
             "total_events": mj.get("total_events", 0),
             "total_tokens": mj.get("total_tokens", 0),
             "total_cost_usd": mj.get("total_cost_usd", 0),
-            "member_count": mj.get("member_count", len(active)),
+            "member_count": mj.get("member_count", len(active_accounts)),
         }
         by_member = mj.get("cost_by_member") or []
         names = mj.get("member_names") or {}
@@ -183,10 +216,11 @@ def build_dashboard_overview(
             "alerts_enabled": effective["alerts"]["enabled"],
             "bi_webhook": bool(effective["integrations"]["webhook_url"]),
         },
-        "submission": {
-            "active_count": len(active),
-            "submitted_count": len(submitted_ids),
-            "unsubmitted_names": [m.display_name for m in unsubmitted],
+        "ingestion": {
+            "active_count": len(active_accounts),
+            "submitted_count": submitted_count,
+            "unsubmitted_names": [a.account_identifier for a in unsubmitted_accounts[:8]],
+            "missing_primary_count": len(missing_primary),
             "members": member_rows,
         },
         "metrics_highlights": metrics_highlights,

@@ -19,12 +19,18 @@ from pulse.web.auth_routes import auth_response, member_payload
 from pulse.web.audit import list_admin_audit_logs, log_admin_action
 from pulse.web.deps import PortalUser, require_portal_user
 from pulse.web.memory_api import MemoryQueryService
-from pulse.web.permissions import ALL_PERMISSIONS, ROLE_PERMISSIONS, has_permission
+from pulse.web.permissions import (
+    ALL_PERMISSIONS,
+    PORTAL_ROLE_DESCRIPTIONS,
+    PORTAL_ROLE_LABELS,
+    ROLE_PERMISSIONS,
+    has_permission,
+)
 from pulse.web.schemas import (
     ChatBody,
     DingTalkCallbackBody,
     PasswordLoginBody,
-    PortalGrantBody,
+    PortalApproveBody,
     PrincipleCreateBody,
     SettingsPatchBody,
 )
@@ -33,6 +39,12 @@ from pulse.web.dashboard_api import (
     build_integrations_status,
     build_schedule_plan,
 )
+from pulse.storage.repository import input_type_from_source_type
+from pulse.web.accounts_api import register_accounts_v2_routes
+from pulse.web.submission_status_api import register_submission_status_routes
+from pulse.web.knowledge_api import register_knowledge_routes
+from pulse.web.usage_api import register_usage_routes
+from pulse.web.requests_api import register_access_request_routes
 from pulse.web.settings_store import EDITABLE_SECTIONS, patch_team_setting, settings_for_api
 
 
@@ -104,6 +116,8 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
 
     @app.post("/api/auth/dingtalk/callback")
     def dingtalk_callback(body: DingTalkCallbackBody, session: Session = Depends(get_db)):
+        from fastapi.responses import JSONResponse
+
         from pulse.web.dingtalk_oauth import DingTalkOAuthError, exchange_code_for_userid
         from pulse.web.permissions import can_access_portal
 
@@ -113,66 +127,61 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         _team, repo = _team_repo(session)
-        member = repo.get_member_by_dingtalk_id(userid)
+        from pulse.web.portal import reconcile_oauth_member
+
+        member = reconcile_oauth_member(repo, enterprise_userid=userid, display_name=name)
         if member is None:
             member = repo.get_or_create_member(userid, name)
+            member.portal_status = "pending"
             session.flush()
+        elif name and member.display_name != name:
+            member.display_name = name
 
-        from pulse.web.permissions import can_access_portal
+        if member.portal_status == "rejected":
+            raise HTTPException(status_code=403, detail="你的账号已被拒绝，请联系超级管理员")
+        if member.portal_status == "disabled":
+            raise HTTPException(status_code=403, detail="你的账号已被禁用，请联系超级管理员")
 
         if not can_access_portal(member):
-            raise HTTPException(status_code=403, detail="该账号无后台访问权限")
+            if member.portal_status != "pending":
+                member.portal_status = "pending"
+            member.last_portal_login_at = datetime.now(timezone.utc)
+            session.commit()
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "pending",
+                    "message": "你的账号正在等待超级管理员审批",
+                    "user": {
+                        "id": member.id,
+                        "display_name": member.display_name,
+                        "dingtalk_user_id": member.dingtalk_user_id,
+                    },
+                },
+            )
 
         member.last_portal_login_at = datetime.now(timezone.utc)
-        if name and member.display_name != name:
-            member.display_name = name
         session.commit()
         return auth_response(config, member)
 
     @app.post("/api/auth/login")
     def password_login(body: PasswordLoginBody, session: Session = Depends(get_db)):
-        from pulse.web.passwords import verify_password
-        from pulse.web.permissions import can_access_portal
+        import hmac
 
-        team, _repo = _team_repo(session)
-        member = session.scalar(
-            select(Member).where(
-                Member.team_id == team.id,
-                Member.dingtalk_user_id == body.dingtalk_user_id,
-            )
-        )
-        if member is None or not member.password_hash:
-            raise HTTPException(status_code=401, detail="账号或密码错误")
-        if not verify_password(body.password, member.password_hash):
-            raise HTTPException(status_code=401, detail="账号或密码错误")
-        if not can_access_portal(member):
-            raise HTTPException(status_code=403, detail="该账号无后台访问权限")
+        from pulse.web.portal import ADMIN_LOGIN_USERNAME, ensure_admin_member
 
+        if body.username != ADMIN_LOGIN_USERNAME:
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+        if not config.web.admin_password:
+            raise HTTPException(status_code=503, detail="未配置超管密码（ADMIN_PASSWORD）")
+        if not hmac.compare_digest(body.password, config.web.admin_password):
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+
+        _team, repo = _team_repo(session)
+        member = ensure_admin_member(repo)
         member.last_portal_login_at = datetime.now(timezone.utc)
         session.commit()
         return auth_response(config, member)
-
-    @app.get("/api/members", dependencies=[Depends(require_capability("members:read"))])
-    def list_members(session: Session = Depends(get_db)):
-        team, _repo = _team_repo(session)
-        members = session.scalars(
-            select(Member).where(Member.team_id == team.id).order_by(Member.display_name)
-        ).all()
-        return [
-            {
-                "id": m.id,
-                "display_name": m.display_name,
-                "dingtalk_user_id": m.dingtalk_user_id,
-                "status": m.status,
-                "portal_role": m.portal_role,
-                "portal_permissions": m.portal_permissions,
-                "last_portal_login_at": (
-                    m.last_portal_login_at.isoformat() if m.last_portal_login_at else None
-                ),
-                "created_at": m.created_at.isoformat(),
-            }
-            for m in members
-        ]
 
     @app.get(
         "/api/periods/{period}/status",
@@ -263,17 +272,19 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     )
     def pending_reviews(session: Session = Depends(get_db), period: str | None = Query(None)):
         _team, repo = _team_repo(session)
-        rows = repo.list_pending_submissions(period)
+        rows = repo.list_pending_ingestions(period)
         return [
             {
-                "id": sub.id,
-                "id_prefix": sub.id[:8],
-                "member_id": sub.member_id,
-                "period": sub.billing_period,
-                "input_type": sub.input_type,
-                "submitted_at": sub.submitted_at.isoformat(),
+                "id": ing.id,
+                "id_prefix": ing.id[:8],
+                "member_id": ing.member_id,
+                "period": ing.billing_period,
+                "source_type": ing.source_type,
+                "input_type": input_type_from_source_type(ing.source_type),
+                "ingested_at": ing.ingested_at.isoformat(),
+                "submitted_at": ing.ingested_at.isoformat(),
             }
-            for sub in rows
+            for ing in rows
         ]
 
     @app.get("/api/export/{period}", dependencies=[Depends(require_capability("metrics:read"))])
@@ -502,52 +513,178 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
             ],
         }
 
-    @app.patch(
-        "/api/members/{member_id}/portal",
-        dependencies=[Depends(require_capability("admin:users"))],
-    )
-    def update_member_portal(
-        member_id: str,
-        body: PortalGrantBody,
-        session: Session = Depends(get_db),
-        user: PortalUser = Depends(require_capability("admin:users")),
-    ):
-        team, _ = _team_repo(session)
-        member = session.get(Member, member_id)
-        if member is None or member.team_id != team.id:
-            raise HTTPException(404, detail="成员不存在")
-
-        if body.portal_role is not None:
-            if body.portal_role and body.portal_role not in ROLE_PERMISSIONS and body.portal_role != "custom":
-                raise HTTPException(400, detail="无效的 portal_role")
-            member.portal_role = body.portal_role or None
-            if body.portal_role != "custom":
-                member.portal_permissions = None
-
-        if body.portal_permissions is not None:
-            if member.portal_role != "custom":
-                raise HTTPException(400, detail="仅 custom 角色可设置 portal_permissions")
-            member.portal_permissions = [p for p in body.portal_permissions if p in ALL_PERMISSIONS]
-
-        if body.display_name:
-            member.display_name = body.display_name
-
-        log_admin_action(
-            session,
-            team_id=team.id,
-            member_id=user.member.id,
-            action="member.portal.update",
-            capability="admin:users",
-            detail=f"{member.dingtalk_user_id} -> {member.portal_role}",
-        )
-        session.commit()
+    def _portal_user_row(member: Member) -> dict:
         return {
             "id": member.id,
             "display_name": member.display_name,
             "dingtalk_user_id": member.dingtalk_user_id,
+            "portal_status": member.portal_status,
             "portal_role": member.portal_role,
             "portal_permissions": member.portal_permissions,
+            "last_portal_login_at": (
+                member.last_portal_login_at.isoformat() if member.last_portal_login_at else None
+            ),
+            "created_at": member.created_at.isoformat(),
         }
+
+    @app.get("/api/portal/roles", dependencies=[Depends(require_capability("admin:users"))])
+    def portal_roles():
+        return [
+            {
+                "id": role,
+                "label": PORTAL_ROLE_LABELS.get(role, role),
+                "description": PORTAL_ROLE_DESCRIPTIONS.get(role, ""),
+                "permissions": sorted(ROLE_PERMISSIONS.get(role, frozenset())),
+            }
+            for role in ("owner", "operator", "auditor", "ai_member", "custom")
+        ]
+
+    @app.get(
+        "/api/portal/users/pending",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_pending_users(session: Session = Depends(get_db)):
+        from pulse.web.portal import list_pending_portal_users
+
+        team, _ = _team_repo(session)
+        return [_portal_user_row(m) for m in list_pending_portal_users(session, team.id)]
+
+    @app.get(
+        "/api/portal/users",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_active_users(session: Session = Depends(get_db)):
+        from pulse.web.portal import list_portal_users
+
+        team, _ = _team_repo(session)
+        return [_portal_user_row(m) for m in list_portal_users(session, team.id)]
+
+    @app.post(
+        "/api/portal/users/{member_id}/approve",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_approve_user(
+        member_id: str,
+        body: PortalApproveBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.web.portal import PortalAdminError, approve_portal_user
+
+        if body.portal_role not in ROLE_PERMISSIONS and body.portal_role != "custom":
+            raise HTTPException(400, detail="无效的 portal_role")
+        perms = None
+        if body.portal_role == "custom":
+            perms = [p for p in (body.portal_permissions or []) if p in ALL_PERMISSIONS]
+        team, _ = _team_repo(session)
+        try:
+            member = approve_portal_user(
+                session,
+                team.id,
+                member_id,
+                role=body.portal_role,
+                permissions=perms,
+            )
+        except PortalAdminError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.approve",
+            capability="admin:users",
+            detail=f"{member.dingtalk_user_id} -> {member.portal_role}",
+        )
+        session.commit()
+        return _portal_user_row(member)
+
+    @app.post(
+        "/api/portal/users/{member_id}/reject",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_reject_user(
+        member_id: str,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.web.portal import PortalAdminError, reject_portal_user
+
+        team, _ = _team_repo(session)
+        try:
+            member = reject_portal_user(session, team.id, member_id)
+        except PortalAdminError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.reject",
+            capability="admin:users",
+            detail=member.dingtalk_user_id,
+        )
+        session.commit()
+        return _portal_user_row(member)
+
+    @app.post(
+        "/api/portal/users/{member_id}/disable",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_disable_user(
+        member_id: str,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.web.portal import PortalAdminError, disable_portal_user
+
+        team, _ = _team_repo(session)
+        if member_id == user.member.id:
+            raise HTTPException(400, detail="不能禁用当前登录账号")
+        try:
+            member = disable_portal_user(session, team.id, member_id)
+        except PortalAdminError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.disable",
+            capability="admin:users",
+            detail=member.dingtalk_user_id,
+        )
+        session.commit()
+        return _portal_user_row(member)
+
+    @app.delete(
+        "/api/portal/users/{member_id}",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_delete_user(
+        member_id: str,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.web.portal import PortalAdminError, delete_member_without_ingestions
+
+        team, _ = _team_repo(session)
+        member = session.get(Member, member_id)
+        if member is None or member.team_id != team.id:
+            raise HTTPException(404, detail="成员不存在")
+        if member_id == user.member.id:
+            raise HTTPException(400, detail="不能删除当前登录账号")
+        try:
+            deleted = delete_member_without_ingestions(session, team.id, member.dingtalk_user_id)
+        except PortalAdminError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.delete",
+            capability="admin:users",
+            detail=deleted.dingtalk_user_id,
+        )
+        session.commit()
+        return {"ok": True, "id": member_id}
 
     @app.get("/api/dashboard/overview", dependencies=[Depends(require_capability("settings:read"))])
     def dashboard_overview(session: Session = Depends(get_db)):
@@ -563,6 +700,12 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     def system_integrations(session: Session = Depends(get_db)):
         team, _ = _team_repo(session)
         return build_integrations_status(config, session, team.id)
+
+    register_accounts_v2_routes(app, get_db, require_capability, _team_repo)
+    register_submission_status_routes(app, get_db, require_capability, _team_repo)
+    register_access_request_routes(app, get_db, require_capability, _team_repo, config)
+    register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
+    register_usage_routes(app, get_db, require_capability, _team_repo, config)
 
     _mount_admin_static(app)
     return app
@@ -613,8 +756,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
   <h2>提交进度</h2>
   <div id="status"></div>
-  <h2>成员</h2>
-  <div id="members"></div>
   <h2>指标快照</h2>
   <pre id="metrics">（加载中…）</pre>
   <h2>最近查询</h2>
@@ -637,27 +778,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         `<p>已提交 ${data.submitted_count}/${data.active_count}</p>
          <table><tr><th>姓名</th><th>状态</th><th>提交</th></tr>${rows}</table>`;
     }
-    function renderMembers(list) {
-      const rows = list.map(m =>
-        `<tr><td>${m.display_name}</td><td>${m.dingtalk_user_id}</td><td>${m.status}</td></tr>`
-      ).join('');
-      document.getElementById('members').innerHTML =
-        `<table><tr><th>姓名</th><th>userid</th><th>状态</th></tr>${rows}</table>`;
-    }
     async function loadAll() {
       try {
         const cfg = await api('/api/config/summary');
         const periodInput = document.getElementById('period');
         if (!periodInput.value) periodInput.value = cfg.current_period;
         const period = periodInput.value;
-        const [status, members, metrics, queries] = await Promise.all([
+        const [status, metrics, queries] = await Promise.all([
           api('/api/periods/' + period + '/status'),
-          api('/api/members'),
           api('/api/periods/' + period + '/metrics'),
           api('/api/query-logs?limit=20'),
         ]);
         renderStatus(status);
-        renderMembers(members);
         document.getElementById('metrics').textContent = JSON.stringify(metrics, null, 2);
         document.getElementById('queries').textContent = JSON.stringify(queries, null, 2);
       } catch (e) {

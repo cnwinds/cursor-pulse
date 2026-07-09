@@ -411,7 +411,7 @@ class ToolCenterRepository:
         self.session.flush()
         return row
 
-    def delete_account_period_submissions(self, account_id: str, period: str) -> None:
+    def delete_account_period_ingestions(self, account_id: str, period: str) -> None:
         from pulse.storage.models import UsageRecord
 
         old_ingestions = self.session.scalars(

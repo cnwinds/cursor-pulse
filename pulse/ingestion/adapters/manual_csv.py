@@ -29,7 +29,7 @@ class ManualCsvAdapter:
     source_type = "manual_csv"
 
     def can_handle(self, context: IngestionContext) -> bool:
-        return context.source_type == "manual_csv" and context.vendor_slug != "cursor"
+        return context.source_type == "manual_csv"
 
     def extract_events(self, context: IngestionContext) -> list[UsageEventDTO]:
         if context.events:

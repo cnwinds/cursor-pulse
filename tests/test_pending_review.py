@@ -23,7 +23,7 @@ def test_pending_review_confirm_flow():
         all_included_or_free=True,
     )
     parsed = ParsedCsv(records=[], summary=summary)
-    pending = repo.save_submission(
+    pending = repo.save_ingestion(
         member=member,
         period="2026-06",
         parsed=parsed,
@@ -35,12 +35,12 @@ def test_pending_review_confirm_flow():
     assert pending.status == "pending_review"
     assert repo.get_submitted_member_ids("2026-06") == set()
 
-    repo.confirm_submission(pending.id)
+    repo.confirm_ingestion(pending.id)
     assert repo.get_submitted_member_ids("2026-06") == {member.id}
     session.close()
 
 
-def test_reject_pending_submission():
+def test_reject_pending_ingestion():
     session_factory = init_db("sqlite:///:memory:")
     session = session_factory()
     _team, repo = make_team_repo(session)
@@ -61,13 +61,13 @@ def test_reject_pending_submission():
         all_included_or_free=True,
     )
     parsed = ParsedCsv(records=[], summary=summary)
-    pending = repo.save_submission(
+    pending = repo.save_ingestion(
         member=member,
         period="2026-06",
         parsed=parsed,
         submit_channel="private",
         status="pending_review",
     )
-    repo.reject_submission(pending.id)
-    assert repo.list_pending_submissions("2026-06") == []
+    repo.reject_ingestion(pending.id)
+    assert repo.list_pending_ingestions("2026-06") == []
     session.close()

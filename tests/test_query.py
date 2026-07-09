@@ -23,7 +23,7 @@ def test_query_ranking_admin(tmp_path):
     repo.add_member("admin1", "Admin")
     member = repo.add_member("u1", "Alice")
     parsed = parse_usage_events_csv(SAMPLE)
-    repo.save_csv_submission(
+    repo.save_csv_ingestion(
         member=member, period="2026-06", parsed=parsed, submit_channel="private"
     )
     repo.commit()
@@ -47,7 +47,7 @@ def test_query_self_only_non_admin(tmp_path):
     _team, repo = make_team_repo(session)
     member = repo.add_member("u1", "Alice")
     parsed = parse_usage_events_csv(SAMPLE)
-    repo.save_csv_submission(
+    repo.save_csv_ingestion(
         member=member, period="2026-06", parsed=parsed, submit_channel="private"
     )
     repo.commit()

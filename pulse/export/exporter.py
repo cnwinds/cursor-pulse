@@ -6,19 +6,19 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.storage.models import Member, Submission, UsageRecord
+from pulse.storage.models import Member, UsageIngestion, UsageRecord
 
 
 def export_usage_csv(session: Session, period: str, dest: Path) -> Path:
-    submission_ids = session.scalars(
-        select(Submission.id).where(
-            Submission.billing_period == period,
-            Submission.status == "confirmed",
+    ingestion_ids = session.scalars(
+        select(UsageIngestion.id).where(
+            UsageIngestion.billing_period == period,
+            UsageIngestion.status == "confirmed",
         )
     ).all()
     records = list(
         session.scalars(
-            select(UsageRecord).where(UsageRecord.submission_id.in_(submission_ids))
+            select(UsageRecord).where(UsageRecord.ingestion_id.in_(ingestion_ids))
         )
     )
     members = {m.id: m.display_name for m in session.scalars(select(Member)).all()}

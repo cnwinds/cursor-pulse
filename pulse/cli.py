@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from pulse.extract.csv_parser import parse_usage_events_csv
 from pulse.extract.summary import format_private_confirmation
 from pulse.storage.db import init_db
 from pulse.tenant.context import team_repository
+from pulse.util.json_codec import dumps_json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("pulse")
@@ -43,18 +45,31 @@ def main(argv: list[str] | None = None) -> int:
     p_export.add_argument("--period", required=True)
     p_export.add_argument("-o", "--output", type=Path, default=None)
 
+    p_reprice = sub.add_parser("reprice", help="Re-estimate Included token costs for a period")
+    p_reprice.add_argument("--period", required=True)
+    p_reprice.add_argument("--account-id", default=None)
+
     p_init = sub.add_parser("init-db", help="Initialize database schema")
+
+    p_init_v2 = sub.add_parser("init-v2", help="Initialize v2 AI tool center tables and seed catalog")
+    p_init_v2.add_argument("--seed", action="store_true", help="Seed vendors, plans, and trial accounts")
+
+    p_sync_dir = sub.add_parser("sync-directory", help="Sync DingTalk directory into members")
+    p_sync_dir.add_argument("--dept-id", type=int, default=None, help="Root department id")
 
     p_serve = sub.add_parser("serve", help="Start DingTalk bot + reminder scheduler")
 
     p_web = sub.add_parser("web", help="Start admin web dashboard")
     p_web.add_argument("--host", default=None)
     p_web.add_argument("--port", type=int, default=None)
+    p_web.add_argument("--reload", action="store_true", help="开发模式：代码变更时自动重载")
 
     p_dt = sub.add_parser("dingtalk", help="DingTalk utilities")
     dt_sub = p_dt.add_subparsers(dest="dingtalk_cmd", required=True)
     p_resolve = dt_sub.add_parser("resolve-group", help="Convert chatId to openConversationId")
     p_resolve.add_argument("--chat-id", default=None, help="群 chatId，默认读 DINGTALK_CHAT_ID")
+    p_oauth_user = dt_sub.add_parser("oauth-user", help="从 OAuth 授权码解析钉钉 userid（code 5 分钟内有效）")
+    p_oauth_user.add_argument("--code", required=True, help="登录回调 URL 中的 code 参数")
 
     p_remind = sub.add_parser("remind", help="Trigger reminder manually")
     p_remind.add_argument("kind", choices=["start", "daily", "deadline", "report"])
@@ -82,8 +97,42 @@ def main(argv: list[str] | None = None) -> int:
     p_grant = admin_sub.add_parser("grant", help="Grant portal role to a member")
     p_grant.add_argument("--user-id", required=True)
     p_grant.add_argument("--name", default="")
-    p_grant.add_argument("--role", required=True, choices=["owner", "operator", "auditor", "custom"])
+    p_grant.add_argument("--role", required=True, choices=["owner", "operator", "auditor", "ai_member", "custom"])
     p_grant.add_argument("--permissions", default="", help="custom 角色时的能力码，逗号分隔")
+    p_revoke = admin_sub.add_parser("revoke", help="取消成员的后台访问权限")
+    p_revoke.add_argument("--user-id", required=True, help="钉钉 dingtalk_user_id")
+    p_delete = admin_sub.add_parser("delete", help="删除无提交记录的成员")
+    p_delete.add_argument("--user-id", required=True, help="钉钉 dingtalk_user_id")
+
+    p_import_ai = admin_sub.add_parser(
+        "import-ai-members",
+        help="从钉钉通讯录按姓名导入成员并授予 AI 工具成员角色",
+    )
+    p_import_ai.add_argument(
+        "--names",
+        required=True,
+        help="姓名列表，逗号分隔，例如：熊波,马静,朱涛",
+    )
+    p_import_ai.add_argument("--dept-id", type=int, default=None, help="通讯录根部门 id，默认配置值")
+
+    p_dev = sub.add_parser("dev", help="开发模式服务管理 (start/stop/restart/logs/status)")
+    dev_sub = p_dev.add_subparsers(dest="dev_cmd", required=True)
+    p_dev_start = dev_sub.add_parser("start", help="启动开发服务 (默认 web + admin + bot)")
+    p_dev_start.add_argument(
+        "services",
+        nargs="*",
+        choices=["web", "admin", "bot"],
+        help="web=API, admin=Vue前端, bot=钉钉机器人",
+    )
+    p_dev_stop = dev_sub.add_parser("stop", help="停止开发服务")
+    p_dev_stop.add_argument("services", nargs="*", choices=["web", "admin", "bot"])
+    p_dev_restart = dev_sub.add_parser("restart", help="重启开发服务")
+    p_dev_restart.add_argument("services", nargs="*", choices=["web", "admin", "bot"])
+    p_dev_logs = dev_sub.add_parser("logs", help="查看服务日志")
+    p_dev_logs.add_argument("service", choices=["web", "admin", "bot"])
+    p_dev_logs.add_argument("-f", "--follow", action="store_true", help="持续跟踪新日志")
+    p_dev_logs.add_argument("-n", "--lines", type=int, default=50, help="显示最近 N 行")
+    dev_sub.add_parser("status", help="查看服务运行状态")
 
     args = parser.parse_args(argv)
     config = load_config(args.config)
@@ -99,12 +148,42 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Database initialized at %s", config.storage.database_url)
         return 0
 
+    if args.command == "init-v2":
+        session = session_factory()
+        team, _repo = team_repository(session, config)
+        counts = {"vendors": 0, "plans": 0, "accounts": 0}
+        if args.seed:
+            from pulse.tool_center.seed import seed_v2_catalog
+
+            counts = seed_v2_catalog(session, team)
+            session.commit()
+        session.close()
+        logger.info(
+            "V2 schema ready at %s (seed: vendors=%s plans=%s accounts=%s)",
+            config.storage.database_url,
+            counts["vendors"],
+            counts["plans"],
+            counts["accounts"],
+        )
+        return 0
+
+    if args.command == "sync-directory":
+        from pulse.integrations.dingtalk_directory import sync_dingtalk_directory
+
+        session = session_factory()
+        team, repo = team_repository(session, config)
+        stats = sync_dingtalk_directory(repo, config, dept_id=args.dept_id)
+        repo.commit()
+        session.close()
+        print(json.dumps(stats, ensure_ascii=False))
+        return 0
+
     if args.command == "import":
         session = session_factory()
         _team, repo = team_repository(session, config)
         member = repo.add_member(args.user_id, args.name or args.user_id)
         parsed = parse_usage_events_csv(args.csv_path)
-        repo.save_csv_submission(
+        repo.save_csv_ingestion(
             member=member,
             period=args.period,
             parsed=parsed,
@@ -114,6 +193,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         repo.commit()
         print(format_private_confirmation(member.display_name, args.period, parsed.summary))
+        session.close()
+        return 0
+
+    if args.command == "reprice":
+        from pulse.pricing.reprice import reprice_period
+
+        session = session_factory()
+        team, _repo = team_repository(session, config)
+        results = reprice_period(
+            session,
+            team_id=team.id,
+            period=args.period,
+            account_id=args.account_id,
+        )
+        session.commit()
+        print(dumps_json(results))
         session.close()
         return 0
 
@@ -171,6 +266,13 @@ def main(argv: list[str] | None = None) -> int:
 
         service = ReminderService(config, session_factory, _log_group, _log_private)
         period = args.period
+        if args.kind in ("start", "daily", "deadline") and not config.collection.reminders_enabled:
+            logger.warning(
+                "用量提交催办已关闭（collection.reminders_enabled=false）；"
+                "跳过 %s。如需手动测试请设置 USAGE_REMINDERS_ENABLED=true",
+                args.kind,
+            )
+            return 0
         if args.kind == "start":
             service.send_collection_start(period)
         elif args.kind == "daily":
@@ -197,12 +299,23 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError as exc:
             print("请安装 web 依赖：pip install -e '.[web]'")
             return 1
-        from pulse.web.app import create_app
-
         host = args.host or config.web.host
         port = args.port or config.web.port
-        app = create_app(config, session_factory)
-        uvicorn.run(app, host=host, port=port)
+        if args.reload:
+            os.environ["PULSE_CONFIG"] = args.config
+            project_root = Path(__file__).resolve().parent.parent
+            uvicorn.run(
+                "pulse.web.dev:app",
+                host=host,
+                port=port,
+                reload=True,
+                reload_dirs=[str(project_root / "pulse")],
+            )
+        else:
+            from pulse.web.app import create_app
+
+            app = create_app(config, session_factory)
+            uvicorn.run(app, host=host, port=port)
         return 0
 
     if args.command == "alerts":
@@ -247,6 +360,19 @@ def main(argv: list[str] | None = None) -> int:
             print(exc)
             return 1
         print(json.dumps(data, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "dingtalk" and args.dingtalk_cmd == "oauth-user":
+        from pulse.web.dingtalk_oauth import DingTalkOAuthError, exchange_code_for_userid
+
+        try:
+            userid, name = exchange_code_for_userid(config, args.code)
+        except DingTalkOAuthError as exc:
+            print(exc)
+            return 1
+        print(f"dingtalk_user_id: {userid}")
+        print(f"display_name: {name}")
+        print(f"\npulse admin bootstrap --user-id {userid} --name \"{name}\" --password <密码>")
         return 0
 
     if args.command == "dingtalk" and args.dingtalk_cmd == "resolve-group":
@@ -309,6 +435,83 @@ def main(argv: list[str] | None = None) -> int:
         session.commit()
         print(f"Granted {args.role} to {member.display_name} ({member.dingtalk_user_id})")
         session.close()
+        return 0
+
+    if args.command == "admin" and args.admin_cmd == "revoke":
+        from pulse.web.portal import PortalAdminError, revoke_portal_access
+
+        session = session_factory()
+        team, _repo = team_repository(session, config)
+        try:
+            member = revoke_portal_access(session, team.id, args.user_id)
+        except PortalAdminError as exc:
+            print(exc)
+            session.close()
+            return 1
+        session.commit()
+        print(f"Revoked portal access: {member.display_name} ({member.dingtalk_user_id})")
+        session.close()
+        return 0
+
+    if args.command == "admin" and args.admin_cmd == "delete":
+        from pulse.web.portal import PortalAdminError, delete_member_without_ingestions
+
+        session = session_factory()
+        team, _repo = team_repository(session, config)
+        try:
+            member = delete_member_without_ingestions(session, team.id, args.user_id)
+        except PortalAdminError as exc:
+            print(exc)
+            session.close()
+            return 1
+        session.commit()
+        print(f"Deleted member: {member.display_name} ({member.dingtalk_user_id})")
+        session.close()
+        return 0
+
+    if args.command == "admin" and args.admin_cmd == "import-ai-members":
+        from pulse.integrations.dingtalk_directory import import_ai_members_by_names
+
+        session = session_factory()
+        team, repo = team_repository(session, config)
+        names = [n.strip() for n in args.names.split(",") if n.strip()]
+        try:
+            result = import_ai_members_by_names(
+                session,
+                team.id,
+                repo,
+                config,
+                names,
+                dept_id=args.dept_id,
+            )
+        except RuntimeError as exc:
+            print(exc)
+            session.close()
+            return 1
+        session.commit()
+        session.close()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["missing"] or result["ambiguous"]:
+            return 1
+        return 0
+
+    if args.command == "dev":
+        from pulse.dev.manager import DevManagerError, logs, print_status, restart, start, stop
+
+        try:
+            if args.dev_cmd == "start":
+                start(args.services or None, config_path=args.config)
+            elif args.dev_cmd == "stop":
+                stop(args.services or None)
+            elif args.dev_cmd == "restart":
+                restart(args.services or None, config_path=args.config)
+            elif args.dev_cmd == "logs":
+                logs(args.service, follow=args.follow, lines=args.lines)
+            elif args.dev_cmd == "status":
+                print_status()
+        except DevManagerError as exc:
+            print(exc)
+            return 1
         return 0
 
     parser.print_help()

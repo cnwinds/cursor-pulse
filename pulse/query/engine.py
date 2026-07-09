@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.periods import current_period
-from pulse.storage.models import Member, QueryLog, Submission, UsageRecord
+from pulse.storage.models import Member, QueryLog, UsageIngestion, UsageRecord
 
 
 @dataclass
@@ -19,17 +19,17 @@ class QueryResult:
 
 
 def load_usage_dataframe(session: Session, period: str) -> pd.DataFrame:
-    submission_ids = session.scalars(
-        select(Submission.id).where(
-            Submission.billing_period == period,
-            Submission.status == "confirmed",
+    ingestion_ids = session.scalars(
+        select(UsageIngestion.id).where(
+            UsageIngestion.billing_period == period,
+            UsageIngestion.status == "confirmed",
         )
     ).all()
-    if not submission_ids:
+    if not ingestion_ids:
         return pd.DataFrame()
 
     records = session.scalars(
-        select(UsageRecord).where(UsageRecord.submission_id.in_(submission_ids))
+        select(UsageRecord).where(UsageRecord.ingestion_id.in_(ingestion_ids))
     ).all()
     members = {m.id: m.display_name for m in session.scalars(select(Member)).all()}
 

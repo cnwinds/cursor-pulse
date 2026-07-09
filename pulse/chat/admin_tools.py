@@ -140,10 +140,10 @@ class AdminToolRouter:
         )
         self.register(
             AdminTool(
-                name="confirm_submission",
+                name="confirm_ingestion",
                 capability="submissions:review",
-                description="确认待审提交（传入 id 前 8 位前缀）",
-                handler=_confirm_submission,
+                description="确认待审摄取（传入 id 前 8 位前缀）",
+                handler=_confirm_ingestion,
             )
         )
 
@@ -178,9 +178,14 @@ _PARAM_SCHEMAS: dict[str, dict] = {
         "type": "object",
         "properties": {"period": {"type": "string"}},
     },
+    "confirm_ingestion": {
+        "type": "object",
+        "properties": {"prefix": {"type": "string", "description": "摄取 ID 前 8 位"}},
+        "required": ["prefix"],
+    },
     "confirm_submission": {
         "type": "object",
-        "properties": {"prefix": {"type": "string", "description": "提交 ID 前 8 位"}},
+        "properties": {"prefix": {"type": "string", "description": "摄取 ID 前 8 位"}},
         "required": ["prefix"],
     },
 }
@@ -313,19 +318,19 @@ def _list_pending_reviews(ctx: AdminContext, args: dict) -> ToolResult:
     from pulse.storage.models import Member
 
     period = args.get("period") or current_period(ctx.config)
-    pending = ctx.repo.list_pending_submissions(period)
+    pending = ctx.repo.list_pending_ingestions(period)
     if not pending:
         return ToolResult(
             tool="list_pending_reviews",
             status="executed",
-            message=f"{period} 没有待审提交。",
+            message=f"{period} 没有待审摄取。",
             capability="submissions:read",
         )
     lines = [f"⏳ {period} 待审 {len(pending)} 条："]
-    for sub in pending[:10]:
-        member = ctx.session.get(Member, sub.member_id)
-        name = member.display_name if member else sub.member_id[:8]
-        lines.append(f"· {sub.id[:8]} {name} ({sub.input_type})")
+    for ing in pending[:10]:
+        member = ctx.session.get(Member, ing.member_id)
+        name = member.display_name if member else (ing.member_id or "")[:8]
+        lines.append(f"· {ing.id[:8]} {name} ({ing.source_type})")
     return ToolResult(
         tool="list_pending_reviews",
         status="executed",
@@ -335,30 +340,33 @@ def _list_pending_reviews(ctx: AdminContext, args: dict) -> ToolResult:
     )
 
 
-def _confirm_submission(ctx: AdminContext, args: dict) -> ToolResult:
+def _confirm_ingestion(ctx: AdminContext, args: dict) -> ToolResult:
     prefix = (args.get("prefix") or "").strip()
     if not prefix:
         return ToolResult(
-            tool="confirm_submission",
+            tool="confirm_ingestion",
             status="failed",
-            message="请提供提交 ID 前缀。",
+            message="请提供摄取 ID 前缀。",
             capability="submissions:review",
         )
-    sub = ctx.repo.find_submission_by_id_prefix(prefix)
-    if not sub:
+    ing = ctx.repo.find_ingestion_by_id_prefix(prefix)
+    if not ing:
         return ToolResult(
-            tool="confirm_submission",
+            tool="confirm_ingestion",
             status="failed",
-            message=f"未找到提交 {prefix}",
+            message=f"未找到摄取 {prefix}",
             capability="submissions:review",
         )
-    ctx.repo.confirm_submission(sub.id)
+    ctx.repo.confirm_ingestion(ing.id)
     return ToolResult(
-        tool="confirm_submission",
+        tool="confirm_ingestion",
         status="executed",
-        message=f"✅ 已确认提交 {sub.id[:8]}，数据已计入统计。",
+        message=f"✅ 已确认摄取 {ing.id[:8]}，数据已计入统计。",
         capability="submissions:review",
     )
+
+
+_confirm_submission = _confirm_ingestion
 
 
 DEFAULT_ROUTER = AdminToolRouter()

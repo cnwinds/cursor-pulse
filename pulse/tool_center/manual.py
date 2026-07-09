@@ -159,6 +159,7 @@ class ManualUsageService:
         extraction_confidence: float = 1.0,
         status: str = "confirmed",
         breakdown_by_model: dict | None = None,
+        source_type: str = "manual_text",
     ) -> tuple:
         account = self._resolve_account(member, command.vendor_slug, account_id)
         plan = self.tool_repo.get_plan(account.plan_id)
@@ -177,7 +178,7 @@ class ManualUsageService:
             breakdown_by_model=breakdown_by_model,
         )
 
-        submission = repo.save_manual_submission(
+        submission = repo.save_manual_ingestion(
             member=member,
             period=period,
             account_id=account.id,
@@ -189,6 +190,7 @@ class ManualUsageService:
             extraction_confidence=extraction_confidence,
             status=status,
             upgrade_notify=upgrade_notify,
+            source_type=source_type,
         )
         return submission, account, summary
 
@@ -220,7 +222,7 @@ class ManualUsageService:
             metric_unit=unit,
             breakdown_by_model=breakdown_by_model,
         )
-        submission = repo.save_manual_submission(
+        submission = repo.save_manual_ingestion(
             member=member,
             period=period,
             account_id=account_id,

@@ -16,7 +16,7 @@ def test_aggregate_reproducible(tmp_path):
 
     member = repo.add_member("user-1", "Alice")
     parsed = parse_usage_events_csv(SAMPLE)
-    repo.save_csv_submission(
+    repo.save_csv_ingestion(
         member=member,
         period="2026-06",
         parsed=parsed,

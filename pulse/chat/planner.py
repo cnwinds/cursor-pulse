@@ -106,6 +106,6 @@ def _plan_with_rules(
     if can("submissions:review"):
         m = re.search(r"确认\s*([0-9a-fA-F]{6,8})", text)
         if m:
-            plans.append(("confirm_submission", {"prefix": m.group(1)}))
+            plans.append(("confirm_ingestion", {"prefix": m.group(1)}))
 
     return plans

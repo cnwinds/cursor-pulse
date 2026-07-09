@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.domain import COMPUTATION_VERSION
-from pulse.storage.models import Member, MetricSnapshot, Submission, UsageRecord
+from pulse.periods import pct_change, previous_period
+from pulse.storage.models import Member, MetricSnapshot, UsageIngestion, UsageRecord
+from pulse.tool_center.aggregate import aggregate_account_metrics
 
 
 def _rank(items: list[tuple[str, float | int]]) -> list[dict]:
@@ -17,18 +19,18 @@ def _rank(items: list[tuple[str, float | int]]) -> list[dict]:
 
 
 def _records_for_period(session: Session, period: str, team_id: str | None = None) -> list[UsageRecord]:
-    submission_query = select(Submission.id).where(
-        Submission.billing_period == period,
-        Submission.status == "confirmed",
+    ingestion_query = select(UsageIngestion.id).where(
+        UsageIngestion.billing_period == period,
+        UsageIngestion.status == "confirmed",
     )
     if team_id:
-        submission_query = submission_query.join(Member).where(Member.team_id == team_id)
-    submission_ids = session.scalars(submission_query).all()
-    if not submission_ids:
+        ingestion_query = ingestion_query.join(Member).where(Member.team_id == team_id)
+    ingestion_ids = session.scalars(ingestion_query).all()
+    if not ingestion_ids:
         return []
     return list(
         session.scalars(
-            select(UsageRecord).where(UsageRecord.submission_id.in_(submission_ids))
+            select(UsageRecord).where(UsageRecord.ingestion_id.in_(ingestion_ids))
         )
     )
 
@@ -100,7 +102,7 @@ def aggregate_period(session: Session, period: str, *, team_id: str | None = Non
         "member_names": members,
     }
 
-    prev = _previous_period(period)
+    prev = previous_period(period)
     try:
         prev_query = select(MetricSnapshot).where(MetricSnapshot.period == prev)
         if team_id:
@@ -110,14 +112,19 @@ def aggregate_period(session: Session, period: str, *, team_id: str | None = Non
             prev_metrics = prev_snap.metrics_json
             prev_cost = prev_metrics.get("total_cost_usd", 0) or 0
             prev_events = prev_metrics.get("total_events", 0) or 0
-            metrics["mom_cost_change_pct"] = _pct_change(prev_cost, float(total_cost))
-            metrics["mom_events_change_pct"] = _pct_change(prev_events, total_events)
+            metrics["mom_cost_change_pct"] = pct_change(prev_cost, float(total_cost))
+            metrics["mom_events_change_pct"] = pct_change(prev_events, total_events)
         else:
             metrics["mom_cost_change_pct"] = None
             metrics["mom_events_change_pct"] = None
     except Exception:
         metrics["mom_cost_change_pct"] = None
         metrics["mom_events_change_pct"] = None
+
+    if team_id:
+        account_metrics = aggregate_account_metrics(session, period, team_id=team_id)
+        if account_metrics.get("account_count_active"):
+            metrics["account_metrics"] = account_metrics
 
     snapshot = MetricSnapshot(
         team_id=team_id,
@@ -133,13 +140,10 @@ def aggregate_period(session: Session, period: str, *, team_id: str | None = Non
 
 
 def _previous_period(period: str) -> str:
-    year, month = map(int, period.split("-"))
-    if month == 1:
-        return f"{year - 1}-12"
-    return f"{year:04d}-{month - 1:02d}"
+    """Deprecated: use pulse.periods.previous_period."""
+    return previous_period(period)
 
 
 def _pct_change(old: float | int, new: float | int) -> float | None:
-    if not old:
-        return None
-    return round((new - old) / old * 100, 2)
+    """Deprecated: use pulse.periods.pct_change."""
+    return pct_change(old, new)
