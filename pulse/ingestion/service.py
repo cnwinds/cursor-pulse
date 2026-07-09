@@ -28,6 +28,7 @@ class UsageIngestionService:
         context: IngestionContext,
         adapter: IngestionAdapter,
         status: str | None = None,
+        commit: bool = True,
     ) -> IngestionResult:
         events = context.events or adapter.extract_events(context)
         metadata = context.metadata or adapter.extract_metadata(context)
@@ -71,7 +72,8 @@ class UsageIngestionService:
             affected_dates = {dto.event_date for dto in events}
             rebuild_daily_aggregates(self.session, context.account_id, affected_dates)
 
-        self.session.commit()
+        if commit:
+            self.session.commit()
         return IngestionResult(
             ingestion_id=ingestion.id,
             event_count=len(events),
