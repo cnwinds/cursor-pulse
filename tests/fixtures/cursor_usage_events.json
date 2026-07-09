@@ -1,0 +1,19 @@
+{
+  "totalUsageEventsCount": 2,
+  "usageEventsDisplay": [
+    {
+      "timestamp": "1783591555915",
+      "model": "composer-2.5",
+      "kind": "USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS",
+      "tokenUsage": {
+        "inputTokens": 100,
+        "outputTokens": 50,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCents": 3.45
+      },
+      "chargedCents": 3.45,
+      "conversationId": "conv-1"
+    }
+  ]
+}
