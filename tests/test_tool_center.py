@@ -131,6 +131,15 @@ def test_daily_nudge_targets_primary_and_admin(session):
     session.flush()
     tool_repo = ToolCenterRepository(session, team.id)
     accounts = tool_repo.list_accounts()
+    cursor_account = next(a for a in accounts if a.vendor.slug == "cursor")
+    zhipu_vendor = tool_repo.get_vendor_by_slug("zhipu")
+    zhipu_plan = next(p for p in tool_repo.list_plans(zhipu_vendor.id))
+    zhipu_account = tool_repo.create_account(
+        vendor_id=zhipu_vendor.id,
+        plan_id=zhipu_plan.id,
+        account_identifier="zhipu-nudge@test.com",
+        status="trial",
+    )
     primary = Member(
         team_id=team.id,
         dingtalk_user_id="u1",
@@ -139,12 +148,19 @@ def test_daily_nudge_targets_primary_and_admin(session):
     )
     session.add(primary)
     session.flush()
-    tool_repo.update_account(accounts[0].id, primary_member_id=primary.id, status="trial")
+    tool_repo.update_account(zhipu_account.id, primary_member_id=primary.id, status="trial")
+    tool_repo.update_account(cursor_account.id, primary_member_id=primary.id, status="trial")
+    # another cursor account without primary triggers admin_no_primary
+    tool_repo.update_account(
+        next(a for a in accounts if a.vendor.slug == "cursor" and a.id != cursor_account.id).id,
+        primary_member_id=None,
+    )
 
     targets = build_daily_nudge_targets(tool_repo, "2026-06")
     kinds = {t.kind for t in targets}
     assert "primary_member" in kinds
     assert "admin_no_primary" in kinds
+    assert "no_credential" in kinds
 
 
 def test_deadline_message_is_anonymous():

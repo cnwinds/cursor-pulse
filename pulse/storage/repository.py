@@ -4,7 +4,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from pulse.domain import ParsedCsv, UsageEventRecord
@@ -14,7 +14,7 @@ from pulse.ingestion.registry import resolve_adapter
 from pulse.ingestion.service import UsageIngestionService
 from pulse.ingestion.types import IngestionContext
 from pulse.pricing.estimator import resolve_cost_fields
-from pulse.storage.models import Member, UsageIngestion, UsageRecord
+from pulse.storage.models import AiAccount, Member, UsageIngestion, UsageRecord
 from pulse.tool_center.account_pick import filter_cursor_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.ingestion_status import period_date_range
@@ -119,12 +119,39 @@ class Repository:
     def _ingestion_service(self) -> UsageIngestionService:
         return UsageIngestionService(self.session, self.team_id)
 
-    def list_pending_ingestions(self, period: str | None = None) -> list[UsageIngestion]:
-        query = (
+    def _ingestions_team_query(self):
+        return (
             select(UsageIngestion)
-            .join(Member)
-            .where(Member.team_id == self.team_id, UsageIngestion.status == "pending_review")
+            .outerjoin(Member, UsageIngestion.member_id == Member.id)
+            .outerjoin(AiAccount, UsageIngestion.account_id == AiAccount.id)
+            .where(
+                or_(Member.team_id == self.team_id, AiAccount.team_id == self.team_id)
+            )
         )
+
+    def list_ingestions(
+        self,
+        period: str | None = None,
+        status: str | None = None,
+    ) -> list[UsageIngestion]:
+        query = self._ingestions_team_query()
+        if period:
+            query = query.where(UsageIngestion.billing_period == period)
+        if status:
+            query = query.where(UsageIngestion.status == status)
+        return list(self.session.scalars(query.order_by(UsageIngestion.ingested_at.desc())))
+
+    def list_pending_ingestions(
+        self,
+        period: str | None = None,
+        *,
+        manual_only: bool = False,
+    ) -> list[UsageIngestion]:
+        query = self._ingestions_team_query().where(
+            UsageIngestion.status == "pending_review"
+        )
+        if manual_only:
+            query = query.where(UsageIngestion.source_type != "api_sync")
         if period:
             query = query.where(UsageIngestion.billing_period == period)
         return list(self.session.scalars(query.order_by(UsageIngestion.ingested_at.desc())))

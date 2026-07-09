@@ -41,7 +41,9 @@ from pulse.web.dashboard_api import (
 )
 from pulse.storage.repository import input_type_from_source_type
 from pulse.web.accounts_api import register_accounts_v2_routes
+from pulse.web.credentials_api import register_credentials_routes
 from pulse.web.ingestion_status_api import register_ingestion_status_routes
+from pulse.web.ingestions_api import register_ingestions_routes
 from pulse.web.knowledge_api import register_knowledge_routes
 from pulse.web.usage_api import register_usage_routes
 from pulse.web.requests_api import register_access_request_routes
@@ -702,7 +704,11 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
         return build_integrations_status(config, session, team.id)
 
     register_accounts_v2_routes(app, get_db, require_capability, _team_repo)
+    register_credentials_routes(
+        app, get_db, require_capability, _team_repo, config, require_user=_require_user
+    )
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
+    register_ingestions_routes(app, get_db, require_capability, _team_repo)
     register_access_request_routes(app, get_db, require_capability, _team_repo, config)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
     register_usage_routes(app, get_db, require_capability, _team_repo, config)

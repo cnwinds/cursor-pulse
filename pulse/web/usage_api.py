@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException
+from datetime import date
+
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.periods import current_period
+from pulse.storage.models import UsageDailyAggregate
 from pulse.tool_center.manual import ManualUsageService
+from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.audit import log_admin_action
 
 
@@ -58,3 +63,45 @@ def register_usage_routes(app, get_db, require_capability, team_repo_fn, config)
             }
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/v2/accounts/{account_id}/usage/daily",
+        dependencies=[Depends(require_capability("accounts:read"))],
+    )
+    def list_daily_usage(
+        account_id: str,
+        start: date = Query(..., description="起始日期 YYYY-MM-DD"),
+        end: date = Query(..., description="结束日期 YYYY-MM-DD"),
+        session: Session = Depends(get_db),
+    ):
+        if end < start:
+            raise HTTPException(status_code=400, detail="end 不能早于 start")
+        team, _ = team_repo_fn(session)
+        tool_repo = ToolCenterRepository(session, team.id)
+        account = tool_repo.get_account(account_id)
+        if not account or account.team_id != team.id:
+            raise HTTPException(status_code=404, detail="账号不存在")
+
+        rows = session.scalars(
+            select(UsageDailyAggregate)
+            .where(
+                UsageDailyAggregate.account_id == account_id,
+                UsageDailyAggregate.event_date >= start,
+                UsageDailyAggregate.event_date <= end,
+            )
+            .order_by(UsageDailyAggregate.event_date, UsageDailyAggregate.model)
+        ).all()
+        return [
+            {
+                "account_id": row.account_id,
+                "event_date": row.event_date.isoformat(),
+                "model": row.model,
+                "event_count": row.event_count,
+                "total_cost_usd": float(row.total_cost_usd),
+                "tokens_input": row.tokens_input,
+                "tokens_output": row.tokens_output,
+                "tokens_cache_read": row.tokens_cache_read,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
