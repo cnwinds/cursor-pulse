@@ -17,7 +17,7 @@ from pulse.pricing.estimator import resolve_cost_fields
 from pulse.storage.models import Member, UsageIngestion, UsageRecord
 from pulse.tool_center.account_pick import filter_cursor_accounts
 from pulse.tool_center.repository import ToolCenterRepository
-from pulse.tool_center.submission_status import period_date_range
+from pulse.tool_center.ingestion_status import period_date_range
 from pulse.tool_center.upgrade import notify_upgrade_if_needed
 
 INPUT_TYPE_TO_SOURCE_TYPE: dict[str, str] = {

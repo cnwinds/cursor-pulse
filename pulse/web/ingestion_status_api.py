@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from pulse.tool_center.submission_status import build_ingestion_status_payload
+from pulse.tool_center.ingestion_status import build_ingestion_status_payload
 from pulse.web.deps import PortalUser
 
 

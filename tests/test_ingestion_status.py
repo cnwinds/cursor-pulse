@@ -17,7 +17,7 @@ from pulse.domain import CostRaw, ParseSummary, ParsedCsv, UsageEventRecord
 from pulse.storage.models import AiAccountMember, Base, Member, UsageSummary
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.tool_center.submission_status import build_submission_status_payload
+from pulse.tool_center.ingestion_status import build_ingestion_status_payload
 from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
@@ -106,7 +106,25 @@ def status_env():
     }
 
 
-def test_submission_status_admin_sees_all_accounts(status_env):
+def _create_zhipu_account(sf, team_id: str, member_id: str) -> str:
+    s = sf()
+    tool_repo = ToolCenterRepository(s, team_id)
+    vendor = tool_repo.get_vendor_by_slug("zhipu")
+    plan = next(p for p in tool_repo.list_plans(vendor.id) if p.slug == "glm_coding_lite")
+    account = tool_repo.create_account(
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        account_identifier="zhipu-test@company.com",
+        status="trial",
+        primary_member_id=member_id,
+    )
+    account_id = account.id
+    s.commit()
+    s.close()
+    return account_id
+
+
+def test_ingestion_status_admin_sees_all_accounts(status_env):
     client = status_env["client"]
     config = status_env["config"]
     owner = status_env["owner"]
@@ -123,7 +141,27 @@ def test_submission_status_admin_sees_all_accounts(status_env):
     assert len(body["groups"]) >= 2
 
 
-def test_submission_status_member_sees_primary_and_shared(status_env):
+def test_ingestion_status_cursor_accounts_show_no_credential(status_env):
+    client = status_env["client"]
+    config = status_env["config"]
+    owner = status_env["owner"]
+    token = create_access_token(config, owner)
+    res = client.get(
+        "/api/v2/ingestion-status",
+        params={"period": "2026-06"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    cursor_rows = [
+        r
+        for r in res.json()["accounts"]
+        if r.get("vendor_slug") == "cursor" and r.get("primary_member_id")
+    ]
+    assert len(cursor_rows) == 2
+    assert all(r["ingestion_state"] == "no_credential" for r in cursor_rows)
+
+
+def test_ingestion_status_member_sees_primary_and_shared(status_env):
     client = status_env["client"]
     config = status_env["config"]
     sf = status_env["sf"]
@@ -150,13 +188,15 @@ def test_submission_status_member_sees_primary_and_shared(status_env):
     assert len(ids) == 2
 
 
-def test_submission_status_flags_date_mismatch(status_env):
+def test_ingestion_status_flags_date_mismatch(status_env):
     client = status_env["client"]
     config = status_env["config"]
     sf = status_env["sf"]
-    account = status_env["account"]
     member_id = status_env["member"].id
     owner = status_env["owner"]
+    team_id = status_env["team_id"]
+
+    zhipu_account_id = _create_zhipu_account(sf, team_id, member_id)
 
     s = sf()
     _team, repo = make_team_repo(s)
@@ -167,7 +207,7 @@ def test_submission_status_flags_date_mismatch(status_env):
         period="2026-06",
         parsed=parsed,
         submit_channel="private",
-        account_id=account.id,
+        account_id=zhipu_account_id,
     )
     repo.commit()
     s.close()
@@ -178,7 +218,8 @@ def test_submission_status_flags_date_mismatch(status_env):
         params={"period": "2026-06"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    row = next(r for r in res.json()["accounts"] if r["account_id"] == account.id)
+    row = next(r for r in res.json()["accounts"] if r["account_id"] == zhipu_account_id)
+    assert row["ingestion_state"] == "manual_submitted"
     assert row["submission_state"] == "submitted_warning"
     assert any("截止日" in issue for issue in row["issues"])
 
@@ -187,9 +228,11 @@ def test_confirm_pending_creates_usage_summary(status_env):
     client = status_env["client"]
     config = status_env["config"]
     sf = status_env["sf"]
-    account = status_env["account"]
     member_id = status_env["member"].id
     owner = status_env["owner"]
+    team_id = status_env["team_id"]
+
+    zhipu_account_id = _create_zhipu_account(sf, team_id, member_id)
 
     s = sf()
     _team, repo = make_team_repo(s)
@@ -200,7 +243,7 @@ def test_confirm_pending_creates_usage_summary(status_env):
         period="2026-06",
         parsed=parsed,
         submit_channel="private",
-        account_id=account.id,
+        account_id=zhipu_account_id,
         status="pending_review",
     )
     repo.commit()
@@ -217,7 +260,7 @@ def test_confirm_pending_creates_usage_summary(status_env):
     s = sf()
     summary = s.scalar(
         select(UsageSummary).where(
-            UsageSummary.account_id == account.id,
+            UsageSummary.account_id == zhipu_account_id,
             UsageSummary.period == "2026-06",
         )
     )
@@ -235,7 +278,7 @@ def test_build_payload_missing_primary(status_env):
     orphan = tool_repo.list_accounts()[2]
     tool_repo.update_account(orphan.id, primary_member_id=None, status="trial")
     s.commit()
-    payload = build_submission_status_payload(s, team_id, "2026-06", owner)
+    payload = build_ingestion_status_payload(s, team_id, "2026-06", owner)
     row = next(r for r in payload["accounts"] if r["account_id"] == orphan.id)
-    assert row["submission_state"] == "missing_primary"
+    assert row["ingestion_state"] == "missing_primary"
     s.close()

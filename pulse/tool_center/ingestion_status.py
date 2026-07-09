@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from pulse.storage.models import (
     AiAccount,
+    AiAccountCredential,
     Member,
     UsageIngestion,
     UsageRecord,
@@ -24,22 +25,52 @@ SOURCE_TYPE_LABELS: dict[str, str] = {
     "api_sync": "API 自动同步",
 }
 
-# Legacy input_type labels for API compatibility
 SUBMIT_METHOD_LABELS: dict[str, str] = {
     "csv": "CSV 导出文件",
+    "csv_export": "CSV 导出文件",
     "screenshot": "控制台截图",
     "manual": "手工录入数值",
     "text": "文本粘贴",
     "api": "API 自动同步",
+    "api_key": "API Key 自动同步",
 }
 
 _ACCOUNT_ACTIVE_STATUSES = frozenset({"trial", "shared", "dedicated"})
+_SYNC_STALE_HOURS = 36
 
 
 def period_date_range(period: str) -> tuple[date, date]:
     year, month = map(int, period.split("-"))
     last_day = calendar.monthrange(year, month)[1]
     return date(year, month, 1), date(year, month, last_day)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def resolve_account_ingestion_status(
+    account: AiAccount,
+    period: str,
+    credential: AiAccountCredential | None,
+    summary: UsageSummary | None,
+    pending_ingestion: UsageIngestion | None,
+) -> str:
+    if account.vendor and account.vendor.slug == "cursor":
+        if not credential or credential.status != "active":
+            return "no_credential"
+        if credential.last_sync_status == "failed":
+            return "sync_failed"
+        if credential.last_sync_at and credential.last_sync_at < _utcnow() - timedelta(
+            hours=_SYNC_STALE_HOURS
+        ):
+            return "sync_stale"
+        return "synced"
+    if pending_ingestion:
+        return "manual_pending"
+    if summary:
+        return "manual_submitted"
+    return "unsubmitted"
 
 
 def _format_methods_label(methods: list[str]) -> str:
@@ -120,6 +151,16 @@ def _latest_ingestion(
     )
 
 
+def _source_type_to_input_type(source_type: str) -> str:
+    mapping = {
+        "manual_csv": "csv",
+        "manual_vision": "screenshot",
+        "manual_text": "manual",
+        "api_sync": "api",
+    }
+    return mapping.get(source_type, source_type)
+
+
 def _ingestion_payload(
     session: Session,
     ingestion: UsageIngestion,
@@ -150,14 +191,18 @@ def _ingestion_payload(
     }
 
 
-def _source_type_to_input_type(source_type: str) -> str:
-    mapping = {
-        "manual_csv": "csv",
-        "manual_vision": "screenshot",
-        "manual_text": "manual",
-        "api_sync": "api",
+def _credential_payload(credential: AiAccountCredential | None) -> dict[str, Any] | None:
+    if not credential:
+        return None
+    return {
+        "status": credential.status,
+        "key_hint": credential.key_hint,
+        "bound_at": credential.bound_at.isoformat() if credential.bound_at else None,
+        "last_sync_at": credential.last_sync_at.isoformat() if credential.last_sync_at else None,
+        "last_sync_status": credential.last_sync_status,
+        "last_sync_error": credential.last_sync_error,
+        "sync_enabled": credential.sync_enabled,
     }
-    return mapping.get(source_type, source_type)
 
 
 def build_account_ingestion_status(
@@ -169,6 +214,7 @@ def build_account_ingestion_status(
     member_names: dict[str, str],
     usage_summary: UsageSummary | None,
     latest_ingestion: UsageIngestion | None,
+    credential: AiAccountCredential | None = None,
 ) -> dict[str, Any]:
     period_start, period_end = period_date_range(period)
     plan = account.plan
@@ -194,11 +240,12 @@ def build_account_ingestion_status(
         if member_names.get(m.member_id)
     ]
 
-    base = {
+    base: dict[str, Any] = {
         "account_id": account.id,
         "account_identifier": account.account_identifier,
         "vendor_id": account.vendor_id,
         "vendor_name": account.vendor.name if account.vendor else None,
+        "vendor_slug": account.vendor.slug if account.vendor else None,
         "plan_name": plan.plan_name if plan else None,
         "ownership": account.ownership,
         "account_status": account.status,
@@ -208,6 +255,7 @@ def build_account_ingestion_status(
         "expected": expected,
         "ingestion": None,
         "submission": None,
+        "credential": _credential_payload(credential),
         "issues": [],
         "action_hint": "",
     }
@@ -218,11 +266,42 @@ def build_account_ingestion_status(
         base["action_hint"] = "待管理员指派主使用人或代为提交"
         return base
 
-    if latest_ingestion and latest_ingestion.status == "pending_review":
-        date_min, date_max = _ingestion_date_range(session, latest_ingestion.id)
-        confidence = _avg_confidence(session, latest_ingestion.id)
-        payload = _ingestion_payload(session, latest_ingestion, member_names=member_names)
-        base["ingestion_state"] = "pending_review"
+    pending = latest_ingestion if latest_ingestion and latest_ingestion.status == "pending_review" else None
+    state = resolve_account_ingestion_status(
+        account, period, credential, usage_summary, pending
+    )
+    is_cursor = bool(account.vendor and account.vendor.slug == "cursor")
+
+    if is_cursor:
+        base["ingestion_state"] = state
+        base["submission_state"] = state
+        if state == "no_credential":
+            base["action_hint"] = f"待主使用人 {primary_name} 绑定 API Key"
+        elif state == "sync_failed":
+            base["action_hint"] = "用量同步失败，请检查 API Key 是否有效"
+        elif state == "sync_stale":
+            base["action_hint"] = "同步滞后超过 36 小时，请联系管理员"
+        else:
+            base["action_hint"] = "已自动同步"
+        if usage_summary:
+            ingestion = (
+                session.get(UsageIngestion, usage_summary.latest_ingestion_id)
+                if usage_summary.latest_ingestion_id
+                else latest_ingestion
+            )
+            if ingestion:
+                payload = _ingestion_payload(
+                    session, ingestion, member_names=member_names, usage_summary=usage_summary
+                )
+                base["ingestion"] = payload
+                base["submission"] = payload
+        return base
+
+    if state == "manual_pending" and pending:
+        date_min, date_max = _ingestion_date_range(session, pending.id)
+        confidence = _avg_confidence(session, pending.id)
+        payload = _ingestion_payload(session, pending, member_names=member_names)
+        base["ingestion_state"] = "manual_pending"
         base["submission_state"] = "pending_review"
         base["ingestion"] = payload
         base["submission"] = payload
@@ -232,29 +311,24 @@ def build_account_ingestion_status(
         base["action_hint"] = "已提交，待管理员审核"
         return base
 
-    if usage_summary:
+    if state == "manual_submitted" and usage_summary:
         ingestion = (
             session.get(UsageIngestion, usage_summary.latest_ingestion_id)
             if usage_summary.latest_ingestion_id
             else latest_ingestion
         )
         date_min, date_max = (
-            _ingestion_date_range(session, ingestion.id)
-            if ingestion
-            else (None, None)
+            _ingestion_date_range(session, ingestion.id) if ingestion else (None, None)
         )
         issues = _assess_date_compliance(period, date_min, date_max)
         if ingestion and ingestion.member_id != account.primary_member_id:
             submitter = member_names.get(ingestion.member_id or "", "他人")
             issues.append(f"提交人 {submitter} 非台账主使用人 {primary_name}")
-        if ingestion and ingestion.source_type == "manual_text":
-            pass
-        elif ingestion and date_min is None and ingestion.source_type != "manual_text":
-            issues.append("提交数据缺少可校验的日期范围")
-
-        state = "submitted_warning" if issues else "submitted_ok"
-        base["ingestion_state"] = state
-        base["submission_state"] = state
+        if ingestion and ingestion.source_type != "manual_text":
+            if date_min is None:
+                issues.append("提交数据缺少可校验的日期范围")
+        base["ingestion_state"] = "manual_submitted"
+        base["submission_state"] = "submitted_warning" if issues else "submitted_ok"
         payload = (
             _ingestion_payload(
                 session,
@@ -284,17 +358,25 @@ def build_account_ingestion_status(
         base["ingestion"] = payload
         base["submission"] = payload
         base["issues"] = issues
-        base["action_hint"] = "已完成" if state == "submitted_ok" else "已提交但需核对"
+        base["action_hint"] = "已完成" if not issues else "已提交但需核对"
         return base
 
-    base["ingestion_state"] = "not_submitted"
+    base["ingestion_state"] = "unsubmitted"
     base["submission_state"] = "not_submitted"
     base["action_hint"] = f"待主使用人 {primary_name} 提交"
     return base
 
 
-# Backward-compatible aliases
 build_account_submission_status = build_account_ingestion_status
+
+
+def _credential_map(session: Session, account_ids: list[str]) -> dict[str, AiAccountCredential]:
+    if not account_ids:
+        return {}
+    rows = session.scalars(
+        select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids))
+    ).all()
+    return {row.account_id: row for row in rows}
 
 
 def build_ingestion_status_payload(
@@ -334,14 +416,22 @@ def build_ingestion_status_payload(
             select(UsageSummary).where(UsageSummary.period == period)
         ).all()
     }
+    credentials = _credential_map(session, [a.id for a in visible])
 
     account_rows: list[dict[str, Any]] = []
-    state_counts = {
+    state_counts: dict[str, int] = {
+        "missing_primary": 0,
+        "no_credential": 0,
+        "sync_failed": 0,
+        "sync_stale": 0,
+        "synced": 0,
+        "manual_pending": 0,
+        "manual_submitted": 0,
+        "unsubmitted": 0,
+        "pending_review": 0,
         "submitted_ok": 0,
         "submitted_warning": 0,
-        "pending_review": 0,
         "not_submitted": 0,
-        "missing_primary": 0,
     }
 
     for account in visible:
@@ -353,15 +443,24 @@ def build_ingestion_status_payload(
             member_names=member_names,
             usage_summary=summaries.get(account.id),
             latest_ingestion=_latest_ingestion(session, account.id, period),
+            credential=credentials.get(account.id),
         )
         account_rows.append(row)
-        state_key = row.get("ingestion_state") or row.get("submission_state")
-        state_counts[state_key] = state_counts.get(state_key, 0) + 1
+        ingestion_state = row.get("ingestion_state", "")
+        submission_state = row.get("submission_state", "")
+        state_counts[ingestion_state] = state_counts.get(ingestion_state, 0) + 1
+        if submission_state != ingestion_state:
+            state_counts[submission_state] = state_counts.get(submission_state, 0) + 1
 
     period_start, period_end = period_date_range(period)
-    done_states = {"submitted_ok", "submitted_warning", "pending_review"}
+    cursor_done = {"synced", "sync_stale"}
+    manual_done = {"manual_submitted", "manual_pending", "submitted_ok", "submitted_warning", "pending_review"}
     submitted_count = sum(
-        1 for row in account_rows if (row.get("ingestion_state") or row.get("submission_state")) in done_states
+        1
+        for row in account_rows
+        if row.get("ingestion_state") in cursor_done
+        or row.get("submission_state") in manual_done
+        or row.get("ingestion_state") == "manual_submitted"
     )
 
     groups: dict[str, dict[str, Any]] = {}
@@ -378,8 +477,9 @@ def build_ingestion_status_payload(
             }
         groups[key]["accounts"].append(row)
         groups[key]["total"] += 1
-        state_key = row.get("ingestion_state") or row.get("submission_state")
-        if state_key in done_states:
+        state = row.get("ingestion_state", "")
+        sub_state = row.get("submission_state", "")
+        if state in cursor_done or state == "manual_submitted" or sub_state in manual_done:
             groups[key]["completed"] += 1
 
     group_list = sorted(
@@ -398,11 +498,7 @@ def build_ingestion_status_payload(
         "summary": {
             "total_accounts": len(account_rows),
             "submitted_count": submitted_count,
-            "submitted_ok": state_counts["submitted_ok"],
-            "submitted_warning": state_counts["submitted_warning"],
-            "pending_review": state_counts["pending_review"],
-            "not_submitted": state_counts["not_submitted"],
-            "missing_primary": state_counts["missing_primary"],
+            **state_counts,
         },
         "accounts": account_rows,
         "groups": group_list,
