@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>AI 工具账号台账</h2>
-        <p class="desc">管理各厂家账号、主使用人与套餐。共享账号只需主使用人提交用量。</p>
+        <p class="desc">管理各厂家账号、主使用人与套餐。Cursor 绑定 API Key 后自动同步；其他工具由主使用人手工上报。</p>
       </div>
       <div class="header-actions">
         <el-select v-model="period" style="width: 140px" @change="loadSummaries">
@@ -151,7 +151,7 @@
           <el-tag v-if="row.suggest_dedicated" type="warning">建议独立号</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="canWrite && supportsManual(row)"
@@ -163,6 +163,11 @@
             link
             @click="openCredential(row)"
           >Key</el-button>
+          <el-button
+            v-if="summaryMap[row.id]"
+            link
+            @click="openDailyUsage(row)"
+          >明细</el-button>
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
         </template>
       </el-table-column>
@@ -299,6 +304,46 @@
         >立即同步</el-button>
         <el-button @click="credentialVisible = false">取消</el-button>
         <el-button type="primary" :loading="credentialBinding" @click="bindCredential">绑定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="dailyVisible" title="按日用量明细" width="720px">
+      <p class="manual-hint">账号：{{ dailyAccount?.account_identifier }}</p>
+      <div class="daily-toolbar">
+        <el-date-picker
+          v-model="dailyRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          range-separator="至"
+          start-placeholder="起始"
+          end-placeholder="结束"
+          style="width: 280px"
+          @change="loadDailyUsage"
+        />
+        <el-button :loading="dailyLoading" @click="loadDailyUsage">刷新</el-button>
+      </div>
+      <div v-loading="dailyLoading" class="daily-body">
+        <p v-if="!dailyLoading && dailyGrouped.length === 0" class="muted">该区间暂无用量数据</p>
+        <section v-for="group in dailyGrouped" :key="group.date" class="daily-day">
+          <header class="daily-day-header">
+            <span>{{ group.date }}</span>
+            <span class="muted">{{ group.event_count }} 次 · {{ formatSpend(group.total_cost_usd) }}</span>
+          </header>
+          <div v-for="row in group.models" :key="row.model" class="daily-model-row">
+            <span class="daily-model-name">{{ row.model }}</span>
+            <div class="daily-bar-track">
+              <div
+                class="daily-bar-fill"
+                :style="{ width: dailyBarWidth(row.total_cost_usd, group.max_cost) }"
+              />
+            </div>
+            <span class="daily-model-cost">{{ formatSpend(row.total_cost_usd) }}</span>
+            <span class="daily-model-tokens muted">{{ formatTokens(row.tokens_total) }}</span>
+          </div>
+        </section>
+      </div>
+      <template #footer>
+        <el-button @click="dailyVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -440,6 +485,50 @@ const apiKeyInput = ref('')
 const credentialBinding = ref(false)
 const credentialUnbinding = ref(false)
 const credentialSyncing = ref(false)
+
+interface DailyUsageRow {
+  account_id: string
+  event_date: string
+  model: string
+  event_count: number
+  total_cost_usd: number
+  tokens_input: number
+  tokens_output: number
+  tokens_cache_read: number
+}
+
+const dailyVisible = ref(false)
+const dailyLoading = ref(false)
+const dailyAccount = ref<Account | null>(null)
+const dailyRows = ref<DailyUsageRow[]>([])
+const dailyRange = ref<[string, string] | null>(null)
+
+const dailyGrouped = computed(() => {
+  const byDate = new Map<string, DailyUsageRow[]>()
+  for (const row of dailyRows.value) {
+    const list = byDate.get(row.event_date) || []
+    list.push(row)
+    byDate.set(row.event_date, list)
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, models]) => {
+      const sorted = [...models].sort((a, b) => b.total_cost_usd - a.total_cost_usd)
+      const total_cost_usd = sorted.reduce((sum, m) => sum + m.total_cost_usd, 0)
+      const event_count = sorted.reduce((sum, m) => sum + m.event_count, 0)
+      const max_cost = sorted[0]?.total_cost_usd || 0
+      return {
+        date,
+        models: sorted.map((m) => ({
+          ...m,
+          tokens_total: m.tokens_input + m.tokens_output + m.tokens_cache_read,
+        })),
+        total_cost_usd,
+        event_count,
+        max_cost,
+      }
+    })
+})
 
 const now = new Date()
 const period = ref(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
@@ -699,6 +788,45 @@ async function unbindCredential() {
   }
 }
 
+function periodDateRange(periodStr: string): [string, string] {
+  const [year, month] = periodStr.split('-').map(Number)
+  const lastDay = new Date(year, month, 0).getDate()
+  return [
+    `${periodStr}-01`,
+    `${periodStr}-${String(lastDay).padStart(2, '0')}`,
+  ]
+}
+
+function dailyBarWidth(cost: number, maxCost: number) {
+  if (!maxCost || maxCost <= 0) return '0%'
+  return `${Math.max(4, Math.round((cost / maxCost) * 100))}%`
+}
+
+function openDailyUsage(row: Account) {
+  dailyAccount.value = row
+  dailyRange.value = periodDateRange(period.value)
+  dailyVisible.value = true
+  loadDailyUsage()
+}
+
+async function loadDailyUsage() {
+  if (!dailyAccount.value || !dailyRange.value) return
+  const [start, end] = dailyRange.value
+  dailyLoading.value = true
+  try {
+    const res = await client.get(`/api/v2/accounts/${dailyAccount.value.id}/usage/daily`, {
+      params: { start, end },
+    })
+    dailyRows.value = res.data
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: string } } }
+    ElMessage.error(err.response?.data?.detail || '加载用量明细失败')
+    dailyRows.value = []
+  } finally {
+    dailyLoading.value = false
+  }
+}
+
 async function syncCredential() {
   if (!credentialAccount.value) return
   credentialSyncing.value = true
@@ -714,6 +842,9 @@ async function syncCredential() {
     credentialMap.value[credentialAccount.value.id] = updated
     ElMessage.success(`同步完成，${res.data.event_count} 条事件`)
     await loadSummaries()
+    if (dailyVisible.value && dailyAccount.value?.id === credentialAccount.value?.id) {
+      await loadDailyUsage()
+    }
   } catch (e: unknown) {
     const err = e as { response?: { data?: { detail?: string } } }
     ElMessage.error(err.response?.data?.detail || '同步失败')
@@ -978,6 +1109,60 @@ onMounted(loadAll)
 }
 .sync-error {
   color: #dc2626;
+  font-size: 12px;
+}
+.daily-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.daily-body {
+  max-height: 480px;
+  overflow-y: auto;
+}
+.daily-day {
+  margin-bottom: 16px;
+}
+.daily-day-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.daily-model-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 72px 80px;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.daily-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.daily-bar-track {
+  height: 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.daily-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  border-radius: 4px;
+}
+.daily-model-cost {
+  text-align: right;
+  font-weight: 600;
+}
+.daily-model-tokens {
+  text-align: right;
   font-size: 12px;
 }
 </style>
