@@ -11,23 +11,45 @@
         </div>
       </template>
 
-      <el-button type="primary" size="large" class="full" :loading="dingLoading" @click="loginDingTalk">
-        钉钉扫码登录
-      </el-button>
+      <div class="login-tabs">
+        <button
+          type="button"
+          class="login-tab"
+          :class="{ active: activeTab === 'admin' }"
+          @click="activeTab = 'admin'"
+        >
+          超管登录
+        </button>
+        <button
+          type="button"
+          class="login-tab"
+          :class="{ active: activeTab === 'dingtalk' }"
+          @click="activeTab = 'dingtalk'"
+        >
+          钉钉扫码
+        </button>
+      </div>
 
-      <el-divider>或灾备本地登录</el-divider>
-
-      <el-form :model="form" @submit.prevent="loginPassword">
-        <el-form-item label="钉钉 User ID">
-          <el-input v-model="form.dingtalk_user_id" placeholder="与成员表 dingtalk_user_id 一致" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" show-password />
-        </el-form-item>
-        <el-button type="default" class="full" native-type="submit" :loading="pwdLoading">
-          密码登录
+      <form v-if="activeTab === 'admin'" class="login-form" @submit.prevent="loginPassword">
+        <p class="admin-hint">超管账号：<strong>admin</strong></p>
+        <el-input
+          v-model="form.password"
+          type="password"
+          placeholder="密码"
+          size="large"
+          show-password
+        />
+        <el-button type="primary" size="large" class="full" native-type="submit" :loading="pwdLoading">
+          登录
         </el-button>
-      </el-form>
+      </form>
+
+      <div v-else class="dingtalk-panel">
+        <p class="dingtalk-hint">使用钉钉 App 扫码，首次登录需超级管理员审批</p>
+        <el-button type="primary" size="large" class="full" :loading="dingLoading" @click="loginDingTalk">
+          打开钉钉扫码
+        </el-button>
+      </div>
     </el-card>
   </div>
 </template>
@@ -43,9 +65,10 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
+const activeTab = ref<'admin' | 'dingtalk'>('admin')
 const dingLoading = ref(false)
 const pwdLoading = ref(false)
-const form = reactive({ dingtalk_user_id: '', password: '' })
+const form = reactive({ password: '' })
 
 async function loginDingTalk() {
   dingLoading.value = true
@@ -62,9 +85,13 @@ async function loginDingTalk() {
 }
 
 async function loginPassword() {
+  if (!form.password) {
+    ElMessage.warning('请输入密码')
+    return
+  }
   pwdLoading.value = true
   try {
-    const { data } = await client.post('/api/auth/login', form)
+    const { data } = await client.post('/api/auth/login', { username: 'admin', password: form.password })
     auth.setSession(data.access_token, data.user)
     const redirect = (route.query.redirect as string) || '/'
     router.push(redirect)
@@ -110,6 +137,53 @@ async function loginPassword() {
   place-items: center;
   font-weight: 700;
   font-size: 1.25rem;
+}
+.login-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.login-tab {
+  padding: 10px 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  background: #fff;
+  color: #606266;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.login-tab:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+.login-tab.active {
+  border-color: #409eff;
+  color: #409eff;
+  font-weight: 600;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.admin-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+.dingtalk-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dingtalk-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.5;
 }
 .full {
   width: 100%;

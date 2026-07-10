@@ -11,11 +11,29 @@ def test_owner_has_all_permissions():
         dingtalk_user_id="u1",
         display_name="Owner",
         status="active",
+        portal_status="active",
         portal_role="owner",
     )
     perms = resolve_permissions(member)
     assert "settings:write" in perms
     assert has_permission(member, "admin:users")
+
+
+def test_ai_member_permissions():
+    member = Member(
+        team_id="t1",
+        dingtalk_user_id="u3",
+        display_name="AI User",
+        status="active",
+        portal_status="active",
+        portal_role="ai_member",
+    )
+    perms = resolve_permissions(member)
+    assert "knowledge:read" in perms
+    assert "requests:write" in perms
+    assert "submissions:read" in perms
+    assert "admin:users" not in perms
+    assert not has_permission(member, "settings:write")
 
 
 def test_auditor_read_only_write_denied():
@@ -24,6 +42,7 @@ def test_auditor_read_only_write_denied():
         dingtalk_user_id="u2",
         display_name="Auditor",
         status="active",
+        portal_status="active",
         portal_role="auditor",
     )
     assert has_permission(member, "metrics:read")
@@ -41,6 +60,7 @@ def test_jwt_roundtrip():
         dingtalk_user_id="u1",
         display_name="X",
         status="active",
+        portal_status="active",
         portal_role="operator",
     )
     member.id = "mem-1"

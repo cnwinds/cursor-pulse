@@ -6,8 +6,6 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
     {
         "settings:read",
         "settings:write",
-        "members:read",
-        "members:write",
         "submissions:read",
         "submissions:review",
         "metrics:read",
@@ -20,6 +18,13 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
         "tasks:group_message",
         "audit:read",
         "admin:users",
+        "accounts:read",
+        "accounts:write",
+        "requests:read",
+        "requests:write",
+        "requests:approve",
+        "knowledge:read",
+        "knowledge:write",
     }
 )
 
@@ -28,24 +33,39 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "operator": frozenset(
         {
             "settings:read",
-            "members:read",
-            "members:write",
             "submissions:read",
             "submissions:review",
             "metrics:read",
             "metrics:aggregate",
             "tasks:nudge",
             "audit:read",
+            "accounts:read",
+            "accounts:write",
+            "requests:read",
+            "requests:write",
+            "requests:approve",
+            "knowledge:read",
+            "knowledge:write",
         }
     ),
     "auditor": frozenset(
         {
             "settings:read",
-            "members:read",
             "submissions:read",
             "metrics:read",
             "memory:read",
             "audit:read",
+            "accounts:read",
+            "requests:read",
+            "knowledge:read",
+        }
+    ),
+    "ai_member": frozenset(
+        {
+            "knowledge:read",
+            "requests:read",
+            "requests:write",
+            "submissions:read",
         }
     ),
 }
@@ -60,8 +80,29 @@ def resolve_permissions(member: Member) -> set[str]:
     return set(ROLE_PERMISSIONS.get(member.portal_role, frozenset()))
 
 
+PORTAL_ROLE_LABELS: dict[str, str] = {
+    "owner": "超级管理员",
+    "operator": "运营员",
+    "auditor": "审计员",
+    "ai_member": "AI工具成员",
+    "custom": "自定义",
+}
+
+PORTAL_ROLE_DESCRIPTIONS: dict[str, str] = {
+    "owner": "拥有全部权限，包括用户管理与审批",
+    "operator": "提交审核、指标聚合与催办",
+    "auditor": "只读访问指标、记忆与审计日志",
+    "ai_member": "申请 AI 工具、浏览技巧知识库、查看本人账号提交进度",
+    "custom": "按需勾选能力码",
+}
+
+
 def can_access_portal(member: Member) -> bool:
-    return member.status == "active" and bool(member.portal_role)
+    return (
+        member.portal_status == "active"
+        and member.status == "active"
+        and bool(member.portal_role)
+    )
 
 
 def has_permission(member: Member, capability: str) -> bool:

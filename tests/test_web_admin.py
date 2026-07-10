@@ -17,7 +17,11 @@ from tests.conftest import make_team_repo
 @pytest.fixture
 def client():
     config = AppConfig(
-        web=WebConfig(admin_token="secret-token", jwt_secret="jwt-test-secret"),
+        web=WebConfig(
+            admin_token="secret-token",
+            admin_password="pass1234",
+            jwt_secret="jwt-test-secret",
+        ),
         tenant=TenantConfig(slug="test", name="Test"),
     )
     engine = create_engine(
@@ -54,19 +58,9 @@ def test_health_open(client):
     assert res.status_code == 200
 
 
-def test_members_requires_auth(client):
-    test_client, config, owner, _ = client
-    assert test_client.get("/api/members").status_code == 401
-    token = create_access_token(config, owner)
-    res = test_client.get("/api/members", headers=_auth_headers(token))
-    assert res.status_code == 200
-    names = [m["display_name"] for m in res.json()]
-    assert "Alice" in names
-
-
 def test_legacy_admin_token(client):
     test_client, _, _, _ = client
-    res = test_client.get("/api/members", headers=_auth_headers("secret-token"))
+    res = test_client.get("/api/settings", headers=_auth_headers("secret-token"))
     assert res.status_code == 200
 
 
@@ -74,13 +68,23 @@ def test_password_login(client):
     test_client, _, _, _ = client
     res = test_client.post(
         "/api/auth/login",
-        json={"dingtalk_user_id": "admin1", "password": "pass1234"},
+        json={"username": "admin", "password": "pass1234"},
     )
     assert res.status_code == 200
     body = res.json()
     assert body["token_type"] == "bearer"
     assert body["user"]["portal_role"] == "owner"
+    assert body["user"]["dingtalk_user_id"] == "admin"
     assert "access_token" in body
+
+
+def test_password_login_rejects_wrong_username(client):
+    test_client, _, _, _ = client
+    res = test_client.post(
+        "/api/auth/login",
+        json={"username": "other", "password": "pass1234"},
+    )
+    assert res.status_code == 401
 
 
 def test_auth_me(client):
@@ -100,6 +104,7 @@ def test_permission_denied_for_auditor(client):
         dingtalk_user_id="auditor1",
         display_name="Auditor",
         status="active",
+        portal_status="active",
         portal_role="auditor",
     )
     session.add(auditor)

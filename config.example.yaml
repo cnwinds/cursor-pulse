@@ -14,6 +14,8 @@ collection:
   report_day: 4
   report_time: "11:00"
   timezone: "Asia/Shanghai"
+  # 用量提交催办（收集开始 / 每日私聊 / 截止提醒）；默认关闭
+  reminders_enabled: false
 
 storage:
   database_url: "sqlite:///data/pulse.db"

@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 from io import StringIO
 from pathlib import Path
 
+import pandas as pd
+
 from pulse.domain import CostRaw, ParseSummary, ParsedCsv, UsageEventRecord
 
 EXPECTED_HEADERS = [
@@ -25,11 +27,20 @@ EXPECTED_HEADERS = [
     "Cost",
 ]
 
+OPTIONAL_HEADERS = frozenset({"Cloud Agent ID", "Automation ID"})
+
+HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "cloud agent id": ("cloud agent",),
+    "kind": ("automation kind",),
+}
+
 
 def _parse_int(value: str) -> int:
     value = (value or "").strip()
     if not value:
         return 0
+    if "." in value:
+        return int(float(value))
     return int(value)
 
 
@@ -117,9 +128,51 @@ def _normalize_headers(fieldnames: list[str] | None) -> dict[str, str]:
     for expected in EXPECTED_HEADERS:
         found = mapping.get(expected.lower())
         if not found:
+            for alias in HEADER_ALIASES.get(expected.lower(), ()):
+                found = mapping.get(alias)
+                if found:
+                    break
+        if not found and expected in OPTIONAL_HEADERS:
+            normalized[expected] = expected
+            continue
+        if not found:
             raise ValueError(f"Missing required column: {expected}")
         normalized[expected] = found
     return normalized
+
+
+def _cell_text(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat().replace("+00:00", "Z")
+    return str(value).strip()
+
+
+def _rows_from_mapped(col_map: dict[str, str], rows: list[dict[str, object]]) -> list[UsageEventRecord]:
+    records: list[UsageEventRecord] = []
+    for row in rows:
+        mapped = {
+            expected: _cell_text(row.get(col_map[expected])) for expected in EXPECTED_HEADERS
+        }
+        if not any(mapped.values()):
+            continue
+        records.append(record_from_mapped_row(mapped))
+    return records
+
+
+def _parse_rows(col_map: dict[str, str], rows: list[dict[str, object]]) -> ParsedCsv:
+    records = _rows_from_mapped(col_map, rows)
+    if not records:
+        raise ValueError("File contains no data rows")
+    summary = build_parse_summary(records)
+    return ParsedCsv(records=records, summary=summary)
 
 
 def parse_usage_events_csv(content: str | bytes | Path) -> ParsedCsv:
@@ -132,16 +185,23 @@ def parse_usage_events_csv(content: str | bytes | Path) -> ParsedCsv:
 
     reader = csv.DictReader(StringIO(text))
     col_map = _normalize_headers(reader.fieldnames)
+    rows = [dict(row) for row in reader]
+    return _parse_rows(col_map, rows)
 
-    records: list[UsageEventRecord] = []
-    for row in reader:
-        if not any((v or "").strip() for v in row.values()):
-            continue
-        mapped = {expected: (row.get(col_map[expected]) or "").strip() for expected in EXPECTED_HEADERS}
-        records.append(record_from_mapped_row(mapped))
 
-    if not records:
-        raise ValueError("CSV contains no data rows")
+def parse_usage_events_xlsx(path: Path) -> ParsedCsv:
+    df = pd.read_excel(path, engine="openpyxl")
+    if df.empty:
+        raise ValueError("Excel file contains no data rows")
+    col_map = _normalize_headers([str(c) for c in df.columns])
+    rows = df.to_dict(orient="records")
+    return _parse_rows(col_map, rows)
 
-    summary = build_parse_summary(records)
-    return ParsedCsv(records=records, summary=summary)
+
+def parse_usage_events_file(path: Path) -> ParsedCsv:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return parse_usage_events_csv(path)
+    if suffix in (".xlsx", ".xls"):
+        return parse_usage_events_xlsx(path)
+    raise ValueError(f"Unsupported file type: {suffix}")

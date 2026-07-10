@@ -39,6 +39,7 @@ def memory_client():
     session = session_factory()
     team, repo = make_team_repo(session)
     member = repo.add_member("u1", "Alice")
+    member.portal_status = "pending"
     owner = bootstrap_portal_owner(
         repo, dingtalk_user_id="admin1", display_name="Admin", password="pass1234"
     )
@@ -120,10 +121,13 @@ def test_audit_logs(memory_client):
 def test_portal_grant(memory_client):
     client, config, owner, _team_id = memory_client
     token = create_access_token(config, owner)
-    members = client.get("/api/members", headers={"Authorization": f"Bearer {token}"}).json()
-    alice = next(m for m in members if m["display_name"] == "Alice")
-    res = client.patch(
-        f"/api/members/{alice['id']}/portal",
+    pending = client.get(
+        "/api/portal/users/pending",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    alice = next(u for u in pending if u["display_name"] == "Alice")
+    res = client.post(
+        f"/api/portal/users/{alice['id']}/approve",
         headers={"Authorization": f"Bearer {token}"},
         json={"portal_role": "auditor"},
     )

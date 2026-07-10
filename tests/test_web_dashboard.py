@@ -42,7 +42,9 @@ def test_dashboard_overview(dash_client):
     res = client.get("/api/dashboard/overview", headers=h)
     assert res.status_code == 200
     body = res.json()
-    assert body["submission"]["active_count"] >= 1
+    assert "ingestion" in body
+    assert body["ingestion"]["active_count"] >= 0
+    assert "submitted_count" in body["ingestion"]
     assert "summary" in body
 
 
@@ -51,7 +53,11 @@ def test_system_schedule(dash_client):
     token = create_access_token(config, owner)
     res = client.get("/api/system/schedule", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
-    assert len(res.json()["jobs"]) >= 4
+    body = res.json()
+    assert body["reminders_enabled"] is False
+    job_ids = {job["id"] for job in body["jobs"]}
+    assert "monthly_report" in job_ids
+    assert "collection_start" not in job_ids
 
 
 def test_system_integrations(dash_client):

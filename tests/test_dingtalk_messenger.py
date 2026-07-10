@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pulse.bot.dingtalk.files import extract_file_attachment, normalize_incoming_text
+from pulse.bot.dingtalk.files import (
+    extract_file_attachment,
+    incoming_message_type,
+    normalize_incoming_text,
+)
 from pulse.bot.dingtalk.messenger import DingTalkMessenger
 from pulse.config import AppConfig, DingTalkConfig
 
@@ -28,6 +32,43 @@ def test_extract_file_attachment():
 
 def test_extract_file_attachment_missing_code():
     assert extract_file_attachment({"msgtype": "file", "content": {}}) is None
+
+
+def test_extract_file_attachment_msgtype_camel_case():
+    raw = {
+        "msgType": "file",
+        "content": {
+            "fileName": "usage-events.xlsx",
+            "downloadCode": "abc123",
+        },
+    }
+    assert extract_file_attachment(raw) == ("usage-events.xlsx", "abc123")
+
+
+def test_extract_file_attachment_content_json_string():
+    raw = {
+        "msgtype": "file",
+        "content": '{"fileName":"usage-events.xlsx","downloadCode":"abc123"}',
+    }
+    assert extract_file_attachment(raw) == ("usage-events.xlsx", "abc123")
+
+
+def test_extract_file_attachment_from_extensions():
+    class Incoming:
+        message_type = "file"
+        extensions = {
+            "content": {
+                "fileName": "usage-events.csv",
+                "downloadCode": "ext123",
+            }
+        }
+
+    assert extract_file_attachment({}, Incoming()) == ("usage-events.csv", "ext123")
+
+
+def test_incoming_message_type_prefers_raw():
+    assert incoming_message_type({"msgtype": "file"}) == "file"
+    assert incoming_message_type({"msgType": "File"}) == "file"
 
 
 @pytest.fixture

@@ -30,7 +30,14 @@ onMounted(async () => {
     return
   }
   try {
-    const { data } = await client.post('/api/auth/dingtalk/callback', { code })
+    const { data, status } = await client.post('/api/auth/dingtalk/callback', { code })
+    if (status === 202 && data.status === 'pending') {
+      sessionStorage.setItem('portal_pending_user', JSON.stringify(data.user))
+      sessionStorage.removeItem('oauth_state')
+      sessionStorage.removeItem('oauth_redirect')
+      router.replace({ name: 'pending-approval' })
+      return
+    }
     auth.setSession(data.access_token, data.user)
     const redirect = sessionStorage.getItem('oauth_redirect') || '/'
     sessionStorage.removeItem('oauth_state')

@@ -54,6 +54,12 @@ class PulseActionExecutor(ActionExecutor):
             )
 
     def _nudge_unsubmitted(self, action: EvolutionActionProposal) -> EvolutionActionResult:
+        if not self.config.collection.reminders_enabled:
+            return EvolutionActionResult(
+                action_type=action.action_type,
+                status="skipped",
+                detail="usage reminders disabled",
+            )
         if not self.send_private_message:
             return EvolutionActionResult(
                 action_type=action.action_type,
@@ -97,6 +103,12 @@ class PulseActionExecutor(ActionExecutor):
         )
 
     def _group_tip(self, action: EvolutionActionProposal) -> EvolutionActionResult:
+        if not self.config.collection.reminders_enabled:
+            return EvolutionActionResult(
+                action_type=action.action_type,
+                status="skipped",
+                detail="usage reminders disabled",
+            )
         if not self.send_group_message:
             return EvolutionActionResult(
                 action_type=action.action_type,

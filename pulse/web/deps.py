@@ -28,6 +28,11 @@ def _member_from_legacy_token(session: Session, config: AppConfig, token: str) -
         for m in session.scalars(select(Member).where(Member.team_id == team.id)).all()
         if m.portal_role == "owner"
     ]
+    from pulse.web.portal import ADMIN_LOGIN_USERNAME
+
+    admin = next((m for m in owners if m.dingtalk_user_id == ADMIN_LOGIN_USERNAME), None)
+    if admin:
+        return admin
     if owners:
         return owners[0]
     if config.admin.dingtalk_user_ids:
@@ -59,6 +64,10 @@ def get_portal_user(
     if legacy:
         if not legacy.portal_role:
             legacy.portal_role = "owner"
+        if not legacy.portal_status:
+            legacy.portal_status = "active"
+        if legacy.status != "active":
+            legacy.status = "active"
         return PortalUser(member=legacy, permissions=resolve_permissions(legacy))
     return None
 

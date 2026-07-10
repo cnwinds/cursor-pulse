@@ -13,6 +13,7 @@ def member_payload(member: Member) -> dict:
         "id": member.id,
         "display_name": member.display_name,
         "dingtalk_user_id": member.dingtalk_user_id,
+        "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "permissions": sorted(resolve_permissions(member)),
         "last_portal_login_at": (

@@ -59,4 +59,4 @@ class ParsedCsv:
 
 SubmitChannelLiteral = Literal["private", "group"]
 
-COMPUTATION_VERSION = "aggregate-v1"
+COMPUTATION_VERSION = "aggregate-v2"

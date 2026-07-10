@@ -1,4 +1,5 @@
 data/
+.dev/
 .env
 config.yaml
 *.db

@@ -45,7 +45,10 @@ def run_app(config: AppConfig) -> None:
         config, session_factory, send_group_message, send_private_message, messenger=messenger
     )
     scheduler.start()
-    logger.info("Reminder scheduler started")
+    if config.collection.reminders_enabled:
+        logger.info("Reminder scheduler started (usage submission reminders enabled)")
+    else:
+        logger.info("Reminder scheduler started (usage submission reminders disabled)")
 
     try:
         if platform == "dingtalk":

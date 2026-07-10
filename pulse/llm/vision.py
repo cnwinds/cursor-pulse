@@ -4,6 +4,12 @@ import logging
 from pathlib import Path
 
 from pulse.extract.vision_parser import VISION_JSON_SCHEMA, VisionExtractResult, parse_vision_response
+from pulse.extract.vendor_vision import (
+    VendorVisionResult,
+    parse_vendor_vision_response,
+    vendor_vision_system_prompt,
+    vendor_vision_user_prompt,
+)
 from pulse.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -34,3 +40,19 @@ def extract_usage_from_screenshot(image_path: Path, client: LLMClient, *, model:
         model=model,
     )
     return parse_vision_response(raw)
+
+
+def extract_vendor_usage_from_screenshot(
+    image_path: Path,
+    client: LLMClient,
+    *,
+    vendor_slug: str,
+    model: str,
+) -> VendorVisionResult:
+    raw = client.complete_with_image(
+        system=vendor_vision_system_prompt(vendor_slug),
+        user=vendor_vision_user_prompt(vendor_slug),
+        image_path=image_path,
+        model=model,
+    )
+    return parse_vendor_vision_response(raw)

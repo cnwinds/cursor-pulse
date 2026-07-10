@@ -16,6 +16,7 @@ class DingTalkConfig(BaseModel):
     robot_code: str = ""
     group_open_conversation_id: str = ""
     chat_id: str = ""  # 钉钉群号（展示用；API 需 openConversationId）
+    sync_root_dept_id: int = 1
 
 
 class CollectionConfig(BaseModel):
@@ -28,6 +29,7 @@ class CollectionConfig(BaseModel):
     report_day: int = 4
     report_time: str = "11:00"
     timezone: str = "Asia/Shanghai"
+    reminders_enabled: bool = False
 
 
 class StorageConfig(BaseModel):
@@ -77,6 +79,7 @@ class WebConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8080
     admin_token: str = ""
+    admin_password: str = ""
     jwt_secret: str = ""
     dingtalk_oauth_redirect_uri: str = "http://localhost:5173/login/callback"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
@@ -159,6 +162,7 @@ class EnvSettings(BaseSettings):
     vision_enabled: str = ""
     vision_model: str = ""
     admin_web_token: str = ""
+    admin_password: str = ""
     jwt_secret: str = ""
     web_cors_origins: str = ""
     dingtalk_oauth_redirect_uri: str = ""
@@ -173,6 +177,7 @@ class EnvSettings(BaseSettings):
     s3_enabled: str = ""
     cursor_teams_api_key: str = ""
     bot_platform: str = ""
+    usage_reminders_enabled: str = ""
     pulse_credential_encryption_key: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
@@ -233,6 +238,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.llm.vision_model = env.vision_model
     if env.admin_web_token:
         cfg.web.admin_token = env.admin_web_token
+    if env.admin_password:
+        cfg.web.admin_password = env.admin_password
     if env.jwt_secret:
         cfg.web.jwt_secret = env.jwt_secret
     if env.dingtalk_oauth_redirect_uri:
@@ -264,6 +271,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.cursor_teams.enabled = True
     if env.bot_platform:
         cfg.bot.name = env.bot_platform
+    if env.usage_reminders_enabled.lower() in ("1", "true", "yes", "on"):
+        cfg.collection.reminders_enabled = True
+    elif env.usage_reminders_enabled.lower() in ("0", "false", "no", "off"):
+        cfg.collection.reminders_enabled = False
 
     cfg.credentials.encryption_key = env.pulse_credential_encryption_key
 
