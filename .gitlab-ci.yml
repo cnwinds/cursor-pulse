@@ -1,0 +1,58 @@
+stages:
+  - test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  key:
+    files:
+      - pyproject.toml
+  paths:
+    - .cache/pip
+    - .venv/
+
+pytest:
+  stage: test
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - python -m venv .venv
+    - . .venv/bin/activate
+    - pip install --upgrade pip
+    - pip install -e ".[dev,web]"
+  script:
+    - pytest --tb=short -q --junitxml=junit.xml
+  artifacts:
+    when: on_failure
+    expire_in: 1 week
+    reports:
+      junit: junit.xml
+
+go-test:
+  stage: test
+  image: golang:1.22
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - proxy/**/*
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - proxy/**/*
+  script:
+    - cd proxy && go test ./...
+
+web-admin-build:
+  stage: test
+  image: node:20-bookworm
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - web-admin/**/*
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - web-admin/**/*
+  script:
+    - cd web-admin && npm ci && npm run build

@@ -1,0 +1,35 @@
+data/
+.dev/
+.env
+.env.*
+!.env.example
+config.yaml
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+*.egg-info/
+.venv/
+web-admin/node_modules/
+web-admin/dist/
+
+.worktrees/
+.superpowers/
+
+# Secrets / TLS material (MITM CA, etc.)
+*.pem
+*.key
+!**/testdata/**
+credentials.json
+tokens.json
+migration-pack/
+
+# Go data-plane binaries (built by ensure_proxy_binary / go build)
+proxy/cursor-pulse-proxy
+proxy/cursor-pulse-proxy.exe
+proxy/*.exe
+proxy/*.exe~
+*.exe
+*.exe~

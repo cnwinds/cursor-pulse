@@ -1,0 +1,1 @@
+DEFAULT_ASSISTANT_ID = "xiaomai"

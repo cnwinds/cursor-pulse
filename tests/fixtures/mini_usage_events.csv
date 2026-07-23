@@ -1,0 +1,5 @@
+Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+2026-03-15T12:00:00.000Z,Included,gpt-4o,No,0,10,0,5,15,Included
+2026-04-15T12:00:00.000Z,Included,gpt-4o,No,0,20,0,10,30,Free
+2026-05-15T12:00:00.000Z,User API Key,claude-4,No,0,8,0,4,12,-
+2026-06-04T12:00:00.000Z,User API Key,gpt-4o,No,0,40,0,20,60,0.01

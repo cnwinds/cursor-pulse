@@ -1,0 +1,7 @@
+fragments:
+  - key: heart.md
+    path: docs/heart.md
+    description: 人设与基本语气
+  - key: precepts.md
+    path: docs/precepts.md
+    description: 表达风格补充

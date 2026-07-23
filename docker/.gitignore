@@ -1,0 +1,11 @@
+.env
+cursor-pulse-migrate-*.zip
+migration-pack/.env
+migration-pack/config.yaml
+migration-pack/data/
+data/*.db
+data/*.db-*
+data/*.db-shm
+data/*.db-wal
+data/raw/
+config.yaml

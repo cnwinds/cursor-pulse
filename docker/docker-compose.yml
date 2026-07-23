@@ -1,0 +1,93 @@
+name: cursor-pulse
+
+x-app-common: &app-common
+  image: cursor-pulse:latest
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  env_file:
+    - .env
+  environment:
+    PULSE_CONFIG: /app/config/config.yaml
+  volumes:
+    - ./data:/app/data
+    - ./config.yaml:/app/config/config.yaml:ro
+  restart: unless-stopped
+
+services:
+  # One-shot schema migration: docker compose --profile tools run --rm init-db
+  init-db:
+    <<: *app-common
+    profiles: [tools]
+    container_name: cursor-pulse-init-db
+    restart: "no"
+    command: ["pulse", "init-db", "-c", "/app/config/config.yaml"]
+
+  init-v2:
+    <<: *app-common
+    profiles: [tools]
+    container_name: cursor-pulse-init-v2
+    restart: "no"
+    command: ["pulse", "init-v2", "--seed", "-c", "/app/config/config.yaml"]
+
+  web:
+    <<: *app-common
+    container_name: cursor-pulse-web
+    command:
+      - pulse
+      - web
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - -c
+      - /app/config/config.yaml
+    ports:
+      - "${PULSE_WEB_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  assistant:
+    <<: *app-common
+    container_name: cursor-pulse-assistant
+    environment:
+      PULSE_CONFIG: /app/config/config.yaml
+      ASSISTANT_HOST: "0.0.0.0"
+      ASSISTANT_PORT: "8090"
+      PULSE_BASE_URL: http://web:8080
+    command: ["python", "-m", "assistant_platform", "serve"]
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  channel:
+    <<: *app-common
+    container_name: cursor-pulse-channel
+    command: ["pulse", "channel", "-c", "/app/config/config.yaml"]
+    depends_on:
+      web:
+        condition: service_healthy
+      assistant:
+        condition: service_healthy

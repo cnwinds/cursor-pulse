@@ -1,0 +1,102 @@
+dingtalk:
+  app_key: ${DINGTALK_APP_KEY}
+  app_secret: ${DINGTALK_APP_SECRET}
+  robot_code: ${DINGTALK_ROBOT_CODE}
+  group_open_conversation_id: ${DINGTALK_GROUP_ID}
+
+collection:
+  period_format: "%Y-%m"
+  start_day: 1
+  start_time: "09:00"
+  deadline_day: 3
+  deadline_time: "18:00"
+  daily_check_time: "10:00"
+  report_day: 4
+  report_time: "09:30"
+  report_period_mode: previous
+  report_on_first_business_day: true
+  readiness_deadline_time: "09:25"
+  timezone: "Asia/Shanghai"
+  # 月报是否群发钉钉群；默认 false，仅私聊预览
+  publish_report_to_group: false
+  # 用量提交催办（收集开始 / 每日私聊 / 截止提醒）；默认关闭
+  reminders_enabled: false
+
+cursor_sync:
+  enabled: true
+  tick_interval_minutes: 2
+  batch_size: 3
+  pre_publish_batch_size: 5
+  default_interval_minutes: 1440  # 每账号同步间隔；30/60 等
+  month_close_interval_minutes: 360
+  max_retry_count: 8
+  pre_publish_start_time: "08:00"
+  readiness_sync_max_age_hours: 6
+
+storage:
+  database_url: "sqlite:///data/pulse.db"
+  raw_files_dir: "data/raw"
+
+admin:
+  dingtalk_user_ids: []  # 管理员 userid 列表
+
+llm:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+  timeout_seconds: 60
+  vision_enabled: false
+  vision_model: "gpt-4o"
+  confidence_threshold: 0.75
+  review_low_confidence: true
+
+assistant_llm:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  model: ""
+  memory_enabled: true
+
+bot:
+  name: dingtalk  # dingtalk | feishu | wecom
+
+object_storage:
+  enabled: false
+  endpoint_url: ""
+  bucket: ""
+  prefix: "pulse/raw"
+
+cursor_teams:
+  enabled: false
+  api_base_url: "https://api.cursor.com"
+
+web:
+  host: "127.0.0.1"
+  port: 8080
+  # jwt_secret / admin_token 建议通过 JWT_SECRET、ADMIN_WEB_TOKEN 注入
+  # dingtalk_oauth_redirect_uri: "http://localhost:5173/login/callback"
+  # cors_origins: ["http://localhost:5173"]
+
+tenant:
+  slug: "default"
+  name: "Default Team"
+
+alerts:
+  enabled: true
+  member_events_spike_pct: 100
+  team_events_spike_pct: 50
+  member_cost_spike_usd: 10
+
+integrations:
+  webhook_url: ""
+  webhook_secret: ""
+  push_on_report: true
+
+tool_center:
+  loan_selection:
+    max_active_loans_per_account: 2   # 单账号最多同时借给几人
+    min_coverage_hours: 1             # 距额度作废不足该小时数的账号不外借（大于该值即可借，时间越短权重越高）
+    freshness_full_penalty_hours: 24  # 快照新鲜度惩罚尺度（小时），超过则新鲜度因子为 0
+    weight_urgency: 0.50              # 日均待消化额度（临期+富余）权重
+    weight_surplus: 0.25              # 富余额度绝对值权重
+    weight_load: 0.15                 # 在借人数（越少越好）权重
+    weight_freshness: 0.10            # 快照新鲜度权重
