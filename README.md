@@ -75,9 +75,8 @@ docker compose up -d
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | 运维 |
 | [docs/bot-commands.md](docs/bot-commands.md) | 钉钉命令 |
 | [docs/cursor-usage-api.md](docs/cursor-usage-api.md) | Cursor 非官方 API 笔记（可能随时失效，自负风险） |
+| [docs/README.md](docs/README.md) | 文档索引 |
 | [proxy/README.md](proxy/README.md) | MITM 代理（CA / 合规风险） |
-
-内部设计过程文档在 `docs/superpowers/`（部署不必阅读）。
 
 ## 风险说明
 

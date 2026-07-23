@@ -1,55 +1,54 @@
-# Architecture
+# 架构说明
 
-Cursor Pulse is a **self-hosted monorepo** with three runtimes and optional data-plane.
+Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  web-admin  │────▶│  Pulse web API   │◀────│  DingTalk   │
-│  (Vue SPA)  │     │  + channel bot   │     │  Stream     │
+│  web-admin  │────▶│  Pulse web API   │◀────│  钉钉 Stream │
+│  (Vue SPA)  │     │  + channel 机器人 │     │             │
 └─────────────┘     └────────┬─────────┘     └─────────────┘
-                             │ internal HTTP
+                             │ 内部 HTTP
                     ┌────────▼─────────┐
-                    │ Assistant service│  (optional process)
+                    │ Assistant 服务    │  （可选进程）
                     └──────────────────┘
                              ▲
                     ┌────────┴─────────┐
-                    │ Go MITM proxy    │  (optional data-plane)
-                    │ cursor-pulse-proxy│
+                    │ Go MITM 代理      │  （可选数据面）
                     └──────────────────┘
 ```
 
-## Processes
+## 进程
 
-| Process | How to start | Default | Responsibility |
-|---------|--------------|---------|----------------|
-| Pulse web | `pulse web` | `:8080` | Portal JWT API, internal provider APIs, static admin |
-| Channel | `pulse channel` | Stream client | DingTalk ingress, reminders, capability bridge |
-| Assistant | `python -m assistant_platform serve` | `:8090` | Sessions, skills, capability invoke (when mirrored) |
-| Admin UI (dev) | `npm run dev` in `web-admin/` | `:5173` | Vue portal against Pulse web |
-| Proxy (opt.) | `go run` / `cursor-pulse.bat start proxy` | `:8317` | HTTPS MITM + usage tap → Pulse internal proxy APIs |
+| 进程 | 启动方式 | 默认端口 | 职责 |
+|------|----------|----------|------|
+| Pulse web | `pulse web` | `:8080` | 门户 JWT API、内部 Provider、静态管理后台 |
+| Channel | `pulse channel` | Stream | 钉钉接入、定时任务、能力桥 |
+| Assistant | `python -m assistant_platform serve` | `:8090` | 会话 / 技能 / 能力调用（开启镜像时） |
+| 管理 UI（开发） | `web-admin` 下 `npm run dev` | `:5173` | Vue 门户 |
+| Proxy（可选） | `cursor-pulse start proxy` | `:8317` | HTTPS MITM + 用量上报 |
 
-Local helper: `cursor-pulse.bat` / `.sh` / `.ps1` wraps `pulse dev` for multi-process start/stop.
+本地可用 `cursor-pulse.bat` / `.sh` / `.ps1` 统一启停。
 
-## Databases
+## 数据库
 
-| File / URL | Owner |
-|------------|--------|
-| `data/pulse.db` (or `DATABASE_URL`) | Pulse control plane |
-| `data/assistant.db` (`ASSISTANT_DATABASE_URL`) | Assistant platform |
+| 位置 | 归属 |
+|------|------|
+| `data/pulse.db`（或 `DATABASE_URL`） | Pulse 控制面 |
+| `data/assistant.db`（`ASSISTANT_DATABASE_URL`） | Assistant |
 
-## Ingestion model
+## 用量采集
 
-- **Cursor:** bind User API Key → scheduled / on-demand API sync (`pulse/ingestion/adapters/cursor_api.py`).
-- **Other tools:** manual CSV/XLSX / vision / text via channel (not the primary Cursor path).
+- **Cursor：** 绑定 User API Key → 定时/按需 API 同步
+- **其他工具：** 钉钉手工提交 CSV/XLSX / 截图 / 文本（非 Cursor 主路径）
 
-## HTTP surfaces (supported)
+## HTTP 面（建议对外支持）
 
-**Portal / public (JWT or portal auth)**
+**门户（JWT / 门户登录）**
 
-- `/api/auth/*`, `/api/v2/*` (accounts, credentials, quota, loans, assistant proxies, …)
+- `/api/auth/*`、`/api/v2/*`（账号、凭证、额度、借贷、Assistant 代理等）
 - `/health`
 
-**Internal (service token — fail closed if unset)**
+**内部（service token；未配置应失败关闭）**
 
 - `/api/internal/v1/capabilities/*`
 - `/api/internal/v1/channel/reply`
@@ -57,28 +56,27 @@ Local helper: `cursor-pulse.bat` / `.sh` / `.ps1` wraps `pulse dev` for multi-pr
 
 **Assistant**
 
-- `/api/assistant/v1/*` (events, capabilities, sessions, …); production usually via Pulse portal proxy.
+- `/api/assistant/v1/*`；生产通常经 Pulse 门户代理。
 
-Legacy `/api/*` (non-v2) routes may still exist — prefer v2 for new clients.
+遗留非 v2 的 `/api/*` 仍可能存在，新客户端优先 v2。
 
-## Package layout
+## 目录
 
-| Path | Notes |
-|------|--------|
-| `pulse/` | Control plane Python package |
-| `assistant_platform/` | Assistant package (same wheel today; process-separated) |
-| `proxy/` | Go module (not in Docker image by default) |
-| `web-admin/` | Vue admin |
-| `docker/` | Canonical compose + Dockerfile |
-| `scripts/` | Helper scripts (e.g. `cursor-usage.sh`) |
-| `docs/superpowers/` | Internal design history — not required to deploy |
+| 路径 | 说明 |
+|------|------|
+| `pulse/` | 控制面 Python 包 |
+| `assistant_platform/` | Assistant（同 wheel，进程可分离） |
+| `proxy/` | Go 模块（默认 Docker 镜像不含） |
+| `web-admin/` | Vue 管理后台 |
+| `docker/` | 正式 compose / Dockerfile |
+| `scripts/` | 辅助脚本 |
 
-Pulse and Assistant currently **import each other** in places; treat them as one product boundary until HTTP-only contracts are finished.
+Pulse 与 Assistant 目前仍有源码互引，视为同一产品边界。
 
-## Config
+## 配置
 
-- `config.yaml` — non-secret structure (from `config.example.yaml`)
-- `.env` — secrets and feature flags (from `.env.example`)
-- Docker: use `docker/.env` + `docker/config.yaml` after `docker/scripts/setup.sh`
+- `config.yaml` ← `config.example.yaml`（非密钥结构）
+- `.env` ← `.env.example`（密钥与开关）
+- Docker：在 `docker/` 下执行 `scripts/setup.sh` 后编辑 `docker/.env`
 
-Never commit real secrets. Placeholder tokens like `change-me-*` are rejected at Pulse web startup.
+切勿提交真实密钥。占位令牌 `change-me-*` 会在 Pulse web 启动时被拒绝。

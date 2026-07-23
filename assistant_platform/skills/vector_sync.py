@@ -3,7 +3,6 @@
 Factory + startup/periodic sync for :class:`SkillVectorIndex`. The embedder
 matches the archive pipeline (OpenAI-compatible when configured, otherwise
 ``HashingEmbedder``); index lifecycle is independent of chat-memory/archive.
-See docs/superpowers/specs/2026-07-21-file-as-skill-vector-routing-design.md.
 """
 
 from __future__ import annotations

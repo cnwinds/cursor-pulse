@@ -1,16 +1,13 @@
-# Documentation index
+# 文档索引
 
-| Doc | For |
-|-----|-----|
-| [../README.md](../README.md) | Product overview & quick start |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Processes, APIs, layout |
-| [RUNBOOK.md](RUNBOOK.md) | Operators |
-| [bot-commands.md](bot-commands.md) | DingTalk commands |
-| [OSS_IMPORT.md](OSS_IMPORT.md) | Clean public-repo import |
-| [cursor-usage-api.md](cursor-usage-api.md) | Unofficial Cursor API notes |
-| [../docker/README.md](../docker/README.md) | Docker deploy |
-| [../proxy/README.md](../proxy/README.md) | MITM proxy |
-| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors |
-| [../SECURITY.md](../SECURITY.md) | Vulnerability reporting |
-
-Internal plans/specs: `superpowers/` (historical; not required for deploy).
+| 文档 | 用途 |
+|------|------|
+| [../README.md](../README.md) | 产品简介与快速开始 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 进程、API、目录结构 |
+| [RUNBOOK.md](RUNBOOK.md) | 部署与运维 |
+| [bot-commands.md](bot-commands.md) | 钉钉机器人命令 |
+| [cursor-usage-api.md](cursor-usage-api.md) | Cursor 非官方 API 参考（可能失效） |
+| [../docker/README.md](../docker/README.md) | Docker 部署 |
+| [../proxy/README.md](../proxy/README.md) | MITM 代理 |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献指南 |
+| [../SECURITY.md](../SECURITY.md) | 安全策略 |

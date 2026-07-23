@@ -84,7 +84,7 @@ class SkillEmbeddingRow(Base):
     One row per skill file (skill_id = docs-relative POSIX path without ``.md``).
     Lifecycle is independent from archive/chat-memory embeddings; rows are synced
     by file ``content_hash`` and used to route which skill cards are injected each
-    turn. See docs/superpowers/specs/2026-07-21-file-as-skill-vector-routing-design.md.
+    turn.
     """
 
     __tablename__ = "ap_skill_embeddings"

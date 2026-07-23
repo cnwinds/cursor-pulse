@@ -11,7 +11,7 @@ class WeComMessenger:
 
     def _not_impl(self, *args, **kwargs):
         raise NotImplementedError(
-            "企业微信平台尚未实现。请使用 bot.name=dingtalk，或参考 docs/platforms/wecom.md 自行扩展。"
+            "企业微信平台尚未实现。请使用 bot.name=dingtalk。"
         )
 
     send_group_text = _not_impl

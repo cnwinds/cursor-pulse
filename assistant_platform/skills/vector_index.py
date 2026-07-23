@@ -8,8 +8,7 @@ returns the top-k :class:`SkillCard` objects for injection.
 
 The Embedder boundary matches ``assistant_platform.memory.embedding`` so tests
 use ``HashingEmbedder`` and production can swap in the OpenAI embedder (same
-pattern as archive). See
-docs/superpowers/specs/2026-07-21-file-as-skill-vector-routing-design.md.
+pattern as archive).
 """
 
 from __future__ import annotations
