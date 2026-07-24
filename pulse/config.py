@@ -454,7 +454,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     elif env.report_publish_to_group.lower() in ("0", "false", "no", "off"):
         cfg.collection.publish_report_to_group = False
 
-    cfg.credentials.encryption_key = env.pulse_credential_encryption_key
+    if env.pulse_credential_encryption_key:
+        cfg.credentials.encryption_key = env.pulse_credential_encryption_key
 
     if env.assistant_mirror_enabled:
         if env.assistant_mirror_enabled.lower() in ("1", "true", "yes", "on"):
