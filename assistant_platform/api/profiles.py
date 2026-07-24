@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from assistant_platform.api.sessions import ActorContext, _actor_dependency
+from assistant_platform.api.actor import ActorContext, build_actor_dependency
 from assistant_platform.profiles.compiler import compile_and_persist_effective_profile
 from assistant_platform.profiles.models import ProfileCorrectionRow, ProfileSignalRow
 
@@ -39,8 +39,9 @@ def register_profile_routes(
     *,
     session_factory: sessionmaker[Session],
     require_service_token: Callable[..., None],
+    service_token: str,
 ) -> None:
-    actor_dependency = _actor_dependency()
+    actor_dependency = build_actor_dependency(service_token)
 
     def get_db():
         session = session_factory()

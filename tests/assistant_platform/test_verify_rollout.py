@@ -45,6 +45,7 @@ from pulse.capabilities.invoke import invoke_capability
 from pulse.config import WebSearchConfig, load_config
 from pulse.storage.db import init_db
 from pulse.storage.models import Member
+from tests.assistant_actor_helpers import signed_actor_headers
 from tests.conftest import make_team_repo
 
 SERVICE_TOKEN = "assistant-secret"
@@ -441,13 +442,13 @@ def test_profile_correction_affects_next_recall():
 
     app = create_assistant_app(cfg, sf)
     test_client = TestClient(app)
-    headers = {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Channel-User-Id": "user-a",
-        "X-Pulse-Actor-Permissions": "assistant:sessions:read:self",
-    }
+    headers = signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        channel_user_id="user-a",
+        permissions="assistant:sessions:read:self",
+    )
     resp = test_client.post(
         "/api/assistant/v1/profiles/corrections",
         headers=headers,
@@ -503,16 +504,16 @@ def test_delete_cascade_removes_search_hits():
     sf = init_assistant_db("sqlite://", team_id=TEAM_A)
     app = create_assistant_app(cfg, sf)
     test_client = TestClient(app)
-    headers = {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Channel-User-Id": "user-a",
-        "X-Pulse-Actor-Permissions": (
+    headers = signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        channel_user_id="user-a",
+        permissions=(
             "assistant:sessions:read:self,"
             "assistant:sessions:delete:self"
         ),
-    }
+    )
 
     db = sf()
     session_row, _ = attach_user_message(

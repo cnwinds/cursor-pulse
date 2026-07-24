@@ -78,6 +78,61 @@ def test_password_login(client):
     assert "access_token" in body
 
 
+def _password_login_client(admin_password: str):
+    config = AppConfig(
+        web=WebConfig(
+            admin_token="secret-token",
+            admin_password=admin_password,
+            jwt_secret="jwt-test-secret",
+        ),
+        tenant=TenantConfig(slug="test", name="Test"),
+    )
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
+    session = session_factory()
+    _team, repo = make_team_repo(session)
+    repo.add_member("u1", "Alice")
+    bootstrap_portal_owner(
+        repo,
+        dingtalk_user_id="admin1",
+        display_name="Admin",
+        password="pass1234",
+    )
+    repo.commit()
+    session.close()
+    return TestClient(create_app(config, session_factory)), config
+
+
+def test_password_login_accepts_hashed_admin_password():
+    from pulse.web.passwords import hash_password
+
+    test_client, _ = _password_login_client(hash_password("pass1234"))
+    res = test_client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "pass1234"},
+    )
+    assert res.status_code == 200
+    assert res.json()["user"]["portal_role"] == "owner"
+
+
+def test_password_login_rejects_wrong_password_with_hashed_admin_password():
+    from pulse.web.passwords import hash_password
+
+    test_client, _ = _password_login_client(hash_password("pass1234"))
+    res = test_client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "wrong"},
+    )
+    assert res.status_code == 401
+
+
 def test_password_login_rejects_wrong_username(client):
     test_client, _, _, _ = client
     res = test_client.post(

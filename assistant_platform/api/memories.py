@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from assistant_platform.api.sessions import ActorContext, _actor_dependency, _has_permission
+from assistant_platform.api.actor import ActorContext, build_actor_dependency
+from assistant_platform.api.sessions import _has_permission
 from assistant_platform.config import AssistantConfig, resolve_effective_chat_memory
 from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.memory.archive_models import ArchiveChunkRow, MemoryScope, SessionArchiveRow
@@ -141,7 +142,7 @@ def register_memory_routes(
     session_factory: sessionmaker[Session],
     require_service_token: Callable[..., None],
 ) -> None:
-    actor_dependency = _actor_dependency()
+    actor_dependency = build_actor_dependency((config.service_token or "").strip())
 
     def get_db():
         session = session_factory()

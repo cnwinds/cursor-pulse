@@ -20,6 +20,10 @@ import (
 	"time"
 )
 
+func permitTestConnect(s *Server) {
+	s.connectAllowlist = []string{"*"}
+}
+
 // fakeUpstream emulates api2.cursor.sh: the token exchange endpoint plus a
 // streaming agent endpoint that fails with a quota error for key A and
 // succeeds for key B.
@@ -102,6 +106,7 @@ func newTestProxy(t *testing.T, fu *fakeUpstream) (addr string, caPEM []byte) {
 	// sessions=nil skips JWT gate so baseline rotation tests need no Pulse exchange.
 	s := NewServer(pool, ca, nil, nil)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},

@@ -166,7 +166,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                     actor_role = member.portal_role
                     if actor_role not in ("owner", "operator") and self._is_admin(user_id):
                         actor_role = "owner"
-                    mirror_dingtalk_message(
+                    await mirror_dingtalk_message(
                         incoming,
                         text=text or "",
                         config=self.pulse_config,

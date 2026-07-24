@@ -32,8 +32,6 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
         "assistant:sessions:export:all",
         "assistant:sessions:delete:self",
         "assistant:prompts:read",
-        "assistant:prompts:write",
-        "assistant:prompts:approve",
     }
 )
 
@@ -62,7 +60,6 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "assistant:sessions:export:all",
             "assistant:sessions:delete:self",
             "assistant:prompts:read",
-            "assistant:prompts:write",
         }
     ),
     "auditor": frozenset(

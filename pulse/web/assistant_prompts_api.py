@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
+from pulse.web.assistant_actor import sign_actor_headers
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import resolve_permissions
 
@@ -39,10 +40,13 @@ def _assistant_headers(config: AppConfig, user: PortalUser) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "X-Assistant-Token": token,
-        "X-Pulse-Actor-Member-Id": user.member.id,
-        "X-Pulse-Actor-Role": user.member.portal_role or "",
-        "X-Pulse-Actor-Channel-User-Id": user.member.dingtalk_user_id,
-        "X-Pulse-Actor-Permissions": permissions,
+        **sign_actor_headers(
+            token,
+            user.member.id,
+            user.member.portal_role or "",
+            user.member.dingtalk_user_id,
+            permissions,
+        ),
         "Content-Type": "application/json",
     }
 
@@ -174,16 +178,8 @@ def register_assistant_prompts_routes(
         )
 
     @app.post("/api/v2/assistant/prompts/proposals/{proposal_id}/approve")
-    def assistant_prompt_proposal_approve(
-        proposal_id: str,
-        user: PortalUser = Depends(require_capability("assistant:prompts:approve")),
-    ):
-        return _proxy_assistant(
-            config,
-            user=user,
-            method="POST",
-            path=f"/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
-        )
+    def assistant_prompt_proposal_approve(proposal_id: str):
+        _gone()
 
     @app.post("/api/v2/assistant/prompts/releases/{release_id}/canary")
     def assistant_prompt_release_canary(release_id: str):

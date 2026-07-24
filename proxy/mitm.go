@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 var hopHeaders = map[string]bool{
@@ -49,7 +50,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		bodyFor = func() io.ReadCloser { return fs.reader() }
 		reqBodySnap = fs.snapshot
 	} else {
-		body, err := io.ReadAll(io.LimitReader(req.Body, 1<<30))
+		body, err := io.ReadAll(io.LimitReader(req.Body, maxNonStreamBodyLimit()))
 		if err != nil {
 			http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
 			return
@@ -73,6 +74,21 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		if !ok {
 			http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 			return
+		}
+		if s.pulse != nil && s.sessionTTL > 0 && time.Since(b.BoundAt) > s.sessionTTL {
+			res, err := s.pulse.Authorize(b.PulseKey)
+			if err != nil {
+				log.Printf("[mitm] session re-authorize fail-closed: %v", err)
+				http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if res.Status != "ok" {
+				s.sessions.Delete(cliTok)
+				http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
+				return
+			}
+			b.BoundAt = time.Now()
+			s.sessions.Bind(cliTok, b)
 		}
 		binding = b
 	}

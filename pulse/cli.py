@@ -66,6 +66,18 @@ def main(argv: list[str] | None = None) -> int:
 
     p_init = sub.add_parser("init-db", help="Initialize database schema")
 
+    p_rotate_key = sub.add_parser(
+        "rotate-credential-key",
+        help="Re-encrypt stored credentials after PULSE_CREDENTIAL_ENCRYPTION_KEY rotation",
+    )
+    p_rotate_key.add_argument("--old", required=True, help="Current encryption key")
+    p_rotate_key.add_argument("--new", required=True, help="New encryption key")
+    p_rotate_key.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Decrypt and count only; do not write",
+    )
+
     p_init_v2 = sub.add_parser("init-v2", help="Initialize v2 AI tool center tables and seed catalog")
     p_init_v2.add_argument("--seed", action="store_true", help="Seed vendors, plans, and trial accounts")
 
@@ -189,6 +201,39 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init-db":
         logger.info("Database initialized at %s", config.storage.database_url)
+        return 0
+
+    if args.command == "rotate-credential-key":
+        from pulse.ingestion.credentials import rotate_credential_encryption
+
+        session = session_factory()
+        try:
+            stats = rotate_credential_encryption(
+                session,
+                old_key=args.old,
+                new_key=args.new,
+                dry_run=args.dry_run,
+            )
+        except ValueError as exc:
+            logger.error("%s", exc)
+            session.close()
+            return 1
+        session.close()
+        mode = "dry-run" if args.dry_run else "rotated"
+        logger.info(
+            "%s: credentials=%s loan_aliases=%s proxy_keys=%s skipped=%s",
+            mode,
+            stats["credentials"],
+            stats["loan_aliases"],
+            stats["proxy_keys"],
+            stats["skipped"],
+        )
+        if stats["skipped"]:
+            logger.warning(
+                "Some rows could not be decrypted with --old key; "
+                "verify backup and old key before updating env"
+            )
+            return 1
         return 0
 
     if args.command == "init-v2":

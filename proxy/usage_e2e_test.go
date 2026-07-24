@@ -99,6 +99,7 @@ func TestUsageTapStreamingE2E(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, pulse, sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},

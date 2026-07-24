@@ -61,7 +61,7 @@ assistant_llm:
   memory_enabled: true
 
 bot:
-  name: dingtalk  # dingtalk | feishu | wecom
+  name: dingtalk  # dingtalk | feishu | wecom — feishu/wecom 仅为占位，生产请用 dingtalk
 
 object_storage:
   enabled: false

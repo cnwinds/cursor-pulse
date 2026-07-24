@@ -109,6 +109,8 @@ def test_catalog_proxies_to_assistant(mock_client_cls, api_env):
     assert headers["Authorization"] == f"Bearer {ASSISTANT_TOKEN}"
     assert headers["X-Assistant-Token"] == ASSISTANT_TOKEN
     assert headers["X-Pulse-Actor-Member-Id"] == api_env["owner"].id
+    assert "X-Pulse-Actor-Ts" in headers
+    assert "X-Pulse-Actor-Signature" in headers
 
 
 @patch("pulse.web.assistant_capabilities_api.httpx.Client")

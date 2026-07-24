@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -12,7 +13,7 @@ import httpx
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
-from pulse.config import AppConfig
+from pulse.config import AppConfig, AssistantMirrorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,26 @@ def _post_to_assistant(
             last_exc = exc
             if attempt < _MIRROR_RETRY_ATTEMPTS - 1:
                 time.sleep(_MIRROR_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
+
+
+async def _post_to_assistant_async(
+    url: str, payload: dict, headers: dict, mirror
+) -> httpx.Response:
+    """Async POST to assistant ingest with retries (non-blocking for event loop)."""
+    timeout = max(float(mirror.timeout_seconds), _MIRROR_MIN_TIMEOUT_SECONDS)
+    last_exc: Exception | None = None
+    for attempt in range(_MIRROR_RETRY_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                return resp
+        except Exception as exc:  # noqa: BLE001 — retry any transient failure
+            last_exc = exc
+            if attempt < _MIRROR_RETRY_ATTEMPTS - 1:
+                await asyncio.sleep(_MIRROR_RETRY_BACKOFF_SECONDS * (attempt + 1))
     assert last_exc is not None
     raise last_exc
 
@@ -104,7 +125,7 @@ def build_event_from_dingtalk(
     )
 
 
-def mirror_dingtalk_message(
+def _dingtalk_mirror_payload(
     incoming,
     *,
     text: str,
@@ -113,10 +134,10 @@ def mirror_dingtalk_message(
     is_group: bool,
     actor_member_id: str | None = None,
     actor_role: str | None = None,
-) -> None:
+) -> tuple[AssistantMirrorConfig | None, str, dict, dict] | None:
     mirror = config.assistant_mirror
     if not mirror.enabled:
-        return
+        return None
     event = build_event_from_dingtalk(
         incoming,
         text=text,
@@ -147,6 +168,66 @@ def mirror_dingtalk_message(
         "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
         "raw_metadata_redacted": event.raw_metadata_redacted,
     }
+    return mirror, url, headers, payload
+
+
+async def mirror_dingtalk_message(
+    incoming,
+    *,
+    text: str,
+    config: AppConfig,
+    team_id: str,
+    is_group: bool,
+    actor_member_id: str | None = None,
+    actor_role: str | None = None,
+) -> None:
+    built = _dingtalk_mirror_payload(
+        incoming,
+        text=text,
+        config=config,
+        team_id=team_id,
+        is_group=is_group,
+        actor_member_id=actor_member_id,
+        actor_role=actor_role,
+    )
+    if built is None:
+        return
+    mirror, url, headers, payload = built
+    try:
+        await _post_to_assistant_async(url, payload, headers, mirror)
+    except Exception as exc:
+        _write_deadletter("dingtalk", payload, exc)
+        if mirror.fail_open:
+            logger.exception(
+                "Assistant mirror failed after retries (fail-open); wrote dead-letter"
+            )
+            return
+        raise
+
+
+def mirror_dingtalk_message_sync(
+    incoming,
+    *,
+    text: str,
+    config: AppConfig,
+    team_id: str,
+    is_group: bool,
+    actor_member_id: str | None = None,
+    actor_role: str | None = None,
+) -> None:
+    """Sync mirror for callers outside an async event loop."""
+    built = _dingtalk_mirror_payload(
+        incoming,
+        text=text,
+        config=config,
+        team_id=team_id,
+        is_group=is_group,
+        actor_member_id=actor_member_id,
+        actor_role=actor_role,
+    )
+    if built is None:
+        return
+    mirror, url, headers, payload = built
     try:
         _post_to_assistant(url, payload, headers, mirror)
     except Exception as exc:

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Callable
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from assistant_platform.api.actor import ActorContext, build_actor_dependency
 from assistant_platform.evolution.models import FailureClusterRow, PromptChangeProposalRow
 from assistant_platform.prompts.models import PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.loader import (
@@ -18,12 +19,6 @@ from assistant_platform.prompts.loader import (
 _PROMPT_EDITING_RETIRED_DETAIL = (
     "Prompt editing retired; edit files in assistant_platform/prompts/docs"
 )
-
-
-class ActorContext(BaseModel):
-    member_id: str = ""
-    role: str = ""
-    permissions: set[str] = Field(default_factory=set)
 
 
 class CreateFragmentBody(BaseModel):
@@ -48,42 +43,9 @@ class CanaryBody(BaseModel):
     percent: int = 10
 
 
-def _parse_permissions(raw: str | None) -> set[str]:
-    if not raw:
-        return set()
-    return {part.strip() for part in raw.split(",") if part.strip()}
-
-
-def _actor_dependency():
-    def dependency(
-        x_pulse_actor_member_id: Annotated[str | None, Header(alias="X-Pulse-Actor-Member-Id")] = None,
-        x_pulse_actor_role: Annotated[str | None, Header(alias="X-Pulse-Actor-Role")] = None,
-        x_pulse_actor_permissions: Annotated[
-            str | None, Header(alias="X-Pulse-Actor-Permissions")
-        ] = None,
-    ) -> ActorContext:
-        return ActorContext(
-            member_id=(x_pulse_actor_member_id or "").strip(),
-            role=(x_pulse_actor_role or "").strip(),
-            permissions=_parse_permissions(x_pulse_actor_permissions),
-        )
-
-    return dependency
-
-
 def _require_read(actor: ActorContext) -> None:
     if "assistant:prompts:read" not in actor.permissions:
         raise HTTPException(status_code=403, detail="缺少 assistant:prompts:read 权限")
-
-
-def _require_write(actor: ActorContext) -> None:
-    if "assistant:prompts:write" not in actor.permissions:
-        raise HTTPException(status_code=403, detail="缺少 assistant:prompts:write 权限")
-
-
-def _require_approve(actor: ActorContext) -> None:
-    if "assistant:prompts:approve" not in actor.permissions:
-        raise HTTPException(status_code=403, detail="缺少 assistant:prompts:approve 权限")
 
 
 def _gone() -> None:
@@ -152,8 +114,9 @@ def register_prompt_routes(
     *,
     session_factory: sessionmaker[Session],
     require_service_token: Callable[..., None],
+    service_token: str,
 ) -> None:
-    actor_dependency = _actor_dependency()
+    actor_dependency = build_actor_dependency(service_token)
 
     def get_db():
         session = session_factory()
@@ -278,21 +241,8 @@ def register_prompt_routes(
         "/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
         dependencies=[Depends(require_service_token)],
     )
-    def approve_proposal(
-        proposal_id: str,
-        session: Session = Depends(get_db),
-        actor: ActorContext = Depends(actor_dependency),
-    ):
-        _require_approve(actor)
-        proposal = session.get(PromptChangeProposalRow, proposal_id)
-        if proposal is None:
-            raise HTTPException(status_code=404, detail="Proposal not found")
-        if proposal.status != "draft":
-            raise HTTPException(status_code=409, detail="仅 draft 提案可审批")
-        proposal.status = "approved"
-        session.add(proposal)
-        session.commit()
-        return _proposal_json(proposal)
+    def approve_proposal(proposal_id: str):
+        _gone()
 
     @app.post(
         "/api/assistant/v1/prompts/releases/{release_id}/canary",

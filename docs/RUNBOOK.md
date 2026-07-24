@@ -40,7 +40,9 @@ cp .env.example .env
 | `DINGTALK_ADMIN_USER_IDS` | 管理员 userid（逗号分隔） |
 | `JWT_SECRET` | Web JWT（生产必配） |
 | `PULSE_CREDENTIAL_ENCRYPTION_KEY` | 凭证加密 |
-| `PULSE_INTERNAL_SERVICE_TOKEN` | 内部 API（与 Assistant / Proxy 共用约定） |
+| `PULSE_INTERNAL_SERVICE_TOKEN` | Pulse / Proxy 内部 API |
+| `PULSE_INTERNAL_TOKEN` | Assistant→Pulse（通常与上项同值） |
+| `PULSE_BASE_URL` | Assistant / Proxy 访问 Pulse 的 URL |
 | `ASSISTANT_SERVICE_TOKEN` / `ASSISTANT_SECRET_KEY` | 启用 Assistant 时 |
 
 更多变量见 `.env.example`。安全要求见 [../SECURITY.md](../SECURITY.md)。
@@ -121,7 +123,9 @@ sqlite3 data/pulse.db ".backup data/pulse-backup.db"
 git pull
 pip install -e ".[web]"
 # Docker: cd docker && docker compose build && docker compose up -d
-pulse init-db   # 或 docker compose --profile tools run --rm init-db
+# init-db 为 oneshot，compose up 会自动幂等迁移；裸机或排查时：
+pulse init-db
+# 仅当 init-db 容器失败需单独重跑：cd docker && docker compose run --rm init-db
 ```
 
 回滚：切回上一 tag，必要时恢复数据库备份。
@@ -138,11 +142,52 @@ pulse init-db   # 或 docker compose --profile tools run --rm init-db
 
 日志：开发态见 `.dev/logs/`；生产见容器 / systemd 日志。
 
+## 9. 凭证加密密钥轮换
+
+更换 `PULSE_CREDENTIAL_ENCRYPTION_KEY` 前必须重加密库内凭证，否则 Cursor API Key / 代理 key 无法解密。
+
+1. **停写进程：** `pulse web`、`pulse channel`、Assistant、Go Proxy（避免同步或绑定写入半新半旧数据）。
+2. **备份数据库：** SQLite 见 §5；Postgres 用 `pg_dump`。
+3. **重加密（推荐 CLI）：**
+
+```bash
+export OLD_KEY="<当前 PULSE_CREDENTIAL_ENCRYPTION_KEY>"
+export NEW_KEY="<新高熵密钥>"
+
+# 先 dry-run 确认可解密条数
+pulse rotate-credential-key --old "$OLD_KEY" --new "$NEW_KEY" --dry-run
+
+# 确认 skipped=0 后执行
+pulse rotate-credential-key --old "$OLD_KEY" --new "$NEW_KEY"
+```
+
+覆盖 `ai_account_credentials.encrypted_value`、`key_loans.alias_encrypted_key`、`proxy_keys.encrypted_key`。
+
+4. **更新配置：** 将 `.env` / `docker/.env` 与 `config.yaml` 中的 `PULSE_CREDENTIAL_ENCRYPTION_KEY` 改为 `NEW_KEY`。
+5. **重启** web / channel / assistant / proxy，抽查绑定 Key 与代理 authorize。
+
+**无 CLI 时的 Python 片段（与 CLI 等价）：**
+
+```python
+from pulse.config import load_config
+from pulse.ingestion.credentials import rotate_credential_encryption
+from pulse.storage.db import init_db
+
+cfg = load_config("config.yaml")
+session = init_db(cfg.storage.database_url)()
+stats = rotate_credential_encryption(session, old_key=OLD, new_key=NEW)
+print(stats)
+session.close()
+```
+
+`ASSISTANT_SECRET_KEY` 与 Pulse 凭证密钥无关；轮换 Assistant Secret Store 见 Assistant 文档。
+
 ## 8. CLI 速查
 
 | 命令 | 作用 |
 |------|------|
 | `pulse init-db` / `init-v2 --seed` | 建库 / v2 种子 |
+| `pulse rotate-credential-key` | 轮换凭证加密密钥后重加密库内 blob |
 | `pulse channel` | 渠道 + 调度 |
 | `pulse web` | 控制面 HTTP |
 | `pulse aggregate` / `report` / `export` | 聚合 / 月报 / 导出 |

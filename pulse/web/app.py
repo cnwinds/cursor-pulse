@@ -56,11 +56,13 @@ def create_app(
     require_admin_spa: bool = False,
 ) -> FastAPI:
     from pulse.security_tokens import assert_secure_service_tokens
+    from pulse.web.auth_tokens import assert_jwt_secret_configured
 
     assert_secure_service_tokens(
         assistant_token=config.assistant_mirror.service_token,
         pulse_internal_token=config.internal.service_token,
     )
+    assert_jwt_secret_configured(config)
     app = FastAPI(title="Cursor Pulse Admin", version="0.2.0")
 
     if config.web.cors_origins:

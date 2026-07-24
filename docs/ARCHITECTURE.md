@@ -54,6 +54,17 @@ Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
 - `/api/internal/v1/channel/reply`
 - `/api/internal/v1/proxy/{authorize,pool,usage,events}`
 
+**内部 token 变量名（同一密钥值）：**
+
+| 消费者 | 环境变量 |
+|--------|----------|
+| Pulse 控制面、Go Proxy | `PULSE_INTERNAL_SERVICE_TOKEN` |
+| Assistant → Pulse | `PULSE_INTERNAL_TOKEN` |
+
+Assistant / Proxy 还需 `PULSE_BASE_URL` 指向 Pulse web（如 `http://127.0.0.1:8080`）。
+
+**On-Demand 强制关闭（Cursor 同步）：** 团队级开关 `cursor_sync.enforce_on_demand_disabled`（默认 true），可在 Web 系统设置编辑；见 [cursor-usage-api.md](cursor-usage-api.md#sethardlimit--设置--关闭-on-demand-spending) 与 [RUNBOOK.md](RUNBOOK.md)。
+
 **Assistant**
 
 - `/api/assistant/v1/*`；生产通常经 Pulse 门户代理。

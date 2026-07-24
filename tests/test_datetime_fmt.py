@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pulse.util.datetime_fmt import format_china_datetime, format_data_updated_line
+from pulse.util.datetime_fmt import (
+    format_china_date,
+    format_china_datetime,
+    format_data_updated_line,
+)
 
 
 def test_format_china_datetime_from_utc():
@@ -10,6 +14,14 @@ def test_format_china_datetime_from_utc():
         format_china_datetime(datetime(2026, 7, 15, 4, 30, 0, tzinfo=timezone.utc))
         == "2026-07-15 12:30:00"
     )
+
+
+def test_format_china_date_from_utc():
+    assert (
+        format_china_date(datetime(2026, 7, 23, 16, 0, 0, tzinfo=timezone.utc))
+        == "2026-07-24"
+    )
+    assert format_china_date(None) is None
 
 
 def test_format_china_datetime_iso_for_tools():

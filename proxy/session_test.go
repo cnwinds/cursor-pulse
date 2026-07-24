@@ -9,6 +9,9 @@ func TestSessionMapBindAndLookup(t *testing.T) {
 	if !ok || b.ProxyKeyID != "pk1" {
 		t.Fatalf("%+v %v", b, ok)
 	}
+	if b.BoundAt.IsZero() {
+		t.Fatal("expected BoundAt set on Bind")
+	}
 	if _, ok := m.Lookup("missing"); ok {
 		t.Fatal("expected miss")
 	}

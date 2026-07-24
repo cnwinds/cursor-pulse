@@ -19,6 +19,7 @@ from assistant_platform.evaluation.stub import run_evaluation_stub
 from assistant_platform.prompts.seed import get_production_release
 from assistant_platform.review.auto_review import run_auto_review
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-eval"
@@ -72,12 +73,12 @@ def client():
 
 
 def _headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Permissions": "assistant:prompts:read,assistant:prompts:write",
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        permissions="assistant:prompts:read",
+    )
 
 
 def test_run_evaluation_stub_compares_closed_sessions(client):
@@ -138,9 +139,9 @@ def test_evaluation_runs_api_requires_prompt_read(client):
     resp = test_client.post(
         "/api/assistant/v1/evaluations/runs",
         json={"release_id": production.id if production else "x", "limit": 5},
-        headers={
-            "Authorization": f"Bearer {SERVICE_TOKEN}",
-            "X-Pulse-Actor-Permissions": "assistant:sessions:read:self",
-        },
+        headers=signed_actor_headers(
+            SERVICE_TOKEN,
+            permissions="assistant:sessions:read:self",
+        ),
     )
     assert resp.status_code == 403

@@ -19,6 +19,7 @@ from assistant_platform.evolution.models import FailureClusterRow, PromptChangeP
 from assistant_platform.prompts.seed import get_production_release
 from assistant_platform.review.auto_review import run_auto_review
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-evolution"
@@ -100,13 +101,13 @@ def test_cluster_low_score_reviews_creates_cluster_and_draft_proposal():
     session.close()
 
 
-def _headers(*, permissions: str = "assistant:prompts:read,assistant:prompts:approve") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+def _headers(*, permissions: str = "assistant:prompts:read") -> dict[str, str]:
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        permissions=permissions,
+    )
 
 
 @pytest.fixture
@@ -143,14 +144,16 @@ def test_approve_proposal_does_not_change_production_release(api_client):
         f"/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
         headers=_headers(),
     )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "approved"
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == (
+        "Prompt editing retired; edit files in assistant_platform/prompts/docs"
+    )
 
     db = sf()
     try:
         updated = db.get(PromptChangeProposalRow, proposal_id)
         assert updated is not None
-        assert updated.status == "approved"
+        assert updated.status == "draft"
         production_after = get_production_release(db)
         assert production_after.id == production_before.id
     finally:

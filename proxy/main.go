@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,7 @@ func main() {
 		pulseURL       = flag.String("pulse-url", "", "Pulse control-plane base URL (env PULSE_BASE_URL)")
 		pulseToken     = flag.String("pulse-token", "", "Pulse internal service token (env PULSE_INTERNAL_SERVICE_TOKEN)")
 		upstreamProxy  = flag.String("upstream-proxy", "", "HTTP(S) proxy for Cursor upstream (env PROXY_UPSTREAM_URL)")
+		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
 	)
 	flag.Parse()
 
@@ -52,6 +55,8 @@ func main() {
 	}
 	if *listen != "" {
 		cfg.Listen = *listen
+	} else if v := strings.TrimSpace(os.Getenv("PROXY_LISTEN")); v != "" {
+		cfg.Listen = v
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = "0.0.0.0:8317"
@@ -120,7 +125,14 @@ Point agent at this proxy and trust the CA (PowerShell):
 		log.Printf("listening on %s with %d API key(s)", cfg.Listen, len(cfg.Keys))
 	}
 
+	exhaustedReset := resolveExhaustedResetInterval()
+	go pollExhaustedReset(pool, exhaustedReset)
+	log.Printf("pool exhausted reset every %s (PROXY_EXHAUSTED_RESET)", exhaustedReset)
+
 	srv := NewServer(pool, ca, pulse, sessions)
+	if pulseMode {
+		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
+	}
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))
 	upstream, err := parseUpstreamProxy(upstreamRaw)
@@ -134,6 +146,14 @@ Point agent at this proxy and trust the CA (PowerShell):
 	log.Printf("cursor upstream: %s", redactUpstreamProxy(upstreamRaw))
 
 	log.Fatal(http.ListenAndServe(cfg.Listen, srv))
+}
+
+func pollExhaustedReset(pool *Pool, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for range tick.C {
+		pool.reset()
+	}
 }
 
 func pollPool(pool *Pool, pulse *PulseClient, every time.Duration) {
@@ -160,4 +180,21 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+const defaultSessionTTL = 120 * time.Second
+
+func resolveSessionTTL(flagVal time.Duration) time.Duration {
+	if flagVal > 0 {
+		return flagVal
+	}
+	if raw := os.Getenv("PROXY_SESSION_TTL"); raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultSessionTTL
 }

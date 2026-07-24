@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.storage.models import Member
+from pulse.web.assistant_actor import sign_actor_headers
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import resolve_permissions
 from sqlalchemy import select
@@ -95,10 +96,13 @@ def _assistant_headers(config: AppConfig, user: PortalUser) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "X-Assistant-Token": token,
-        "X-Pulse-Actor-Member-Id": user.member.id,
-        "X-Pulse-Actor-Role": user.member.portal_role or "",
-        "X-Pulse-Actor-Channel-User-Id": user.member.dingtalk_user_id,
-        "X-Pulse-Actor-Permissions": permissions,
+        **sign_actor_headers(
+            token,
+            user.member.id,
+            user.member.portal_role or "",
+            user.member.dingtalk_user_id,
+            permissions,
+        ),
         "Content-Type": "application/json",
     }
 

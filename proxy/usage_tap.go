@@ -12,12 +12,25 @@ type usageTapWriter struct {
 	w        io.Writer
 	buf      []byte
 	onTokens func(TokenCounts)
+	stopped  bool // true once buffer cap reached — forward only, no tap
 }
 
 func (t *usageTapWriter) Write(p []byte) (int, error) {
 	n, err := t.w.Write(p)
-	if n > 0 {
+	if t.stopped || n <= 0 {
+		return n, err
+	}
+	remain := maxUsageTapBuffer - len(t.buf)
+	if remain <= 0 {
+		t.stopped = true
+		t.buf = nil
+		return n, err
+	}
+	if n <= remain {
 		t.buf = append(t.buf, p[:n]...)
+	} else {
+		t.buf = append(t.buf, p[:remain]...)
+		t.stopped = true
 	}
 	for {
 		if len(t.buf) < 5 {

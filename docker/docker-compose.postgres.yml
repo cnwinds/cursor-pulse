@@ -5,7 +5,7 @@
 #
 # First run after switching from SQLite:
 #   1. pg_dump / migrate data manually, or keep using SQLite (recommended for small teams)
-#   2. docker compose --profile tools run --rm init-db
+#   2. docker compose up -d   # init-db oneshot runs automatically; or: docker compose run --rm init-db
 
 services:
   db:

@@ -17,6 +17,7 @@ from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import AuditEventRow
 from assistant_platform.storage.repository import AssistantRepository
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-1"
@@ -29,13 +30,13 @@ def _headers(
     member_id: str = "mem-1",
     role: str = "operator",
 ) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": member_id,
-        "X-Pulse-Actor-Role": role,
-        "X-Pulse-Actor-Channel-User-Id": channel_user_id,
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id=member_id,
+        role=role,
+        channel_user_id=channel_user_id,
+        permissions=permissions,
+    )
 
 
 def _event(

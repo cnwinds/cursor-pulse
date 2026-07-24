@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type SessionBinding struct {
 	ProxyKeyID   string
@@ -11,6 +14,7 @@ type SessionBinding struct {
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
+	BoundAt      time.Time
 }
 
 type SessionMap struct {
@@ -23,6 +27,9 @@ func NewSessionMap() *SessionMap {
 }
 
 func (m *SessionMap) Bind(jwt string, b SessionBinding) {
+	if b.BoundAt.IsZero() {
+		b.BoundAt = time.Now()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.byJWT[jwt] = b
@@ -33,4 +40,10 @@ func (m *SessionMap) Lookup(jwt string) (SessionBinding, bool) {
 	defer m.mu.RUnlock()
 	b, ok := m.byJWT[jwt]
 	return b, ok
+}
+
+func (m *SessionMap) Delete(jwt string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.byJWT, jwt)
 }

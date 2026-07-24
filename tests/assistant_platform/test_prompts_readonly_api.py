@@ -8,18 +8,19 @@ pytest.importorskip("fastapi")
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-prompts-readonly-api"
 
 
 def _headers(*, permissions: str = "assistant:prompts:read") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        permissions=permissions,
+    )
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ def test_prompt_preview_comes_from_files(client: TestClient):
         "/api/assistant/v1/prompts/releases/release-1/canary",
         "/api/assistant/v1/prompts/releases/release-1/promote",
         "/api/assistant/v1/prompts/releases/release-1/rollback",
+        "/api/assistant/v1/prompts/proposals/proposal-1/approve",
     ],
 )
 def test_prompt_write_returns_410(client: TestClient, path: str):

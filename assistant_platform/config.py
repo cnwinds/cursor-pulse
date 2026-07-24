@@ -463,14 +463,31 @@ def _load_memory_database_url() -> str | None:
 
 def validate_runtime_config(config: AssistantConfig, *, strict: bool = False) -> None:
     """Ensure required secrets are configured before serving traffic."""
+    from pulse.security_tokens import is_insecure_token
+
     missing: list[str] = []
-    if not (config.service_token or "").strip():
+    insecure: list[str] = []
+
+    service_token = (config.service_token or "").strip()
+    if not service_token:
         missing.append("ASSISTANT_SERVICE_TOKEN")
+    elif is_insecure_token(service_token):
+        insecure.append("ASSISTANT_SERVICE_TOKEN")
+
     if strict:
-        if not (config.secret_key or "").strip():
+        secret_key = (config.secret_key or "").strip()
+        if not secret_key:
             missing.append("ASSISTANT_SECRET_KEY")
+        elif is_insecure_token(secret_key):
+            insecure.append("ASSISTANT_SECRET_KEY")
         if config.llm.enabled and not (config.llm.api_key or "").strip():
             missing.append("ASSISTANT_LLM_API_KEY")
+
+    if insecure:
+        joined = ", ".join(insecure)
+        raise SystemExit(
+            f"Assistant Platform insecure placeholder configuration: {joined}"
+        )
     if missing:
         joined = ", ".join(missing)
         raise SystemExit(f"Assistant Platform missing required configuration: {joined}")

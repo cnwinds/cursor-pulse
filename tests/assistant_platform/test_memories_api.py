@@ -19,6 +19,7 @@ from assistant_platform.memory.archive_pipeline import run_archive_pipeline
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import AuditEventRow
 from assistant_platform.memory.semantic.models import SemanticAtomRow
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-memory-api"
@@ -33,13 +34,13 @@ def _headers(
     ),
     channel_user_id: str = "u1",
 ) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Channel-User-Id": channel_user_id,
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        channel_user_id=channel_user_id,
+        permissions=permissions,
+    )
 
 
 def _event(*, sender: str = "u1", text: str = "alpha project deadline Friday") -> IncomingMessageEvent:

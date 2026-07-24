@@ -64,6 +64,7 @@ func newPulseTestProxy(t *testing.T, fu *fakeUpstream, pulseURL string) (addr st
 	sessions = NewSessionMap()
 	s := NewServer(pool, ca, pulse, sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
@@ -203,6 +204,7 @@ func TestExchangeCollisionRotatesToOtherCredential(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},

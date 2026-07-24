@@ -257,6 +257,12 @@ def test_loan_usages_detail(loan_client_env):
     assert body["by_model"] == [
         {"model": "gpt-5", "request_count": 1, "total_tokens": 100, "cost_cents": 42}
     ]
+    assert len(body["by_day"]) == 1
+    assert body["by_day"][0]["request_count"] == 1
+    assert body["by_day"][0]["total_tokens"] == 100
+    assert body["by_day"][0]["cost_cents"] == 42
+    assert len(body["by_day"][0]["items"]) == 1
+    assert body["by_day"][0]["items"][0]["model"] == "gpt-5"
 
 
 def test_loan_usages_by_model_aggregates_all_rows(loan_client_env):
@@ -314,6 +320,50 @@ def test_loan_usages_by_model_aggregates_all_rows(loan_client_env):
             "cost_cents": 7,
         },
     ]
+
+
+def test_loan_usages_by_day_groups_china_calendar(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    # 2026-07-23 16:00 UTC = 2026-07-24 00:00 China
+    # 2026-07-23 15:00 UTC = 2026-07-23 23:00 China
+    for ts, tokens, cost in [
+        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=timezone.utc), 100, 10),
+        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=timezone.utc), 200, 20),
+        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=timezone.utc), 50, 5),
+    ]:
+        s.add(
+            ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan_id,
+                credential_id="cred-1",
+                model="gpt-5",
+                total_tokens=tokens,
+                cost_cents=cost,
+                ts=ts,
+            )
+        )
+    s.commit()
+    s.close()
+
+    res = env["client"].get(f"/api/v2/loans/{loan_id}/usages", headers=_headers(token))
+    assert res.status_code == 200
+    by_day = res.json()["by_day"]
+    assert [d["day"] for d in by_day] == ["2026-07-24", "2026-07-23"]
+    assert by_day[0] == {
+        "day": "2026-07-24",
+        "request_count": 2,
+        "total_tokens": 300,
+        "cost_cents": 30,
+        "items": by_day[0]["items"],
+    }
+    assert len(by_day[0]["items"]) == 2
+    assert by_day[1]["request_count"] == 1
+    assert by_day[1]["total_tokens"] == 50
+    assert by_day[1]["cost_cents"] == 5
 
 
 def test_loan_client_setup_powershell(loan_client_env):

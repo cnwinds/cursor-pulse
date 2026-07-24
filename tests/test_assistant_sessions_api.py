@@ -113,3 +113,5 @@ def test_sessions_proxy_forwards_request(mock_client_cls, api_env):
     call_kwargs = mock_client.request.call_args.kwargs
     assert call_kwargs["headers"]["X-Pulse-Actor-Member-Id"] == api_env["owner"].id
     assert "assistant:sessions:read:all" in call_kwargs["headers"]["X-Pulse-Actor-Permissions"]
+    assert "X-Pulse-Actor-Ts" in call_kwargs["headers"]
+    assert "X-Pulse-Actor-Signature" in call_kwargs["headers"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -8,12 +10,51 @@ import jwt
 from pulse.storage.models import Member
 from pulse.web.permissions import resolve_permissions
 
+logger = logging.getLogger(__name__)
+_admin_token_fallback_warned = False
+
+
+def _is_production() -> bool:
+    return os.environ.get("PULSE_ENV") == "production"
+
+
+def _warn_admin_token_fallback() -> None:
+    global _admin_token_fallback_warned
+    if _admin_token_fallback_warned:
+        return
+    _admin_token_fallback_warned = True
+    logger.warning(
+        "JWT_SECRET not set; using ADMIN_WEB_TOKEN as JWT signing secret. "
+        "Set JWT_SECRET explicitly (required when PULSE_ENV=production)."
+    )
+
+
+def assert_jwt_secret_configured(config) -> None:
+    """Reject missing JWT_SECRET in production; warn once when falling back in dev."""
+    jwt_secret = (config.web.jwt_secret or "").strip()
+    if _is_production() and not jwt_secret:
+        raise ValueError(
+            "JWT_SECRET is required when PULSE_ENV=production "
+            "(admin_token cannot substitute for JWT signing)."
+        )
+    if not jwt_secret and (config.web.admin_token or "").strip():
+        _warn_admin_token_fallback()
+
 
 def _secret(config) -> str:
-    secret = config.web.jwt_secret or config.web.admin_token
-    if not secret:
-        raise RuntimeError("未配置 JWT_SECRET 或 ADMIN_WEB_TOKEN")
-    return secret
+    jwt_secret = (config.web.jwt_secret or "").strip()
+    if jwt_secret:
+        return jwt_secret
+    if _is_production():
+        raise RuntimeError(
+            "JWT_SECRET is required when PULSE_ENV=production "
+            "(admin_token cannot substitute for JWT signing)."
+        )
+    admin_token = (config.web.admin_token or "").strip()
+    if admin_token:
+        _warn_admin_token_fallback()
+        return admin_token
+    raise RuntimeError("未配置 JWT_SECRET 或 ADMIN_WEB_TOKEN")
 
 
 def create_access_token(config, member: Member, *, hours: int = 2) -> str:
