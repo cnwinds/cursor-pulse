@@ -84,6 +84,7 @@ scp -r data/pulse.db data/assistant.db data/raw \
 cd /opt/cursor-pulse/docker
 
 # 构建并启动全部核心服务（自动跑 init-db）
+# Dockerfile 默认走国内镜像：DaoCloud 基础镜像 / npmmirror / 阿里云 apt+pip
 docker compose up -d --build
 
 # 查看状态
@@ -92,6 +93,7 @@ docker compose logs -f web channel assistant
 ```
 
 访问：`http://<服务器IP>:8080/admin/`（或经宿主机 Nginx 反代 HTTPS）。
+SPA 构建产物打包在镜像内 `pulse/web/static/`（与 `pip install` 同源），勿再依赖 `/app/web-admin/dist`。
 
 健康检查：
 

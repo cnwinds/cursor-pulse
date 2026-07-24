@@ -14,6 +14,8 @@ pytest-cache-files-*/
 .venv/
 web-admin/node_modules/
 web-admin/dist/
+# Vue production build (vite outDir); packaged with pulse via package-data
+pulse/web/static/
 
 .worktrees/
 .superpowers/

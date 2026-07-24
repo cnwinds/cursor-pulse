@@ -46,7 +46,7 @@ cd proxy && go test ./...
 若改动了管理后台：
 
 ```bash
-cd web-admin && npm ci && npm run build
+cd web-admin && npm ci && npm run build   # writes pulse/web/static/
 ```
 
 ## Docker

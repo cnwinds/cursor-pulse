@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -48,7 +49,12 @@ from pulse.web.settings_api import register_settings_routes
 logger = logging.getLogger(__name__)
 
 
-def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> FastAPI:
+def create_app(
+    config: AppConfig,
+    session_factory: sessionmaker[Session],
+    *,
+    require_admin_spa: bool = False,
+) -> FastAPI:
     from pulse.security_tokens import assert_secure_service_tokens
 
     assert_secure_service_tokens(
@@ -98,7 +104,13 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     def health():
         return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
-    admin_spa_dir = _resolve_admin_static_dir()
+    admin_spa_dir = resolve_admin_static_dir()
+    if require_admin_spa and admin_spa_dir is None:
+        raise RuntimeError(
+            "Vue admin SPA not found under pulse/web/static (index.html missing). "
+            "Build it with: cd web-admin && npm ci && npm run build. "
+            "Optional override: PULSE_ADMIN_STATIC_DIR=/path/to/dist"
+        )
 
     @app.get("/")
     def dashboard():
@@ -329,17 +341,22 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     return app
 
 
-def _resolve_admin_static_dir() -> Path | None:
-    """Locate Vue admin build (dev tree, Docker WORKDIR, or packaged static/)."""
-    candidates = [
-        Path(__file__).resolve().parents[2] / "web-admin" / "dist",
-        Path.cwd() / "web-admin" / "dist",
-        Path("/app/web-admin/dist"),
-        Path(__file__).parent / "static",
-    ]
-    for static_dir in candidates:
+def resolve_admin_static_dir() -> Path | None:
+    """Locate Vue admin build next to this module (packaged with pulse).
+
+    Canonical location: ``pulse/web/static/`` (vite ``outDir`` / Docker COPY).
+    Optional override: ``PULSE_ADMIN_STATIC_DIR`` (dev/special deploys only).
+    When the override is set, it is the only candidate (no silent fallback).
+    """
+    override = (os.environ.get("PULSE_ADMIN_STATIC_DIR") or "").strip()
+    if override:
+        static_dir = Path(override)
         if static_dir.is_dir() and (static_dir / "index.html").exists():
             return static_dir.resolve()
+        return None
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir() and (static_dir / "index.html").exists():
+        return static_dir.resolve()
     return None
 
 
@@ -348,7 +365,7 @@ def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
-    resolved = static_dir or _resolve_admin_static_dir()
+    resolved = static_dir or resolve_admin_static_dir()
     if resolved is None:
         logger.warning("Vue admin SPA not found; /admin will be unavailable")
         return

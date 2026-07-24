@@ -394,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             from pulse.web.app import create_app
 
-            app = create_app(config, session_factory)
+            app = create_app(config, session_factory, require_admin_spa=True)
             uvicorn.run(app, host=host, port=port)
         return 0
 

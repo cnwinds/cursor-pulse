@@ -21,11 +21,15 @@ npm run dev
 
 ```bash
 cd web-admin
-npm run build
-pulse web   # 自动挂载 web-admin/dist → http://host:8080/admin/
+npm ci && npm run build   # 输出到 pulse/web/static/
+pip install -e ".[web]"   # package-data 带上 static/
+pulse web                 # 托管 http://host:8080/admin/
 ```
 
-构建产物 base 为 `/admin/`；开发模式仍为 `http://localhost:5173`。
+构建产物 base 为 `/admin/`，唯一路径为 `pulse/web/static/`（与 Docker / `pip install` 一致）。
+开发覆盖可用环境变量 `PULSE_ADMIN_STATIC_DIR`。
+
+开发模式仍为 `http://localhost:5173`。
 
 ## 首次登录
 

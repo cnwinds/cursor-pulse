@@ -44,6 +44,10 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["pulse*", "assistant_platform*"]
 
+# Vue admin build output (see web-admin/vite.config.ts → pulse/web/static)
+[tool.setuptools.package-data]
+pulse = ["web/static/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

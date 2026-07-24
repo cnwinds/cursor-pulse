@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => ({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // Ship into the Python package so `pip install` / Docker share one path.
+  build: {
+    outDir: fileURLToPath(new URL('../pulse/web/static', import.meta.url)),
+    emptyOutDir: true,
+  },
   server: {
     port: 5173,
     proxy: {
