@@ -57,9 +57,10 @@ cd web-admin && npm ci && npm run build   # writes pulse/web/static/
 cd docker
 ./scripts/setup.sh    # Windows Git Bash 可用 bash scripts/setup.sh
 docker compose build
-docker compose --profile tools run --rm init-db
-docker compose up -d
+docker compose up -d    # init-db oneshot 在 up 时自动执行
 ```
+
+排查 schema 迁移失败时可手动：`docker compose run --rm init-db`。
 
 ## 提交与评审
 

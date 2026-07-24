@@ -436,7 +436,13 @@ curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/SetHardLim
 | On-Demand Spending 开启 + Monthly Limit 固定金额 | `noUsageBasedAllowed: false` + `hardLimit: <美元>` |
 | Monthly Limit = Unlimited | `noUsageBasedAllowed: false`（`hardLimit` 行为以实测为准，勿对共享账号使用） |
 
-cursor-pulse 在每次用量同步（`CursorSyncService.sync_account`）时会先 `GetHardLimit`，若未关闭则自动 `SetHardLimit(noUsageBasedAllowed=true)` 并钉钉通知管理员；关闭失败不阻断用量入库。实现见 `pulse/ingestion/on_demand.py`。
+cursor-pulse 在用量同步（`CursorSyncService.sync_account`）时**可配置**是否强制关闭 On-Demand：
+
+- **默认开启：** `config.yaml` → `cursor_sync.enforce_on_demand_disabled: true`；Web **系统设置 → Cursor 账号同步** 可关闭或调整通知对象。
+- 开启时：先 `GetHardLimit`，若未关闭则 `SetHardLimit(noUsageBasedAllowed=true)` 并钉钉通知（收件人可在 Web 配置 `on_demand_notify_member_ids` / `on_demand_notify_primary`）。
+- 关闭 `enforce_on_demand_disabled` 时不会调用 `SetHardLimit`；关闭失败不阻断用量入库。
+
+实现见 `pulse/ingestion/on_demand.py`、`pulse/ingestion/sync.py`；设计见 [superpowers/specs/2026-07-24-on-demand-enforce-settings-design.md](superpowers/specs/2026-07-24-on-demand-enforce-settings-design.md)。
 
 ---
 

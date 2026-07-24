@@ -28,20 +28,22 @@ Cursor Pulse 是**自托管**控制面。敏感资产包括：
 ## 密钥处理
 
 - 将 `.env.example` 复制为 `.env`，将 `config.example.yaml` 复制为 `config.yaml`。**切勿提交** `.env`、`config.yaml`、`*.db`、`*.pem`、`*.key` 或 `.dev/` 调试落盘。
-- 为以下项生成高熵随机值：`JWT_SECRET`、`PULSE_CREDENTIAL_ENCRYPTION_KEY`、`PULSE_INTERNAL_SERVICE_TOKEN`、`ASSISTANT_SERVICE_TOKEN`、`ASSISTANT_SECRET_KEY`。
+- 为以下项生成高熵随机值：`JWT_SECRET`、`PULSE_CREDENTIAL_ENCRYPTION_KEY`、`PULSE_INTERNAL_SERVICE_TOKEN`、`PULSE_INTERNAL_TOKEN`（通常与前者同值）、`ASSISTANT_SERVICE_TOKEN`、`ASSISTANT_SECRET_KEY`。
 - 生产环境禁止使用 `change-me-*` 等占位令牌（见 `docker/scripts/setup.sh`；应用启动也会拒绝）。
-- 一旦疑似泄露请立即轮换；更改 `PULSE_CREDENTIAL_ENCRYPTION_KEY` 后需按 `docs/RUNBOOK.md` 重加密已存凭证。
+- 一旦疑似泄露请立即轮换；更改 `PULSE_CREDENTIAL_ENCRYPTION_KEY` 后需按 [docs/RUNBOOK.md](docs/RUNBOOK.md#9-凭证加密密钥轮换) 重加密已存凭证（`pulse rotate-credential-key` 或文档中的 Python 步骤）。
 
 ## 鉴权说明
 
 - 内部路由（`/api/internal/v1/*`）必须配置 service token；未配置时应失败关闭（fail closed）。
+- **双变量名、同一密钥值：** Pulse / Go Proxy 读 `PULSE_INTERNAL_SERVICE_TOKEN`；Assistant 回调 Pulse 读 `PULSE_INTERNAL_TOKEN`。本地与 Docker 部署通常设为相同高熵字符串（`docker/scripts/setup.sh` 会写入两者）。
 - 设置项「揭密 / reveal」会返回明文密钥——请谨慎授予管理员角色。
 - `ADMIN_PASSWORD` / `ADMIN_WEB_TOKEN` 属于灾备路径；日常优先使用门户 bootstrap 账号。
 
 ## 部署加固
 
 - 勿在无 TLS 终结与网络隔离的情况下，将 web / proxy 监听直接暴露到公网。
-- Go 数据面默认监听 `0.0.0.0:8317`；本机部署请设 `PROXY_LISTEN=127.0.0.1:8317`（或 `-listen`），避免 LAN 侧任意 CONNECT。
-- CONNECT 目标受 `PROXY_CONNECT_ALLOWLIST` 约束（默认仅 `*.cursor.sh,cursor.sh`）；勿放宽到不可信域名。
+- Go 数据面默认监听 `0.0.0.0:8317`；本机部署请设 `PROXY_LISTEN=127.0.0.1:8317`（或 `-listen`），避免 LAN 侧任意 CONNECT。详见 [proxy/README.md](proxy/README.md)。
+- CONNECT 目标受 `PROXY_CONNECT_ALLOWLIST` 约束（默认仅 `*.cursor.sh,cursor.sh`）；非匹配主机返回 403。勿放宽到不可信域名。
+- 代理会话默认 **120s** 后向 Pulse 重新 `authorize`（`PROXY_SESSION_TTL`）；吊销/暂停 key 会在 TTL 内生效，无需重启代理。
 - MITM CA 私钥仅保存在可信运维机器；泄露后立即轮换。
 - `PROXY_DEBUG_USAGE` 会落盘请求体——仅限本地调试，切勿提交调试目录。

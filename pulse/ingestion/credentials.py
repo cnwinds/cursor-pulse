@@ -9,7 +9,7 @@ from pulse.ingestion.crypto import decrypt_secret, encrypt_secret, mask_api_key
 from pulse.proxy.keys import hash_proxy_key
 from pulse.ingestion.sync_schedule import init_schedule_on_bind
 from pulse.integrations.cursor_api import CursorApiClient
-from pulse.storage.models import AiAccount, AiAccountCredential
+from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, ProxyKey
 
 
 class AccountEmailMismatchError(ValueError):
@@ -170,6 +170,72 @@ class CredentialService:
 
     def get_credential(self, account_id: str) -> AiAccountCredential | None:
         return self.get_primary_credential(account_id)
+
+
+def rotate_credential_encryption(
+    session: Session,
+    *,
+    old_key: str,
+    new_key: str,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Decrypt credential blobs with old_key and re-encrypt with new_key."""
+    old = (old_key or "").strip()
+    new = (new_key or "").strip()
+    if not old or not new:
+        raise ValueError("Both old and new encryption keys are required")
+    if old == new:
+        raise ValueError("New key must differ from old key")
+
+    stats = {"credentials": 0, "loan_aliases": 0, "proxy_keys": 0, "skipped": 0}
+
+    for cred in session.scalars(
+        select(AiAccountCredential).where(AiAccountCredential.encrypted_value != "")
+    ).all():
+        try:
+            plain = decrypt_secret(cred.encrypted_value, old)
+        except Exception:
+            stats["skipped"] += 1
+            continue
+        if not dry_run:
+            cred.encrypted_value = encrypt_secret(plain, new)
+        stats["credentials"] += 1
+
+    for loan in session.scalars(
+        select(KeyLoan).where(
+            KeyLoan.alias_encrypted_key.isnot(None),
+            KeyLoan.alias_encrypted_key != "",
+        )
+    ).all():
+        try:
+            plain = decrypt_secret(loan.alias_encrypted_key, old)
+        except Exception:
+            stats["skipped"] += 1
+            continue
+        if not dry_run:
+            loan.alias_encrypted_key = encrypt_secret(plain, new)
+        stats["loan_aliases"] += 1
+
+    for pk in session.scalars(
+        select(ProxyKey).where(
+            ProxyKey.encrypted_key.isnot(None),
+            ProxyKey.encrypted_key != "",
+        )
+    ).all():
+        try:
+            plain = decrypt_secret(pk.encrypted_key, old)
+        except Exception:
+            stats["skipped"] += 1
+            continue
+        if not dry_run:
+            pk.encrypted_key = encrypt_secret(plain, new)
+        stats["proxy_keys"] += 1
+
+    if not dry_run and (
+        stats["credentials"] or stats["loan_aliases"] or stats["proxy_keys"]
+    ):
+        session.commit()
+    return stats
 
 
 def backfill_credential_key_hashes(session: Session, encryption_key: str) -> int:

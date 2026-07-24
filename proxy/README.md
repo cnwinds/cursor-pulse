@@ -55,8 +55,8 @@ $env:PROXY_UPSTREAM_URL = "http://127.0.0.1:7890"
 
 1. **Admin**：在凭证上开启 `proxy_enabled`。
 2. **池非空**：代理日志出现 `[pool] hot-updated: N credential(s)`（N > 0）。
-3. **创建 Pulse key**：在 web-admin 创建 proxy key（`pk_...`）。
-4. **Authorize 冒烟**：`POST /internal/proxy/authorize` 对 `pk_...` 返回 200。
+3. **创建 Pulse key**：在 web-admin 创建共享池 proxy key（`pk_...`）。借贷 alias 为 `pka_...`，走独立 authorize 路径，**不能**当作 `pk_` 使用。
+4. **Authorize 冒烟**：`POST /api/internal/v1/proxy/authorize`（Bearer `PULSE_INTERNAL_SERVICE_TOKEN`）对 `pk_...` 返回 200。
 5. **Agent 跑一条**：agent 经代理完成一次对话。
 6. **用量可见**：web-admin 用量抽屉出现对应记录。
 
@@ -99,7 +99,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 ## 原理（简述）
 
-- agent 的 API key 用于向 `api2.cursor.sh/auth/exchange_user_api_key` 换取 JWT；Pulse 模式下该 exchange 由代理拦截，用 `pk_...` 授权并映射到池内 Cursor 凭证。
+- agent 的 API key 用于向 `api2.cursor.sh/auth/exchange_user_api_key` 换取 JWT；Pulse 模式下该 exchange 由代理拦截，用 `pk_...`（共享池）或 `pka_...`（借贷 alias）授权并映射到池内 Cursor 凭证。会话绑定默认 **120s** 后向 Pulse 重新 authorize（`-session-ttl` / `PROXY_SESSION_TTL`）。
 - 配额/限流错误时自动换凭证重放，CLI 侧无感（流式路径在尚未转发数据时可整体重放）。
 - 通过 `HTTPS_PROXY` + 自签 CA（MITM `*.cursor.sh`）实现，无需修改 agent 本体。
 
