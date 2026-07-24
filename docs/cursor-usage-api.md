@@ -327,6 +327,119 @@ Dashboard 的「Export CSV」为前端导出，**无独立 CSV 接口**；需自
 
 ---
 
+### GetHardLimit — 读取 On-Demand / 支出上限
+
+对应 Dashboard [Spending](https://cursor.com/dashboard/spending) 的 **On-Demand Usage** 状态（「On-Demand Spending」开关与「Monthly Limit」）。
+
+认证与其它 `DashboardService` 相同：先用 `crsr_...` 兑换 `accessToken`，再调用本接口。
+
+**请求：** `{}`（团队场景可传 `teamId`）
+
+**响应字段：**
+
+| 字段 | 说明 |
+|------|------|
+| `hardLimit` | 月支出上限（美元整数）；未设置时可能为 `0` 或省略 |
+| `noUsageBasedAllowed` | **关键字段**：`true` = On-Demand Spending **已关闭**（Dashboard 显示 Disabled）；`false`/缺省 = 允许按量扣费 |
+| `hardLimitPerUser` | 团队人均上限（若有） |
+
+**响应示例（已关闭）：**
+
+```json
+{
+  "hardLimit": 0,
+  "noUsageBasedAllowed": true
+}
+```
+
+**响应示例（已开启，月限额 $50）：**
+
+```json
+{
+  "hardLimit": 50,
+  "noUsageBasedAllowed": false
+}
+```
+
+**示例：**
+
+```bash
+curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Connect-Protocol-Version: 1" \
+  -d '{}'
+```
+
+---
+
+### SetHardLimit — 设置 / 关闭 On-Demand Spending
+
+写入 Dashboard Spending 页的 On-Demand 开关与月限额。  
+**关闭 On-Demand**（与 UI 中 Monthly Limit 选 **Disabled** 等价）时传：
+
+```json
+{
+  "hardLimit": 0,
+  "noUsageBasedAllowed": true
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `hardLimit` | number | 是 | 月限额（美元整数）。关闭 On-Demand 时传 `0`；开启时可设为具体金额（如 `50`） |
+| `noUsageBasedAllowed` | boolean | 是 | `true` = **关闭**按量扣费（禁用 On-Demand）；`false` = **开启** On-Demand |
+| `teamId` | number | 否 | 团队场景 |
+| `hardLimitPerUser` | number | 否 | 团队人均上限（若适用） |
+
+**成功响应：** `{}`
+
+**示例（强制关闭 On-Demand Spending）：**
+
+```bash
+# 1) API Key → accessToken
+TOKEN="$(curl -sS -X POST "https://api2.cursor.sh/auth/exchange_user_api_key" \
+  -H "Authorization: Bearer $CURSOR_API_KEY" \
+  -H "Content-Type: application/json" -d '{}' | jq -r '.accessToken')"
+
+# 2) 关闭 On-Demand（套餐用尽后不再超额扣费）
+curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/SetHardLimit" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Connect-Protocol-Version: 1" \
+  -d '{"hardLimit":0,"noUsageBasedAllowed":true}'
+
+# 3) 复核
+curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/GetHardLimit" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Connect-Protocol-Version: 1" \
+  -d '{}'
+# 期望：{"hardLimit":0,"noUsageBasedAllowed":true}
+```
+
+**开启 On-Demand 并设月限额 $100（一般不用于共享账号）：**
+
+```bash
+curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/SetHardLimit" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Connect-Protocol-Version: 1" \
+  -d '{"hardLimit":100,"noUsageBasedAllowed":false}'
+```
+
+**与 Dashboard UI 对照：**
+
+| Dashboard Spending | API |
+|--------------------|-----|
+| On-Demand Spending = Disabled | `noUsageBasedAllowed: true` |
+| On-Demand Spending 开启 + Monthly Limit 固定金额 | `noUsageBasedAllowed: false` + `hardLimit: <美元>` |
+| Monthly Limit = Unlimited | `noUsageBasedAllowed: false`（`hardLimit` 行为以实测为准，勿对共享账号使用） |
+
+cursor-pulse 在每次用量同步（`CursorSyncService.sync_account`）时会先 `GetHardLimit`，若未关闭则自动 `SetHardLimit(noUsageBasedAllowed=true)` 并钉钉通知管理员；关闭失败不阻断用量入库。实现见 `pulse/ingestion/on_demand.py`。
+
+---
+
 ### GET /auth/usage — 旧版请求数统计
 
 ```http
@@ -542,6 +655,33 @@ curl -sS -X POST 'https://cursor.com/api/dashboard/get-filtered-usage-events' \
 
 旧版简单计数，基本已被上述接口取代。
 
+### POST /api/dashboard/get-hard-limit
+
+网页侧读取 On-Demand / 支出上限；功能与 `GetHardLimit` 相同。  
+**推荐脚本走 `api2` + Bearer**；仅在只有 Cookie、没有 User API Key 时使用本接口。
+
+```bash
+curl -sS -X POST 'https://cursor.com/api/dashboard/get-hard-limit' \
+  -H 'Cookie: WorkosCursorSessionToken=YOUR_COOKIE' \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: https://cursor.com' \
+  -d '{}'
+```
+
+### POST /api/dashboard/set-hard-limit
+
+网页侧关闭 / 设置 On-Demand Spending；功能与 `SetHardLimit` 相同。  
+POST 必须带 `Origin: https://cursor.com`，否则 CSRF 校验失败。
+
+```bash
+# 关闭 On-Demand Spending
+curl -sS -X POST 'https://cursor.com/api/dashboard/set-hard-limit' \
+  -H 'Cookie: WorkosCursorSessionToken=YOUR_COOKIE' \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: https://cursor.com' \
+  -d '{"hardLimit":0,"noUsageBasedAllowed":true}'
+```
+
 ---
 
 ## 团队 Admin API（官方）
@@ -574,6 +714,8 @@ curl -sS -X POST 'https://cursor.com/api/dashboard/get-filtered-usage-events' \
 | 用量明细表 | `GetFilteredUsageEvents` | 可指定；支持分页 |
 | 按模型图表 | `GetAggregatedUsageEvents` | 可指定；默认当前周期 |
 | 赠送额度 | `GetCreditGrantsBalance` | — |
+| On-Demand / 支出上限读取 | `GetHardLimit` | 当前 |
+| On-Demand 关闭 / 限额设置 | `SetHardLimit` | 当前 |
 | User API Keys 列表 | `ListUserApiKeys` | — |
 | User API Keys 创建 | `CreateUserApiKey` | — |
 | User API Keys 删除 | `RevokeUserApiKey` | — |

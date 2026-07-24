@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
+from pulse.ingestion.on_demand import OnDemandEnforceResult, format_on_demand_admin_alert
 from pulse.ingestion.sync import CursorSyncService
 from pulse.ingestion.sync_errors import FatalSyncError, RetryableSyncError, classify_sync_error
 from pulse.ingestion.sync_schedule import (
@@ -16,14 +17,36 @@ from pulse.ingestion.sync_schedule import (
     elevate_month_close_if_needed,
     is_due_for_sync,
 )
-from pulse.storage.models import AiAccountCredential
+from pulse.storage.models import AiAccount, AiAccountCredential
 
 logger = logging.getLogger(__name__)
 
 _PRIORITY_ORDER = {"pre_publish": 0, "month_close": 1, "normal": 2}
 
 
-def run_sync_tick(session: Session, config: AppConfig) -> int:
+def _make_on_demand_notify(config: AppConfig, notify_admins):
+    if not notify_admins or not config.admin.dingtalk_user_ids:
+        return None
+
+    def _notify(account: AiAccount, result: OnDemandEnforceResult) -> None:
+        text = format_on_demand_admin_alert(account, result)
+        for admin_id in config.admin.dingtalk_user_ids:
+            try:
+                notify_admins(admin_id, text)
+            except Exception:
+                logger.exception(
+                    "Failed to notify admin %s about on-demand enforce", admin_id
+                )
+
+    return _notify
+
+
+def run_sync_tick(
+    session: Session,
+    config: AppConfig,
+    *,
+    notify_admins=None,
+) -> int:
     encryption_key = config.credentials.encryption_key
     if not encryption_key or not config.cursor_sync.enabled:
         return 0
@@ -59,7 +82,11 @@ def run_sync_tick(session: Session, config: AppConfig) -> int:
         batch_size = max(batch_size, config.cursor_sync.pre_publish_batch_size)
 
     synced = 0
-    sync = CursorSyncService(session, encryption_key)
+    sync = CursorSyncService(
+        session,
+        encryption_key,
+        on_demand_notify=_make_on_demand_notify(config, notify_admins),
+    )
     for cred in due[:batch_size]:
         try:
             sync.sync_account(cred.account_id, channel="scheduler")

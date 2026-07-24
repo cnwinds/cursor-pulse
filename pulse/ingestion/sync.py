@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 
 from sqlalchemy import select
@@ -8,12 +10,20 @@ from sqlalchemy.orm import Session, joinedload
 
 from pulse.ingestion.adapters.cursor_api import CursorApiAdapter
 from pulse.ingestion.credentials import CredentialService, _apply_key_account_identifier, _ledger_identifier
+from pulse.ingestion.on_demand import (
+    OnDemandEnforceResult,
+    enforce_on_demand_disabled,
+)
 from pulse.ingestion.service import UsageIngestionService
 from pulse.ingestion.sync_errors import classify_sync_error
 from pulse.ingestion.types import IngestionContext, IngestionResult
 from pulse.integrations.cursor_api import CursorApiClient
-from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiAccountCredential, UsageSummary
+from pulse.storage.models import AccountQuotaSnapshot, AiAccount, UsageSummary
 from pulse.tool_center.repository import ToolCenterRepository
+
+logger = logging.getLogger(__name__)
+
+OnDemandNotify = Callable[[AiAccount, OnDemandEnforceResult], None]
 
 
 def _recompute_account_summaries(
@@ -72,13 +82,47 @@ class CursorSyncService:
         encryption_key: str,
         *,
         cursor_client: CursorApiClient | None = None,
+        on_demand_notify: OnDemandNotify | None = None,
     ):
         self.session = session
         self.encryption_key = encryption_key
         self.cursor_client = cursor_client or CursorApiClient()
+        self.on_demand_notify = on_demand_notify
         self.credential_service = CredentialService(
             session, encryption_key, cursor_client=self.cursor_client
         )
+
+    def _enforce_on_demand(self, account: AiAccount, token: str, api_key: str) -> None:
+        result = enforce_on_demand_disabled(
+            self.cursor_client, token, api_key=api_key
+        )
+        if result.status == "already_disabled":
+            return
+        if result.status == "disabled_now":
+            logger.warning(
+                "on-demand spending disabled for account %s (%s)",
+                account.id,
+                account.account_identifier,
+            )
+        elif result.status == "disable_failed":
+            logger.error(
+                "failed to disable on-demand for account %s: %s",
+                account.id,
+                result.error,
+            )
+        else:
+            logger.warning(
+                "on-demand check failed for account %s: %s",
+                account.id,
+                result.error,
+            )
+        if result.status in ("disabled_now", "disable_failed") and self.on_demand_notify:
+            try:
+                self.on_demand_notify(account, result)
+            except Exception:
+                logger.exception(
+                    "on-demand notify failed for account %s", account.id
+                )
 
     def sync_account(
         self, account_id: str, *, channel: str = "scheduler"
@@ -106,6 +150,7 @@ class CursorSyncService:
                 key_email = self.cursor_client.resolve_api_key_account_email(api_key)
                 if key_email:
                     _apply_key_account_identifier(account, key_email)
+            self._enforce_on_demand(account, token, api_key)
             period_usage = self.cursor_client.get_current_period_usage(
                 token, api_key=api_key
             )

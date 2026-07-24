@@ -350,7 +350,11 @@ class ReminderService:
             runtime_config = effective_config_for_tenant(session, self.config)
             if not runtime_config.cursor_sync.enabled:
                 return 0
-            return run_sync_tick(session, runtime_config)
+            return run_sync_tick(
+                session,
+                runtime_config,
+                notify_admins=self.send_private_message,
+            )
         finally:
             session.close()
 

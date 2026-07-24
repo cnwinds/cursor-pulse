@@ -313,3 +313,28 @@ class CursorApiClient:
         self, token: str, key_id: int, *, api_key: str | None = None
     ) -> None:
         self._post_dashboard(token, "RevokeUserApiKey", {"id": key_id}, api_key=api_key)
+
+    def get_hard_limit(
+        self, token: str, *, api_key: str | None = None, team_id: int | None = None
+    ) -> dict:
+        body: dict = {}
+        if team_id is not None:
+            body["teamId"] = team_id
+        return self._post_dashboard(token, "GetHardLimit", body, api_key=api_key)
+
+    def set_hard_limit(
+        self,
+        token: str,
+        *,
+        hard_limit: int,
+        no_usage_based_allowed: bool,
+        api_key: str | None = None,
+        team_id: int | None = None,
+    ) -> dict:
+        body: dict = {
+            "hardLimit": int(hard_limit),
+            "noUsageBasedAllowed": bool(no_usage_based_allowed),
+        }
+        if team_id is not None:
+            body["teamId"] = team_id
+        return self._post_dashboard(token, "SetHardLimit", body, api_key=api_key)
