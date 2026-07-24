@@ -113,7 +113,8 @@ def test_enforce_disable_failed():
 
 def test_format_on_demand_admin_alert_disabled_now():
     account = MagicMock()
-    account.shared_note = "共享-A"
+    account.status = "shared"
+    account.shared_note = "试用池共享账号，请指定主使用人后提交用量"
     account.account_identifier = "a@example.com"
     account.id = "acc-1"
     text = format_on_demand_admin_alert(
@@ -122,12 +123,14 @@ def test_format_on_demand_admin_alert_disabled_now():
     )
     assert "On-Demand" in text
     assert "已自动关闭" in text
-    assert "共享-A" in text
     assert "a@example.com" in text
+    assert "账号：" not in text
+    assert "请指定主使用人" not in text
 
 
 def test_format_check_failed_mentions_api():
     account = MagicMock()
+    account.status = "trial"
     account.shared_note = ""
     account.account_identifier = "b@example.com"
     text = format_on_demand_admin_alert(
@@ -137,6 +140,7 @@ def test_format_check_failed_mentions_api():
     assert "GetHardLimit" in text
     assert "404 not found" in text
     assert "管理员" in text
+    assert "账号：" not in text
 
 
 def test_resolve_admin_dingtalk_ids():

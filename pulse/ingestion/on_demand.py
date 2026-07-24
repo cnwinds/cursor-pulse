@@ -75,8 +75,6 @@ def format_on_demand_admin_alert(
     account: AiAccount, result: OnDemandEnforceResult
 ) -> str:
     email = (account.account_identifier or "").strip() or "-"
-    note = (account.shared_note or "").strip()
-    label = note or email
     if result.status == "disabled_now":
         prev = (
             f"${result.previous_hard_limit}"
@@ -85,15 +83,13 @@ def format_on_demand_admin_alert(
         )
         return (
             "⚠️ On-Demand Spending 已自动关闭\n\n"
-            f"账号：{label}\n"
             f"邮箱：{email}\n"
             f"原状态：On-Demand 开启（月限额 {prev}）\n"
-            "已调用 SetHardLimit 关闭，避免超额扣费。"
+            "已关闭，避免超额扣费。"
         )
     if result.status == "disable_failed":
         return (
             "🔴 On-Demand Spending 关闭失败\n\n"
-            f"账号：{label}\n"
             f"邮箱：{email}\n"
             f"错误：{result.error or 'unknown'}\n"
             "请尽快到 Cursor Dashboard → Spending 手动设为 Disabled。"
@@ -101,7 +97,6 @@ def format_on_demand_admin_alert(
     if result.status == "check_failed":
         return (
             "🔴 On-Demand 检测接口失败（需管理员关注）\n\n"
-            f"账号：{label}\n"
             f"邮箱：{email}\n"
             f"接口：GetHardLimit\n"
             f"错误：{result.error or 'unknown'}\n\n"
@@ -110,7 +105,7 @@ def format_on_demand_admin_alert(
             "并检查 cursor-pulse 的 HardLimit 对接是否仍有效。"
         )
     return (
-        f"On-Demand 检查异常 · {label}\n"
+        f"On-Demand 检查异常 · {email}\n"
         f"状态：{result.status}\n"
         f"错误：{result.error or '-'}"
     )
