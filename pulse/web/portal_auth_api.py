@@ -87,13 +87,19 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
     def password_login(body: PasswordLoginBody, session: Session = Depends(get_db)):
         import hmac
 
+        from pulse.web.passwords import looks_like_password_hash, verify_password
         from pulse.web.portal import ADMIN_LOGIN_USERNAME, ensure_admin_member
 
         if body.username != ADMIN_LOGIN_USERNAME:
             raise HTTPException(status_code=401, detail="账号或密码错误")
         if not config.web.admin_password:
             raise HTTPException(status_code=503, detail="未配置超管密码（ADMIN_PASSWORD）")
-        if not hmac.compare_digest(body.password, config.web.admin_password):
+        stored = config.web.admin_password
+        if looks_like_password_hash(stored):
+            ok = verify_password(body.password, stored)
+        else:
+            ok = hmac.compare_digest(body.password, stored)
+        if not ok:
             raise HTTPException(status_code=401, detail="账号或密码错误")
 
         _team, repo = team_repo_fn(session)

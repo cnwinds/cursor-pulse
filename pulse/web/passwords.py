@@ -11,8 +11,12 @@ def hash_password(password: str) -> str:
     return f"{salt}${digest.hex()}"
 
 
+def looks_like_password_hash(stored: str) -> bool:
+    return bool(stored and "$" in stored)
+
+
 def verify_password(password: str, stored: str) -> bool:
-    if not stored or "$" not in stored:
+    if not looks_like_password_hash(stored):
         return False
     salt, expected = stored.split("$", 1)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000)

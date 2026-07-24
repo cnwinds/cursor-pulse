@@ -220,7 +220,7 @@ func writeHTTPError(c net.Conn, status int) {
 - Reuse existing `pulse` password helpers used for members
 - Test: portal auth tests
 
-- [ ] **Step 1–4: TDD + implement + commit** `sec: support hashed ADMIN_PASSWORD`
+- [x] **Step 1–4: TDD + implement + commit** `sec: support hashed ADMIN_PASSWORD`
 
 ---
 
