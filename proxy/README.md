@@ -17,10 +17,12 @@ go build -o cursor-pulse-proxy.exe .
 ```powershell
 $env:PULSE_BASE_URL = "http://127.0.0.1:8080"
 $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
-.\cursor-pulse-proxy.exe -listen 0.0.0.0:8317
+.\cursor-pulse-proxy.exe -listen 127.0.0.1:8317
 ```
 
-- 默认监听 `0.0.0.0:8317`；也可通过 `-pulse-url` / `-pulse-token` 或配置文件 `pulse_url` / `pulse_token` 传入。
+- 默认监听 `0.0.0.0:8317`（Docker 友好）；本机开发建议 `127.0.0.1:8317` 或 `PROXY_LISTEN=127.0.0.1:8317`。
+- CONNECT 目标默认仅允许 `*.cursor.sh` 与 `cursor.sh`（`PROXY_CONNECT_ALLOWLIST`）；其它主机返回 403。
+- 也可通过 `-pulse-url` / `-pulse-token` 或配置文件 `pulse_url` / `pulse_token` 传入。
 - CA 证书：`%USERPROFILE%\.cursor-quota-proxy\ca.pem`（首次运行自动生成）。
 - 启动后代理会周期性从 Pulse 拉取凭证池；日志中应出现 `[pool] hot-updated: N credential(s)`。
 
@@ -105,13 +107,16 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 | 参数 | 说明 | 默认值 |
 |---|---|---|
-| `-listen` | 监听地址 | `0.0.0.0:8317` |
+| `-listen` | 监听地址 | `0.0.0.0:8317`（本机可用 `127.0.0.1:8317`；环境变量 `PROXY_LISTEN`） |
 | `-pulse-url` | Pulse 控制面 base URL | 环境变量 `PULSE_BASE_URL` |
 | `-pulse-token` | Pulse 内部服务 token | 环境变量 `PULSE_INTERNAL_SERVICE_TOKEN` |
 | `-upstream-proxy` | Cursor 出站上游代理 | 环境变量 `PROXY_UPSTREAM_URL` |
+| `-session-ttl` | 会话重授权间隔 | 环境变量 `PROXY_SESSION_TTL`（默认 120s） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |
+
+环境变量 `PROXY_CONNECT_ALLOWLIST`（默认 `*.cursor.sh,cursor.sh`）限制 CONNECT 可连主机；非匹配目标返回 403。
 
 ## 开发
 

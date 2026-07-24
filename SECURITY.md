@@ -41,5 +41,7 @@ Cursor Pulse 是**自托管**控制面。敏感资产包括：
 ## 部署加固
 
 - 勿在无 TLS 终结与网络隔离的情况下，将 web / proxy 监听直接暴露到公网。
+- Go 数据面默认监听 `0.0.0.0:8317`；本机部署请设 `PROXY_LISTEN=127.0.0.1:8317`（或 `-listen`），避免 LAN 侧任意 CONNECT。
+- CONNECT 目标受 `PROXY_CONNECT_ALLOWLIST` 约束（默认仅 `*.cursor.sh,cursor.sh`）；勿放宽到不可信域名。
 - MITM CA 私钥仅保存在可信运维机器；泄露后立即轮换。
 - `PROXY_DEBUG_USAGE` 会落盘请求体——仅限本地调试，切勿提交调试目录。

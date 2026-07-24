@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -54,6 +55,8 @@ func main() {
 	}
 	if *listen != "" {
 		cfg.Listen = *listen
+	} else if v := strings.TrimSpace(os.Getenv("PROXY_LISTEN")); v != "" {
+		cfg.Listen = v
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = "0.0.0.0:8317"

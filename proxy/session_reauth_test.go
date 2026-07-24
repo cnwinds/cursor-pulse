@@ -203,6 +203,7 @@ func newPulseTestProxyWithTTL(t *testing.T, fu *fakeUpstream, pulseURL string, s
 	s := NewServer(pool, ca, pulse, sessions)
 	s.sessionTTL = sessionTTL
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},

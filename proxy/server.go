@@ -27,8 +27,10 @@ type Server struct {
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
 
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
-	// (true for Cursor backends); other hosts are tunneled blindly.
+	// (true for Cursor backends); other allowlisted hosts are tunneled blindly.
 	shouldMITM func(authority string) bool
+
+	connectAllowlist []string
 }
 
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
@@ -38,7 +40,8 @@ func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Se
 		pulse:      pulse,
 		sessions:   sessions,
 		transport:  newOutboundTransport(nil),
-		shouldMITM: defaultShouldMITM,
+		shouldMITM:       defaultShouldMITM,
+		connectAllowlist: resolveConnectAllowlist(),
 	}
 }
 
@@ -75,6 +78,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authority := r.Host
+
+	if !hostAllowed(authority, s.connectAllowlist) {
+		writeHTTPError(client, http.StatusForbidden)
+		client.Close()
+		return
+	}
 
 	if !s.shouldMITM(authority) {
 		// Blind tunnel for non-Cursor traffic.
@@ -133,7 +142,8 @@ func tunnel(dst, src net.Conn) {
 }
 
 func writeHTTPError(c net.Conn, status int) {
-	c.Write([]byte("HTTP/1.1 " + http.StatusText(status) + "\r\nContent-Length: 0\r\n\r\n"))
+	text := http.StatusText(status)
+	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\n\r\n", status, text)
 }
 
 // oneConnListener adapts a single net.Conn to net.Listener for http.Server.

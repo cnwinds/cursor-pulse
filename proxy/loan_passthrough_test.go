@@ -72,6 +72,7 @@ func TestLoanPassthroughExchangeEmptyPool(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
@@ -212,6 +213,7 @@ func TestLoanPassthroughMITMUsage(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, pulseClient, sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
@@ -378,6 +380,7 @@ func TestLoanPassthroughMITMAuthFailReportsLoan(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
@@ -523,6 +526,7 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
 	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
 	s.transport = &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
