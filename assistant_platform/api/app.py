@@ -49,6 +49,7 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
             session.close()
 
     require_service_token = build_require_service_token(config)
+    service_token = (config.service_token or "").strip()
 
     @app.get("/health")
     def health():
@@ -81,6 +82,7 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
         app,
         session_factory=session_factory,
         require_service_token=require_service_token,
+        service_token=service_token,
     )
     register_memory_routes(
         app,
@@ -92,11 +94,13 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
         app,
         session_factory=session_factory,
         require_service_token=require_service_token,
+        service_token=service_token,
     )
     register_prompt_routes(
         app,
         session_factory=session_factory,
         require_service_token=require_service_token,
+        service_token=service_token,
     )
     register_skills_admin_routes(
         app,
@@ -106,6 +110,7 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
         app,
         session_factory=session_factory,
         require_service_token=require_service_token,
+        service_token=service_token,
     )
 
     return app

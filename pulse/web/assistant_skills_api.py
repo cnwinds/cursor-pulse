@@ -6,6 +6,7 @@ import httpx
 from fastapi import Depends, HTTPException
 
 from pulse.config import AppConfig
+from pulse.web.assistant_actor import sign_actor_headers
 from pulse.web.deps import PortalUser
 
 
@@ -29,9 +30,13 @@ def _assistant_headers(config: AppConfig, user: PortalUser) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "X-Assistant-Token": token,
-        "X-Pulse-Actor-Member-Id": user.member.id,
-        "X-Pulse-Actor-Role": user.member.portal_role or "",
-        "Content-Type": "application/json",
+        **sign_actor_headers(
+            token,
+            user.member.id,
+            user.member.portal_role or "",
+            "",
+            "",
+        ),
     }
 
 

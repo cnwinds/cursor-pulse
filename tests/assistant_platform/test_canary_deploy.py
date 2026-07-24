@@ -24,6 +24,7 @@ from assistant_platform.prompts.models import PromptDeploymentRow, PromptFragmen
 from assistant_platform.prompts.fragments import canonical_fragments
 from assistant_platform.prompts.seed import DEFAULT_RELEASE_NAME, get_production_release
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-canary"
@@ -185,12 +186,12 @@ def test_deploy_canary_creates_deployment_row():
 
 
 def _headers(*, permissions: str = "assistant:prompts:read,assistant:prompts:write") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        permissions=permissions,
+    )
 
 
 @pytest.fixture

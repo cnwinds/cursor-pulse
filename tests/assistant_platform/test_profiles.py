@@ -16,19 +16,20 @@ from assistant_platform.conversation.session_store import attach_user_message, c
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.profiles.models import ProfileCorrectionRow, ProfileEffectiveRow, ProfileSignalRow
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-profiles"
 
 
 def _headers(*, channel_user_id: str = "u1") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Channel-User-Id": channel_user_id,
-        "X-Pulse-Actor-Permissions": "assistant:sessions:read:self",
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        channel_user_id=channel_user_id,
+        permissions="assistant:sessions:read:self",
+    )
 
 
 def _event(*, sender: str = "u1", text: str = "偏好: 我喜欢短句") -> IncomingMessageEvent:

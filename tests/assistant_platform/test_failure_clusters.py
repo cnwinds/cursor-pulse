@@ -19,6 +19,7 @@ from assistant_platform.evolution.models import FailureClusterRow, PromptChangeP
 from assistant_platform.prompts.seed import get_production_release
 from assistant_platform.review.auto_review import run_auto_review
 from assistant_platform.storage.db import init_assistant_db
+from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-evolution"
@@ -101,12 +102,12 @@ def test_cluster_low_score_reviews_creates_cluster_and_draft_proposal():
 
 
 def _headers(*, permissions: str = "assistant:prompts:read,assistant:prompts:approve") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
-        "X-Pulse-Actor-Member-Id": "mem-1",
-        "X-Pulse-Actor-Role": "operator",
-        "X-Pulse-Actor-Permissions": permissions,
-    }
+    return signed_actor_headers(
+        SERVICE_TOKEN,
+        member_id="mem-1",
+        role="operator",
+        permissions=permissions,
+    )
 
 
 @pytest.fixture

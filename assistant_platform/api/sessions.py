@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated, Any, Callable
 
-from fastapi import Depends, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from assistant_platform.api.actor import ActorContext, build_actor_dependency
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.conversation.session_store import close_session
 from assistant_platform.memory.deletion import purge_session_memory
@@ -16,40 +17,6 @@ from assistant_platform.storage.repository import AssistantRepository
 
 class CloseSessionBody(BaseModel):
     reason: str = "manual"
-
-
-class ActorContext(BaseModel):
-    member_id: str = ""
-    role: str = ""
-    channel_user_id: str = ""
-    permissions: set[str] = Field(default_factory=set)
-
-
-def _parse_permissions(raw: str | None) -> set[str]:
-    if not raw:
-        return set()
-    return {part.strip() for part in raw.split(",") if part.strip()}
-
-
-def _actor_dependency():
-    def dependency(
-        x_pulse_actor_member_id: Annotated[str | None, Header(alias="X-Pulse-Actor-Member-Id")] = None,
-        x_pulse_actor_role: Annotated[str | None, Header(alias="X-Pulse-Actor-Role")] = None,
-        x_pulse_actor_channel_user_id: Annotated[
-            str | None, Header(alias="X-Pulse-Actor-Channel-User-Id")
-        ] = None,
-        x_pulse_actor_permissions: Annotated[
-            str | None, Header(alias="X-Pulse-Actor-Permissions")
-        ] = None,
-    ) -> ActorContext:
-        return ActorContext(
-            member_id=(x_pulse_actor_member_id or "").strip(),
-            role=(x_pulse_actor_role or "").strip(),
-            channel_user_id=(x_pulse_actor_channel_user_id or "").strip(),
-            permissions=_parse_permissions(x_pulse_actor_permissions),
-        )
-
-    return dependency
 
 
 def _has_permission(actor: ActorContext, permission: str) -> bool:
@@ -170,8 +137,9 @@ def register_session_routes(
     *,
     session_factory: sessionmaker[Session],
     require_service_token: Callable[..., None],
+    service_token: str,
 ) -> None:
-    actor_dependency = _actor_dependency()
+    actor_dependency = build_actor_dependency(service_token)
 
     def get_db():
         session = session_factory()
