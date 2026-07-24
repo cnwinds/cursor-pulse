@@ -193,7 +193,7 @@ func writeHTTPError(c net.Conn, status int) {
 - Modify: `pulse/channels/dingtalk/handler.py` — `await` async mirror
 - Test: extend mirror/handler tests
 
-- [ ] **Step 1–4: TDD + implement + commit** `fix: async DingTalk assistant mirror HTTP`
+- [x] **Step 1–4: TDD + implement + commit** `fix: async DingTalk assistant mirror HTTP`
 
 ---
 
