@@ -52,12 +52,12 @@ cp .env.example .env
 ```bash
 cd docker
 ./scripts/setup.sh
-docker compose build
-docker compose --profile tools run --rm init-db
-docker compose up -d
+# 编辑 .env（钉钉等）
+docker compose up -d --build   # init-db 自动执行；data/config 映射到宿主机
 ```
 
-Postgres：叠加 `docker-compose.postgres.yml`，并设置 `DATABASE_URL`。
+可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。  
+Postgres：叠加 `docker-compose.postgres.yml`，并设置 `DATABASE_URL`（非默认）。
 
 ### 2.4 裸机
 

@@ -52,18 +52,16 @@ pytest --tb=short -q
 
 ## Docker
 
-生产编排只在 **`docker/`** 目录：
+生产编排只在 **`docker/`** 目录（库与配置 bind mount 到 `docker/data`、`docker/config.yaml`）：
 
 ```bash
 cd docker
 ./scripts/setup.sh          # 生成 .env / config.yaml，并写入随机服务令牌
-# 编辑 docker/.env — JWT / 加密密钥不可留空
-docker compose build
-docker compose --profile tools run --rm init-db
-docker compose up -d
+# 编辑 docker/.env — 钉钉凭证；JWT / 加密密钥不可留空
+docker compose up -d --build   # 自动跑 init-db，再起 web/assistant/channel
 ```
 
-详情见 [docker/README.md](docker/README.md)。
+可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
 
 ## 文档
 

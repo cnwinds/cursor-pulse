@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.22-alpine AS build
+WORKDIR /src
+COPY proxy/go.mod ./
+COPY proxy/*.go ./
+RUN CGO_ENABLED=0 go build -o /out/cursor-pulse-proxy .
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=build /out/cursor-pulse-proxy /usr/local/bin/cursor-pulse-proxy
+RUN mkdir -p /data
+VOLUME ["/data"]
+ENV HOME=/data
+EXPOSE 8317
+ENTRYPOINT ["cursor-pulse-proxy"]
+CMD ["-listen", "0.0.0.0:8317"]

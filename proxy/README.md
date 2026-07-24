@@ -72,7 +72,18 @@ $env:PROXY_UPSTREAM_URL = "http://127.0.0.1:7890"
 
 ## 部署说明
 
-开发机优先用上一节 `cursor-pulse start proxy`。生产/独立部署仍可按「启动（Pulse 模式）」一节手动跑二进制。
+开发机优先用上一节 `cursor-pulse start proxy`。生产/独立部署可：
+
+- 手动跑二进制（见「启动（Pulse 模式）」），或
+- Docker（与主栈分离）：
+
+```bash
+cd docker
+# 主栈已 up；.env 含 PULSE_INTERNAL_SERVICE_TOKEN
+docker compose -f docker-compose.proxy.yml up -d --build
+```
+
+默认经 `host.docker.internal` 访问宿主机 Web；CA 落在 `docker/proxy-data/`。详见 [docker/README.md](../docker/README.md)。
 
 ## 本地 `-keys` 兜底（无 Pulse）
 

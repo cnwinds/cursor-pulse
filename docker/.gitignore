@@ -8,4 +8,5 @@ data/*.db-*
 data/*.db-shm
 data/*.db-wal
 data/raw/
+proxy-data/
 config.yaml

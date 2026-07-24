@@ -15,14 +15,14 @@ x-app-common: &app-common
   restart: unless-stopped
 
 services:
-  # One-shot schema migration: docker compose --profile tools run --rm init-db
+  # Oneshot schema migration — runs automatically on every `compose up`
   init-db:
     <<: *app-common
-    profiles: [tools]
     container_name: cursor-pulse-init-db
     restart: "no"
     command: ["pulse", "init-db", "-c", "/app/config/config.yaml"]
 
+  # Optional: docker compose --profile tools run --rm init-v2
   init-v2:
     <<: *app-common
     profiles: [tools]
@@ -33,6 +33,9 @@ services:
   web:
     <<: *app-common
     container_name: cursor-pulse-web
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
     command:
       - pulse
       - web
@@ -67,6 +70,8 @@ services:
       PULSE_BASE_URL: http://web:8080
     command: ["python", "-m", "assistant_platform", "serve"]
     depends_on:
+      init-db:
+        condition: service_completed_successfully
       web:
         condition: service_healthy
     healthcheck:
@@ -87,6 +92,8 @@ services:
     container_name: cursor-pulse-channel
     command: ["pulse", "channel", "-c", "/app/config/config.yaml"]
     depends_on:
+      init-db:
+        condition: service_completed_successfully
       web:
         condition: service_healthy
       assistant:

@@ -1,0 +1,32 @@
+# Standalone Cursor Pulse proxy (Go MITM data plane).
+# Requires the main stack (or reachable Pulse web) and matching internal token.
+#
+# Usage (from docker/):
+#   # ensure docker/.env has PULSE_INTERNAL_SERVICE_TOKEN
+#   # default talks to host-mapped web on :8080
+#   docker compose -f docker-compose.proxy.yml up -d --build
+#
+# Optional: set PULSE_BASE_URL / PULSE_PROXY_PORT in .env
+
+name: cursor-pulse-proxy
+
+services:
+  proxy:
+    image: cursor-pulse-proxy:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.proxy
+    container_name: cursor-pulse-proxy
+    env_file:
+      - .env
+    environment:
+      # 勿复用主栈的 PULSE_BASE_URL=http://web:8080（独立网络解析不到）
+      PULSE_BASE_URL: ${PROXY_PULSE_BASE_URL:-http://host.docker.internal:8080}
+      PULSE_INTERNAL_SERVICE_TOKEN: ${PULSE_INTERNAL_SERVICE_TOKEN}
+    ports:
+      - "${PULSE_PROXY_PORT:-8317}:8317"
+    volumes:
+      - ./proxy-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
