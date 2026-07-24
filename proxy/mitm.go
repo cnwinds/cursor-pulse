@@ -50,7 +50,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		bodyFor = func() io.ReadCloser { return fs.reader() }
 		reqBodySnap = fs.snapshot
 	} else {
-		body, err := io.ReadAll(io.LimitReader(req.Body, 1<<30))
+		body, err := io.ReadAll(io.LimitReader(req.Body, maxNonStreamBodyLimit()))
 		if err != nil {
 			http.Error(w, "read request body: "+err.Error(), http.StatusBadRequest)
 			return

@@ -126,8 +126,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	// Serve this single connection as an HTTP server (h2 via ALPN, or h1).
 	srv := &http.Server{
-		Handler:   http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { s.handleMITM(w, req, authority) }),
-		TLSConfig: tlsConf,
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { s.handleMITM(w, req, authority) }),
+		TLSConfig:         tlsConf,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		IdleTimeout:       defaultIdleTimeout,
 	}
 	go srv.Serve(&oneConnListener{conn: tlsConn})
 }

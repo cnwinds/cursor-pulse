@@ -118,6 +118,22 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 环境变量 `PROXY_CONNECT_ALLOWLIST`（默认 `*.cursor.sh,cursor.sh`）限制 CONNECT 可连主机；非匹配目标返回 403。
 
+## 资源限制
+
+| 限制 | 默认 | 环境变量 |
+|---|---|---|
+| 非流式请求体 | 32 MiB | `PROXY_MAX_BODY`（字节数） |
+| 流式 usage tap 缓冲 | 8 MiB | —（超限后停止解析，仍转发） |
+| 每连接读头超时 | 30s | — |
+| 每连接空闲超时 | 120s | — |
+
+## 池 exhausted 语义
+
+- 某凭证因 **配额/限流** 被 `markExhausted` 后，`exhausted` 标志 **sticky**：Pulse 热更新凭证池时 **保留**（避免短暂恢复后立刻再烧额度）。
+- **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
+- 进程启动后按 **`PROXY_EXHAUSTED_RESET`**（默认 **30m**）周期性调用 `pool.reset()`，清掉所有 `exhausted` 与 `badUntil`，便于额度窗口刷新后重试。
+- 日志：`[pool] exhaustion flags reset`。
+
 ## 开发
 
 ```powershell

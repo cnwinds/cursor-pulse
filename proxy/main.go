@@ -125,6 +125,10 @@ Point agent at this proxy and trust the CA (PowerShell):
 		log.Printf("listening on %s with %d API key(s)", cfg.Listen, len(cfg.Keys))
 	}
 
+	exhaustedReset := resolveExhaustedResetInterval()
+	go pollExhaustedReset(pool, exhaustedReset)
+	log.Printf("pool exhausted reset every %s (PROXY_EXHAUSTED_RESET)", exhaustedReset)
+
 	srv := NewServer(pool, ca, pulse, sessions)
 	if pulseMode {
 		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
@@ -142,6 +146,14 @@ Point agent at this proxy and trust the CA (PowerShell):
 	log.Printf("cursor upstream: %s", redactUpstreamProxy(upstreamRaw))
 
 	log.Fatal(http.ListenAndServe(cfg.Listen, srv))
+}
+
+func pollExhaustedReset(pool *Pool, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for range tick.C {
+		pool.reset()
+	}
 }
 
 func pollPool(pool *Pool, pulse *PulseClient, every time.Duration) {
