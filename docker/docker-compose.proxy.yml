@@ -27,6 +27,8 @@ services:
       - "${PULSE_PROXY_PORT:-8317}:8317"
     volumes:
       - ./proxy-data:/data
+      # Mount so process restart re-reads secrets/flags (env_file alone is create-time only)
+      - ./.env:/app/.env:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

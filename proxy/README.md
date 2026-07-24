@@ -83,7 +83,7 @@ cd docker
 docker compose -f docker-compose.proxy.yml up -d --build
 ```
 
-默认经 `host.docker.internal` 访问宿主机 Web；CA 落在 `docker/proxy-data/`。详见 [docker/README.md](../docker/README.md)。
+默认经 `host.docker.internal` 访问宿主机 Web；CA 落在 `docker/proxy-data/`。`docker/.env` 挂载为 `/app/.env`，改令牌 / `PROXY_UPSTREAM_URL` 等后 `docker compose -f docker-compose.proxy.yml restart` 即可生效（改端口需 `up -d` 重建）。详见 [docker/README.md](../docker/README.md)。
 
 ## 本地 `-keys` 兜底（无 Pulse）
 

@@ -170,8 +170,9 @@ cd /opt/cursor-pulse/docker
 docker compose -f docker-compose.proxy.yml up -d --build
 ```
 
-- 端口：`${PULSE_PROXY_PORT:-8317}`
+- 端口：`${PULSE_PROXY_PORT:-8317}`（改端口需 `up -d` 重建，不能只 `restart`）
 - 控制面地址：默认 `PROXY_PULSE_BASE_URL=http://host.docker.internal:8080`（勿用主栈的 `http://web:8080`）
+- `docker/.env` → `/app/.env`（只读）+ `env_file`：令牌 / `PROXY_UPSTREAM_URL` 等**改完 `restart` 即可**
 - CA / 状态目录：宿主机 `docker/proxy-data/` → 容器 `/data`（`HOME=/data`）
 - 详见 [proxy/README.md](../proxy/README.md)
 

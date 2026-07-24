@@ -1,13 +1,17 @@
-# syntax=docker/dockerfile:1
+# Base images via DaoCloud mirror (Docker Hub proxy)
+ARG GOLANG_IMAGE=docker.m.daocloud.io/library/golang:1.22-alpine
+ARG ALPINE_IMAGE=docker.m.daocloud.io/library/alpine:3.20
 
-FROM golang:1.22-alpine AS build
+FROM ${GOLANG_IMAGE} AS build
 WORKDIR /src
+ENV GOPROXY=https://goproxy.cn,direct
 COPY proxy/go.mod ./
 COPY proxy/*.go ./
 RUN CGO_ENABLED=0 go build -o /out/cursor-pulse-proxy .
 
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
+FROM ${ALPINE_IMAGE}
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
+    && apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /out/cursor-pulse-proxy /usr/local/bin/cursor-pulse-proxy
 RUN mkdir -p /data

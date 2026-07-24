@@ -12,6 +12,7 @@ import (
 
 func main() {
 	log.SetPrefix("[cursor-quota-proxy] ")
+	bootstrapDockerDotenv()
 	var (
 		listen         = flag.String("listen", "", "listen address (default 0.0.0.0:8317)")
 		keys           = flag.String("keys", "", "comma-separated Cursor API keys (saved to config)")
