@@ -37,6 +37,14 @@ def format_china_datetime_iso(value: datetime | str | None) -> str | None:
     return wall.replace(" ", "T") + "+08:00"
 
 
+def format_china_date(value: datetime | str | None) -> str | None:
+    """China local calendar date as YYYY-MM-DD."""
+    wall = format_china_datetime(value)
+    if wall is None:
+        return None
+    return wall[:10]
+
+
 def format_data_updated_line(value: datetime | str | None) -> str:
     formatted = format_china_datetime(value)
     if formatted:

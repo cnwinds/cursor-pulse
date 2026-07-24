@@ -172,12 +172,33 @@
           <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
-      <h4 class="usage-section-title">proxy 明细（最近 · 本地估算）</h4>
-      <el-table :data="usages" style="width: 100%" v-loading="usagesLoading">
-        <el-table-column label="时间" width="170">
-          <template #default="{ row }">{{ formatChinaTime(row.ts) }}</template>
+      <h4 class="usage-section-title">proxy 明细（按天 · 本地估算）</h4>
+      <el-table
+        :data="usageByDay"
+        style="width: 100%"
+        v-loading="usagesLoading"
+        row-key="day"
+      >
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <el-table :data="row.items" size="small" class="day-detail-table">
+              <el-table-column label="时间" width="170">
+                <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
+              </el-table-column>
+              <el-table-column prop="model" label="模型" min-width="140" />
+              <el-table-column label="tokens" width="100">
+                <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
+              </el-table-column>
+              <el-table-column label="费用" width="100">
+                <template #default="{ row: item }">
+                  ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
         </el-table-column>
-        <el-table-column prop="model" label="模型" min-width="140" />
+        <el-table-column prop="day" label="日期" width="140" />
+        <el-table-column prop="request_count" label="请求数" width="80" />
         <el-table-column label="tokens" width="100">
           <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
         </el-table-column>
@@ -307,7 +328,7 @@ const cursorKeyPlaintext = ref('')
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
 const usagesTitle = ref('')
-const usages = ref<LoanUsageRow[]>([])
+const usageByDay = ref<LoanUsageByDayRow[]>([])
 const usageByModel = ref<LoanUsageByModelRow[]>([])
 const usageSummary = ref<LoanUsageSummary | null>(null)
 
@@ -317,6 +338,14 @@ interface LoanUsageRow {
   total_tokens: number
   cost_cents: number
   ts: string | null
+}
+
+interface LoanUsageByDayRow {
+  day: string
+  request_count: number
+  total_tokens: number
+  cost_cents: number
+  items: LoanUsageRow[]
 }
 
 interface LoanUsageByModelRow {
@@ -468,7 +497,7 @@ function closeKeyReveal() {
 
 async function openUsages(row: LoanRow) {
   usagesTitle.value = row.borrower_name || row.source_account_identifier || row.id.slice(0, 8)
-  usages.value = []
+  usageByDay.value = []
   usageByModel.value = []
   usageSummary.value = null
   usagesVisible.value = true
@@ -477,7 +506,7 @@ async function openUsages(row: LoanRow) {
     const res = await client.get(`/api/v2/loans/${row.id}/usages`)
     usageSummary.value = res.data.summary
     usageByModel.value = res.data.by_model || []
-    usages.value = res.data.items || []
+    usageByDay.value = res.data.by_day || []
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '用量加载失败')
   } finally {
@@ -575,6 +604,9 @@ onMounted(loadLoans)
 }
 .usage-section-title + .el-table + .usage-section-title {
   margin-top: 20px;
+}
+.day-detail-table {
+  margin: 4px 12px 12px 48px;
 }
 .mb {
   margin-bottom: 12px;

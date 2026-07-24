@@ -28,6 +28,7 @@ from pulse.tool_center.key_loans import (
     reveal_loan_user_key,
 )
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import format_china_date
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 
@@ -298,8 +299,25 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             .all()
         )
         proxy_tokens, proxy_cost = proxy_service.loan_proxy_totals(session, loan_id)
+
         by_model_map: dict[str, dict] = {}
+        by_day_map: dict[str, dict] = {}
+        items_all: list[dict] = []
         for u in rows:
+            item = {
+                "id": u.id,
+                "model": u.model,
+                "tokens_input": u.tokens_input,
+                "tokens_output": u.tokens_output,
+                "tokens_cache_read": u.tokens_cache_read,
+                "tokens_cache_write": u.tokens_cache_write,
+                "tokens_reasoning": u.tokens_reasoning,
+                "total_tokens": u.total_tokens,
+                "cost_cents": u.cost_cents,
+                "ts": u.ts.isoformat() if u.ts else None,
+            }
+            items_all.append(item)
+
             label = (u.model or "").strip() or "（未知）"
             bucket = by_model_map.get(label)
             if bucket is None:
@@ -313,26 +331,34 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             bucket["request_count"] += 1
             bucket["total_tokens"] += int(u.total_tokens or 0)
             bucket["cost_cents"] += int(u.cost_cents or 0)
+
+            day = format_china_date(u.ts) or "未知"
+            day_bucket = by_day_map.get(day)
+            if day_bucket is None:
+                day_bucket = {
+                    "day": day,
+                    "request_count": 0,
+                    "total_tokens": 0,
+                    "cost_cents": 0,
+                    "items": [],
+                }
+                by_day_map[day] = day_bucket
+            day_bucket["request_count"] += 1
+            day_bucket["total_tokens"] += int(u.total_tokens or 0)
+            day_bucket["cost_cents"] += int(u.cost_cents or 0)
+            day_bucket["items"].append(item)
+
         by_model = sorted(
             by_model_map.values(),
             key=lambda r: r["cost_cents"],
             reverse=True,
         )
-        items = [
-            {
-                "id": u.id,
-                "model": u.model,
-                "tokens_input": u.tokens_input,
-                "tokens_output": u.tokens_output,
-                "tokens_cache_read": u.tokens_cache_read,
-                "tokens_cache_write": u.tokens_cache_write,
-                "tokens_reasoning": u.tokens_reasoning,
-                "total_tokens": u.total_tokens,
-                "cost_cents": u.cost_cents,
-                "ts": u.ts.isoformat() if u.ts else None,
-            }
-            for u in rows[:limit]
-        ]
+        # Newest China calendar day first; rows without ts ("未知") last.
+        by_day = sorted(
+            by_day_map.values(),
+            key=lambda r: (0 if r["day"] == "未知" else 1, r["day"]),
+            reverse=True,
+        )
         return {
             "summary": {
                 "borrowed_cents": payload["borrowed_cents"],
@@ -341,7 +367,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 "request_count": len(rows),
             },
             "by_model": by_model,
-            "items": items,
+            "by_day": by_day,
+            "items": items_all[:limit],
         }
 
     @app.get(
