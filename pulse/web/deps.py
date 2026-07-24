@@ -20,6 +20,7 @@ class PortalUser:
 
 
 def _member_from_legacy_token(session: Session, config: AppConfig, token: str) -> Member | None:
+    # Disaster-recovery only: raw ADMIN_WEB_TOKEN bearer (not a JWT). Do not expand scope.
     if not config.web.admin_token or token != config.web.admin_token:
         return None
     team, repo = team_repository(session, config)
