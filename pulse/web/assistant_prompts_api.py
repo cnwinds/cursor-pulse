@@ -178,16 +178,8 @@ def register_assistant_prompts_routes(
         )
 
     @app.post("/api/v2/assistant/prompts/proposals/{proposal_id}/approve")
-    def assistant_prompt_proposal_approve(
-        proposal_id: str,
-        user: PortalUser = Depends(require_capability("assistant:prompts:approve")),
-    ):
-        return _proxy_assistant(
-            config,
-            user=user,
-            method="POST",
-            path=f"/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
-        )
+    def assistant_prompt_proposal_approve(proposal_id: str):
+        _gone()
 
     @app.post("/api/v2/assistant/prompts/releases/{release_id}/canary")
     def assistant_prompt_release_canary(release_id: str):

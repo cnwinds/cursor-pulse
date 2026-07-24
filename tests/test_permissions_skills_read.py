@@ -24,5 +24,14 @@ def test_owner_and_operator_have_skills_read_permission():
     "capability",
     ["assistant:prompts:write", "assistant:prompts:approve"],
 )
-def test_retired_prompt_write_permissions_are_denied_for_owner(capability: str):
+def test_retired_prompt_write_permissions_not_in_resolve_permissions(capability: str):
+    assert capability not in resolve_permissions(_member("owner"))
+    assert capability not in resolve_permissions(_member("operator"))
+
+
+@pytest.mark.parametrize(
+    "capability",
+    ["assistant:prompts:write", "assistant:prompts:approve"],
+)
+def test_retired_prompt_write_permissions_hard_denied(capability: str):
     assert not has_permission(_member("owner"), capability)

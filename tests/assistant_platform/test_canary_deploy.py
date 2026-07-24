@@ -185,7 +185,7 @@ def test_deploy_canary_creates_deployment_row():
     session.close()
 
 
-def _headers(*, permissions: str = "assistant:prompts:read,assistant:prompts:write") -> dict[str, str]:
+def _headers(*, permissions: str = "assistant:prompts:read") -> dict[str, str]:
     return signed_actor_headers(
         SERVICE_TOKEN,
         member_id="mem-1",

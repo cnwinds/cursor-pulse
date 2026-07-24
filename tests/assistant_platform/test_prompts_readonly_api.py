@@ -60,6 +60,7 @@ def test_prompt_preview_comes_from_files(client: TestClient):
         "/api/assistant/v1/prompts/releases/release-1/canary",
         "/api/assistant/v1/prompts/releases/release-1/promote",
         "/api/assistant/v1/prompts/releases/release-1/rollback",
+        "/api/assistant/v1/prompts/proposals/proposal-1/approve",
     ],
 )
 def test_prompt_write_returns_410(client: TestClient, path: str):

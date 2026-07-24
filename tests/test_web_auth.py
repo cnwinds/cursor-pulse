@@ -69,3 +69,5 @@ def test_jwt_roundtrip():
     payload = decode_access_token(config, token)
     assert payload["sub"] == "mem-1"
     assert "metrics:read" in payload["permissions"]
+    assert "assistant:prompts:write" not in payload["permissions"]
+    assert "assistant:prompts:approve" not in payload["permissions"]

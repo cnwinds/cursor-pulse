@@ -101,7 +101,7 @@ def test_cluster_low_score_reviews_creates_cluster_and_draft_proposal():
     session.close()
 
 
-def _headers(*, permissions: str = "assistant:prompts:read,assistant:prompts:approve") -> dict[str, str]:
+def _headers(*, permissions: str = "assistant:prompts:read") -> dict[str, str]:
     return signed_actor_headers(
         SERVICE_TOKEN,
         member_id="mem-1",
@@ -144,14 +144,16 @@ def test_approve_proposal_does_not_change_production_release(api_client):
         f"/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
         headers=_headers(),
     )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "approved"
+    assert resp.status_code == 410
+    assert resp.json()["detail"] == (
+        "Prompt editing retired; edit files in assistant_platform/prompts/docs"
+    )
 
     db = sf()
     try:
         updated = db.get(PromptChangeProposalRow, proposal_id)
         assert updated is not None
-        assert updated.status == "approved"
+        assert updated.status == "draft"
         production_after = get_production_release(db)
         assert production_after.id == production_before.id
     finally:

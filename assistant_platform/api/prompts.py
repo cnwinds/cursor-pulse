@@ -48,16 +48,6 @@ def _require_read(actor: ActorContext) -> None:
         raise HTTPException(status_code=403, detail="缺少 assistant:prompts:read 权限")
 
 
-def _require_write(actor: ActorContext) -> None:
-    if "assistant:prompts:write" not in actor.permissions:
-        raise HTTPException(status_code=403, detail="缺少 assistant:prompts:write 权限")
-
-
-def _require_approve(actor: ActorContext) -> None:
-    if "assistant:prompts:approve" not in actor.permissions:
-        raise HTTPException(status_code=403, detail="缺少 assistant:prompts:approve 权限")
-
-
 def _gone() -> None:
     raise HTTPException(status_code=410, detail=_PROMPT_EDITING_RETIRED_DETAIL)
 
@@ -251,21 +241,8 @@ def register_prompt_routes(
         "/api/assistant/v1/prompts/proposals/{proposal_id}/approve",
         dependencies=[Depends(require_service_token)],
     )
-    def approve_proposal(
-        proposal_id: str,
-        session: Session = Depends(get_db),
-        actor: ActorContext = Depends(actor_dependency),
-    ):
-        _require_approve(actor)
-        proposal = session.get(PromptChangeProposalRow, proposal_id)
-        if proposal is None:
-            raise HTTPException(status_code=404, detail="Proposal not found")
-        if proposal.status != "draft":
-            raise HTTPException(status_code=409, detail="仅 draft 提案可审批")
-        proposal.status = "approved"
-        session.add(proposal)
-        session.commit()
-        return _proposal_json(proposal)
+    def approve_proposal(proposal_id: str):
+        _gone()
 
     @app.post(
         "/api/assistant/v1/prompts/releases/{release_id}/canary",

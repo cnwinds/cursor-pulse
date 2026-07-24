@@ -105,8 +105,16 @@ def test_prompts_preview_proxies_file_readonly_endpoint(mock_client_cls, api_env
     )
 
 
-def test_prompt_writes_return_410_without_proxy(api_env):
-    response = api_env["client"].post("/api/v2/assistant/prompts/fragments")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v2/assistant/prompts/fragments",
+        "/api/v2/assistant/prompts/releases",
+        "/api/v2/assistant/prompts/proposals/proposal-1/approve",
+    ],
+)
+def test_prompt_writes_return_410_without_proxy(api_env, path: str):
+    response = api_env["client"].post(path)
 
     assert response.status_code == 410
     assert response.json()["detail"] == RETIRED_DETAIL

@@ -77,7 +77,7 @@ def _headers() -> dict[str, str]:
         SERVICE_TOKEN,
         member_id="mem-1",
         role="operator",
-        permissions="assistant:prompts:read,assistant:prompts:write",
+        permissions="assistant:prompts:read",
     )
 
 
