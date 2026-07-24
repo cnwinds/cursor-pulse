@@ -15,12 +15,13 @@ import (
 )
 
 type Server struct {
-	pool      *Pool
-	ca        *CA
-	pulse     *PulseClient
-	sessions  *SessionMap
-	onRotate  func(entry *keyEntry, binding SessionBinding, kind failKind)
-	transport *http.Transport
+	pool       *Pool
+	ca         *CA
+	pulse      *PulseClient
+	sessions   *SessionMap
+	sessionTTL time.Duration
+	onRotate   func(entry *keyEntry, binding SessionBinding, kind failKind)
+	transport  *http.Transport
 
 	passthroughMu sync.Mutex
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT

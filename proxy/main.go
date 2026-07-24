@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -21,6 +22,7 @@ func main() {
 		pulseURL       = flag.String("pulse-url", "", "Pulse control-plane base URL (env PULSE_BASE_URL)")
 		pulseToken     = flag.String("pulse-token", "", "Pulse internal service token (env PULSE_INTERNAL_SERVICE_TOKEN)")
 		upstreamProxy  = flag.String("upstream-proxy", "", "HTTP(S) proxy for Cursor upstream (env PROXY_UPSTREAM_URL)")
+		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
 	)
 	flag.Parse()
 
@@ -121,6 +123,9 @@ Point agent at this proxy and trust the CA (PowerShell):
 	}
 
 	srv := NewServer(pool, ca, pulse, sessions)
+	if pulseMode {
+		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
+	}
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))
 	upstream, err := parseUpstreamProxy(upstreamRaw)
@@ -160,4 +165,21 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+const defaultSessionTTL = 120 * time.Second
+
+func resolveSessionTTL(flagVal time.Duration) time.Duration {
+	if flagVal > 0 {
+		return flagVal
+	}
+	if raw := os.Getenv("PROXY_SESSION_TTL"); raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultSessionTTL
 }
