@@ -32,6 +32,10 @@ cursor_sync:
   max_retry_count: 8
   pre_publish_start_time: "08:00"
   readiness_sync_max_age_hours: 6
+  enforce_on_demand_disabled: true  # 同步时强制关闭 On-Demand Spending
+  # on_demand_notify_member_ids: []  # 未配置则回落 admin.dingtalk_user_ids 对应成员
+  on_demand_notify_primary: true  # 同时通知账号主使用人
+  on_demand_notify_admins_on_api_failure: true  # GetHardLimit 失败时单独通知管理员
 
 storage:
   database_url: "sqlite:///data/pulse.db"

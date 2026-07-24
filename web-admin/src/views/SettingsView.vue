@@ -104,6 +104,7 @@ const tab = ref('collection')
 const integrations = ref<any>(null)
 const schedule = ref<any>(null)
 const runtimeLoading = ref(true)
+const members = ref<Array<{ id: string; display_name: string; dingtalk_user_id: string }>>([])
 
 const loading = computed(() => store.loading || runtimeLoading.value)
 
@@ -118,7 +119,27 @@ const forms = reactive({
   integrations: {} as Record<string, unknown>,
   cursor_sync: {} as Record<string, unknown>,
   dingtalk: {} as Record<string, unknown>,
+  admin: {} as Record<string, unknown>,
 })
+
+const memberSelectOptions = computed(() =>
+  members.value.map((m) => ({
+    value: m.id,
+    label: m.display_name || m.dingtalk_user_id || m.id,
+  })),
+)
+
+function adminFallbackMemberIds(): string[] {
+  const adminIds = new Set(
+    ((forms.admin.dingtalk_user_ids as string[]) || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean),
+  )
+  if (!adminIds.size) return []
+  return members.value
+    .filter((m) => adminIds.has(m.dingtalk_user_id))
+    .map((m) => m.id)
+}
 
 const dialog = reactive<DialogState>({
   open: false,
@@ -137,7 +158,18 @@ const ITEM_PLANS: Record<string, SavePlan[]> = {
     { section: 'collection', keys: ['report_time', 'report_on_first_business_day', 'report_day', 'publish_report_to_group'] },
     { section: 'cursor_sync', keys: ['pre_publish_start_time'] },
   ],
-  cursor_sync_tick: [{ section: 'cursor_sync', keys: ['enabled', 'default_interval_minutes', 'tick_interval_minutes'] }],
+  cursor_sync_tick: [{
+    section: 'cursor_sync',
+    keys: [
+      'enabled',
+      'default_interval_minutes',
+      'tick_interval_minutes',
+      'enforce_on_demand_disabled',
+      'on_demand_notify_member_ids',
+      'on_demand_notify_primary',
+      'on_demand_notify_admins_on_api_failure',
+    ],
+  }],
   memory_evolution: [{ section: 'memory', keys: ['evolution_enabled', 'evolution_day_of_week', 'evolution_time'] }],
   alerts: [{ section: 'alerts', keys: ['enabled', 'member_events_spike_pct', 'team_events_spike_pct', 'member_cost_spike_usd'] }],
   pulse_llm: [{ section: 'llm', keys: ['enabled', 'base_url', 'api_key', 'model', 'vision_enabled', 'vision_model'] }],
@@ -188,7 +220,21 @@ function syncRowSummary(): string {
   if (!forms.cursor_sync.enabled) return '已关闭'
   const tick = forms.cursor_sync.tick_interval_minutes ?? 2
   const interval = formatIntervalMinutes(forms.cursor_sync.default_interval_minutes ?? 1440)
-  return `每 ${tick} 分钟巡检 · 账号间隔 ${interval}`
+  const parts = [`每 ${tick} 分钟巡检`, `账号间隔 ${interval}`]
+  if (forms.cursor_sync.enforce_on_demand_disabled !== false) {
+    parts.push('强制关 On-Demand')
+    const ids = forms.cursor_sync.on_demand_notify_member_ids
+    const n = Array.isArray(ids) ? ids.length : null
+    const primary = forms.cursor_sync.on_demand_notify_primary !== false
+    if (n != null) {
+      parts.push(primary ? `通知 ${n} 人+主使用人` : `通知 ${n} 人`)
+    } else if (primary) {
+      parts.push('通知管理员+主使用人')
+    } else {
+      parts.push('通知管理员')
+    }
+  }
+  return parts.join(' · ')
 }
 
 function jobCron(id: string): string {
@@ -392,6 +438,33 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     hint: '首个工作日上午先刷新 Cursor 用量，再按发送时间发月报',
   },
   sync_enabled: { key: 'enabled', label: '启用同步', type: 'switch' },
+  enforce_on_demand_disabled: {
+    key: 'enforce_on_demand_disabled',
+    label: 'On-Demand 强制关闭',
+    type: 'switch',
+    hint: '用量同步时检测并关闭 Cursor On-Demand Spending，避免超额扣费',
+  },
+  on_demand_notify_member_ids: {
+    key: 'on_demand_notify_member_ids',
+    label: '关闭时通知这些人',
+    type: 'member_multi',
+    hint: '可搜索选择钉钉成员；未保存过时默认预填管理员',
+    showWhen: (model) => model.enforce_on_demand_disabled !== false,
+  },
+  on_demand_notify_primary: {
+    key: 'on_demand_notify_primary',
+    label: '同时通知主使用人',
+    type: 'switch',
+    hint: '向该账号的主使用人发送钉钉私聊（与上表去重）',
+    showWhen: (model) => model.enforce_on_demand_disabled !== false,
+  },
+  on_demand_notify_admins_on_api_failure: {
+    key: 'on_demand_notify_admins_on_api_failure',
+    label: '接口失败时通知管理员',
+    type: 'switch',
+    hint: 'GetHardLimit 失败时单独通知平台管理员（DINGTALK_ADMIN_USER_IDS），应对 API 变更',
+    showWhen: (model) => model.enforce_on_demand_disabled !== false,
+  },
   default_interval_minutes: {
     key: 'default_interval_minutes',
     label: '账号同步间隔',
@@ -707,7 +780,16 @@ watch(tab, (value) => {
 onMounted(loadAll)
 
 async function loadAll() {
-  await Promise.all([applySettings(await store.load()), loadRuntime()])
+  await Promise.all([applySettings(await store.load()), loadRuntime(), loadMembers()])
+}
+
+async function loadMembers() {
+  try {
+    const res = await client.get('/api/v2/members')
+    members.value = Array.isArray(res.data) ? res.data : []
+  } catch {
+    members.value = []
+  }
 }
 
 function applySettings(data: Record<string, any>) {
@@ -731,6 +813,7 @@ function applySettings(data: Record<string, any>) {
   }
   forms.integrations = { ...data.integrations }
   forms.dingtalk = { ...data.dingtalk }
+  forms.admin = { ...(data.admin || {}) }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
     cursorSync.default_interval_minutes = Number(cursorSync.default_interval_hours) * 60
@@ -836,7 +919,15 @@ function fieldsForItem(itemId: string): SettingsField[] {
         if (itemId === 'assistant_llm' && key === 'enabled') return FIELD_DEFS.assistant_enabled
         if (itemId === 'assistant_llm' && key === 'model') return FIELD_DEFS.assistant_model
         if (itemId === 'assistant_llm' && key === 'api_key') return FIELD_DEFS.assistant_api_key
-        return FIELD_DEFS[key]
+        const field = FIELD_DEFS[key]
+        if (
+          itemId === 'cursor_sync_tick' &&
+          key === 'on_demand_notify_member_ids' &&
+          field
+        ) {
+          return { ...field, options: memberSelectOptions.value }
+        }
+        return field
       })
       .filter(Boolean),
   )
@@ -894,6 +985,20 @@ function modelForItem(itemId: string): Record<string, unknown> {
     const source = sectionModel(plan.section)
     for (const key of plan.keys) {
       model[key] = source[key]
+    }
+  }
+  if (itemId === 'cursor_sync_tick') {
+    if (model.enforce_on_demand_disabled == null) {
+      model.enforce_on_demand_disabled = true
+    }
+    if (model.on_demand_notify_primary == null) {
+      model.on_demand_notify_primary = true
+    }
+    if (model.on_demand_notify_admins_on_api_failure == null) {
+      model.on_demand_notify_admins_on_api_failure = true
+    }
+    if (model.on_demand_notify_member_ids == null) {
+      model.on_demand_notify_member_ids = adminFallbackMemberIds()
     }
   }
   return model

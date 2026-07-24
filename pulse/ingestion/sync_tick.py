@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
-from pulse.ingestion.on_demand import OnDemandEnforceResult, format_on_demand_admin_alert
+from pulse.ingestion.on_demand import (
+    OnDemandEnforceResult,
+    format_on_demand_admin_alert,
+    resolve_admin_dingtalk_ids,
+    resolve_on_demand_notify_dingtalk_ids,
+)
 from pulse.ingestion.sync import CursorSyncService
 from pulse.ingestion.sync_errors import FatalSyncError, RetryableSyncError, classify_sync_error
 from pulse.ingestion.sync_schedule import (
@@ -24,18 +29,34 @@ logger = logging.getLogger(__name__)
 _PRIORITY_ORDER = {"pre_publish": 0, "month_close": 1, "normal": 2}
 
 
-def _make_on_demand_notify(config: AppConfig, notify_admins):
-    if not notify_admins or not config.admin.dingtalk_user_ids:
+def _make_on_demand_notify(session: Session, config: AppConfig, send_private_message):
+    if not send_private_message or not config.cursor_sync.enforce_on_demand_disabled:
         return None
 
     def _notify(account: AiAccount, result: OnDemandEnforceResult) -> None:
         text = format_on_demand_admin_alert(account, result)
-        for admin_id in config.admin.dingtalk_user_ids:
+        if result.status == "check_failed":
+            if not config.cursor_sync.on_demand_notify_admins_on_api_failure:
+                return
+            # GetHardLimit 失败：只通知平台管理员，不发给业务通知名单/主使用人
+            recipients = resolve_admin_dingtalk_ids(config)
+        else:
+            recipients = resolve_on_demand_notify_dingtalk_ids(
+                session, config, account
+            )
+        if not recipients:
+            logger.warning(
+                "on-demand notify: no recipients for account %s (status=%s)",
+                account.id,
+                result.status,
+            )
+            return
+        for user_id in recipients:
             try:
-                notify_admins(admin_id, text)
+                send_private_message(user_id, text)
             except Exception:
                 logger.exception(
-                    "Failed to notify admin %s about on-demand enforce", admin_id
+                    "Failed to notify %s about on-demand enforce", user_id
                 )
 
     return _notify
@@ -85,7 +106,8 @@ def run_sync_tick(
     sync = CursorSyncService(
         session,
         encryption_key,
-        on_demand_notify=_make_on_demand_notify(config, notify_admins),
+        on_demand_notify=_make_on_demand_notify(session, config, notify_admins),
+        enforce_on_demand_disabled=config.cursor_sync.enforce_on_demand_disabled,
     )
     for cred in due[:batch_size]:
         try:

@@ -49,6 +49,25 @@
               :value="opt.value"
             />
           </el-select>
+          <el-select
+            v-else-if="field.type === 'member_multi'"
+            v-model="local[field.key]"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            :disabled="field.readonly"
+            placeholder="选择钉钉成员"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in field.options || []"
+              :key="String(opt.value)"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
           <el-input
             v-else-if="field.type === 'secret'"
             v-model="local[field.key]"
@@ -101,7 +120,7 @@ import { useAuthStore } from '@/stores/auth'
 export type SettingsField = {
   key: string
   label: string
-  type?: 'switch' | 'textarea' | 'number' | 'divider' | 'select' | 'secret'
+  type?: 'switch' | 'textarea' | 'number' | 'divider' | 'select' | 'secret' | 'member_multi'
   hint?: string
   readonly?: boolean
   secretSection?: string

@@ -46,8 +46,9 @@ On-Demand 强制关闭          [switch]
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `enforce_on_demand_disabled` | bool | `true` | 同步时是否强制关闭 |
-| `on_demand_notify_member_ids` | `string[]` \| unset | unset → 回落管理员 | 钉钉私聊收件人 |
+| `on_demand_notify_member_ids` | `string[]` \| unset | unset → 回落管理员 | 钉钉私聊收件人（关闭成功/失败） |
 | `on_demand_notify_primary` | bool | `true` | 是否通知账号主使用人 |
+| `on_demand_notify_admins_on_api_failure` | bool | `true` | `GetHardLimit` 失败时单独通知平台管理员 |
 
 `CursorSyncConfig`（`pulse/config.py`）增加对应字段；`EDITABLE_SECTIONS` 已含 `cursor_sync`，无需新 section。
 

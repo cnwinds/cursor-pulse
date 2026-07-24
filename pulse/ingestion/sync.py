@@ -83,16 +83,20 @@ class CursorSyncService:
         *,
         cursor_client: CursorApiClient | None = None,
         on_demand_notify: OnDemandNotify | None = None,
+        enforce_on_demand_disabled: bool = True,
     ):
         self.session = session
         self.encryption_key = encryption_key
         self.cursor_client = cursor_client or CursorApiClient()
         self.on_demand_notify = on_demand_notify
+        self.enforce_on_demand_disabled = enforce_on_demand_disabled
         self.credential_service = CredentialService(
             session, encryption_key, cursor_client=self.cursor_client
         )
 
     def _enforce_on_demand(self, account: AiAccount, token: str, api_key: str) -> None:
+        if not self.enforce_on_demand_disabled:
+            return
         result = enforce_on_demand_disabled(
             self.cursor_client, token, api_key=api_key
         )
@@ -116,7 +120,10 @@ class CursorSyncService:
                 account.id,
                 result.error,
             )
-        if result.status in ("disabled_now", "disable_failed") and self.on_demand_notify:
+        if (
+            result.status in ("disabled_now", "disable_failed", "check_failed")
+            and self.on_demand_notify
+        ):
             try:
                 self.on_demand_notify(account, result)
             except Exception:

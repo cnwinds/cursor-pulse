@@ -142,6 +142,13 @@ class CursorSyncConfig(BaseModel):
     max_retry_count: int = 8
     pre_publish_start_time: str = "08:00"
     readiness_sync_max_age_hours: int = 6
+    # On-Demand Spending：同步时强制关闭 + 通知
+    enforce_on_demand_disabled: bool = True
+    # None = 未配置（回落管理员）；[] = 明确不通知名单中的人
+    on_demand_notify_member_ids: list[str] | None = None
+    on_demand_notify_primary: bool = True
+    # GetHardLimit 失败（接口变更等）时单独通知 admin.dingtalk_user_ids
+    on_demand_notify_admins_on_api_failure: bool = True
 
     @classmethod
     def model_validate(cls, obj, **kwargs):
