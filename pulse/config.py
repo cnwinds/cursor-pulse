@@ -10,6 +10,26 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 
+def _bootstrap_dotenv() -> None:
+    """Load .env into process env.
+
+    Docker mounts ``docker/.env`` at ``/app/.env``. Compose ``env_file`` only
+    injects at container *create* time, so a plain ``restart`` would keep stale
+    values unless we re-read the mounted file with override=True.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    docker_env = Path("/app/.env")
+    if docker_env.is_file():
+        load_dotenv(docker_env, override=True)
+        return
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.is_file():
+        load_dotenv(cwd_env, override=False)
+
+
 class DingTalkConfig(BaseModel):
     app_key: str = ""
     app_secret: str = ""
@@ -341,6 +361,7 @@ def _expand_env(value: Any) -> Any:
 
 
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
+    _bootstrap_dotenv()
     config_path = Path(path)
     data: dict[str, Any] = {}
     if config_path.exists():

@@ -423,14 +423,21 @@ def _resolve_team_id_from_pulse(team_slug: str) -> str:
 
 
 def _load_dotenv_if_present() -> None:
-    """Load project .env into os.environ when not already set (direct `serve` / tests)."""
+    """Load project .env into os.environ.
+
+    Prefer Docker-mounted ``/app/.env`` with override=True so ``compose restart``
+    picks up edits (Compose ``env_file`` alone only applies at container create).
+    """
     try:
         from dotenv import load_dotenv
     except ImportError:
         return
     from pathlib import Path
 
-    # Prefer CWD .env, then repo-root relative to this package
+    docker_env = Path("/app/.env")
+    if docker_env.is_file():
+        load_dotenv(docker_env, override=True)
+        return
     candidates = [
         Path.cwd() / ".env",
         Path(__file__).resolve().parents[1] / ".env",

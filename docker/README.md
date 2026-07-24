@@ -15,7 +15,7 @@
 |--------|------|------|
 | `docker/data/` | `/app/data` | `pulse.db`、`assistant.db`、`raw/` |
 | `docker/config.yaml` | `/app/config/config.yaml`（只读） | 业务配置 |
-| `docker/.env` | `env_file` | 密钥与功能开关 |
+| `docker/.env` | `/app/.env`（只读）+ `env_file` | 密钥与功能开关；**改完 `restart` 即可** |
 
 可选 **Proxy** 见下文独立 compose，不进入主文件。
 

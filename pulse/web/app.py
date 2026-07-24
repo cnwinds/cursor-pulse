@@ -4,9 +4,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -96,9 +98,13 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     def health():
         return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
 
-    @app.get("/", response_class=HTMLResponse)
+    admin_spa_dir = _resolve_admin_static_dir()
+
+    @app.get("/")
     def dashboard():
-        return DASHBOARD_HTML
+        if admin_spa_dir is not None:
+            return RedirectResponse(url="/admin/", status_code=307)
+        return HTMLResponse(DASHBOARD_HTML)
 
     @app.get("/api/periods/{period}/metrics")
     def period_metrics(
@@ -303,7 +309,8 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
         app, get_db, require_capability, _team_repo, config
     )
 
-    _mount_admin_static(app)
+    if admin_spa_dir is not None:
+        _mount_admin_static(app, admin_spa_dir)
 
     enc = (config.credentials.encryption_key or "").strip()
     if enc:
@@ -322,23 +329,52 @@ def create_app(config: AppConfig, session_factory: sessionmaker[Session]) -> Fas
     return app
 
 
-def _mount_admin_static(app: FastAPI) -> None:
-    from pathlib import Path
-
-    from fastapi.staticfiles import StaticFiles
-
+def _resolve_admin_static_dir() -> Path | None:
+    """Locate Vue admin build (dev tree, Docker WORKDIR, or packaged static/)."""
     candidates = [
         Path(__file__).resolve().parents[2] / "web-admin" / "dist",
+        Path.cwd() / "web-admin" / "dist",
+        Path("/app/web-admin/dist"),
         Path(__file__).parent / "static",
     ]
     for static_dir in candidates:
         if static_dir.is_dir() and (static_dir / "index.html").exists():
-            app.mount(
-                "/admin",
-                StaticFiles(directory=str(static_dir), html=True),
-                name="admin_spa",
-            )
-            break
+            return static_dir.resolve()
+    return None
+
+
+def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
+    """Serve Vue SPA under /admin with deep-link fallback to index.html."""
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    resolved = static_dir or _resolve_admin_static_dir()
+    if resolved is None:
+        logger.warning("Vue admin SPA not found; /admin will be unavailable")
+        return
+
+    assets_dir = resolved / "assets"
+    if assets_dir.is_dir():
+        app.mount(
+            "/admin/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="admin_assets",
+        )
+
+    index_file = resolved / "index.html"
+
+    @app.get("/admin")
+    @app.get("/admin/")
+    @app.get("/admin/{full_path:path}")
+    async def admin_spa(full_path: str = "") -> FileResponse:
+        # Prefer real files (favicon, etc.); otherwise SPA shell.
+        if full_path and ".." not in full_path.split("/"):
+            candidate = resolved / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+        return FileResponse(index_file)
+
+    logger.info("Mounted Vue admin SPA from %s at /admin/", resolved)
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>

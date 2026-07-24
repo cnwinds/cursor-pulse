@@ -238,6 +238,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { copyText } from '@/utils/clipboard'
 import { formatChinaTime, formatLoanDuration } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 
@@ -412,8 +413,12 @@ async function submitLoan() {
 
 async function copyKey() {
   if (!revealedKey.value?.api_key) return
-  await navigator.clipboard.writeText(revealedKey.value.api_key)
-  ElMessage.success('已复制 Key')
+  try {
+    await copyText(revealedKey.value.api_key)
+    ElMessage.success('已复制 Key')
+  } catch (err: any) {
+    ElMessage.error(err?.message || '复制失败')
+  }
 }
 
 async function revealCursorKey(row: LoanRow) {
@@ -428,8 +433,12 @@ async function revealCursorKey(row: LoanRow) {
 
 async function copyCursorKey() {
   if (!cursorKeyPlaintext.value) return
-  await navigator.clipboard.writeText(cursorKeyPlaintext.value)
-  ElMessage.success('已复制底层 Cursor Key')
+  try {
+    await copyText(cursorKeyPlaintext.value)
+    ElMessage.success('已复制底层 Cursor Key')
+  } catch (err: any) {
+    ElMessage.error(err?.message || '复制失败')
+  }
 }
 
 async function copyCommand(loanId: string, shell: ShellKind) {
@@ -437,11 +446,13 @@ async function copyCommand(loanId: string, shell: ShellKind) {
     const res = await client.get(`/api/v2/loans/${loanId}/client-setup`, {
       params: { shell },
     })
-    await navigator.clipboard.writeText(res.data.command)
+    await copyText(res.data.command)
     ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
   } catch (err: any) {
     const detail = err?.response?.data?.detail
-    ElMessage.error(typeof detail === 'string' ? detail : '复制失败')
+    ElMessage.error(
+      typeof detail === 'string' ? detail : err?.message || '复制失败'
+    )
   }
 }
 

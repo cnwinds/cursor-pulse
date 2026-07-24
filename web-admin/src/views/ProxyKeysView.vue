@@ -247,6 +247,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 
@@ -476,14 +477,22 @@ async function submitCreate() {
 }
 
 async function copyCreated() {
-  await navigator.clipboard.writeText(createdKey.value)
-  ElMessage.success('已复制 Key')
+  try {
+    await copyText(createdKey.value)
+    ElMessage.success('已复制 Key')
+  } catch (err: any) {
+    ElMessage.error(err?.message || '复制失败')
+  }
 }
 
 async function copyCreatedCommand(shell: ShellKind) {
-  const cmd = buildLocalCommand(shell, createdProxyUrl.value, createdKey.value)
-  await navigator.clipboard.writeText(cmd)
-  ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
+  try {
+    const cmd = buildLocalCommand(shell, createdProxyUrl.value, createdKey.value)
+    await copyText(cmd)
+    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
+  } catch (err: any) {
+    ElMessage.error(err?.message || '复制失败')
+  }
 }
 
 async function copyCommand(row: ProxyKeyRow, shell: ShellKind) {
@@ -491,11 +500,13 @@ async function copyCommand(row: ProxyKeyRow, shell: ShellKind) {
     const res = await client.get(`/api/v2/proxy-keys/${row.id}/client-setup`, {
       params: { shell },
     })
-    await navigator.clipboard.writeText(res.data.command)
+    await copyText(res.data.command)
     ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
   } catch (err: any) {
     const detail = err?.response?.data?.detail
-    ElMessage.error(typeof detail === 'string' ? detail : '复制失败')
+    ElMessage.error(
+      typeof detail === 'string' ? detail : err?.message || '复制失败'
+    )
   }
 }
 

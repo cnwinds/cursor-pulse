@@ -12,6 +12,8 @@ x-app-common: &app-common
   volumes:
     - ./data:/app/data
     - ./config.yaml:/app/config/config.yaml:ro
+    # Mount so process restart re-reads secrets/flags (env_file alone is create-time only)
+    - ./.env:/app/.env:ro
   restart: unless-stopped
 
 services:
@@ -20,7 +22,8 @@ services:
     <<: *app-common
     container_name: cursor-pulse-init-db
     restart: "no"
-    command: ["pulse", "init-db", "-c", "/app/config/config.yaml"]
+    # -c is a global CLI flag (before subcommand); PULSE_CONFIG env is enough
+    command: ["pulse", "init-db"]
 
   # Optional: docker compose --profile tools run --rm init-v2
   init-v2:
@@ -28,7 +31,7 @@ services:
     profiles: [tools]
     container_name: cursor-pulse-init-v2
     restart: "no"
-    command: ["pulse", "init-v2", "--seed", "-c", "/app/config/config.yaml"]
+    command: ["pulse", "init-v2", "--seed"]
 
   web:
     <<: *app-common
@@ -43,8 +46,6 @@ services:
       - "0.0.0.0"
       - --port
       - "8080"
-      - -c
-      - /app/config/config.yaml
     ports:
       - "${PULSE_WEB_PORT:-8080}:8080"
     healthcheck:
@@ -90,7 +91,7 @@ services:
   channel:
     <<: *app-common
     container_name: cursor-pulse-channel
-    command: ["pulse", "channel", "-c", "/app/config/config.yaml"]
+    command: ["pulse", "channel"]
     depends_on:
       init-db:
         condition: service_completed_successfully

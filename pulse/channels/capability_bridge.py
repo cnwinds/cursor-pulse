@@ -13,8 +13,22 @@ from pulse.config import AppConfig
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_usage_accounts(accounts: list) -> bool:
+    """usage.self.read rows use identifier/kind; quota.self.read uses account_identifier."""
+    sample = next((a for a in accounts if isinstance(a, dict)), None)
+    if sample is None:
+        return False
+    if "account_identifier" in sample:
+        return False
+    return bool(
+        sample.get("kind") in ("owned", "loan")
+        or "identifier" in sample
+        or sample.get("is_loan") is True
+    )
+
+
 def format_capability_reply(result: CapabilityInvokeResult) -> str:
-    """Channel-facing text: prefer user_message, else result.text / result.answer / quota format."""
+    """Channel-facing text: prefer user_message, else result.text / result.answer / quota|usage format."""
     if (result.user_message or "").strip():
         return result.user_message
     data = result.result if isinstance(result.result, dict) else {}
@@ -22,10 +36,22 @@ def format_capability_reply(result: CapabilityInvokeResult) -> str:
         val = data.get(key)
         if val is not None and str(val).strip():
             return str(val)
-    if data.get("empty_reason") == "no_cursor_account":
+    empty_reason = data.get("empty_reason")
+    if empty_reason == "no_cursor_account":
         return "尚未绑定 Cursor 账号"
+    if empty_reason == "no_cursor_or_loan":
+        return "尚未绑定 Cursor 账号，且当前无进行中的 Key 借用。"
     accounts = data.get("accounts")
     if isinstance(accounts, list) and accounts:
+        if _looks_like_usage_accounts(accounts) or isinstance(data.get("query"), dict):
+            from pulse.tool_center.usage_self import format_usage_self_message
+
+            query = data.get("query") if isinstance(data.get("query"), dict) else {}
+            return format_usage_self_message(
+                mode=str(query.get("mode") or "billing_cycle"),
+                period=str(query.get("period") or ""),
+                accounts=accounts,
+            )
         from pulse.capabilities.handlers.quota_self_read import _format_user_message
 
         return _format_user_message(accounts)

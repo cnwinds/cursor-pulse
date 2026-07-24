@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from pulse.channels.capability_bridge import invoke_capability_local, invoke_via_assistant
+from assistant_platform.contracts.provider import CapabilityInvokeResult
+from pulse.channels.capability_bridge import (
+    format_capability_reply,
+    invoke_capability_local,
+    invoke_via_assistant,
+)
 from pulse.channels.commands import _handle_quota_command, handle_bind_cursor_command
 from pulse.config import (
     AppConfig,
@@ -99,6 +104,73 @@ def test_load_config_reads_capability_bridge_env(monkeypatch, tmp_path):
     assert cfg.capability_bridge.quota_self_read is True
     assert cfg.capability_bridge.cursor_key_bind is True
     assert cfg.capability_bridge.guide_image_update is True
+
+
+def test_format_capability_reply_usage_payload_does_not_use_quota_keys():
+    """Regression: usage accounts use identifier, not account_identifier (was KeyError → 500)."""
+    result = CapabilityInvokeResult(
+        status="succeeded",
+        user_message="",
+        result={
+            "schema_version": 1,
+            "query": {"mode": "billing_cycle", "period": "2026-07"},
+            "accounts": [
+                {
+                    "kind": "owned",
+                    "identifier": "user@example.com",
+                    "window_label": "记账周期",
+                    "range_text": "06-24 ~ 07-24",
+                    "events": 2,
+                    "tokens": 100,
+                    "cost_usd": 1.5,
+                    "models": [{"model": "gpt", "events": 2, "tokens": 100, "cost_usd": 1.5}],
+                    "data_updated_at": None,
+                    "is_loan": False,
+                }
+            ],
+            "empty_reason": None,
+        },
+    )
+    msg = format_capability_reply(result)
+    assert "你的用量" in msg
+    assert "user@example.com" in msg
+    assert "Cursor 额度" not in msg
+
+
+def test_format_capability_reply_quota_payload_still_works():
+    result = CapabilityInvokeResult(
+        status="succeeded",
+        user_message="",
+        result={
+            "schema_version": 1,
+            "accounts": [
+                {
+                    "account_id": "a1",
+                    "account_identifier": "quota@example.com",
+                    "has_snapshot": False,
+                    "status": "unknown",
+                }
+            ],
+            "empty_reason": None,
+        },
+    )
+    msg = format_capability_reply(result)
+    assert "Cursor 额度" in msg
+    assert "quota@example.com" in msg
+
+
+def test_format_capability_reply_usage_empty_reason():
+    result = CapabilityInvokeResult(
+        status="succeeded",
+        user_message="",
+        result={
+            "schema_version": 1,
+            "query": {"mode": "billing_cycle", "period": "2026-07"},
+            "accounts": [],
+            "empty_reason": "no_cursor_or_loan",
+        },
+    )
+    assert "Key 借用" in format_capability_reply(result)
 
 
 @pytest.fixture
