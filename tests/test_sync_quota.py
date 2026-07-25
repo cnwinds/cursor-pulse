@@ -85,7 +85,7 @@ def test_sync_writes_quota_snapshot(session):
     member = Member(
         team_id=team.id,
         display_name="Sync Tester",
-        dingtalk_user_id="dt-sync-quota",
+        channel_user_id="dt-sync-quota",
         status="active",
     )
     session.add(member)
@@ -136,7 +136,7 @@ def test_sync_backfills_empty_account_identifier_via_get_me(session):
     member = Member(
         team_id=team.id,
         display_name="Backfill Tester",
-        dingtalk_user_id="dt-sync-backfill",
+        channel_user_id="dt-sync-backfill",
         status="active",
     )
     session.add(member)

@@ -144,7 +144,7 @@ def test_format_check_failed_mentions_api():
 
 
 def test_resolve_admin_dingtalk_ids():
-    config = AppConfig(admin=AdminConfig(dingtalk_user_ids=[" a ", "b", "a", ""]))
+    config = AppConfig(admin=AdminConfig(channel_user_ids=[" a ", "b", "a", ""]))
     assert resolve_admin_dingtalk_ids(config) == ["a", "b"]
 
 
@@ -158,7 +158,7 @@ def test_check_failed_notifies_admins_only(session):
     primary = Member(
         team_id=team.id,
         display_name="Primary",
-        dingtalk_user_id="dt-primary",
+        channel_user_id="dt-primary",
         status="active",
     )
     session.add(primary)
@@ -168,7 +168,7 @@ def test_check_failed_notifies_admins_only(session):
 
     send = MagicMock()
     config = AppConfig(
-        admin=AdminConfig(dingtalk_user_ids=["dt-admin"]),
+        admin=AdminConfig(channel_user_ids=["dt-admin"]),
         cursor_sync=CursorSyncConfig(
             enforce_on_demand_disabled=True,
             on_demand_notify_member_ids=[primary.id],
@@ -196,7 +196,7 @@ def test_check_failed_skips_admin_notify_when_disabled(session):
 
     send = MagicMock()
     config = AppConfig(
-        admin=AdminConfig(dingtalk_user_ids=["dt-admin"]),
+        admin=AdminConfig(channel_user_ids=["dt-admin"]),
         cursor_sync=CursorSyncConfig(
             on_demand_notify_admins_on_api_failure=False,
         ),
@@ -216,7 +216,7 @@ def test_sync_disables_on_demand_and_notifies(session):
     member = Member(
         team_id=team.id,
         display_name="OD Tester",
-        dingtalk_user_id="dt-od",
+        channel_user_id="dt-od",
         status="active",
     )
     session.add(member)
@@ -269,13 +269,13 @@ def test_resolve_notify_falls_back_to_admins(session):
     admin = Member(
         team_id=team.id,
         display_name="Admin",
-        dingtalk_user_id="dt-admin",
+        channel_user_id="dt-admin",
         status="active",
     )
     primary = Member(
         team_id=team.id,
         display_name="Primary",
-        dingtalk_user_id="dt-primary",
+        channel_user_id="dt-primary",
         status="active",
     )
     session.add_all([admin, primary])
@@ -284,7 +284,7 @@ def test_resolve_notify_falls_back_to_admins(session):
     session.commit()
 
     config = AppConfig(
-        admin=AdminConfig(dingtalk_user_ids=["dt-admin"]),
+        admin=AdminConfig(channel_user_ids=["dt-admin"]),
         cursor_sync=CursorSyncConfig(
             on_demand_notify_member_ids=None,
             on_demand_notify_primary=True,
@@ -304,14 +304,14 @@ def test_resolve_notify_empty_list_skips_admin_fallback(session):
     admin = Member(
         team_id=team.id,
         display_name="Admin",
-        dingtalk_user_id="dt-admin",
+        channel_user_id="dt-admin",
         status="active",
     )
     session.add(admin)
     session.commit()
 
     config = AppConfig(
-        admin=AdminConfig(dingtalk_user_ids=["dt-admin"]),
+        admin=AdminConfig(channel_user_ids=["dt-admin"]),
         cursor_sync=CursorSyncConfig(
             on_demand_notify_member_ids=[],
             on_demand_notify_primary=False,
@@ -330,7 +330,7 @@ def test_sync_skips_enforce_when_disabled(session):
     member = Member(
         team_id=team.id,
         display_name="Skip Enforce",
-        dingtalk_user_id="dt-skip",
+        channel_user_id="dt-skip",
         status="active",
     )
     session.add(member)
@@ -377,7 +377,7 @@ def test_sync_continues_when_on_demand_check_fails(session):
     member = Member(
         team_id=team.id,
         display_name="OD Fail",
-        dingtalk_user_id="dt-od-fail",
+        channel_user_id="dt-od-fail",
         status="active",
     )
     session.add(member)

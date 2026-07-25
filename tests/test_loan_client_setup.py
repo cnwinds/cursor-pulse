@@ -114,7 +114,7 @@ def loan_client_env():
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(
-        repo, dingtalk_user_id="admin", display_name="Admin", password="x"
+        repo, channel_user_id="admin", display_name="Admin", password="x"
     )
     borrower = repo.add_member("borrower", "Borrower")
     borrower.portal_role = "ai_member"

@@ -91,8 +91,8 @@ def test_sync_dingtalk_directory_walks_sub_departments(session):
     stats = sync_dingtalk_directory(repo, config, client=FakeDirectoryClient())
 
     assert stats["fetched"] == 4
-    dev = repo.get_member_by_dingtalk_id("u_dev")
-    pm = repo.get_member_by_dingtalk_id("u_pm")
+    dev = repo.get_member_by_channel_user_id("u_dev")
+    pm = repo.get_member_by_channel_user_id("u_pm")
     assert dev is not None
     assert dev.department_name == "研发部"
     assert pm is not None

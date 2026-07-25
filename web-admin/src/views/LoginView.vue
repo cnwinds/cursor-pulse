@@ -11,86 +11,142 @@
         </div>
       </template>
 
-      <div class="login-tabs">
-        <button
-          type="button"
-          class="login-tab"
-          :class="{ active: activeTab === 'admin' }"
-          @click="activeTab = 'admin'"
-        >
-          超管登录
-        </button>
-        <button
-          type="button"
-          class="login-tab"
-          :class="{ active: activeTab === 'dingtalk' }"
-          @click="activeTab = 'dingtalk'"
-        >
-          钉钉扫码
-        </button>
-      </div>
+      <div v-if="loadingProviders" class="loading-hint">加载登录方式…</div>
 
-      <form v-if="activeTab === 'admin'" class="login-form" @submit.prevent="loginPassword">
-        <p class="admin-hint">超管账号：<strong>admin</strong></p>
-        <el-input
-          v-model="form.password"
-          type="password"
-          placeholder="密码"
-          size="large"
-          show-password
-        />
-        <el-button type="primary" size="large" class="full" native-type="submit" :loading="pwdLoading">
-          登录
-        </el-button>
-      </form>
+      <template v-else>
+        <div
+          v-if="visibleTabs.length > 1"
+          class="login-tabs"
+          :style="{ gridTemplateColumns: `repeat(${visibleTabs.length}, 1fr)` }"
+        >
+          <button
+            v-for="tab in visibleTabs"
+            :key="tab.id"
+            type="button"
+            class="login-tab"
+            :class="{ active: activeTab === tab.id }"
+            @click="activeTab = tab.id"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
 
-      <div v-else class="dingtalk-panel">
-        <p class="dingtalk-hint">使用钉钉 App 扫码，首次登录需超级管理员审批</p>
-        <el-button type="primary" size="large" class="full" :loading="dingLoading" @click="loginDingTalk">
-          打开钉钉扫码
-        </el-button>
-      </div>
+        <form v-if="activeTab === 'password'" class="login-form" @submit.prevent="loginPassword">
+          <p class="admin-hint">超管账号：<strong>admin</strong></p>
+          <el-input
+            v-model="form.password"
+            type="password"
+            placeholder="密码"
+            size="large"
+            show-password
+          />
+          <el-button type="primary" size="large" class="full" native-type="submit" :loading="pwdLoading">
+            登录
+          </el-button>
+        </form>
+
+        <div v-else-if="activeTab === 'dingtalk_oauth'" class="oauth-panel">
+          <p class="oauth-hint">使用钉钉 App 扫码，首次登录需超级管理员审批</p>
+          <el-button type="primary" size="large" class="full" :loading="oauthLoading" @click="loginOAuth('dingtalk_oauth')">
+            打开钉钉扫码
+          </el-button>
+        </div>
+
+        <div v-else-if="activeTab === 'feishu_oauth'" class="oauth-panel">
+          <p class="oauth-hint">使用飞书 App 扫码，首次登录需超级管理员审批</p>
+          <el-button type="primary" size="large" class="full" :loading="oauthLoading" @click="loginOAuth('feishu_oauth')">
+            打开飞书授权
+          </el-button>
+        </div>
+
+        <p v-else-if="!visibleTabs.length" class="oauth-hint">
+          未配置可用登录方式。请设置 ADMIN_PASSWORD，或配置钉钉/飞书应用凭证。
+        </p>
+      </template>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
+type ProviderId = 'password' | 'dingtalk_oauth' | 'feishu_oauth'
+
+interface AuthProvider {
+  id: ProviderId
+  label: string
+  kind: string
+  enabled: boolean
+  login_url_path?: string
+  callback_path?: string
+}
+
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-const activeTab = ref<'admin' | 'dingtalk'>('admin')
-const dingLoading = ref(false)
+const providers = ref<AuthProvider[]>([])
+const loadingProviders = ref(true)
+const activeTab = ref<ProviderId>('password')
+const oauthLoading = ref(false)
 const pwdLoading = ref(false)
 const form = reactive({ password: '' })
 
+const visibleTabs = computed(() => {
+  // Always show password tab so bootstrap is possible; mark disabled via hint if needed.
+  const list = providers.value.filter((p) => p.id === 'password' || p.enabled)
+  if (!list.some((p) => p.id === 'password')) {
+    list.unshift({ id: 'password', label: '本地密码', kind: 'password', enabled: true })
+  }
+  return list
+})
+
 function oauthCallbackUri(): string {
-  // Vite base is `/`; production SPA base is `/admin/`.
   const base = import.meta.env.BASE_URL || '/'
   const path = `${base}login/callback`.replace(/\/{2,}/g, '/')
   return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`
 }
 
-async function loginDingTalk() {
-  dingLoading.value = true
+async function loadProviders() {
+  loadingProviders.value = true
+  try {
+    const { data } = await client.get('/api/auth/providers')
+    providers.value = (data.providers || []) as AuthProvider[]
+    const first = visibleTabs.value[0]
+    if (first) activeTab.value = first.id
+  } catch {
+    providers.value = [{ id: 'password', label: '本地密码', kind: 'password', enabled: true }]
+    activeTab.value = 'password'
+  } finally {
+    loadingProviders.value = false
+  }
+}
+
+async function loginOAuth(providerId: ProviderId) {
+  const provider = providers.value.find((p) => p.id === providerId)
+  if (!provider?.login_url_path) {
+    ElMessage.error('该登录方式不可用')
+    return
+  }
+  oauthLoading.value = true
   try {
     const redirectUri = oauthCallbackUri()
-    const { data } = await client.get('/api/auth/dingtalk/login-url', {
+    const { data } = await client.get(provider.login_url_path, {
       params: { redirect_uri: redirectUri },
     })
     sessionStorage.setItem('oauth_state', data.state)
+    sessionStorage.setItem('oauth_provider', providerId)
     sessionStorage.setItem('oauth_redirect', (route.query.redirect as string) || '/')
+    sessionStorage.setItem('oauth_redirect_uri', data.redirect_uri || redirectUri)
     window.location.href = data.url
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '获取钉钉登录地址失败')
+    ElMessage.error(e.response?.data?.detail || '获取登录地址失败')
   } finally {
-    dingLoading.value = false
+    oauthLoading.value = false
   }
 }
 
@@ -111,6 +167,8 @@ async function loginPassword() {
     pwdLoading.value = false
   }
 }
+
+onMounted(loadProviders)
 </script>
 
 <style scoped>
@@ -150,7 +208,6 @@ async function loginPassword() {
 }
 .login-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-bottom: 20px;
 }
@@ -183,12 +240,13 @@ async function loginPassword() {
   font-size: 13px;
   color: #64748b;
 }
-.dingtalk-panel {
+.oauth-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-.dingtalk-hint {
+.oauth-hint,
+.loading-hint {
   margin: 0;
   font-size: 13px;
   color: #64748b;

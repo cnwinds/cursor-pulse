@@ -6,8 +6,8 @@
 
 | 组件 | 命令 | 说明 |
 |------|------|------|
-| 机器人 + 调度 | `pulse channel` | 钉钉 Stream；勿多实例抢同一机器人 |
-| 管理 API | `pulse web` | JWT / 钉钉扫码；默认 `:8080` |
+| 渠道 + 调度 | `pulse channel` | `BOT_PLATFORM=none` 时仅调度；`dingtalk`/`feishu` 时含 IM 入站（勿多实例抢同一机器人） |
+| 管理 API | `pulse web` | JWT / 本地密码 / 可选 IM 扫码；默认 `:8080` |
 | Vue（开发） | `web-admin` → `npm run dev` | `:5173`，代理 `/api` |
 | Vue（生产） | `npm run build` 后由 web 挂载 `/admin/` | |
 | 可选 Assistant | `python -m assistant_platform serve` | `:8090` |
@@ -19,11 +19,32 @@
 
 ## 2. 部署
 
-### 2.1 钉钉（一次性）
+### 2.0 Web-only（推荐开源最小形态）
+
+不配任何 IM 也可使用台账、借 Key、额度：
+
+```bash
+# .env
+BOT_PLATFORM=none
+ADMIN_PASSWORD=<强密码>
+JWT_SECRET=<高熵>
+PULSE_CREDENTIAL_ENCRYPTION_KEY=<高熵>
+
+pulse init-db
+pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' --channel web
+pulse web
+```
+
+### 2.1 钉钉（可选）
 
 1. 创建**企业内部应用**，启用机器人，模式选 **Stream**。
 2. 开通收发消息、媒体下载等权限；记录 AppKey / AppSecret / robot_code。
-3. 机器人入群；配置 `DINGTALK_GROUP_ID`（openConversationId），或群内 @ 一次自动绑定。
+3. 设置 `BOT_PLATFORM=dingtalk` 与 `DINGTALK_*`；机器人入群，配置 `DINGTALK_GROUP_ID` 或群内 @ 一次自动绑定。
+
+### 2.1b 飞书（可选）
+
+1. 创建自建应用，开通机器人与事件订阅（推荐 WebSocket 长连接）。
+2. `pip install 'cursor-pulse[feishu]'`，设置 `BOT_PLATFORM=feishu` 与 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`（可选 `FEISHU_GROUP_CHAT_ID`）。
 
 ### 2.2 配置
 
@@ -36,8 +57,10 @@ cp .env.example .env
 
 | 变量 | 说明 |
 |------|------|
-| `DINGTALK_APP_KEY` / `SECRET` / `ROBOT_CODE` | 钉钉凭证 |
-| `DINGTALK_ADMIN_USER_IDS` | 管理员 userid（逗号分隔） |
+| `ADMIN_PASSWORD` | 本地超管密码（Web-only 必配） |
+| `ADMIN_CHANNEL_USER_IDS` | 渠道管理员 userid（逗号分隔）；旧名 `DINGTALK_ADMIN_USER_IDS` 仍兼容 |
+| `BOT_PLATFORM` | `none` / `dingtalk` / `feishu` |
+| `DINGTALK_*` / `FEISHU_*` | 对应 IM 凭证（可选） |
 | `JWT_SECRET` | Web JWT（生产必配） |
 | `PULSE_CREDENTIAL_ENCRYPTION_KEY` | 凭证加密 |
 | `PULSE_INTERNAL_SERVICE_TOKEN` | Pulse / Proxy 内部 API |
@@ -54,7 +77,7 @@ cp .env.example .env
 ```bash
 cd docker
 ./scripts/setup.sh
-# 编辑 .env（钉钉等）
+# 编辑 .env（至少 JWT / 加密密钥 / ADMIN_PASSWORD；IM 可选）
 docker compose up -d --build   # init-db 自动执行；data/config 映射到宿主机
 ```
 
@@ -64,10 +87,10 @@ Postgres：叠加 `docker-compose.postgres.yml`，并设置 `DATABASE_URL`（非
 ### 2.4 裸机
 
 ```bash
-pip install -e ".[web]"          # 按需加 pdf,postgres,s3
+pip install -e ".[web]"          # 飞书另加 feishu；按需 pdf,postgres,s3
 pulse init-db
 pulse web --host 0.0.0.0 --port 8080
-pulse channel                    # 另一进程
+pulse channel                    # 另一进程（BOT_PLATFORM=none 时仅调度）
 ```
 
 ## 3. 日常操作
@@ -87,11 +110,31 @@ pulse export --period 2026-06 -o data/raw/export_2026-06.csv
 pulse alerts --period 2026-06
 pulse bi-push --period 2026-06
 
-# 门户管理员
-pulse admin bootstrap --user-id <钉钉userid> --name "管理员" --password <密码>
+# 门户管理员（Web-only）
+pulse admin bootstrap --user-id admin --name "管理员" --password <密码> --channel web
 ```
 
-钉钉命令说明：[bot-commands.md](bot-commands.md)。
+机器人命令说明：[bot-commands.md](bot-commands.md)。
+
+## 2.5 身份字段迁移（钉钉-only → 中性通道）
+
+`pulse init-db` / `migrate_schema` 会：
+
+1. 将 `members.dingtalk_user_id` → `channel_user_id`，并写入 `channel='dingtalk'`
+2. `manager_dingtalk_user_id` → `manager_channel_user_id`
+3. `reminder_logs.dingtalk_msg_id` → `channel_msg_id`
+4. 删除旧列（SQLite 可能重建表）
+
+配置侧：
+
+| 旧 | 新 |
+|----|----|
+| `admin.dingtalk_user_ids` | `admin.channel_user_ids` |
+| `DINGTALK_ADMIN_USER_IDS` | `ADMIN_CHANNEL_USER_IDS`（旧 env 启动时仍读入并 warning） |
+
+升级后请重新登录门户（JWT payload 字段已改名）。
+
+**默认渠道变更：** 新默认 `BOT_PLATFORM=none`（仅 Web）。已有钉钉部署必须在 `.env` / `config.yaml` 中显式设置 `BOT_PLATFORM=dingtalk`，否则 channel 进程只跑调度、不再连钉钉 Stream。
 
 非 Cursor 工具补录：
 

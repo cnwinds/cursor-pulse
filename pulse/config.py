@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 def _bootstrap_dotenv() -> None:
@@ -73,8 +76,17 @@ class ObjectStorageConfig(BaseModel):
 
 
 class BotPlatformConfig(BaseModel):
-    """群平台：dingtalk（默认）| feishu | wecom（后两者为扩展桩）。"""
-    name: str = "dingtalk"
+    """群平台：none（默认，Web-only）| dingtalk | feishu | wecom。"""
+    name: str = "none"
+
+
+class FeishuConfig(BaseModel):
+    """飞书自建应用（Open API）：app_id/app_secret 用于换取 tenant_access_token。"""
+
+    app_id: str = ""
+    app_secret: str = ""
+    bot_open_id: str = ""  # 机器人自身 open_id（可选，用于过滤自发消息等）
+    group_chat_id: str = ""  # 默认群 chat_id（send_group_text 目标；可选）
 
 
 class CursorTeamsConfig(BaseModel):
@@ -85,7 +97,7 @@ class CursorTeamsConfig(BaseModel):
 
 
 class AdminConfig(BaseModel):
-    dingtalk_user_ids: list[str] = Field(default_factory=list)
+    channel_user_ids: list[str] = Field(default_factory=list)
 
 
 class LLMConfig(BaseModel):
@@ -167,7 +179,7 @@ class CursorSyncConfig(BaseModel):
     # None = 未配置（回落管理员）；[] = 明确不通知名单中的人
     on_demand_notify_member_ids: list[str] | None = None
     on_demand_notify_primary: bool = True
-    # GetHardLimit 失败（接口变更等）时单独通知 admin.dingtalk_user_ids
+    # GetHardLimit 失败（接口变更等）时单独通知 admin.channel_user_ids
     on_demand_notify_admins_on_api_failure: bool = True
 
     @classmethod
@@ -266,6 +278,7 @@ class WebSearchConfig(BaseModel):
 
 class AppConfig(BaseModel):
     dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     collection: CollectionConfig = Field(default_factory=CollectionConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     object_storage: ObjectStorageConfig = Field(default_factory=ObjectStorageConfig)
@@ -297,6 +310,11 @@ class EnvSettings(BaseSettings):
     dingtalk_group_id: str = ""
     dingtalk_chat_id: str = ""
     dingtalk_admin_user_ids: str = ""
+    admin_channel_user_ids: str = ""
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_bot_open_id: str = ""
+    feishu_group_chat_id: str = ""
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
@@ -369,6 +387,14 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             data = yaml.safe_load(f) or {}
 
     data = _expand_env(data)
+    # 兼容旧 YAML：admin.dingtalk_user_ids → admin.channel_user_ids
+    admin_data = data.get("admin")
+    if isinstance(admin_data, dict):
+        if "channel_user_ids" not in admin_data and "dingtalk_user_ids" in admin_data:
+            admin_data["channel_user_ids"] = admin_data.pop("dingtalk_user_ids")
+            logger.warning(
+                "config admin.dingtalk_user_ids is deprecated; use admin.channel_user_ids"
+            )
     cfg = AppConfig.model_validate(data)
 
     env = EnvSettings()
@@ -382,10 +408,25 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.dingtalk.group_open_conversation_id = env.dingtalk_group_id
     if env.dingtalk_chat_id:
         cfg.dingtalk.chat_id = env.dingtalk_chat_id
-    if env.dingtalk_admin_user_ids:
-        cfg.admin.dingtalk_user_ids = [
+    if env.admin_channel_user_ids:
+        cfg.admin.channel_user_ids = [
+            uid.strip() for uid in env.admin_channel_user_ids.split(",") if uid.strip()
+        ]
+    elif env.dingtalk_admin_user_ids:
+        logger.warning(
+            "DINGTALK_ADMIN_USER_IDS is deprecated; use ADMIN_CHANNEL_USER_IDS instead"
+        )
+        cfg.admin.channel_user_ids = [
             uid.strip() for uid in env.dingtalk_admin_user_ids.split(",") if uid.strip()
         ]
+    if env.feishu_app_id:
+        cfg.feishu.app_id = env.feishu_app_id
+    if env.feishu_app_secret:
+        cfg.feishu.app_secret = env.feishu_app_secret
+    if env.feishu_bot_open_id:
+        cfg.feishu.bot_open_id = env.feishu_bot_open_id
+    if env.feishu_group_chat_id:
+        cfg.feishu.group_chat_id = env.feishu_group_chat_id
     if env.llm_api_key:
         cfg.llm.api_key = env.llm_api_key
     if env.llm_base_url:

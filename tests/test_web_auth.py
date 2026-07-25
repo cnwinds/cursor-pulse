@@ -8,7 +8,7 @@ from pulse.storage.models import Member
 def test_owner_has_all_permissions():
     member = Member(
         team_id="t1",
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="Owner",
         status="active",
         portal_status="active",
@@ -22,7 +22,7 @@ def test_owner_has_all_permissions():
 def test_ai_member_permissions():
     member = Member(
         team_id="t1",
-        dingtalk_user_id="u3",
+        channel_user_id="u3",
         display_name="AI User",
         status="active",
         portal_status="active",
@@ -38,7 +38,7 @@ def test_ai_member_permissions():
 def test_auditor_read_only_write_denied():
     member = Member(
         team_id="t1",
-        dingtalk_user_id="u2",
+        channel_user_id="u2",
         display_name="Auditor",
         status="active",
         portal_status="active",
@@ -58,7 +58,7 @@ def test_jwt_roundtrip():
     config = AppConfig(web=WebConfig(jwt_secret="test-secret"))
     member = Member(
         team_id="t1",
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="X",
         status="active",
         portal_status="active",

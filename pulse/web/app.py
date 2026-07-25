@@ -219,7 +219,7 @@ def create_app(
                 team_id=team.id,
                 member_id=user.member.id,
                 display_name=user.member.display_name,
-                channel_user_id=user.member.dingtalk_user_id,
+                channel_user_id=user.member.channel_user_id,
                 actor_role=user.member.portal_role,
             )
         except Exception:

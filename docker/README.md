@@ -7,7 +7,7 @@
 | `init-db` | `pulse init-db` | oneshot，每次 up 幂等迁移；成功后退出 |
 | `web` | `pulse web` | 管理后台 API + Vue 静态页 `/admin/` |
 | `assistant` | `assistant_platform serve` | 会话账本、记忆、能力中心 |
-| `channel` | `pulse channel` | 钉钉 Stream + 定时调度 |
+| `channel` | `pulse channel` | IM 入站（可选）+ 定时调度；`BOT_PLATFORM=none` 时仅调度 |
 
 **宿主机映射（勿删）：**
 
@@ -34,16 +34,18 @@ chmod +x scripts/*.sh
 ./scripts/setup.sh
 ```
 
-编辑 `docker/.env`（钉钉凭证、JWT、加密密钥）和 `docker/config.yaml`（收集周期等）。
+编辑 `docker/.env`（至少 JWT、加密密钥、`ADMIN_PASSWORD`；钉钉/飞书凭证可选）和 `docker/config.yaml`（收集周期等）。
 
-**生产 OAuth / CORS**（`.env`）：
+Web-only：`BOT_PLATFORM=none`。需要机器人时设为 `dingtalk` 或 `feishu` 并填写对应凭证。
+
+**生产 OAuth / CORS**（`.env`，仅在启用 IM 扫码登录时需要）：
 
 ```env
 DINGTALK_OAUTH_REDIRECT_URI=https://your-domain.com/admin/login/callback
 WEB_CORS_ORIGINS=https://your-domain.com
 ```
 
-钉钉开放平台重定向 URL 需与上面一致。
+将开放平台重定向 URL 配成与上面一致（钉钉与飞书可共用同一 SPA 回调路径）。
 
 ---
 

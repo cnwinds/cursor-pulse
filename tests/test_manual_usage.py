@@ -30,7 +30,7 @@ def session():
 def _member(session, team_id, name="Alice"):
     m = Member(
         team_id=team_id,
-        dingtalk_user_id=f"u-{name}",
+        channel_user_id=f"u-{name}",
         display_name=name,
         status="active",
     )

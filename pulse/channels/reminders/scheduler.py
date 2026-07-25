@@ -8,6 +8,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from pulse.channels.base import messenger_delivered
 from pulse.config import AppConfig
 from pulse.ingestion.sync_schedule import elevate_pre_publish
 from pulse.ingestion.sync_tick import run_sync_tick
@@ -20,6 +21,15 @@ from pulse.tenant.context import team_repository
 from pulse.util.business_days import is_first_business_day
 
 logger = logging.getLogger(__name__)
+
+
+def _send_ok(result) -> bool:
+    """True when send callable delivered (or legacy callable returned None)."""
+    if result is None:
+        return True
+    if isinstance(result, dict):
+        return messenger_delivered(result)
+    return True
 
 
 class ReminderService:
@@ -69,8 +79,10 @@ class ReminderService:
             "4. 分享本月技巧：私聊发送「心得：…」\n\n"
             "也可在本群 @我 发送（群里不会显示用量细节，结果私聊发你）。"
         )
-        self.send_group_message(text, at_all=False)
-        self._log_reminder(None, period, "collection_start")
+        if _send_ok(self.send_group_message(text, at_all=False)):
+            self._log_reminder(None, period, "collection_start")
+        else:
+            logger.warning("collection_start skipped (no IM delivery); not logged")
 
     def send_daily_nudges(self, period: str | None = None) -> int:
         if not self._usage_reminders_enabled():
@@ -118,9 +130,9 @@ class ReminderService:
                         f"{target.account.account_identifier} 的用量还未收到。\n\n"
                         "你是该账号主使用人，请导出用量后私聊发给我。"
                     )
-                self.send_private_message(target.member.dingtalk_user_id, text)
-                self._log_reminder(target.member.id, period, "daily_dm")
-                sent += 1
+                if _send_ok(self.send_private_message(target.member.channel_user_id, text)):
+                    self._log_reminder(target.member.id, period, "daily_dm")
+                    sent += 1
 
             stale_lines = self._cursor_sync_stale_lines(session, tool_repo)
             if stale_lines and not self._already_nudged_today(session, None, period, "sync_stale"):
@@ -128,20 +140,26 @@ class ReminderService:
                     f"【管理员待办】{period} 以下 Cursor 账号同步滞后超过 36 小时：\n"
                     + "\n".join(stale_lines)
                 )
-                for admin_id in self.config.admin.dingtalk_user_ids:
-                    self.send_private_message(admin_id, stale_text)
-                self._log_reminder(None, period, "sync_stale")
-                sent += 1
+                delivered = False
+                for admin_id in self.config.admin.channel_user_ids:
+                    if _send_ok(self.send_private_message(admin_id, stale_text)):
+                        delivered = True
+                if delivered:
+                    self._log_reminder(None, period, "sync_stale")
+                    sent += 1
 
             if admin_lines and not self._already_nudged_today(session, None, period, "admin_no_primary"):
                 admin_text = (
                     f"【管理员待办】{period} 以下账号未指定主使用人，无法催办提交：\n"
                     + "\n".join(admin_lines)
                 )
-                for admin_id in self.config.admin.dingtalk_user_ids:
-                    self.send_private_message(admin_id, admin_text)
-                self._log_reminder(None, period, "admin_no_primary")
-                sent += 1
+                delivered = False
+                for admin_id in self.config.admin.channel_user_ids:
+                    if _send_ok(self.send_private_message(admin_id, admin_text)):
+                        delivered = True
+                if delivered:
+                    self._log_reminder(None, period, "admin_no_primary")
+                    sent += 1
 
             session.commit()
             return sent
@@ -159,9 +177,9 @@ class ReminderService:
                 "导出步骤：Dashboard → Usage → 选日期 → Export CSV\n"
                 "直接发给我就行。"
             )
-            self.send_private_message(member.dingtalk_user_id, text)
-            self._log_reminder(member.id, period, "daily_dm")
-            sent += 1
+            if _send_ok(self.send_private_message(member.channel_user_id, text)):
+                self._log_reminder(member.id, period, "daily_dm")
+                sent += 1
         session.commit()
         return sent
 
@@ -195,18 +213,25 @@ class ReminderService:
                     f"尚未提交：{names}\n\n"
                     "请尚未提交的同学尽快私聊我发送 CSV。"
                 )
-            self.send_group_message(text, at_all=True)
-            self._log_reminder(None, period, "deadline_at_all")
+            if _send_ok(self.send_group_message(text, at_all=True)):
+                self._log_reminder(None, period, "deadline_at_all")
+            else:
+                logger.warning("deadline reminder skipped (no IM delivery); not logged")
             session.commit()
         finally:
             session.close()
 
     def send_monthly_report(self, period: str | None = None) -> None:
-        if not self.messenger:
-            logger.warning("Monthly report skipped: no messenger")
-            return
         from pulse.alerts.service import run_anomaly_check
-        from pulse.report.service import publish_report_to_group
+        from pulse.channels.base import NullMessenger, outbound_messenger_or_none
+        from pulse.report.service import publish_report_to_group, should_publish_report_to_group
+
+        messenger = self.messenger
+        if messenger is None or isinstance(messenger, NullMessenger):
+            messenger = outbound_messenger_or_none(self.config)
+        if should_publish_report_to_group(self.config) and messenger is None:
+            logger.warning("Monthly report skipped: no outbound messenger for group publish")
+            return
 
         period = period or self.report_period()
         session = self.session_factory()
@@ -215,7 +240,7 @@ class ReminderService:
             publish_report_to_group(
                 session,
                 period,
-                self.messenger,
+                messenger,
                 team_id=team.id,
                 config=self.config,
             )
@@ -245,7 +270,7 @@ class ReminderService:
             return
 
         briefing = build_manager_briefing(session, period, team_id=team_id)
-        for admin_id in self.config.admin.dingtalk_user_ids:
+        for admin_id in self.config.admin.channel_user_ids:
             try:
                 self.send_private_message(admin_id, briefing)
             except Exception:
@@ -323,7 +348,7 @@ class ReminderService:
             )
             if not readiness.ready:
                 blocked_text = format_blocked_report_message(period, readiness)
-                for admin_id in self.config.admin.dingtalk_user_ids:
+                for admin_id in self.config.admin.channel_user_ids:
                     try:
                         self.send_private_message(admin_id, blocked_text)
                     except Exception:

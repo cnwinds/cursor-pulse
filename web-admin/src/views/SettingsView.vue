@@ -104,7 +104,7 @@ const tab = ref('collection')
 const integrations = ref<any>(null)
 const schedule = ref<any>(null)
 const runtimeLoading = ref(true)
-const members = ref<Array<{ id: string; display_name: string; dingtalk_user_id: string }>>([])
+const members = ref<Array<{ id: string; display_name: string; channel_user_id: string }>>([])
 
 const loading = computed(() => store.loading || runtimeLoading.value)
 
@@ -125,19 +125,19 @@ const forms = reactive({
 const memberSelectOptions = computed(() =>
   members.value.map((m) => ({
     value: m.id,
-    label: m.display_name || m.dingtalk_user_id || m.id,
+    label: m.display_name || m.channel_user_id || m.id,
   })),
 )
 
 function adminFallbackMemberIds(): string[] {
   const adminIds = new Set(
-    ((forms.admin.dingtalk_user_ids as string[]) || [])
+    ((forms.admin.channel_user_ids as string[]) || [])
       .map((id) => String(id || '').trim())
       .filter(Boolean),
   )
   if (!adminIds.size) return []
   return members.value
-    .filter((m) => adminIds.has(m.dingtalk_user_id))
+    .filter((m) => adminIds.has(m.channel_user_id))
     .map((m) => m.id)
 }
 

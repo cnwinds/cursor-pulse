@@ -90,9 +90,9 @@ def notify_upgrade_if_needed(
         primary = session.get(Member, account.primary_member_id)
         if primary and primary.manager_member_id:
             manager = session.get(Member, primary.manager_member_id)
-            if manager and manager.dingtalk_user_id not in notified:
-                send_private_message(manager.dingtalk_user_id, text)
-                notified.add(manager.dingtalk_user_id)
+            if manager and manager.channel_user_id not in notified:
+                send_private_message(manager.channel_user_id, text)
+                notified.add(manager.channel_user_id)
 
     for admin_id in admin_ids:
         if admin_id not in notified:

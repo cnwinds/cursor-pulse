@@ -5,7 +5,7 @@ import client from '@/api/client'
 export interface PortalUser {
   id: string
   display_name: string
-  dingtalk_user_id: string
+  channel_user_id: string
   portal_role: string | null
   permissions: string[]
 }

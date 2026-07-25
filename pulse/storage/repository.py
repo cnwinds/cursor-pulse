@@ -50,30 +50,40 @@ class Repository:
         self.session = session
         self.team_id = team_id
 
-    def get_member_by_dingtalk_id(self, dingtalk_user_id: str) -> Member | None:
-        return self.session.scalar(
-            select(Member).where(
-                Member.team_id == self.team_id,
-                Member.dingtalk_user_id == dingtalk_user_id,
-            )
+    def get_member_by_channel_user_id(
+        self, channel_user_id: str, *, channel: str | None = None
+    ) -> Member | None:
+        stmt = select(Member).where(
+            Member.team_id == self.team_id,
+            Member.channel_user_id == channel_user_id,
         )
+        if channel is not None:
+            stmt = stmt.where(Member.channel == channel)
+        return self.session.scalar(stmt)
 
-    def get_or_create_member(self, dingtalk_user_id: str, display_name: str) -> Member:
-        member = self.get_member_by_dingtalk_id(dingtalk_user_id)
+    def get_or_create_member(
+        self,
+        channel_user_id: str,
+        display_name: str,
+        *,
+        channel: str = "dingtalk",
+    ) -> Member:
+        member = self.get_member_by_channel_user_id(channel_user_id, channel=channel)
         if member:
             if display_name and member.display_name != display_name:
-                # 避免用钉钉 user id 覆盖管理员/通讯录已配置的真实姓名。
+                # 避免用渠道 user id 覆盖管理员/通讯录已配置的真实姓名。
                 if (
-                    display_name == dingtalk_user_id
-                    and member.display_name != dingtalk_user_id
+                    display_name == channel_user_id
+                    and member.display_name != channel_user_id
                 ):
                     return member
                 member.display_name = display_name
             return member
         member = Member(
             team_id=self.team_id,
-            dingtalk_user_id=dingtalk_user_id,
-            display_name=display_name or dingtalk_user_id,
+            channel=channel,
+            channel_user_id=channel_user_id,
+            display_name=display_name or channel_user_id,
             status="pending",
         )
         self.session.add(member)
@@ -87,8 +97,8 @@ class Repository:
             )
         )
 
-    def add_member(self, dingtalk_user_id: str, display_name: str) -> Member:
-        member = self.get_or_create_member(dingtalk_user_id, display_name)
+    def add_member(self, channel_user_id: str, display_name: str) -> Member:
+        member = self.get_or_create_member(channel_user_id, display_name)
         member.status = "active"
         return member
 

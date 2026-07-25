@@ -177,7 +177,7 @@ def _nudge_unsubmitted(ctx: AdminContext, args: dict) -> ToolResult:
     sent = 0
     for member in members:
         ctx.messenger.send_oto_text(
-            member.dingtalk_user_id,
+            member.channel_user_id,
             f"Hi {member.display_name}，{tip}",
         )
         sent += 1

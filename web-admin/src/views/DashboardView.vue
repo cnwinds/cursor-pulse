@@ -14,7 +14,7 @@
           <div v-for="user in pendingActions.portal_users" :key="user.id" class="portal-pending-item">
             <div>
               <div class="portal-name">{{ user.display_name }}</div>
-              <div class="portal-meta">钉钉 · {{ user.dingtalk_user_id }}</div>
+              <div class="portal-meta">钉钉 · {{ user.channel_user_id }}</div>
             </div>
             <router-link to="/users" class="view-all">去审批 →</router-link>
           </div>
@@ -119,7 +119,7 @@ import { computed, onMounted, ref } from 'vue'
 import client from '@/api/client'
 
 interface PendingActions {
-  portal_users: { id: string; display_name: string; dingtalk_user_id: string }[]
+  portal_users: { id: string; display_name: string; channel_user_id: string }[]
   total_count: number
 }
 

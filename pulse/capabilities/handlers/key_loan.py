@@ -134,7 +134,7 @@ def handle_key_loan_list(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     reply = list_active_loans(repo, config, team_id=request.team_id)
     return _success(reply, capability_key="key.loan.list")
@@ -151,7 +151,7 @@ def handle_key_loan_revoke(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     prefix = _parse_loan_id_prefix(request.arguments)
     if not prefix:

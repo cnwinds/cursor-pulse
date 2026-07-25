@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import re
 
-from pulse.channels.admin_gate import is_dingtalk_admin as _is_admin
+from pulse.channels.admin_gate import is_channel_admin as _is_admin
 from pulse.storage.repository import Repository
 
 from pulse.channels.commands_common import (
     can_bind_account as _can_bind_account,
-    dingtalk_member as _dingtalk_member,
+    channel_member as _channel_member,
     encryption_key as _encryption_key,
 )
 from pulse.channels.commands_loans import (  # noqa: F401 — re-export for tests
@@ -65,11 +65,12 @@ def _handle_quota_command(
     repo: Repository,
     *,
     display_name: str | None = None,
+    channel: str = "dingtalk",
 ) -> str | None:
     if text not in ("额度", "我的额度"):
         return None
 
-    member = _dingtalk_member(repo, user_id, display_name)
+    member = _channel_member(repo, user_id, display_name, channel=channel)
     arguments: dict = {}
 
     if config.capability_bridge.quota_self_read:
@@ -113,13 +114,19 @@ def _handle_quota_command(
 
 
 def handle_bind_cursor_command(
-    text: str, user_id: str, config, repo, *, display_name: str | None = None
+    text: str,
+    user_id: str,
+    config,
+    repo,
+    *,
+    display_name: str | None = None,
+    channel: str = "dingtalk",
 ) -> str | None:
     match = BIND_CURSOR_RE.match(text.strip())
     if not match:
         return None
 
-    member = _dingtalk_member(repo, user_id, display_name)
+    member = _channel_member(repo, user_id, display_name, channel=channel)
     email = match.group("email")
     api_key = match.group("key").strip()
     arguments: dict[str, str] = {"api_key": api_key}
@@ -164,7 +171,7 @@ def handle_bind_cursor_command(
         api_key=api_key,
         tool_repo=tool_repo,
         cred_service=cred_service,
-        is_admin=_is_admin(user_id, set(config.admin.dingtalk_user_ids)),
+        is_admin=_is_admin(user_id, set(config.admin.channel_user_ids)),
     )
     if not account:
         return note
@@ -200,13 +207,19 @@ def handle_bind_cursor_command(
 
 
 def handle_unbind_cursor_command(
-    text: str, user_id: str, config, repo, *, display_name: str | None = None
+    text: str,
+    user_id: str,
+    config,
+    repo,
+    *,
+    display_name: str | None = None,
+    channel: str = "dingtalk",
 ) -> str | None:
     match = UNBIND_CURSOR_RE.match(text.strip())
     if not match:
         return None
 
-    member = _dingtalk_member(repo, user_id, display_name)
+    member = _channel_member(repo, user_id, display_name, channel=channel)
     email = match.group("email")
 
     from pulse.tool_center.account_pick import filter_cursor_accounts

@@ -23,7 +23,7 @@ def reset_admin_token_fallback_warning():
 def member():
     m = Member(
         team_id="t1",
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="Owner",
         status="active",
         portal_status="active",

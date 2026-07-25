@@ -34,7 +34,7 @@ def memory_client():
     member = repo.add_member("u1", "Alice")
     member.portal_status = "pending"
     owner = bootstrap_portal_owner(
-        repo, dingtalk_user_id="admin1", display_name="Admin", password="pass1234"
+        repo, channel_user_id="admin1", display_name="Admin", password="pass1234"
     )
     repo.commit()
     session.close()

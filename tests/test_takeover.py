@@ -119,7 +119,7 @@ def web_env():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     session = sf()
     team, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     repo.commit()
     session.close()
     client = TestClient(create_app(config, sf))

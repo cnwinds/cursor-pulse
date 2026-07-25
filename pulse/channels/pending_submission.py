@@ -10,7 +10,7 @@ DEFAULT_TTL = timedelta(hours=24)
 
 @dataclass
 class PendingUsageIngestion:
-    dingtalk_user_id: str
+    channel_user_id: str
     user_name: str
     channel: str
     source_type: str
@@ -30,8 +30,8 @@ class PendingUsageIngestion:
     def from_dict(cls, data: dict) -> PendingUsageIngestion:
         source_type = data.get("source_type") or data.get("input_type", "manual_csv")
         return cls(
-            dingtalk_user_id=data["dingtalk_user_id"],
-            user_name=data.get("user_name", data["dingtalk_user_id"]),
+            channel_user_id=data["channel_user_id"],
+            user_name=data.get("user_name", data["channel_user_id"]),
             channel=data["channel"],
             source_type=source_type,
             account_ids=list(data["account_ids"]),
@@ -66,8 +66,8 @@ class PendingIngestionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def get(self, dingtalk_user_id: str) -> PendingUsageIngestion | None:
-        raw = self._load_all().get(dingtalk_user_id)
+    def get(self, channel_user_id: str) -> PendingUsageIngestion | None:
+        raw = self._load_all().get(channel_user_id)
         if not raw:
             return None
         pending = PendingUsageIngestion.from_dict(raw)
@@ -75,19 +75,19 @@ class PendingIngestionStore:
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - created > DEFAULT_TTL:
-            self.clear(dingtalk_user_id)
+            self.clear(channel_user_id)
             return None
         return pending
 
     def save(self, pending: PendingUsageIngestion) -> None:
         data = self._load_all()
-        data[pending.dingtalk_user_id] = pending.to_dict()
+        data[pending.channel_user_id] = pending.to_dict()
         self._save_all(data)
 
-    def clear(self, dingtalk_user_id: str) -> None:
+    def clear(self, channel_user_id: str) -> None:
         data = self._load_all()
-        if dingtalk_user_id in data:
-            del data[dingtalk_user_id]
+        if channel_user_id in data:
+            del data[channel_user_id]
             self._save_all(data)
 
 

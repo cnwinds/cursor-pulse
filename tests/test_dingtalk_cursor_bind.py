@@ -56,7 +56,7 @@ def test_bind_command_requires_encryption_key(bot_repo):
     )
     reply = handle_bind_cursor_command(
         f"绑定 cursor key crsr_test_key_1234567890",
-        member.dingtalk_user_id,
+        member.channel_user_id,
         config,
         repo,
     )
@@ -80,7 +80,7 @@ def test_bind_command_success(mock_cred_cls, mock_sync_cls, bot_repo):
 
     reply = handle_bind_cursor_command(
         "绑定 cursor key crsr_test_key_1234567890",
-        member.dingtalk_user_id,
+        member.channel_user_id,
         config,
         repo,
     )

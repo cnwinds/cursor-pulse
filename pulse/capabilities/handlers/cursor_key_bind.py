@@ -3,7 +3,7 @@
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-from pulse.channels.admin_gate import is_dingtalk_admin
+from pulse.channels.admin_gate import is_channel_admin
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.storage.models import AiAccount, Member
@@ -27,14 +27,14 @@ def _admin_ids(config: Any) -> set[str]:
     admin = getattr(config, "admin", None)
     if admin is None:
         return set()
-    ids = getattr(admin, "dingtalk_user_ids", None) or []
+    ids = getattr(admin, "channel_user_ids", None) or []
     return set(ids)
 
 
 def _is_admin_member(member: Member, config: Any) -> bool:
     if member.portal_role in ("owner", "operator"):
         return True
-    return is_dingtalk_admin(member.dingtalk_user_id, _admin_ids(config))
+    return is_channel_admin(member.channel_user_id, _admin_ids(config))
 
 
 def _can_bind_account(config: Any, member: Member, account: AiAccount) -> bool:

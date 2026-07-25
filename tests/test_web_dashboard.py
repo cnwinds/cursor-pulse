@@ -28,7 +28,7 @@ def dash_client():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     s = sf()
     _team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="a1", display_name="A", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
     repo.add_member("u1", "Bob")
     repo.commit()
     s.close()

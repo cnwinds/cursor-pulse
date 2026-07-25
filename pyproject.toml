@@ -1,7 +1,7 @@
 [project]
 name = "cursor-pulse"
 version = "0.1.0"
-description = "Self-hosted AI tool usage metering and quota control plane (DingTalk-first)"
+description = "Self-hosted AI tool usage metering and quota control plane (IM channels optional)"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "xiongbo" }]
@@ -31,7 +31,9 @@ web = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "PyJWT>=2.8"]
 pdf = ["reportlab>=4.0"]
 postgres = ["psycopg[binary]>=3.1"]
 s3 = ["boto3>=1.34"]
-all = ["cursor-pulse[dev,web,pdf,postgres,s3]"]
+# WebSocket long-connection transport for FeishuRuntime (see pulse/channels/feishu/runtime.py).
+feishu = ["lark-oapi>=1.4"]
+all = ["cursor-pulse[dev,web,pdf,postgres,s3,feishu]"]
 
 [project.scripts]
 pulse = "pulse.cli:main"

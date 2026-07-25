@@ -197,7 +197,7 @@ def build_pending_actions(session: Session, team_id: str, actor: Member) -> dict
             {
                 "id": member.id,
                 "display_name": member.display_name,
-                "dingtalk_user_id": member.dingtalk_user_id,
+                "channel_user_id": member.channel_user_id,
             }
             for member in list_pending_portal_users(session, team_id)
         ]

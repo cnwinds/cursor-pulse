@@ -39,7 +39,7 @@ def chat_client():
     session = session_factory()
     _team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
-        repo, dingtalk_user_id="admin1", display_name="Admin", password="pass1234"
+        repo, channel_user_id="admin1", display_name="Admin", password="pass1234"
     )
     repo.commit()
     session.close()

@@ -31,14 +31,20 @@ def _member_from_legacy_token(session: Session, config: AppConfig, token: str) -
     ]
     from pulse.web.portal import ADMIN_LOGIN_USERNAME
 
-    admin = next((m for m in owners if m.dingtalk_user_id == ADMIN_LOGIN_USERNAME), None)
+    admin = next((m for m in owners if m.channel_user_id == ADMIN_LOGIN_USERNAME), None)
     if admin:
         return admin
     if owners:
         return owners[0]
-    if config.admin.dingtalk_user_ids:
-        uid = config.admin.dingtalk_user_ids[0]
-        return repo.get_or_create_member(uid, "Legacy Admin")
+    if config.admin.channel_user_ids:
+        uid = config.admin.channel_user_ids[0]
+        from pulse.web.portal import identity_channel_for_config
+
+        return repo.get_or_create_member(
+            uid,
+            "Legacy Admin",
+            channel=identity_channel_for_config(config.bot.name),
+        )
     return None
 
 

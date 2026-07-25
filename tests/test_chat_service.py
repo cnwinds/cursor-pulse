@@ -18,7 +18,7 @@ def owner_member():
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
-        repo, dingtalk_user_id="admin1", display_name="Admin", password="x"
+        repo, channel_user_id="admin1", display_name="Admin", password="x"
     )
     repo.commit()
     return owner
@@ -32,7 +32,7 @@ def test_plan_nudge_with_permission(owner_member):
 def test_plan_denied_without_portal():
     member = Member(
         team_id="t1",
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="User",
         status="active",
         portal_role=None,

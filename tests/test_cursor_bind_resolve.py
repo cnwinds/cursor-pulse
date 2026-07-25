@@ -145,7 +145,7 @@ def test_bind_command_shows_note_from_resolver(
 
     reply = handle_bind_cursor_command(
         "绑定 cursor wrong@gmail.com crsr_test_key_1234567890",
-        ctx["member"].dingtalk_user_id,
+        ctx["member"].channel_user_id,
         config,
         ctx["repo"],
     )

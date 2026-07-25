@@ -1,13 +1,13 @@
 # 架构说明
 
-Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
+Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可选 Assistant 与可选数据面。
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  web-admin  │────▶│  Pulse web API   │◀────│  钉钉 Stream │
-│  (Vue SPA)  │     │  + channel 机器人 │     │             │
-└─────────────┘     └────────┬─────────┘     └─────────────┘
-                             │ 内部 HTTP
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  web-admin  │────▶│  Pulse web API   │◀────│ Channel runtime │
+│  (Vue SPA)  │     │  + 调度 / 能力桥  │     │ none/dingtalk/  │
+└─────────────┘     └────────┬─────────┘     │ feishu          │
+                             │ 内部 HTTP      └─────────────────┘
                     ┌────────▼─────────┐
                     │ Assistant 服务    │  （可选进程）
                     └──────────────────┘
@@ -17,12 +17,14 @@ Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
                     └──────────────────┘
 ```
 
+身份模型：`Member.channel`（`web` / `dingtalk` / `feishu`）+ `Member.channel_user_id`。业务逻辑只认这对键，不直接依赖某一 IM SDK。
+
 ## 进程
 
 | 进程 | 启动方式 | 默认端口 | 职责 |
 |------|----------|----------|------|
 | Pulse web | `pulse web` | `:8080` | 门户 JWT API、内部 Provider、静态管理后台 |
-| Channel | `pulse channel` | Stream | 钉钉接入、定时任务、能力桥 |
+| Channel | `pulse channel` | — | IM 入站（可选）+ 定时任务；`BOT_PLATFORM=none` 时仅调度保活 |
 | Assistant | `python -m assistant_platform serve` | `:8090` | 会话 / 技能 / 能力调用（开启镜像时） |
 | 管理 UI（开发） | `web-admin` 下 `npm run dev` | `:5173` | Vue 门户 |
 | Proxy（可选） | `cursor-pulse start proxy` | `:8317` | HTTPS MITM + 用量上报 |
@@ -30,6 +32,19 @@ Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
 本地可用 `cursor-pulse.bat` / `.sh` / `.ps1` 统一启停。
 
 三类「代理」勿混淆：Cursor MITM、进程内互调、出站翻墙 — 见 [PROXY_LAYERS.md](PROXY_LAYERS.md)。
+
+## 渠道抽象
+
+| 抽象 | 位置 | 职责 |
+|------|------|------|
+| `ChannelMessenger` | `pulse/channels/base.py` | OTO / 群发 / 文件下载；含 `NullMessenger` |
+| `ChannelRuntime` | 同上 | 阻塞入站；含 `NullRuntime` |
+| `InboundMessage` + `dispatch_text_command` | `pulse/channels/inbound.py` | 规范化文本命令分发 |
+| 钉钉实现 | `pulse/channels/dingtalk/` | Stream + OpenAPI |
+| 飞书实现 | `pulse/channels/feishu/` | WebSocket（`lark-oapi`）+ OpenAPI |
+| 企微 | `pulse/channels/platforms/wecom.py` | 占位 stub |
+
+`create_messenger` / `create_runtime` 按 `bot.name` / `BOT_PLATFORM` 选择实现。
 
 ## 数据库
 
@@ -40,13 +55,14 @@ Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
 
 ## 用量采集
 
-- **Cursor：** 绑定 User API Key → 定时/按需 API 同步
-- **其他工具：** 钉钉手工提交 CSV/XLSX / 截图 / 文本（非 Cursor 主路径）
+- **Cursor：** 绑定 User API Key → 定时/按需 API 同步（不依赖 IM）
+- **其他工具：** 可选经 IM 手工提交 CSV/XLSX / 截图 / 文本
 
 ## HTTP 面（建议对外支持）
 
 **门户（JWT / 门户登录）**
 
+- `/api/auth/providers` — 可用登录方式（password / dingtalk_oauth / feishu_oauth）
 - `/api/auth/*`、`/api/v2/*`（账号、凭证、额度、借贷、Assistant 代理等）
 - `/health`
 

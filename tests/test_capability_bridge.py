@@ -192,7 +192,7 @@ def test_quota_command_uses_local_when_flag_off(bot_repo):
     repo, member = bot_repo
     config = _bridge_config()
     with patch("pulse.channels.capability_bridge.invoke_via_assistant") as bridge:
-        reply = _handle_quota_command("额度", member.dingtalk_user_id, config, repo)
+        reply = _handle_quota_command("额度", member.channel_user_id, config, repo)
         bridge.assert_not_called()
     assert "Cursor 额度" in reply or "尚未绑定" in reply
 
@@ -204,7 +204,7 @@ def test_quota_command_uses_bridge_when_flag_on(bot_repo):
         "pulse.channels.capability_bridge.invoke_via_assistant",
         return_value="桥接额度回复",
     ) as bridge:
-        reply = _handle_quota_command("额度", member.dingtalk_user_id, config, repo)
+        reply = _handle_quota_command("额度", member.channel_user_id, config, repo)
         bridge.assert_called_once()
         assert bridge.call_args.kwargs["capability_key"] == "quota.self.read"
     assert reply == "桥接额度回复"
@@ -217,7 +217,7 @@ def test_quota_command_falls_back_when_bridge_fails(bot_repo):
         "pulse.channels.capability_bridge.invoke_via_assistant",
         side_effect=httpx.ConnectError("down"),
     ):
-        reply = _handle_quota_command("额度", member.dingtalk_user_id, config, repo)
+        reply = _handle_quota_command("额度", member.channel_user_id, config, repo)
     assert "Cursor 额度" in reply or "尚未绑定" in reply
 
 
@@ -232,7 +232,7 @@ def test_bind_command_uses_bridge_when_flag_on(mock_cred_cls, mock_sync_cls, bot
     ) as bridge:
         reply = handle_bind_cursor_command(
             "绑定 cursor key crsr_test_key_1234567890",
-            member.dingtalk_user_id,
+            member.channel_user_id,
             config,
             repo,
         )
@@ -258,7 +258,7 @@ def test_bind_command_falls_back_when_bridge_fails(mock_cred_cls, mock_sync_cls,
     ):
         reply = handle_bind_cursor_command(
             "绑定 cursor key crsr_test_key_1234567890",
-            member.dingtalk_user_id,
+            member.channel_user_id,
             config,
             repo,
         )
@@ -312,7 +312,7 @@ def test_guide_image_handler_uses_bridge_when_flag_on(tmp_path):
     session = init_db("sqlite:///:memory:")()
     team, repo = make_team_repo(session)
     admin = repo.add_member("admin-1", "Admin")
-    config.admin.dingtalk_user_ids = ["admin-1"]
+    config.admin.channel_user_ids = ["admin-1"]
     session.commit()
     handler.session_factory = MagicMock(return_value=session)
 

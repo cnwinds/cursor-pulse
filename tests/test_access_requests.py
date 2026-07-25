@@ -33,8 +33,8 @@ def test_dingtalk_directory_sync_mock():
         config = load_config("config.yaml")
         stats = sync_dingtalk_directory(repo, config, client=FakeClient())
         assert stats["fetched"] == 2
-        alice = repo.get_member_by_dingtalk_id("u1")
-        boss = repo.get_member_by_dingtalk_id("u2")
+        alice = repo.get_member_by_channel_user_id("u1")
+        boss = repo.get_member_by_channel_user_id("u2")
         assert alice is not None
         assert alice.department_name == "研发部"
         assert alice.manager_member_id == boss.id

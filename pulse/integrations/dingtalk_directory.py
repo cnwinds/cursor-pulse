@@ -223,7 +223,7 @@ def list_directory_tree_children(
         if not userid:
             continue
         name = user.get("name") or userid
-        member = repo.get_or_create_member(userid, name)
+        member = repo.get_or_create_member(userid, name, channel="dingtalk")
         member.display_name = name
         member.department_name = dept_name
         member.employment_status = "active"
@@ -234,7 +234,7 @@ def list_directory_tree_children(
                 "label": name,
                 "is_leaf": True,
                 "member_id": member.id,
-                "dingtalk_user_id": userid,
+                "channel_user_id": userid,
                 "department_name": dept_name,
                 "portal_status": member.portal_status,
             }
@@ -304,7 +304,7 @@ def import_ai_members_by_names(
     granted: list[dict[str, str]] = []
     for name, user in found.items():
         userid = str(user.get("userid") or "")
-        member = repo.get_or_create_member(userid, name)
+        member = repo.get_or_create_member(userid, name, channel="dingtalk")
         member.display_name = name
         member.employment_status = "active"
         detail = client.get_user(userid)
@@ -314,8 +314,8 @@ def import_ai_members_by_names(
             member.department_name = dept_info.get("name") or member.department_name
         manager_userid = detail.get("manager_userid")
         if manager_userid:
-            member.manager_dingtalk_user_id = str(manager_userid)
-            manager = repo.get_member_by_dingtalk_id(str(manager_userid))
+            member.manager_channel_user_id = str(manager_userid)
+            manager = repo.get_member_by_channel_user_id(str(manager_userid))
             if manager:
                 member.manager_member_id = manager.id
         grant_portal_role(
@@ -325,7 +325,7 @@ def import_ai_members_by_names(
             role="ai_member",
             display_name=name,
         )
-        granted.append({"name": name, "dingtalk_user_id": userid, "member_id": member.id})
+        granted.append({"name": name, "channel_user_id": userid, "member_id": member.id})
 
     return {
         "granted": granted,
@@ -375,7 +375,7 @@ def sync_dingtalk_directory(
 
     for userid, (user, dept_name) in users_map.items():
         name = user.get("name") or userid
-        member = repo.get_or_create_member(userid, name)
+        member = repo.get_or_create_member(userid, name, channel="dingtalk")
         if member.status == "pending":
             stats["created"] += 1
         else:
@@ -386,12 +386,12 @@ def sync_dingtalk_directory(
         detail = client.get_user(userid)
         manager_userid = detail.get("manager_userid")
         if manager_userid:
-            member.manager_dingtalk_user_id = str(manager_userid)
+            member.manager_channel_user_id = str(manager_userid)
             pending_managers.append((member, str(manager_userid)))
         userid_to_member[userid] = member
 
     for member, manager_userid in pending_managers:
-        manager = userid_to_member.get(manager_userid) or repo.get_member_by_dingtalk_id(
+        manager = userid_to_member.get(manager_userid) or repo.get_member_by_channel_user_id(
             manager_userid
         )
         if manager:

@@ -42,7 +42,7 @@ def api_env():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     session = sf()
     team, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     auditor = repo.add_member("auditor", "Auditor")
     auditor.portal_role = "auditor"
     auditor.portal_status = "active"

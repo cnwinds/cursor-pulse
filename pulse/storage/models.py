@@ -44,12 +44,13 @@ class Team(Base):
 
 class Member(Base):
     __tablename__ = "members"
-    __table_args__ = (UniqueConstraint("team_id", "dingtalk_user_id", name="uq_member_team_dingtalk"),)
+    __table_args__ = (UniqueConstraint("team_id", "channel", "channel_user_id", name="uq_member_team_channel"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), index=True, nullable=True)
     display_name: Mapped[str] = mapped_column(String(128))
-    dingtalk_user_id: Mapped[str] = mapped_column(String(64), index=True)
+    channel: Mapped[str] = mapped_column(String(32), default="dingtalk", index=True)
+    channel_user_id: Mapped[str] = mapped_column(String(64), index=True)
     cursor_email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     portal_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -58,7 +59,7 @@ class Member(Base):
     password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     last_portal_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     department_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    manager_dingtalk_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manager_channel_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manager_member_id: Mapped[str | None] = mapped_column(
         ForeignKey("members.id"), nullable=True, index=True
     )
@@ -160,7 +161,7 @@ class ReminderLog(Base):
     period: Mapped[str] = mapped_column(String(7))
     type: Mapped[str] = mapped_column(String(32))
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    dingtalk_msg_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    channel_msg_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class QueryLog(Base):

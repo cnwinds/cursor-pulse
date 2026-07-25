@@ -38,7 +38,7 @@ def client():
     repo.add_member("u1", "Alice")
     owner = bootstrap_portal_owner(
         repo,
-        dingtalk_user_id="admin1",
+        channel_user_id="admin1",
         display_name="Admin",
         password="pass1234",
     )
@@ -74,7 +74,7 @@ def test_password_login(client):
     body = res.json()
     assert body["token_type"] == "bearer"
     assert body["user"]["portal_role"] == "owner"
-    assert body["user"]["dingtalk_user_id"] == "admin"
+    assert body["user"]["channel_user_id"] == "admin"
     assert "access_token" in body
 
 
@@ -101,7 +101,7 @@ def _password_login_client(admin_password: str):
     repo.add_member("u1", "Alice")
     bootstrap_portal_owner(
         repo,
-        dingtalk_user_id="admin1",
+        channel_user_id="admin1",
         display_name="Admin",
         password="pass1234",
     )
@@ -147,7 +147,7 @@ def test_auth_me(client):
     token = create_access_token(config, owner)
     res = test_client.get("/api/auth/me", headers=_auth_headers(token))
     assert res.status_code == 200
-    assert res.json()["dingtalk_user_id"] == "admin1"
+    assert res.json()["channel_user_id"] == "admin1"
 
 
 def test_permission_denied_for_auditor(client):
@@ -156,7 +156,7 @@ def test_permission_denied_for_auditor(client):
     team, _repo = make_team_repo(session)
     auditor = Member(
         team_id=team.id,
-        dingtalk_user_id="auditor1",
+        channel_user_id="auditor1",
         display_name="Auditor",
         status="active",
         portal_status="active",

@@ -76,7 +76,7 @@ def test_backfill_plan_upgrade_and_cycle_quota(session):
 
     member = Member(
         team_id=team.id,
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="Alice",
         status="active",
     )

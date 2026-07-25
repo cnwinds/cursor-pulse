@@ -111,7 +111,17 @@ def publish_report_to_group(
         config=config,
     )
     if should_publish_report_to_group(config):
-        messenger.send_group_text(text)
+        from pulse.channels.base import messenger_delivered
+
+        if messenger is None:
+            raise RuntimeError(
+                f"月报 {period} 需群发但 messenger 不可用（检查 BOT_PLATFORM / 渠道凭证）"
+            )
+        result = messenger.send_group_text(text)
+        if not messenger_delivered(result):
+            raise RuntimeError(
+                f"月报 {period} 群发未实际投递（BOT_PLATFORM=none 或渠道跳过发送）"
+            )
         if report:
             report.posted_at = datetime.now(timezone.utc)
     else:

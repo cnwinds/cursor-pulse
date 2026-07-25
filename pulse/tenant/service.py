@@ -21,10 +21,15 @@ def resolve_team(session: Session, config: AppConfig) -> Team:
     slug = config.tenant.slug
     team = get_or_create_team(session, slug, name=config.tenant.name or slug)
     _backfill_team_id(session, team.id)
-    if config.admin.dingtalk_user_ids:
-        from pulse.web.portal import sync_portal_owners_from_config
+    if config.admin.channel_user_ids:
+        from pulse.web.portal import identity_channel_for_config, sync_portal_owners_from_config
 
-        sync_portal_owners_from_config(session, team.id, config.admin.dingtalk_user_ids)
+        sync_portal_owners_from_config(
+            session,
+            team.id,
+            config.admin.channel_user_ids,
+            channel=identity_channel_for_config(config.bot.name),
+        )
         session.flush()
     return team
 

@@ -7,7 +7,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.channels.admin_gate import is_dingtalk_admin as _is_admin
+from pulse.channels.admin_gate import is_channel_admin as _is_admin
 from pulse.periods import current_period
 from pulse.storage.models import Member, QueryLog, UsageIngestion, UsageRecord
 
@@ -72,7 +72,7 @@ def answer_question(
             result_summary={},
         )
 
-    member = session.scalar(select(Member).where(Member.dingtalk_user_id == user_id))
+    member = session.scalar(select(Member).where(Member.channel_user_id == user_id))
     member_name = member.display_name if member else None
 
     plan, summary, answer = _dispatch_query(q, df, period, is_admin, member_name, member.id if member else None)

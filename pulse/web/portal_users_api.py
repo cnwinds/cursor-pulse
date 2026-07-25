@@ -20,7 +20,7 @@ def _portal_user_row(member: Member) -> dict:
     return {
         "id": member.id,
         "display_name": member.display_name,
-        "dingtalk_user_id": member.dingtalk_user_id,
+        "channel_user_id": member.channel_user_id,
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "portal_permissions": member.portal_permissions,
@@ -35,7 +35,7 @@ def _portal_directory_row(member: Member) -> dict:
     return {
         "id": member.id,
         "display_name": member.display_name,
-        "dingtalk_user_id": member.dingtalk_user_id,
+        "channel_user_id": member.channel_user_id,
         "department_name": member.department_name,
         "portal_status": member.portal_status,
     }
@@ -108,7 +108,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             userid = str(user.get("userid") or "")
             name = user.get("name") or userid
             dept_name = user.get("department_name")
-            member = repo.get_or_create_member(userid, name)
+            member = repo.get_or_create_member(userid, name, channel="dingtalk")
             member.display_name = name
             if dept_name:
                 member.department_name = dept_name
@@ -215,7 +215,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             member_id=user.member.id,
             action="portal.user.approve",
             capability="admin:users",
-            detail=f"{member.dingtalk_user_id} -> {member.portal_role}",
+            detail=f"{member.channel_user_id} -> {member.portal_role}",
         )
         session.commit()
         return _portal_user_row(member)
@@ -242,7 +242,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             member_id=user.member.id,
             action="portal.user.reject",
             capability="admin:users",
-            detail=member.dingtalk_user_id,
+            detail=member.channel_user_id,
         )
         session.commit()
         return _portal_user_row(member)
@@ -271,7 +271,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             member_id=user.member.id,
             action="portal.user.disable",
             capability="admin:users",
-            detail=member.dingtalk_user_id,
+            detail=member.channel_user_id,
         )
         session.commit()
         return _portal_user_row(member)
@@ -294,7 +294,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         if member_id == user.member.id:
             raise HTTPException(400, detail="不能删除当前登录账号")
         try:
-            deleted = delete_member_without_ingestions(session, team.id, member.dingtalk_user_id)
+            deleted = delete_member_without_ingestions(session, team.id, member.channel_user_id)
         except PortalAdminError as exc:
             raise HTTPException(400, detail=str(exc)) from exc
         log_admin_action(
@@ -303,7 +303,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             member_id=user.member.id,
             action="portal.user.delete",
             capability="admin:users",
-            detail=deleted.dingtalk_user_id,
+            detail=deleted.channel_user_id,
         )
         session.commit()
         return {"ok": True, "id": member_id}

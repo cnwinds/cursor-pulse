@@ -38,7 +38,7 @@ def test_owner_can_publish_report_without_dingtalk_admin_ids():
         repo.commit()
 
         config = AppConfig(tenant=TenantConfig(slug="test", name="Test"))
-        config.admin.dingtalk_user_ids = []
+        config.admin.channel_user_ids = []
 
         with patch(
             "pulse.capabilities.handlers.text_capabilities.publish_report_to_group",
@@ -75,7 +75,7 @@ def test_owner_can_publish_report_to_group_when_enabled():
             tenant=TenantConfig(slug="test", name="Test"),
             collection=CollectionConfig(publish_report_to_group=True),
         )
-        config.admin.dingtalk_user_ids = []
+        config.admin.channel_user_ids = []
         messenger = MagicMock()
 
         messenger = MagicMock()

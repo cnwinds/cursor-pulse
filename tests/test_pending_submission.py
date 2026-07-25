@@ -6,7 +6,7 @@ from pulse.channels.pending_submission import PendingIngestionStore, PendingUsag
 def test_pending_ingestion_roundtrip(tmp_path):
     store = PendingIngestionStore(tmp_path / "pending.json")
     pending = PendingUsageIngestion(
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         user_name="Alice",
         channel="private",
         source_type="manual_csv",

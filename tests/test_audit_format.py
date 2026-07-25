@@ -57,7 +57,7 @@ def test_format_quota_loan_and_revoke():
     loan_id = "f82abe14-603d-453b-b4ed-9f57a8462c55"
     borrower_id = "4cec80bc-921e-4eb2-92fa-735ba575246a"
     account = AiAccount(id=account_id, account_identifier="shared-key", vendor_id="v", plan_id="p")
-    borrower = Member(id=borrower_id, display_name="陆宗博", dingtalk_user_id="u1")
+    borrower = Member(id=borrower_id, display_name="陆宗博", channel_user_id="u1")
     loan = KeyLoan(
         id=loan_id,
         source_account_id=account_id,
@@ -80,8 +80,8 @@ def test_format_quota_loan_and_revoke():
 
 
 def test_format_portal_user_actions():
-    member = Member(id="m1", display_name="陈新志", dingtalk_user_id="dt-001")
-    ctx = _ctx(members_by_dingtalk={"dt-001": member})
+    member = Member(id="m1", display_name="陈新志", channel_user_id="dt-001")
+    ctx = _ctx(members_by_channel_user={"dt-001": member})
     assert format_audit_detail("portal.user.approve", "dt-001 -> operator", ctx) == (
         "批准 陈新志，角色设为 运营员"
     )
@@ -93,7 +93,7 @@ def test_list_admin_audit_logs_enriches_rows(audit_session):
     team = Team(slug="audit-team", name="Audit Team")
     session.add(team)
     session.flush()
-    operator = Member(team_id=team.id, display_name="熊波", dingtalk_user_id="op1")
+    operator = Member(team_id=team.id, display_name="熊波", channel_user_id="op1")
     session.add(operator)
     session.flush()
     account = AiAccount(

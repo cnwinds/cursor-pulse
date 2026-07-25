@@ -6,15 +6,15 @@ from pulse.authz.actor import can_manage_guide_image, is_channel_admin
 from pulse.config import AdminConfig, AppConfig, StorageConfig, TenantConfig
 
 
-def _member(*, portal_role: str | None, dingtalk_user_id: str = "user-1") -> SimpleNamespace:
-    return SimpleNamespace(portal_role=portal_role, dingtalk_user_id=dingtalk_user_id)
+def _member(*, portal_role: str | None, channel_user_id: str = "user-1") -> SimpleNamespace:
+    return SimpleNamespace(portal_role=portal_role, channel_user_id=channel_user_id)
 
 
-def _config(*, dingtalk_user_ids: list[str] | None = None) -> AppConfig:
+def _config(*, channel_user_ids: list[str] | None = None) -> AppConfig:
     return AppConfig(
         tenant=TenantConfig(slug="test", name="Test"),
         storage=StorageConfig(),
-        admin=AdminConfig(dingtalk_user_ids=dingtalk_user_ids or []),
+        admin=AdminConfig(channel_user_ids=channel_user_ids or []),
     )
 
 
@@ -39,6 +39,6 @@ def test_ai_member_is_not_channel_admin_without_dingtalk_id():
 
 
 def test_dingtalk_admin_can_manage_guide_image_even_if_ai_member():
-    member = _member(portal_role="ai_member", dingtalk_user_id="dingtalk-admin")
-    config = _config(dingtalk_user_ids=["dingtalk-admin"])
+    member = _member(portal_role="ai_member", channel_user_id="dingtalk-admin")
+    config = _config(channel_user_ids=["dingtalk-admin"])
     assert can_manage_guide_image(member, config) is True

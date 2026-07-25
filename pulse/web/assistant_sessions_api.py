@@ -26,10 +26,10 @@ def _member_display_names(
     members = session.scalars(
         select(Member).where(
             Member.team_id == team_id,
-            Member.dingtalk_user_id.in_(channel_user_ids),
+            Member.channel_user_id.in_(channel_user_ids),
         )
     ).all()
-    return {member.dingtalk_user_id: member.display_name for member in members}
+    return {member.channel_user_id: member.display_name for member in members}
 
 
 def _enrich_session_item(
@@ -101,7 +101,7 @@ def _assistant_headers(config: AppConfig, user: PortalUser) -> dict[str, str]:
             token,
             user.member.id,
             user.member.portal_role or "",
-            user.member.dingtalk_user_id,
+            user.member.channel_user_id,
             permissions,
         ),
         "Content-Type": "application/json",
@@ -178,7 +178,7 @@ def register_assistant_sessions_routes(
             params["status"] = status
         perms = resolve_permissions(user.member)
         if "assistant:sessions:read:all" not in perms:
-            params["member_user_id"] = user.member.dingtalk_user_id
+            params["member_user_id"] = user.member.channel_user_id
         elif member_user_id:
             params["member_user_id"] = member_user_id
         payload = _proxy_assistant(
@@ -258,7 +258,7 @@ def register_assistant_sessions_routes(
                 method="GET",
                 path="/api/assistant/v1/profiles/me",
                 params={
-                    "user_id": user.member.dingtalk_user_id,
+                    "user_id": user.member.channel_user_id,
                     "team_id": effective_team_id,
                 },
             )
@@ -274,7 +274,7 @@ def register_assistant_sessions_routes(
         try:
             team, _repo = team_repo_fn(session)
             payload = {
-                "user_id": user.member.dingtalk_user_id,
+                "user_id": user.member.channel_user_id,
                 "team_id": body.get("team_id") or team.id,
                 "signal_id": body.get("signal_id"),
                 "correction_text": body.get("correction_text", ""),

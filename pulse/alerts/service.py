@@ -58,13 +58,13 @@ def run_anomaly_check(
         saved.append(row)
     session.flush()
 
-    if saved and notify_admins and config.admin.dingtalk_user_ids:
+    if saved and notify_admins and config.admin.channel_user_ids:
         lines = [f"⚠️ Cursor Pulse 异常告警 · {period}", ""]
         for row in saved[:10]:
             prefix = "🔴" if row.severity == "critical" else "🟡"
             lines.append(f"{prefix} {row.message}")
         text = "\n".join(lines)
-        for admin_id in config.admin.dingtalk_user_ids:
+        for admin_id in config.admin.channel_user_ids:
             try:
                 notify_admins(admin_id, text)
             except Exception:

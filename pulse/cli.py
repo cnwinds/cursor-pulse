@@ -125,18 +125,24 @@ def main(argv: list[str] | None = None) -> int:
     p_admin = sub.add_parser("admin", help="Portal admin utilities")
     admin_sub = p_admin.add_subparsers(dest="admin_cmd", required=True)
     p_bootstrap = admin_sub.add_parser("bootstrap", help="Create first portal owner with password")
-    p_bootstrap.add_argument("--user-id", required=True, help="钉钉 dingtalk_user_id")
+    p_bootstrap.add_argument("--user-id", required=True, help="渠道用户 ID（web 本地可用 admin）")
     p_bootstrap.add_argument("--name", default="", help="显示名称")
     p_bootstrap.add_argument("--password", required=True, help="灾备登录密码")
+    p_bootstrap.add_argument(
+        "--channel",
+        default="web",
+        choices=["web", "dingtalk", "feishu"],
+        help="身份渠道（默认 web）",
+    )
     p_grant = admin_sub.add_parser("grant", help="Grant portal role to a member")
     p_grant.add_argument("--user-id", required=True)
     p_grant.add_argument("--name", default="")
     p_grant.add_argument("--role", required=True, choices=["owner", "operator", "auditor", "ai_member", "custom"])
     p_grant.add_argument("--permissions", default="", help="custom 角色时的能力码，逗号分隔")
     p_revoke = admin_sub.add_parser("revoke", help="取消成员的后台访问权限")
-    p_revoke.add_argument("--user-id", required=True, help="钉钉 dingtalk_user_id")
+    p_revoke.add_argument("--user-id", required=True, help="channel_user_id")
     p_delete = admin_sub.add_parser("delete", help="删除无提交记录的成员")
-    p_delete.add_argument("--user-id", required=True, help="钉钉 dingtalk_user_id")
+    p_delete.add_argument("--user-id", required=True, help="channel_user_id")
 
     p_import_ai = admin_sub.add_parser(
         "import-ai-members",
@@ -327,17 +333,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "report":
-        from pulse.channels.base import create_messenger
+        from pulse.channels.base import outbound_messenger_or_none
         from pulse.report.pdf import write_report_pdf
         from pulse.report.service import generate_report, publish_report_to_group
 
         session = session_factory()
         team, _repo = team_repository(session, config)
         if args.publish:
-            messenger = create_messenger(config)
-            text = publish_report_to_group(
-                session, args.period, messenger, team_id=team.id, config=config
-            )
+            messenger = outbound_messenger_or_none(config)
+            try:
+                text = publish_report_to_group(
+                    session, args.period, messenger, team_id=team.id, config=config
+                )
+            except RuntimeError as exc:
+                session.rollback()
+                session.close()
+                logger.error("%s", exc)
+                print(exc)
+                return 1
         else:
             text, _, _ = generate_report(
                 session, args.period, team_id=team.id, config=config
@@ -384,9 +397,9 @@ def main(argv: list[str] | None = None) -> int:
             n = service.send_daily_nudges(period)
             logger.info("Sent %d daily nudges", n)
         elif args.kind == "report":
-            from pulse.channels.dingtalk.messenger import DingTalkMessenger
+            from pulse.channels.base import outbound_messenger_or_none
 
-            service.messenger = DingTalkMessenger(config)
+            service.messenger = outbound_messenger_or_none(config)
             service.send_monthly_report(period)
         else:
             service.send_deadline_reminder(period)
@@ -498,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         except DingTalkOAuthError as exc:
             print(exc)
             return 1
-        print(f"dingtalk_user_id: {userid}")
+        print(f"channel_user_id: {userid}")
         print(f"display_name: {name}")
         print(f"\npulse admin bootstrap --user-id {userid} --name \"{name}\" --password <密码>")
         return 0
@@ -548,12 +561,16 @@ def main(argv: list[str] | None = None) -> int:
         _team, repo = team_repository(session, config)
         member = bootstrap_portal_owner(
             repo,
-            dingtalk_user_id=args.user_id,
+            channel_user_id=args.user_id,
             display_name=args.name or args.user_id,
             password=args.password,
+            channel=args.channel,
         )
         repo.commit()
-        print(f"Portal owner: {member.display_name} ({member.dingtalk_user_id})")
+        print(
+            f"Portal owner: {member.display_name} "
+            f"({member.channel}:{member.channel_user_id})"
+        )
         session.close()
         return 0
 
@@ -572,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
             permissions=perms,
         )
         session.commit()
-        print(f"Granted {args.role} to {member.display_name} ({member.dingtalk_user_id})")
+        print(f"Granted {args.role} to {member.display_name} ({member.channel_user_id})")
         session.close()
         return 0
 
@@ -588,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
             session.close()
             return 1
         session.commit()
-        print(f"Revoked portal access: {member.display_name} ({member.dingtalk_user_id})")
+        print(f"Revoked portal access: {member.display_name} ({member.channel_user_id})")
         session.close()
         return 0
 
@@ -604,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
             session.close()
             return 1
         session.commit()
-        print(f"Deleted member: {member.display_name} ({member.dingtalk_user_id})")
+        print(f"Deleted member: {member.display_name} ({member.channel_user_id})")
         session.close()
         return 0
 

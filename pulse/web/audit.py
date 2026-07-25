@@ -71,7 +71,7 @@ DELETE_MODE_LABELS = {
 @dataclass
 class _AuditContext:
     members_by_id: dict[str, Member] = field(default_factory=dict)
-    members_by_dingtalk: dict[str, Member] = field(default_factory=dict)
+    members_by_channel_user: dict[str, Member] = field(default_factory=dict)
     accounts: dict[str, AiAccount] = field(default_factory=dict)
     loans: dict[str, KeyLoan] = field(default_factory=dict)
     requests: dict[str, AccessRequest] = field(default_factory=dict)
@@ -109,8 +109,8 @@ def _member_name(ctx: _AuditContext, member_id: str | None) -> str | None:
     return member.display_name if member else None
 
 
-def _member_by_dingtalk(ctx: _AuditContext, dingtalk_user_id: str) -> Member | None:
-    return ctx.members_by_dingtalk.get(dingtalk_user_id)
+def _member_by_dingtalk(ctx: _AuditContext, channel_user_id: str) -> Member | None:
+    return ctx.members_by_channel_user.get(channel_user_id)
 
 
 def _account_label(ctx: _AuditContext, account_id: str) -> str:
@@ -317,10 +317,10 @@ def _build_audit_context(session: Session, team_id: str, rows: list[AdminAuditLo
         members = session.scalars(
             select(Member).where(
                 Member.team_id == team_id,
-                Member.dingtalk_user_id.in_(dingtalk_ids),
+                Member.channel_user_id.in_(dingtalk_ids),
             )
         ).all()
-        ctx.members_by_dingtalk = {member.dingtalk_user_id: member for member in members}
+        ctx.members_by_channel_user = {member.channel_user_id: member for member in members}
 
     account_ids = uuids - set(ctx.members_by_id)
     if account_ids:

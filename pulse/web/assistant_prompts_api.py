@@ -45,7 +45,7 @@ def _assistant_headers(config: AppConfig, user: PortalUser) -> dict[str, str]:
             token,
             user.member.id,
             user.member.portal_role or "",
-            user.member.dingtalk_user_id,
+            user.member.channel_user_id,
             permissions,
         ),
         "Content-Type": "application/json",

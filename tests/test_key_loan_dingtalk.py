@@ -215,7 +215,7 @@ def _invoke(session, *, team_id: str, member_id: str, capability_key: str, argum
 def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
-    config.admin.dingtalk_user_ids = [env["admin"].dingtalk_user_id]
+    config.admin.channel_user_ids = [env["admin"].channel_user_id]
 
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client
@@ -256,7 +256,7 @@ def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
 def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
-    config.admin.dingtalk_user_ids = [env["admin"].dingtalk_user_id]
+    config.admin.channel_user_ids = [env["admin"].channel_user_id]
 
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client

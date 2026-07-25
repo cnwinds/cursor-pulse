@@ -47,7 +47,7 @@ def reminder_env():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     session = sf()
     team, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     member = repo.add_member("u1", "Alice")
     seed_v2_catalog(session, team)
     session.flush()

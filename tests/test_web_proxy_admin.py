@@ -48,7 +48,7 @@ def env():
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(
-        repo, dingtalk_user_id="admin", display_name="Admin", password="x"
+        repo, channel_user_id="admin", display_name="Admin", password="x"
     )
     vendor = AiVendor(slug="cursor", name="Cursor")
     s.add(vendor)
@@ -478,7 +478,7 @@ def _member_headers(env, permissions: list[str], *, display_name: str = "Aud"):
     member = Member(
         id=str(uuid.uuid4()),
         team_id=env["owner"].team_id,
-        dingtalk_user_id=f"u-{uuid.uuid4().hex[:8]}",
+        channel_user_id=f"u-{uuid.uuid4().hex[:8]}",
         display_name=display_name,
         status="active",
         portal_status="active",

@@ -58,10 +58,10 @@ def format_cursor_account_choice_prompt(
 def can_proxy_submit_for_others(config: AppConfig, member: Member) -> bool:
     if member.portal_role in ("owner", "operator"):
         return True
-    admin_ids = set(config.admin.dingtalk_user_ids or [])
+    admin_ids = set(config.admin.channel_user_ids or [])
     if not admin_ids:
         return True
-    return member.dingtalk_user_id in admin_ids
+    return member.channel_user_id in admin_ids
 
 
 def parse_proxy_member_name(text: str) -> str | None:

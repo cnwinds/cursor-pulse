@@ -40,7 +40,7 @@ def test_ingest_writes_records_summary_and_daily_agg(session):
     member = Member(
         team_id=team.id,
         display_name="Tester",
-        dingtalk_user_id="dt-ingest-1",
+        channel_user_id="dt-ingest-1",
         status="active",
     )
     session.add(member)
@@ -114,7 +114,7 @@ def test_confirmed_ingest_replaces_old_period_records(session):
     member = Member(
         team_id=team.id,
         display_name="Tester",
-        dingtalk_user_id="dt-ingest-2",
+        channel_user_id="dt-ingest-2",
         status="active",
     )
     session.add(member)

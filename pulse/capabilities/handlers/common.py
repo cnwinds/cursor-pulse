@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-from pulse.channels.admin_gate import is_dingtalk_admin
+from pulse.channels.admin_gate import is_channel_admin as _is_channel_admin
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
 
@@ -42,7 +42,7 @@ def resolve_actor_member(session, request: CapabilityInvokeRequest) -> Member | 
     return session.scalar(
         select(Member).where(
             Member.team_id == request.team_id,
-            Member.dingtalk_user_id == request.actor_member_id,
+            Member.channel_user_id == request.actor_member_id,
         )
     )
 
@@ -52,8 +52,8 @@ def repository_for(session, team_id: str) -> Repository:
 
 
 def is_channel_admin(user_id: str, config: Any, repo: Repository) -> bool:
-    member = repo.get_member_by_dingtalk_id(user_id)
+    member = repo.get_member_by_channel_user_id(user_id)
     if member and member.portal_role in ("owner", "operator"):
         return True
-    admin_ids = set(getattr(getattr(config, "admin", None), "dingtalk_user_ids", None) or [])
-    return is_dingtalk_admin(user_id, admin_ids)
+    admin_ids = set(getattr(getattr(config, "admin", None), "channel_user_ids", None) or [])
+    return _is_channel_admin(user_id, admin_ids)

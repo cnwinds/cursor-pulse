@@ -1,6 +1,6 @@
 # Cursor Pulse
 
-自托管的 **AI 工具用量计量与额度控制面**（钉钉优先）：通过 API Key 同步 Cursor 用量，管理账号 / 借 Key / 告警；可选 Assistant 技能会话，以及可选的 Go MITM 代理数据面。
+自托管的 **AI 工具用量计量与额度控制面**。核心能力（账号台账、借 Key、额度看板、Cursor API 同步）仅需 Web + 数据库；**钉钉 / 飞书等 IM 渠道为可选插件**。
 
 > **许可证：** [MIT](LICENSE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -8,14 +8,14 @@
 
 | 层 | 作用 |
 |----|------|
-| **Pulse**（`pulse/`） | 控制面：数据库、钉钉渠道、Web API、内部 Provider API |
+| **Pulse**（`pulse/`） | 控制面：数据库、可选 IM 渠道、Web API、内部 Provider API |
 | **Assistant**（`assistant_platform/`） | 可选：会话 / 能力 / 记忆服务 |
 | **管理后台**（`web-admin/`） | Vue 门户（开发用 Vite，或构建后由 Pulse web 托管） |
 | **Proxy**（`proxy/`） | 可选：Go HTTPS MITM，截获 Cursor 流量并上报用量 |
 
 Cursor 用量应以 **API Key 自动同步** 为主，不要走 CSV。手工 CSV/XLSX 仅用于非 Cursor 工具。
 
-## 快速开始（本地）
+## 快速开始（Web-only，无钉钉/飞书）
 
 ```bash
 python -m venv .venv
@@ -23,10 +23,13 @@ python -m venv .venv
 # macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev,web]"
 
-cp config.example.yaml config.yaml   # Windows 可用 copy
-cp .env.example .env                 # 填写 DINGTALK_* / JWT_SECRET 等
+cp config.example.yaml config.yaml
+cp .env.example .env
+# 最少填写：ADMIN_PASSWORD、JWT_SECRET、PULSE_CREDENTIAL_ENCRYPTION_KEY
+# BOT_PLATFORM=none（默认）即可只用管理后台
 
 pulse init-db
+pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' --channel web
 pytest --tb=short -q
 ```
 
@@ -40,15 +43,20 @@ pytest --tb=short -q
 ```
 
 - API：`http://127.0.0.1:8080`
-- 管理 UI（Vite）：先 `cd web-admin && npm install && npm run dev`，再打开 `http://127.0.0.1:5173`
+- 管理 UI（Vite）：`cd web-admin && npm install && npm run dev` → `http://127.0.0.1:5173`
+- 登录：本地密码（`admin` + `ADMIN_PASSWORD`）
 
-完整 channel + assistant（+ proxy）配置见：[docs/bot-commands.md](docs/bot-commands.md)、[docs/RUNBOOK.md](docs/RUNBOOK.md)、[proxy/README.md](proxy/README.md)。
+完整 channel + assistant（+ proxy）见：[docs/bot-commands.md](docs/bot-commands.md)、[docs/RUNBOOK.md](docs/RUNBOOK.md)、[proxy/README.md](proxy/README.md)。
 
-### 钉钉（概要）
+### 可选 IM 渠道
 
-1. 在钉钉开放平台创建 **企业内部应用**（这是钉钉的应用类型名称，不是「仅本公司私有代码」的意思）。
-2. 启用机器人 + Stream 模式；在 `.env` 中配置 `DINGTALK_APP_KEY` / `SECRET` / `ROBOT_CODE` / 管理员 userid。
-3. 运行 `pulse channel`（或 `cursor-pulse start channel`）。
+| `BOT_PLATFORM` | 说明 |
+|----------------|------|
+| `none` | 仅 Web + 调度；提醒出站记日志不发送 |
+| `dingtalk` | 钉钉 Stream 机器人（`DINGTALK_*`） |
+| `feishu` | 飞书 WebSocket 机器人（`FEISHU_*`，需 `pip install 'cursor-pulse[feishu]'`） |
+
+门户登录方式由 `/api/auth/providers` 按凭证动态暴露：未配 IM 时只显示本地密码；配置了钉钉/飞书应用凭证后才出现对应扫码登录。
 
 ## Docker
 
@@ -57,11 +65,21 @@ pytest --tb=short -q
 ```bash
 cd docker
 ./scripts/setup.sh          # 生成 .env / config.yaml，并写入随机服务令牌
-# 编辑 docker/.env — 钉钉凭证；JWT / 加密密钥不可留空
+# 编辑 docker/.env — 至少 JWT / 加密密钥 / ADMIN_PASSWORD；IM 凭证可选
 docker compose up -d --build   # 自动跑 init-db，再起 web/assistant/channel
 ```
 
-可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
+Web-only 时可将 `BOT_PLATFORM=none`，channel 容器只跑调度。可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
+
+## 从钉钉-only 升级
+
+| 旧 | 新 |
+|----|----|
+| `Member.dingtalk_user_id` | `Member.channel` + `Member.channel_user_id` |
+| `admin.dingtalk_user_ids` / `DINGTALK_ADMIN_USER_IDS` | `admin.channel_user_ids` / `ADMIN_CHANNEL_USER_IDS` |
+| 强制 `BOT_PLATFORM=dingtalk` | 可选 `none` / `dingtalk` / `feishu` |
+
+启动时 `pulse init-db` / `migrate_schema` 会硬切迁移旧列。旧 JWT 字段名失效，用户需重新登录。详见 [docs/RUNBOOK.md](docs/RUNBOOK.md)「身份字段迁移」。
 
 ## 文档
 
@@ -71,15 +89,11 @@ docker compose up -d --build   # 自动跑 init-db，再起 web/assistant/channe
 | [SECURITY.md](SECURITY.md) | 漏洞报告与密钥处理 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程与 API 面 |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | 运维 |
-| [docs/bot-commands.md](docs/bot-commands.md) | 钉钉命令 |
+| [docs/bot-commands.md](docs/bot-commands.md) | 机器人命令 |
 | [docs/cursor-usage-api.md](docs/cursor-usage-api.md) | Cursor 非官方 API 笔记（可能随时失效，自负风险） |
 | [docs/README.md](docs/README.md) | 文档索引 |
 | [proxy/README.md](proxy/README.md) | MITM 代理（CA / 合规风险） |
 
 ## 风险说明
 
-可选代理会对 `*.cursor.sh` 做 **TLS MITM**（本地 CA）。非官方 Cursor HTTP 接口可能无通知变更。上线前请自行评估组织策略与 Cursor 服务条款。
-
-## 许可证
-
-[MIT](LICENSE) © 2026 xiongbo
+代理与 Cursor 非官方 API 均有合规与失效风险；生产使用前请自行评估。详见 SECURITY 与 proxy 文档。

@@ -115,7 +115,7 @@ def resolve_admin_dingtalk_ids(config: AppConfig) -> list[str]:
     """Platform admins from config (DingTalk user ids), deduplicated."""
     seen: set[str] = set()
     out: list[str] = []
-    for uid in config.admin.dingtalk_user_ids or []:
+    for uid in config.admin.channel_user_ids or []:
         value = (uid or "").strip()
         if not value or value in seen:
             continue
@@ -126,14 +126,14 @@ def resolve_admin_dingtalk_ids(config: AppConfig) -> list[str]:
 
 def admin_fallback_member_ids(session: Session, config: AppConfig) -> list[str]:
     admin_dt = {
-        uid.strip() for uid in (config.admin.dingtalk_user_ids or []) if uid and uid.strip()
+        uid.strip() for uid in (config.admin.channel_user_ids or []) if uid and uid.strip()
     }
     if not admin_dt:
         return []
     members = session.scalars(
-        select(Member).where(Member.status == "active", Member.dingtalk_user_id.in_(admin_dt))
+        select(Member).where(Member.status == "active", Member.channel_user_id.in_(admin_dt))
     ).all()
-    return [m.id for m in members if m.dingtalk_user_id]
+    return [m.id for m in members if m.channel_user_id]
 
 
 def resolve_on_demand_notify_dingtalk_ids(
@@ -164,10 +164,10 @@ def resolve_on_demand_notify_dingtalk_ids(
         if not member:
             logger.warning("on-demand notify: member %s not found", mid)
             continue
-        uid = (member.dingtalk_user_id or "").strip()
+        uid = (member.channel_user_id or "").strip()
         if not uid:
             logger.warning(
-                "on-demand notify: member %s has no dingtalk_user_id", mid
+                "on-demand notify: member %s has no channel_user_id", mid
             )
             continue
         if uid in seen:

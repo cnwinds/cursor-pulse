@@ -84,7 +84,7 @@ def test_api_sync_inserts_after_legacy_migration(legacy_engine):
     member = Member(
         team_id=team.id,
         display_name="Sync Tester",
-        dingtalk_user_id="dt-legacy-1",
+        channel_user_id="dt-legacy-1",
         status="active",
     )
     session.add(member)

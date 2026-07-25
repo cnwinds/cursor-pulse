@@ -12,7 +12,8 @@ def member_payload(member: Member) -> dict:
     return {
         "id": member.id,
         "display_name": member.display_name,
-        "dingtalk_user_id": member.dingtalk_user_id,
+        "channel": getattr(member, "channel", None) or "web",
+        "channel_user_id": member.channel_user_id,
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "permissions": sorted(resolve_permissions(member)),

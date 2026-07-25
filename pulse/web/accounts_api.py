@@ -382,7 +382,7 @@ def register_accounts_v2_routes(app, get_db, require_capability, team_repo_fn, l
             {
                 "id": m.id,
                 "display_name": m.display_name,
-                "dingtalk_user_id": m.dingtalk_user_id,
+                "channel_user_id": m.channel_user_id,
                 "department_name": m.department_name,
             }
             for m in members

@@ -77,7 +77,7 @@ def test_channel_reply_rejects_wrong_token(api_env):
 def test_channel_reply_private_sends_oto_text(api_env, monkeypatch):
     messenger = MagicMock()
     monkeypatch.setattr(
-        "pulse.web.internal_channel_api._get_dingtalk_messenger",
+        "pulse.web.internal_channel_api._get_channel_messenger",
         lambda _config: messenger,
     )
     response = api_env["client"].post(
@@ -92,7 +92,7 @@ def test_channel_reply_private_sends_oto_text(api_env, monkeypatch):
 
 def test_channel_reply_without_messenger_returns_queued(api_env, monkeypatch):
     monkeypatch.setattr(
-        "pulse.web.internal_channel_api._get_dingtalk_messenger",
+        "pulse.web.internal_channel_api._get_channel_messenger",
         lambda _config: None,
     )
     response = api_env["client"].post(
@@ -116,7 +116,7 @@ def test_channel_reply_web_stores_delivery(api_env):
     member = Member(
         id=str(uuid.uuid4()),
         team_id=team.id,
-        dingtalk_user_id="web-user",
+        channel_user_id="web-user",
         display_name="Web User",
         portal_role="member",
     )
@@ -151,7 +151,7 @@ def test_channel_reply_group_without_config_returns_queued(api_env, monkeypatch)
     messenger = MagicMock()
     messenger.config.dingtalk.group_open_conversation_id = ""
     monkeypatch.setattr(
-        "pulse.web.internal_channel_api._get_dingtalk_messenger",
+        "pulse.web.internal_channel_api._get_channel_messenger",
         lambda _config: messenger,
     )
     response = api_env["client"].post(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pulse.channels.commands_common import dingtalk_member
+from pulse.channels.commands_common import channel_member
 from pulse.storage.repository import Repository
 from pulse.tool_center.key_loan_ops import (
     list_active_loans,
@@ -89,8 +89,9 @@ def handle_key_loan_commands(
     *,
     is_admin: bool,
     display_name: str | None = None,
+    channel: str = "dingtalk",
 ) -> str | None:
-    member = repo.get_member_by_dingtalk_id(user_id)
+    member = repo.get_member_by_channel_user_id(user_id, channel=channel)
     if member is None and not _looks_like_borrow_key_command(text):
         return None
 
@@ -105,7 +106,7 @@ def handle_key_loan_commands(
         return return_loan(repo, config, member)
 
     if _looks_like_borrow_key_command(text):
-        borrower = dingtalk_member(repo, user_id, display_name)
+        borrower = channel_member(repo, user_id, display_name, channel=channel)
         note = text.split(maxsplit=1)[1].strip() if " " in text else None
         return request_loan(repo, config, borrower, note=note)
 

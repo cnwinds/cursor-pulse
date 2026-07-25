@@ -7,7 +7,7 @@ from pulse.web.permissions import has_permission, resolve_permissions
 def _member(portal_role: str) -> Member:
     return Member(
         team_id="t1",
-        dingtalk_user_id=f"{portal_role}-user",
+        channel_user_id=f"{portal_role}-user",
         display_name=portal_role,
         status="active",
         portal_status="active",

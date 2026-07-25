@@ -43,7 +43,7 @@ def cred_env():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     member = repo.add_member("u1", "Alice")
     member.portal_role = "ai_member"
     member.portal_status = "active"
@@ -221,7 +221,7 @@ def test_bind_credential_forbidden_for_non_primary(cred_env):
     session = sf()
     other = Member(
         team_id=cred_env["team_id"],
-        dingtalk_user_id="stranger",
+        channel_user_id="stranger",
         display_name="Stranger",
         status="active",
         portal_status="active",

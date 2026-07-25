@@ -24,7 +24,7 @@
             <el-avatar :size="40">{{ user.display_name.slice(0, 1) }}</el-avatar>
             <div>
               <div class="name">{{ user.display_name }}</div>
-              <div class="meta">钉钉 · {{ user.dingtalk_user_id }}</div>
+              <div class="meta">钉钉 · {{ user.channel_user_id }}</div>
             </div>
           </div>
           <div class="pending-actions">
@@ -54,7 +54,7 @@
               <el-avatar :size="32">{{ row.display_name.slice(0, 1) }}</el-avatar>
               <div>
                 <div>{{ row.display_name }}</div>
-                <div class="meta">钉钉 · {{ row.dingtalk_user_id }}</div>
+                <div class="meta">钉钉 · {{ row.channel_user_id }}</div>
               </div>
             </div>
           </template>
@@ -166,7 +166,7 @@
                   <el-avatar :size="28">{{ row.display_name.slice(0, 1) }}</el-avatar>
                   <div>
                     <div>{{ row.display_name }}</div>
-                    <div class="meta">钉钉 · {{ row.dingtalk_user_id }}</div>
+                    <div class="meta">钉钉 · {{ row.channel_user_id }}</div>
                   </div>
                 </div>
               </template>
@@ -242,7 +242,7 @@ import { useAuthStore } from '@/stores/auth'
 interface PortalUserRow {
   id: string
   display_name: string
-  dingtalk_user_id: string
+  channel_user_id: string
   portal_status: string
   portal_role: string | null
   portal_permissions?: string[]
@@ -258,7 +258,7 @@ interface DirectoryCandidate {
   id: string
   member_id?: string
   display_name: string
-  dingtalk_user_id: string
+  channel_user_id: string
   department_name: string | null
   portal_status: string | null
 }
@@ -270,7 +270,7 @@ interface DirectoryTreeNode {
   is_leaf: boolean
   dept_id?: number
   member_id?: string
-  dingtalk_user_id?: string
+  channel_user_id?: string
   department_name?: string | null
   portal_status?: string | null
 }
@@ -428,7 +428,7 @@ const loadDirectoryTreeNode: LoadFunction = async (node, resolve) => {
 function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   const memberId = row.member_id || row.id
   const displayName = row.display_name || row.label
-  const dingtalkUserId = row.dingtalk_user_id || ''
+  const dingtalkUserId = row.channel_user_id || ''
   const portalStatus = row.portal_status
 
   if (portalStatus === 'active') {
@@ -448,7 +448,7 @@ function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   openApprove({
     id: memberId,
     display_name: displayName,
-    dingtalk_user_id: dingtalkUserId,
+    channel_user_id: dingtalkUserId,
     portal_status: portalStatus || '',
     portal_role: null,
   })

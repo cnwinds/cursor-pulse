@@ -71,7 +71,7 @@ def status_env():
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     member = repo.add_member("u1", "Alice")
     member.portal_role = "ai_member"
     member.portal_status = "active"

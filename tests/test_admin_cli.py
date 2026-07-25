@@ -31,7 +31,7 @@ def test_revoke_portal_access(session):
     s, team_id = session
     _team, repo = make_team_repo(s)
     member = bootstrap_portal_owner(
-        repo, dingtalk_user_id="u1", display_name="Alice", password="secret1234"
+        repo, channel_user_id="u1", display_name="Alice", password="secret1234"
     )
     repo.commit()
 
@@ -68,8 +68,8 @@ def test_delete_member_without_ingestions(session):
     deleted = delete_member_without_ingestions(s, team_id, "u3")
     s.commit()
 
-    assert deleted.dingtalk_user_id == "u3"
-    assert s.scalar(select(Member).where(Member.dingtalk_user_id == "u3")) is None
+    assert deleted.channel_user_id == "u3"
+    assert s.scalar(select(Member).where(Member.channel_user_id == "u3")) is None
 
 
 def test_delete_member_with_ingestions(session):

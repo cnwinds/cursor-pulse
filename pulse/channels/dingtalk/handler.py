@@ -24,6 +24,7 @@ from pulse.channels.dingtalk.work_group import (
     sync_group_display_name,
 )
 from pulse.channels.dingtalk.messenger import DingTalkMessenger
+from pulse.channels.inbound import InboundMessage, dispatch_text_command
 from pulse.config import AppConfig
 from pulse.extract.text_parser import looks_like_usage_csv
 from pulse.extract.summary import format_group_ack
@@ -76,9 +77,9 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         return super().reply_text(text, incoming_message)
 
     def _is_admin(self, user_id: str) -> bool:
-        from pulse.channels.admin_gate import is_dingtalk_admin
+        from pulse.channels.admin_gate import is_channel_admin
 
-        return is_dingtalk_admin(user_id, self.pulse_config.admin.dingtalk_user_ids)
+        return is_channel_admin(user_id, self.pulse_config.admin.channel_user_ids)
 
     def _send_user_detail(
         self,
@@ -125,7 +126,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             session = self.session_factory()
             try:
                 team, repo = team_repository(session, self.pulse_config)
-                member = repo.get_or_create_member(user_id, user_name)
+                member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
                 actor_role = member.portal_role
                 if actor_role not in ("owner", "operator") and self._is_admin(user_id):
                     actor_role = "owner"
@@ -161,7 +162,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                 session = self.session_factory()
                 try:
                     team, repo = team_repository(session, self.pulse_config)
-                    member = repo.get_or_create_member(user_id, user_name)
+                    member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
                     session.commit()
                     actor_role = member.portal_role
                     if actor_role not in ("owner", "operator") and self._is_admin(user_id):
@@ -216,6 +217,35 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             )
             return
 
+        # 共享命令分发（channel-neutral）：仅当 Assistant 镜像未启用时兜底本地回复
+        # 纯文本命令（帮助/额度/绑定解绑Key/借还Key），避免与 Assistant 侧重复回复。
+        if text and not self.pulse_config.assistant_mirror.enabled:
+            inbound = InboundMessage(
+                channel="dingtalk",
+                channel_user_id=user_id,
+                display_name=user_name,
+                text=text,
+                conversation_type="group" if is_group else "oto",
+                conversation_id=incoming.conversation_id,
+                message_id=incoming.message_id,
+                raw=incoming,
+            )
+            reply = dispatch_text_command(
+                config=self.pulse_config,
+                session_factory=self.session_factory,
+                messenger=self.messenger,
+                inbound=inbound,
+            )
+            if reply is not None:
+                self._send_user_detail(
+                    incoming=incoming,
+                    user_id=user_id,
+                    user_name=user_name,
+                    channel="group" if is_group else "private",
+                    detail=reply,
+                )
+                return
+
         # 其余文本：已镜像，由 Assistant 经 channel/reply 回复
         if text:
             return
@@ -256,7 +286,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         session = self.session_factory()
         try:
             _team, repo = team_repository(session, self.pulse_config)
-            member = repo.get_or_create_member(user_id, user_name)
+            member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
             allowed = can_manage_guide_image(member, self.pulse_config)
             session.commit()
         except Exception:
@@ -347,7 +377,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             from pulse.settings import effective_config
 
             runtime_config = effective_config(self.pulse_config, session, team.id)
-            member = repo.get_or_create_member(user_id, user_name)
+            member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
             tool_repo = ToolCenterRepository(session, team.id)
             primary_accounts = tool_repo.get_primary_accounts_for_member(member.id)
             hinted_vendor = infer_vendor_slug_from_text(text_hint)
@@ -494,7 +524,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         session = self.session_factory()
         team, repo = team_repository(session, self.pulse_config)
         try:
-            member = repo.get_or_create_member(user_id, user_name)
+            member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
             period = current_period(self.pulse_config)
             if result.period_hint and len(result.period_hint) == 7:
                 period = result.period_hint
@@ -521,9 +551,9 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                 source_type="manual_vision",
                 upgrade_notify=(
                     self.messenger.send_oto_text,
-                    list(self.pulse_config.admin.dingtalk_user_ids),
+                    list(self.pulse_config.admin.channel_user_ids),
                 )
-                if self.pulse_config.admin.dingtalk_user_ids
+                if self.pulse_config.admin.channel_user_ids
                 else None,
             )
             repo.commit()
@@ -581,7 +611,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                     session = self.session_factory()
                     try:
                         _team, repo = team_repository(session, self.pulse_config)
-                        member = repo.get_member_by_dingtalk_id(user_id)
+                        member = repo.get_member_by_channel_user_id(user_id)
                         if member is None:
                             raise ValueError("未找到成员记录")
                         image_b64 = base64.b64encode(dest.read_bytes()).decode("ascii")

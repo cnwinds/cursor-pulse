@@ -36,7 +36,7 @@ def readiness_env():
     session = sf()
     team, repo = make_team_repo(session)
     member = repo.add_member("u1", "Alice")
-    bootstrap_portal_owner(repo, dingtalk_user_id="admin", display_name="Admin", password="x")
+    bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     seed_v2_catalog(session, team)
     session.flush()
 

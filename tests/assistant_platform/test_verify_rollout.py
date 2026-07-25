@@ -570,7 +570,7 @@ def test_web_search_failure_degrades_gracefully(caplog):
     team, _ = make_team_repo(db)
     member = Member(
         team_id=team.id,
-        dingtalk_user_id="u-web",
+        channel_user_id="u-web",
         display_name="Web",
         status="active",
     )

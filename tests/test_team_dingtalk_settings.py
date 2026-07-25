@@ -32,7 +32,7 @@ def dingtalk_settings_client(tmp_path):
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(repo, dingtalk_user_id="a1", display_name="A", password="x")
+    owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
     repo.commit()
     s.close()
     return TestClient(create_app(config, sf)), config, owner, team.id, sf

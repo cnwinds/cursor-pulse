@@ -46,7 +46,7 @@ def guide_env(session, tmp_path):
     config = AppConfig(
         tenant=TenantConfig(slug="test", name="Test"),
         storage=StorageConfig(raw_files_dir=str(tmp_path)),
-        admin=AdminConfig(dingtalk_user_ids=[]),
+        admin=AdminConfig(channel_user_ids=[]),
     )
     return {
         "team": team,
@@ -186,7 +186,7 @@ def test_success_for_dingtalk_admin_without_portal_role(session, guide_env):
     repo.commit()
 
     config = guide_env["config"].model_copy(
-        update={"admin": AdminConfig(dingtalk_user_ids=["dingtalk-admin-user"])}
+        update={"admin": AdminConfig(channel_user_ids=["dingtalk-admin-user"])}
     )
     request = _request(
         team_id=team.id,

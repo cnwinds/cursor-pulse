@@ -42,15 +42,9 @@ def _period_arg(request: CapabilityInvokeRequest, config: Any) -> str:
 
 
 def _optional_messenger(config: Any):
-    dingtalk = getattr(config, "dingtalk", None)
-    if dingtalk and getattr(dingtalk, "app_key", None) and getattr(dingtalk, "app_secret", None):
-        try:
-            from pulse.channels.dingtalk.messenger import DingTalkMessenger
+    from pulse.channels.base import outbound_messenger_or_none
 
-            return DingTalkMessenger(config)
-        except Exception:
-            return None
-    return None
+    return outbound_messenger_or_none(config)
 
 
 def handle_bot_help(
@@ -118,7 +112,7 @@ def handle_submission_status_read(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     period = _period_arg(request, config)
     active = repo.list_active_members()
@@ -152,7 +146,7 @@ def handle_cursor_key_unbind(
             text = "解绑 cursor"
     reply = handle_unbind_cursor_command(
         text,
-        member.dingtalk_user_id,
+        member.channel_user_id,
         config,
         repo,
         display_name=member.display_name,
@@ -216,7 +210,7 @@ def handle_usage_aggregate(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     period = _period_arg(request, config)
     metrics = aggregate_period(session, period, team_id=request.team_id)
@@ -240,7 +234,7 @@ def handle_report_publish(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     period = _period_arg(request, config)
     messenger = _optional_messenger(config)
@@ -262,7 +256,7 @@ def handle_report_publish(
             f"✅ {period} 月报已生成（暂未发群，仅预览）：\n\n{preview}",
             capability_key="report.publish",
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         return _fail("report_failed", str(exc))
 
 
@@ -277,7 +271,7 @@ def handle_members_manage(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     text = _text_arg(request) or "成员"
     parts = text.split()
@@ -287,7 +281,7 @@ def handle_members_manage(
             return _success("暂无 active 成员。使用「成员 添加 userid 姓名」添加。", capability_key="members.manage")
         lines = ["👥 成员名单（active）："]
         for m in active:
-            lines.append(f"· {m.display_name} ({m.dingtalk_user_id})")
+            lines.append(f"· {m.display_name} ({m.channel_user_id})")
         return _success("\n".join(lines), capability_key="members.manage")
     if parts[1] == "添加" and len(parts) >= 4:
         uid, name = parts[2], parts[3]
@@ -295,7 +289,7 @@ def handle_members_manage(
         return _success(f"已添加成员 {name}（{uid}）", capability_key="members.manage")
     if parts[1] == "移除" and len(parts) >= 3:
         uid = parts[2]
-        target = repo.get_member_by_dingtalk_id(uid)
+        target = repo.get_member_by_channel_user_id(uid)
         if not target:
             return _fail("not_found", f"未找到 {uid}")
         target.status = "inactive"
@@ -316,7 +310,7 @@ def handle_alerts_run(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     period = _period_arg(request, config)
     rows = run_anomaly_check(session, config, request.team_id, period)
@@ -340,7 +334,7 @@ def handle_usage_export(
     if member is None:
         return _fail("forbidden", "成员不存在或无权访问")
     repo = repository_for(session, request.team_id)
-    if not is_channel_admin(member.dingtalk_user_id, config, repo):
+    if not is_channel_admin(member.channel_user_id, config, repo):
         return _fail("forbidden", "无权限。")
     period = _period_arg(request, config)
     dest = export_usage_csv(

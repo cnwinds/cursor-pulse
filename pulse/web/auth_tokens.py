@@ -61,7 +61,8 @@ def create_access_token(config, member: Member, *, hours: int = 2) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": member.id,
-        "dingtalk_user_id": member.dingtalk_user_id,
+        "channel": getattr(member, "channel", None) or "web",
+        "channel_user_id": member.channel_user_id,
         "display_name": member.display_name,
         "portal_role": member.portal_role,
         "permissions": sorted(resolve_permissions(member)),

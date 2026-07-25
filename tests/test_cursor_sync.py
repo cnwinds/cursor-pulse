@@ -45,7 +45,7 @@ def test_successful_sync_writes_records(session):
     member = Member(
         team_id=team.id,
         display_name="Sync Tester",
-        dingtalk_user_id="dt-sync-1",
+        channel_user_id="dt-sync-1",
         status="active",
     )
     session.add(member)

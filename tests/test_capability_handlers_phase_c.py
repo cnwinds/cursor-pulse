@@ -75,7 +75,7 @@ def test_handle_report_publish_owner_preview():
         member.portal_role = "owner"
         repo.commit()
         config = AppConfig(tenant=TenantConfig(slug="test", name="Test"))
-        config.admin.dingtalk_user_ids = []
+        config.admin.channel_user_ids = []
         with patch(
             "pulse.capabilities.handlers.text_capabilities.publish_report_to_group",
             return_value="月报正文",

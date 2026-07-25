@@ -96,7 +96,7 @@ def test_account_submission_creates_usage_summary(session):
     account = tool_repo.list_accounts()[0]
     member = Member(
         team_id=team.id,
-        dingtalk_user_id="u-primary",
+        channel_user_id="u-primary",
         display_name="Primary",
         status="active",
     )
@@ -142,7 +142,7 @@ def test_daily_nudge_targets_primary_and_admin(session):
     )
     primary = Member(
         team_id=team.id,
-        dingtalk_user_id="u1",
+        channel_user_id="u1",
         display_name="Alice",
         status="active",
     )

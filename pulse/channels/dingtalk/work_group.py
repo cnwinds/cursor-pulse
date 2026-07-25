@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from pulse.channels.admin_gate import is_dingtalk_admin
+from pulse.channels.admin_gate import is_channel_admin
 from pulse.channels.dingtalk.group_store import save_group_binding
 from pulse.config import AppConfig
 from pulse.web.audit import log_admin_action
@@ -59,7 +59,7 @@ def can_activate_work_group(
         return True, ""
     if member_portal_role in ("owner", "operator"):
         return True, ""
-    if is_dingtalk_admin(user_id, config.admin.dingtalk_user_ids):
+    if is_channel_admin(user_id, config.admin.channel_user_ids):
         return True, ""
     return False, "工作群已绑定到其他群，仅管理员可在新群发送「启动」重新绑定。"
 

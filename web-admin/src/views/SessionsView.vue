@@ -25,9 +25,9 @@
         >
           <el-option
             v-for="member in members"
-            :key="member.dingtalk_user_id"
+            :key="member.channel_user_id"
             :label="member.display_name"
-            :value="member.dingtalk_user_id"
+            :value="member.channel_user_id"
           />
         </el-select>
       </el-form-item>
@@ -244,7 +244,7 @@ interface SessionRow {
 
 interface MemberOption {
   display_name: string
-  dingtalk_user_id: string
+  channel_user_id: string
 }
 
 interface SessionMessage {

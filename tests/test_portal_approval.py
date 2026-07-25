@@ -42,7 +42,7 @@ def portal_env():
     team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
         repo,
-        dingtalk_user_id="admin1",
+        channel_user_id="admin1",
         display_name="Super Admin",
         password="pass1234",
     )
@@ -75,7 +75,7 @@ def test_approve_pending_user(portal_env):
     session = session_factory()
     pending = Member(
         team_id=team_id,
-        dingtalk_user_id="pending1",
+        channel_user_id="pending1",
         display_name="Pending User",
         status="pending",
         portal_status="pending",
@@ -101,7 +101,7 @@ def test_reject_pending_user(portal_env):
     session = session_factory()
     pending = Member(
         team_id=team_id,
-        dingtalk_user_id="reject1",
+        channel_user_id="reject1",
         display_name="Reject Me",
         status="pending",
         portal_status="pending",
@@ -124,7 +124,7 @@ def test_portal_pending_api(portal_env):
     session = session_factory()
     pending = Member(
         team_id=team_id,
-        dingtalk_user_id="api_pending",
+        channel_user_id="api_pending",
         display_name="API Pending",
         status="pending",
         portal_status="pending",
@@ -146,7 +146,7 @@ def test_portal_approve_api(portal_env):
     session = session_factory()
     pending = Member(
         team_id=team_id,
-        dingtalk_user_id="approve_api",
+        channel_user_id="approve_api",
         display_name="Approve API",
         status="pending",
         portal_status="pending",
@@ -173,7 +173,7 @@ def test_cannot_approve_non_pending(portal_env):
     session = session_factory()
     active = Member(
         team_id=team_id,
-        dingtalk_user_id="already_active",
+        channel_user_id="already_active",
         display_name="Active",
         status="active",
         portal_status="active",
@@ -199,7 +199,7 @@ def test_list_pending_portal_users(portal_env):
         session.add(
             Member(
                 team_id=team_id,
-                dingtalk_user_id=f"p{i}",
+                channel_user_id=f"p{i}",
                 display_name=f"P{i}",
                 status="pending",
                 portal_status="pending",
@@ -218,7 +218,7 @@ def test_list_directory_portal_candidates(portal_env):
     session.add(
         Member(
             team_id=team_id,
-            dingtalk_user_id="dir1",
+            channel_user_id="dir1",
             display_name="通讯录用户",
             status="pending",
             portal_status=None,
@@ -228,7 +228,7 @@ def test_list_directory_portal_candidates(portal_env):
     session.add(
         Member(
             team_id=team_id,
-            dingtalk_user_id="active1",
+            channel_user_id="active1",
             display_name="已开通",
             status="active",
             portal_status="active",
@@ -240,7 +240,7 @@ def test_list_directory_portal_candidates(portal_env):
 
     candidates = list_directory_portal_candidates(session, team_id)
     assert len(candidates) == 1
-    assert candidates[0].dingtalk_user_id == "dir1"
+    assert candidates[0].channel_user_id == "dir1"
 
     approved = approve_portal_user(session, team_id, candidates[0].id, role="ai_member")
     session.commit()
@@ -257,7 +257,7 @@ def test_search_local_directory_members(portal_env):
     session.add(
         Member(
             team_id=team_id,
-            dingtalk_user_id="local1",
+            channel_user_id="local1",
             display_name="周其清",
             status="pending",
             portal_status=None,
@@ -278,7 +278,7 @@ def test_portal_directory_search_api_local(portal_env):
     session.add(
         Member(
             team_id=team_id,
-            dingtalk_user_id="local_api",
+            channel_user_id="local_api",
             display_name="周其清",
             status="pending",
             portal_status=None,
@@ -337,7 +337,7 @@ def test_portal_directory_candidates_api(portal_env):
     session.add(
         Member(
             team_id=team_id,
-            dingtalk_user_id="api_dir",
+            channel_user_id="api_dir",
             display_name="API 用户",
             status="pending",
             portal_status=None,
@@ -361,7 +361,7 @@ def test_reconcile_oauth_member_migrates_openid_and_cleans_duplicate(portal_env)
     _team, repo = make_team_repo(session)
     enterprise = Member(
         team_id=team_id,
-        dingtalk_user_id="1584929783723323",
+        channel_user_id="1584929783723323",
         display_name="熊波",
         status="active",
         portal_status="active",
@@ -369,7 +369,7 @@ def test_reconcile_oauth_member_migrates_openid_and_cleans_duplicate(portal_env)
     )
     legacy = Member(
         team_id=team_id,
-        dingtalk_user_id="q1kd0KjUKjamrEbcOqeGjQiEiE",
+        channel_user_id="q1kd0KjUKjamrEbcOqeGjQiEiE",
         display_name="熊波",
         status="active",
         portal_status="active",
@@ -391,5 +391,5 @@ def test_reconcile_oauth_member_migrates_openid_and_cleans_duplicate(portal_env)
         select(Member).where(Member.team_id == team_id, Member.display_name == "熊波")
     ).all()
     assert len(remaining) == 1
-    assert remaining[0].dingtalk_user_id == "1584929783723323"
+    assert remaining[0].channel_user_id == "1584929783723323"
     session.close()

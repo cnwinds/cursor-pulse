@@ -19,22 +19,62 @@ class PortalAdminError(RuntimeError):
     pass
 
 
-def get_team_member(session: Session, team_id: str, dingtalk_user_id: str) -> Member | None:
-    return session.scalar(
-        select(Member).where(Member.team_id == team_id, Member.dingtalk_user_id == dingtalk_user_id)
+def identity_channel_for_config(bot_name: str | None) -> str:
+    """Map BOT_PLATFORM to Member.channel for admin provisioning."""
+    from pulse.channels.base import normalize_platform
+
+    platform = normalize_platform(bot_name)
+    if platform in ("dingtalk", "feishu"):
+        return platform
+    return "web"
+
+
+def get_team_member(
+    session: Session,
+    team_id: str,
+    channel_user_id: str,
+    *,
+    channel: str | None = None,
+) -> Member | None:
+    stmt = select(Member).where(
+        Member.team_id == team_id,
+        Member.channel_user_id == channel_user_id,
     )
+    if channel is not None:
+        return session.scalar(stmt.where(Member.channel == channel))
+    rows = list(session.scalars(stmt.order_by(Member.channel.asc())).all())
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    for preferred in ("web", "dingtalk", "feishu"):
+        for row in rows:
+            if row.channel == preferred:
+                return row
+    return rows[0]
 
 
-def sync_portal_owners_from_config(session: Session, team_id: str, admin_user_ids: list[str]) -> int:
+def sync_portal_owners_from_config(
+    session: Session,
+    team_id: str,
+    admin_user_ids: list[str],
+    *,
+    channel: str = "web",
+) -> int:
     if not admin_user_ids:
         return 0
     updated = 0
     for uid in admin_user_ids:
-        member = get_team_member(session, team_id, uid)
+        # Prefer exact (channel, userid); fall back to any existing row for that userid
+        # so IM admins are not duplicated as channel=web.
+        member = get_team_member(session, team_id, uid, channel=channel)
+        if member is None:
+            member = get_team_member(session, team_id, uid)
         if member is None:
             member = Member(
                 team_id=team_id,
-                dingtalk_user_id=uid,
+                channel=channel,
+                channel_user_id=uid,
                 display_name=uid,
                 status="active",
                 portal_status="active",
@@ -48,6 +88,7 @@ def sync_portal_owners_from_config(session: Session, team_id: str, admin_user_id
             if member.status != "active":
                 member.status = "active"
             updated += 1
+    session.flush()
     return updated
 
 
@@ -58,8 +99,11 @@ def reconcile_oauth_member(
     display_name: str,
 ) -> Member | None:
     """将 OAuth 登录对齐到通讯录 userid，并清理历史 openId 重复账号。"""
-    member = repo.get_member_by_dingtalk_id(enterprise_userid)
+    member = repo.get_member_by_channel_user_id(enterprise_userid, channel="dingtalk")
+    if member is None:
+        member = repo.get_member_by_channel_user_id(enterprise_userid)
     if member is not None:
+        member.channel = member.channel or "dingtalk"
         _cleanup_legacy_oauth_duplicates(repo, display_name=display_name, keep_id=member.id)
         return member
 
@@ -71,10 +115,10 @@ def reconcile_oauth_member(
             )
         ).all()
     )
-    legacy = [row for row in rows if looks_like_open_id(row.dingtalk_user_id)]
+    legacy = [row for row in rows if looks_like_open_id(row.channel_user_id)]
     if len(legacy) != 1:
         return None
-    legacy[0].dingtalk_user_id = enterprise_userid
+    legacy[0].channel_user_id = enterprise_userid
     repo.session.flush()
     return legacy[0]
 
@@ -96,13 +140,16 @@ def _cleanup_legacy_oauth_duplicates(
     for row in rows:
         if row.id == keep_id:
             continue
-        if looks_like_open_id(row.dingtalk_user_id) and not row.ingestions:
+        if looks_like_open_id(row.channel_user_id) and not row.ingestions:
             repo.session.delete(row)
     repo.session.flush()
 
 
 def ensure_admin_member(repo: Repository) -> Member:
-    member = repo.get_or_create_member(ADMIN_LOGIN_USERNAME, ADMIN_DISPLAY_NAME)
+    member = repo.get_or_create_member(
+        ADMIN_LOGIN_USERNAME, ADMIN_DISPLAY_NAME, channel="web"
+    )
+    member.channel = "web"
     member.status = "active"
     member.portal_status = "active"
     member.portal_role = "owner"
@@ -112,11 +159,13 @@ def ensure_admin_member(repo: Repository) -> Member:
 def bootstrap_portal_owner(
     repo: Repository,
     *,
-    dingtalk_user_id: str,
+    channel_user_id: str,
     display_name: str,
     password: str,
+    channel: str = "web",
 ) -> Member:
-    member = repo.get_or_create_member(dingtalk_user_id, display_name)
+    member = repo.get_or_create_member(channel_user_id, display_name, channel=channel)
+    member.channel = channel
     member.status = "active"
     member.portal_status = "active"
     member.portal_role = "owner"
@@ -128,18 +177,19 @@ def bootstrap_portal_owner(
 def grant_portal_role(
     session: Session,
     team_id: str,
-    dingtalk_user_id: str,
+    channel_user_id: str,
     *,
     role: str,
     display_name: str = "",
     permissions: list[str] | None = None,
 ) -> Member:
-    member = get_team_member(session, team_id, dingtalk_user_id)
+    member = get_team_member(session, team_id, channel_user_id)
     if member is None:
         member = Member(
             team_id=team_id,
-            dingtalk_user_id=dingtalk_user_id,
-            display_name=display_name or dingtalk_user_id,
+            channel="web",
+            channel_user_id=channel_user_id,
+            display_name=display_name or channel_user_id,
             status="active",
         )
         session.add(member)
@@ -157,13 +207,13 @@ def grant_portal_role(
 def revoke_portal_access(
     session: Session,
     team_id: str,
-    dingtalk_user_id: str,
+    channel_user_id: str,
 ) -> Member:
-    member = get_team_member(session, team_id, dingtalk_user_id)
+    member = get_team_member(session, team_id, channel_user_id)
     if member is None:
-        raise PortalAdminError(f"未找到成员: {dingtalk_user_id}")
+        raise PortalAdminError(f"未找到成员: {channel_user_id}")
     if not member.portal_role and not member.password_hash:
-        raise PortalAdminError(f"{dingtalk_user_id} 无后台权限可撤销")
+        raise PortalAdminError(f"{channel_user_id} 无后台权限可撤销")
     member.portal_role = None
     member.portal_permissions = None
     member.portal_status = None
@@ -176,14 +226,14 @@ def revoke_portal_access(
 def delete_member_without_ingestions(
     session: Session,
     team_id: str,
-    dingtalk_user_id: str,
+    channel_user_id: str,
 ) -> Member:
-    member = get_team_member(session, team_id, dingtalk_user_id)
+    member = get_team_member(session, team_id, channel_user_id)
     if member is None:
-        raise PortalAdminError(f"未找到成员: {dingtalk_user_id}")
+        raise PortalAdminError(f"未找到成员: {channel_user_id}")
     if member.ingestions:
         raise PortalAdminError(
-            f"{dingtalk_user_id} 有 {len(member.ingestions)} 条摄取记录，无法删除"
+            f"{channel_user_id} 有 {len(member.ingestions)} 条摄取记录，无法删除"
         )
     session.delete(member)
     session.flush()
@@ -210,7 +260,7 @@ def list_directory_portal_candidates(session: Session, team_id: str) -> list[Mem
             select(Member)
             .where(
                 Member.team_id == team_id,
-                Member.dingtalk_user_id != ADMIN_LOGIN_USERNAME,
+                Member.channel_user_id != ADMIN_LOGIN_USERNAME,
                 Member.portal_status.is_(None)
                 | (Member.portal_status == "rejected"),
                 Member.department_name.is_not(None),
@@ -237,7 +287,7 @@ def search_local_directory_members(
             select(Member)
             .where(
                 Member.team_id == team_id,
-                Member.dingtalk_user_id != ADMIN_LOGIN_USERNAME,
+                Member.channel_user_id != ADMIN_LOGIN_USERNAME,
                 Member.department_name.is_not(None),
                 Member.display_name.like(pattern),
             )

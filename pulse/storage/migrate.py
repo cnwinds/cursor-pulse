@@ -46,7 +46,7 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
 
 _MEMBER_V2_COLUMNS: dict[str, str] = {
     "department_name": "VARCHAR(128)",
-    "manager_dingtalk_user_id": "VARCHAR(64)",
+    "manager_channel_user_id": "VARCHAR(64)",
     "manager_member_id": "VARCHAR(36)",
     "employment_status": "VARCHAR(16) DEFAULT 'active'",
 }
@@ -117,7 +117,28 @@ _USAGE_SUMMARY_INGESTION_COLUMNS: dict[str, str] = {
 }
 
 
-def _sqlite_drop_column(engine: Engine, table_name: str, column_name: str) -> None:
+def _drop_column(engine: Engine, table_name: str, column_name: str) -> None:
+    """Drop a column on SQLite (rebuild fallback) or Postgres/MySQL ALTER DROP."""
+    dialect = engine.dialect.name
+    if dialect != "sqlite":
+        with engine.begin() as conn:
+            try:
+                if dialect == "postgresql":
+                    conn.execute(
+                        text(f'ALTER TABLE {table_name} DROP COLUMN IF EXISTS "{column_name}"')
+                    )
+                else:
+                    conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
+                logger.info("Dropped %s from %s (%s)", column_name, table_name, dialect)
+            except Exception:
+                logger.exception(
+                    "Failed to drop %s.%s on %s; leaving legacy column in place",
+                    table_name,
+                    column_name,
+                    dialect,
+                )
+        return
+
     with engine.begin() as conn:
         conn.execute(text("PRAGMA foreign_keys=OFF"))
         try:
@@ -161,6 +182,10 @@ def _sqlite_drop_column(engine: Engine, table_name: str, column_name: str) -> No
             logger.info("Rebuilt %s without %s", table_name, column_name)
         finally:
             conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+# Backward-compatible name used by older call sites in this module.
+_sqlite_drop_column = _drop_column
 
 
 def _migrate_legacy_submission_columns(engine: Engine) -> None:
@@ -301,6 +326,87 @@ def _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine: Engine) -> None:
             conn.execute(text("PRAGMA foreign_keys=ON"))
 
 
+def _migrate_member_channel_identity(engine: Engine) -> None:
+    """硬切迁移：members.dingtalk_user_id/manager_dingtalk_user_id →
+
+    channel + channel_user_id / manager_channel_user_id；
+    reminder_logs.dingtalk_msg_id → channel_msg_id。
+    若新列已存在（如全新库由 Base.metadata.create_all 直接建出）则跳过。
+    """
+    inspector = inspect(engine)
+    if "members" in inspector.get_table_names():
+        columns = {col["name"] for col in inspector.get_columns("members")}
+        if "channel_user_id" not in columns and "dingtalk_user_id" in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE members ADD COLUMN channel_user_id VARCHAR(64)"))
+                conn.execute(
+                    text(
+                        "UPDATE members SET channel_user_id = dingtalk_user_id "
+                        "WHERE channel_user_id IS NULL"
+                    )
+                )
+            logger.info("Migrated members.dingtalk_user_id -> channel_user_id")
+
+            columns = {col["name"] for col in inspect(engine).get_columns("members")}
+            if "channel" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE members ADD COLUMN channel VARCHAR(32) DEFAULT 'dingtalk'")
+                    )
+                logger.info("Added channel column to members")
+            with engine.begin() as conn:
+                conn.execute(text("UPDATE members SET channel = 'dingtalk' WHERE channel IS NULL"))
+
+            columns = {col["name"] for col in inspect(engine).get_columns("members")}
+            if "manager_channel_user_id" not in columns and "manager_dingtalk_user_id" in columns:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("ALTER TABLE members ADD COLUMN manager_channel_user_id VARCHAR(64)")
+                    )
+                    conn.execute(
+                        text(
+                            "UPDATE members SET manager_channel_user_id = manager_dingtalk_user_id "
+                            "WHERE manager_channel_user_id IS NULL"
+                        )
+                    )
+                logger.info("Migrated members.manager_dingtalk_user_id -> manager_channel_user_id")
+
+            _sqlite_drop_column(engine, "members", "dingtalk_user_id")
+            columns = {col["name"] for col in inspect(engine).get_columns("members")}
+            if "manager_dingtalk_user_id" in columns:
+                _sqlite_drop_column(engine, "members", "manager_dingtalk_user_id")
+
+        # 无论是否刚做硬切迁移，都尽量补齐中性唯一索引（旧库可能仍无此约束）
+        columns = {col["name"] for col in inspect(engine).get_columns("members")}
+        if {"team_id", "channel", "channel_user_id"}.issubset(columns):
+            index_names = {idx["name"] for idx in inspect(engine).get_indexes("members")}
+            # SQLAlchemy UniqueConstraint name may not appear in get_indexes on all backends
+            if "uq_member_team_channel" not in index_names and "ix_uq_member_team_channel" not in index_names:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS uq_member_team_channel "
+                            "ON members (team_id, channel, channel_user_id)"
+                        )
+                    )
+                logger.info("Ensured unique index uq_member_team_channel on members")
+
+    inspector = inspect(engine)
+    if "reminder_logs" in inspector.get_table_names():
+        rl_columns = {col["name"] for col in inspector.get_columns("reminder_logs")}
+        if "channel_msg_id" not in rl_columns and "dingtalk_msg_id" in rl_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE reminder_logs ADD COLUMN channel_msg_id VARCHAR(128)"))
+                conn.execute(
+                    text(
+                        "UPDATE reminder_logs SET channel_msg_id = dingtalk_msg_id "
+                        "WHERE channel_msg_id IS NULL"
+                    )
+                )
+            logger.info("Migrated reminder_logs.dingtalk_msg_id -> channel_msg_id")
+            _sqlite_drop_column(engine, "reminder_logs", "dingtalk_msg_id")
+
+
 def migrate_schema(engine: Engine) -> None:
     """轻量迁移：为已有 SQLite 库补齐表与列。"""
     inspector = inspect(engine)
@@ -343,6 +449,10 @@ def migrate_schema(engine: Engine) -> None:
                         "WHERE portal_role IS NOT NULL AND portal_status IS NULL"
                     )
                 )
+
+        _migrate_member_channel_identity(engine)
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
 
     if "submissions" in tables:
         columns = {col["name"] for col in inspector.get_columns("submissions")}

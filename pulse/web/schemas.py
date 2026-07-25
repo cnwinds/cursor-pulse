@@ -14,6 +14,11 @@ class DingTalkCallbackBody(BaseModel):
     code: str
 
 
+class FeishuCallbackBody(BaseModel):
+    code: str
+    redirect_uri: str | None = None
+
+
 class ChatBody(BaseModel):
     message: str
 
