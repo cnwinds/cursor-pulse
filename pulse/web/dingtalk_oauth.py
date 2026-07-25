@@ -6,6 +6,7 @@ from urllib.parse import quote
 import httpx
 
 from pulse.config import AppConfig
+from pulse.http_clients import outbound_client
 
 
 class DingTalkOAuthError(RuntimeError):
@@ -16,13 +17,67 @@ _OAUTH_SCOPE = "openid"
 _CONTACT_READ_HINT = (
     "请在钉钉开放平台为应用申请「通讯录个人信息读」(Contact.User.Read) 权限并重新发布应用后重试。"
 )
+_CALLBACK_SUFFIXES = ("/login/callback", "/admin/login/callback")
 
 
-def build_login_url(config: AppConfig, *, state: str | None = None) -> tuple[str, str]:
+def allowed_oauth_redirect_uris(config: AppConfig) -> list[str]:
+    """Configured redirect + CORS origins × common SPA callback paths."""
+    allowed: list[str] = []
+    seen: set[str] = set()
+
+    def _add(uri: str) -> None:
+        text = (uri or "").strip()
+        if not text or text in seen:
+            return
+        seen.add(text)
+        allowed.append(text)
+
+    _add(config.web.dingtalk_oauth_redirect_uri)
+    for origin in config.web.cors_origins or []:
+        base = (origin or "").strip().rstrip("/")
+        if not base:
+            continue
+        for suffix in _CALLBACK_SUFFIXES:
+            _add(f"{base}{suffix}")
+    return allowed
+
+
+def resolve_oauth_redirect_uri(
+    config: AppConfig, requested: str | None = None
+) -> str:
+    """Pick redirect_uri: requested (if allowlisted) else configured default."""
+    allowed = allowed_oauth_redirect_uris(config)
+    configured = (config.web.dingtalk_oauth_redirect_uri or "").strip()
+    req = (requested or "").strip().rstrip("/")
+    if req:
+        allowed_norm = {a.rstrip("/") for a in allowed}
+        if req in allowed_norm:
+            # Prefer the canonical allowlist spelling (keep /admin prefix as listed).
+            for candidate in allowed:
+                if candidate.rstrip("/") == req:
+                    return candidate
+            return requested.strip()
+        raise DingTalkOAuthError(
+            f"redirect_uri 不在允许列表中: {requested}。"
+            "请把该前端源站加入 WEB_CORS_ORIGINS，并在钉钉开放平台登记对应回调地址。"
+        )
+    if configured:
+        return configured
+    if allowed:
+        return allowed[0]
+    raise DingTalkOAuthError("未配置 DINGTALK_OAUTH_REDIRECT_URI")
+
+
+def build_login_url(
+    config: AppConfig,
+    *,
+    state: str | None = None,
+    redirect_uri: str | None = None,
+) -> tuple[str, str]:
     if not config.dingtalk.app_key:
         raise DingTalkOAuthError("未配置 DINGTALK_APP_KEY")
     state = state or secrets.token_urlsafe(24)
-    redirect = quote(config.web.dingtalk_oauth_redirect_uri, safe="")
+    redirect = quote(resolve_oauth_redirect_uri(config, redirect_uri), safe="")
     url = (
         "https://login.dingtalk.com/oauth2/auth"
         f"?client_id={config.dingtalk.app_key}"
@@ -80,7 +135,7 @@ def exchange_code_for_userid(config: AppConfig, code: str) -> tuple[str, str]:
     if not config.dingtalk.app_key or not config.dingtalk.app_secret:
         raise DingTalkOAuthError("未配置钉钉应用凭证")
 
-    with httpx.Client(timeout=30.0) as client:
+    with outbound_client(timeout=30.0) as client:
         token_resp = client.post(
             "https://api.dingtalk.com/v1.0/oauth2/userAccessToken",
             json={

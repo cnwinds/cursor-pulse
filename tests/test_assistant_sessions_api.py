@@ -68,7 +68,7 @@ def test_sessions_proxy_requires_read_permission(api_env):
     assert res.status_code == 403
 
 
-@patch("pulse.web.assistant_sessions_api.httpx.Client")
+@patch("pulse.web.assistant_sessions_api.internal_client")
 def test_sessions_proxy_enriches_display_names(mock_client_cls, api_env):
     mock_response = httpx.Response(
         200,
@@ -96,7 +96,7 @@ def test_sessions_proxy_enriches_display_names(mock_client_cls, api_env):
     assert item["user_display_name"] == "Admin"
 
 
-@patch("pulse.web.assistant_sessions_api.httpx.Client")
+@patch("pulse.web.assistant_sessions_api.internal_client")
 def test_sessions_proxy_forwards_request(mock_client_cls, api_env):
     mock_response = httpx.Response(
         200,
@@ -110,6 +110,7 @@ def test_sessions_proxy_forwards_request(mock_client_cls, api_env):
     res = api_env["client"].get("/api/v2/assistant/sessions", headers=_headers(token))
     assert res.status_code == 200
     assert res.json()["total"] == 0
+    mock_client_cls.assert_called()
     call_kwargs = mock_client.request.call_args.kwargs
     assert call_kwargs["headers"]["X-Pulse-Actor-Member-Id"] == api_env["owner"].id
     assert "assistant:sessions:read:all" in call_kwargs["headers"]["X-Pulse-Actor-Permissions"]

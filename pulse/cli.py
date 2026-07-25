@@ -152,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     _dev_services = ["web", "admin", "channel", "assistant", "proxy"]
     p_dev = sub.add_parser("dev", help="开发模式服务管理 (start/stop/restart/logs/status)")
     dev_sub = p_dev.add_subparsers(dest="dev_cmd", required=True)
-    p_dev_start = dev_sub.add_parser("start", help="启动开发服务 (默认 web + admin + channel + assistant)")
+    p_dev_start = dev_sub.add_parser(
+        "start",
+        help="启动开发服务 (默认 web + assistant + channel + admin + proxy)",
+    )
     p_dev_start.add_argument(
         "services",
         nargs="*",

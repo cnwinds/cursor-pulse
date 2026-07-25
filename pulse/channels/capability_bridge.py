@@ -9,6 +9,7 @@ import httpx
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig
+from pulse.http_clients import internal_client
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def invoke_via_assistant(
         "arguments": arguments,
         "confirmed": confirmed,
     }
-    with httpx.Client(timeout=mirror.timeout_seconds) as client:
+    with internal_client(timeout=mirror.timeout_seconds) as client:
         resp = client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()

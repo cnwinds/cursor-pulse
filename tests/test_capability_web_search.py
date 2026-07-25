@@ -352,7 +352,7 @@ def test_web_search_handler_mocked(session):
     mock_client = MagicMock()
     mock_client.post.return_value = mock_response
 
-    with patch("pulse.capabilities.web.tavily.httpx.Client") as Client:
+    with patch("pulse.capabilities.web.tavily.outbound_client") as Client:
         Client.return_value.__enter__.return_value = mock_client
         Client.return_value.__exit__.return_value = False
         result = invoke_capability(
@@ -403,7 +403,7 @@ def test_web_search_rate_limit_exceeded(session):
     mock_client = MagicMock()
     mock_client.post.return_value = mock_response
 
-    with patch("pulse.capabilities.web.tavily.httpx.Client") as Client:
+    with patch("pulse.capabilities.web.tavily.outbound_client") as Client:
         Client.return_value.__enter__.return_value = mock_client
         Client.return_value.__exit__.return_value = False
         for i in range(2):
@@ -450,7 +450,7 @@ def test_web_search_rate_limit_respects_hot_reload(session):
     mock_client = MagicMock()
     mock_client.post.return_value = mock_response
 
-    with patch("pulse.capabilities.web.tavily.httpx.Client") as Client:
+    with patch("pulse.capabilities.web.tavily.outbound_client") as Client:
         Client.return_value.__enter__.return_value = mock_client
         Client.return_value.__exit__.return_value = False
         first = invoke_capability(
@@ -519,7 +519,7 @@ def test_web_fetch_rate_limit_exceeded(session):
             "pulse.capabilities.web.fetch.build_pinned_request",
             return_value=("https://93.184.216.34/a", {"Host": "example.com"}, {}),
         ),
-        patch("pulse.capabilities.web.fetch.httpx.Client", return_value=mock_client),
+        patch("pulse.capabilities.web.fetch.outbound_client", return_value=mock_client),
     ):
         first = invoke_capability(
             session,

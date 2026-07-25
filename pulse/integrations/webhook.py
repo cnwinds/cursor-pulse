@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from pulse.http_clients import outbound_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +35,7 @@ def push_webhook(url: str, payload: dict, *, secret: str = "", timeout: float = 
     headers = {"Content-Type": "application/json"}
     if secret:
         headers["X-Pulse-Signature"] = sign_payload(payload, secret)
-    with httpx.Client(timeout=timeout) as client:
+    with outbound_client(timeout=timeout) as client:
         response = client.post(url, headers=headers, json=payload)
         response.raise_for_status()
     logger.info("Pushed BI webhook for period %s", payload.get("period"))

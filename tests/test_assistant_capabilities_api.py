@@ -84,7 +84,7 @@ def test_catalog_returns_503_when_mirror_unconfigured(api_env):
     assert "Assistant" in res.json()["detail"]
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_catalog_proxies_to_assistant(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -113,7 +113,7 @@ def test_catalog_proxies_to_assistant(mock_client_cls, api_env):
     assert "X-Pulse-Actor-Signature" in headers
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_assignments_list_uses_session_team_id(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -137,7 +137,7 @@ def test_assignments_list_uses_session_team_id(mock_client_cls, api_env):
     assert kwargs["params"] == {"team_id": team_id}
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_assignments_list_ignores_client_team_id(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -176,7 +176,7 @@ def test_create_assignment_requires_write_permission(api_env):
     assert res.status_code == 403
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_create_assignment_proxies_post(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -208,7 +208,7 @@ def test_create_assignment_proxies_post(mock_client_cls, api_env):
     assert kwargs["json"] == body
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_delete_assignment_proxies(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -233,7 +233,7 @@ def test_delete_assignment_proxies(mock_client_cls, api_env):
     assert args[1].endswith("/api/assistant/v1/capabilities/assignments/a1")
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_resolved_member_proxies_me_endpoint(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -262,7 +262,7 @@ def test_resolved_member_proxies_me_endpoint(mock_client_cls, api_env):
     assert kwargs["params"]["role"] == "ai_member"
 
 
-@patch("pulse.web.assistant_capabilities_api.httpx.Client")
+@patch("pulse.web.assistant_capabilities_api.internal_client")
 def test_unreachable_assistant_returns_503(mock_client_cls, api_env):
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client

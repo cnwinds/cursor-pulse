@@ -70,10 +70,20 @@ const dingLoading = ref(false)
 const pwdLoading = ref(false)
 const form = reactive({ password: '' })
 
+function oauthCallbackUri(): string {
+  // Vite base is `/`; production SPA base is `/admin/`.
+  const base = import.meta.env.BASE_URL || '/'
+  const path = `${base}login/callback`.replace(/\/{2,}/g, '/')
+  return `${window.location.origin}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 async function loginDingTalk() {
   dingLoading.value = true
   try {
-    const { data } = await client.get('/api/auth/dingtalk/login-url')
+    const redirectUri = oauthCallbackUri()
+    const { data } = await client.get('/api/auth/dingtalk/login-url', {
+      params: { redirect_uri: redirectUri },
+    })
     sessionStorage.setItem('oauth_state', data.state)
     sessionStorage.setItem('oauth_redirect', (route.query.redirect as string) || '/')
     window.location.href = data.url

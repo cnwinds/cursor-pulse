@@ -1,0 +1,10 @@
+services:
+  assistant:
+    ports:
+      - "8090:8090"
+    environment:
+      PULSE_BASE_URL: http://172.17.0.1:8080
+  channel:
+    environment:
+      # channel talks to assistant on docker network; keep as-is
+      PULSE_CONFIG: /app/config/config.yaml

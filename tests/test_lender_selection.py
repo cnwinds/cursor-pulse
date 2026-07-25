@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import select
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig
 from pulse.ingestion.credentials import CredentialService
@@ -165,11 +166,97 @@ def test_expire_loans_when_renews_on_passed(lender_env):
     assert loan.status == "expired"
 
 
+def test_expire_uses_frozen_expires_on_not_live_resets(lender_env):
+    """Sync may advance usage_resets_on; frozen expires_on must still reclaim."""
+    env = lender_env
+    session = env["session"]
+    account = env["accounts"][0]
+    loan = _make_loan(session, env, account, env["member"])
+    loan.expires_on = date.today() - timedelta(days=1)
+    env["tool_repo"].update_account(
+        account.id,
+        usage_resets_on=date.today() + timedelta(days=365),
+        renews_on=date.today() + timedelta(days=400),
+    )
+    session.flush()
+
+    svc = KeyLoanService(session, TEST_KEY)
+    assert svc.expire_loans_on_reset() == 1
+    assert loan.status == "expired"
+
+
+def test_expire_when_billing_cycle_rolled_past_loan(lender_env):
+    """Legacy loans (null expires_on): cycle_start moved past created_at."""
+    env = lender_env
+    session = env["session"]
+    account = env["accounts"][0]
+    loan = _make_loan(session, env, account, env["member"])
+    loan.created_at = datetime.now(timezone.utc) - timedelta(days=40)
+    loan.expires_on = None
+    env["tool_repo"].update_account(
+        account.id,
+        usage_resets_on=date.today() + timedelta(days=300),
+        renews_on=None,
+    )
+    # Replace fixture snapshot with a rolled cycle that starts after loan creation.
+    for snap in session.scalars(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
+    ).all():
+        session.delete(snap)
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime.now(timezone.utc),
+            cycle_start=date.today() - timedelta(days=2),
+            cycle_end=date.today() + timedelta(days=28),
+            limit_cents=2000,
+            used_cents=100,
+            remaining_cents=1900,
+        )
+    )
+    session.flush()
+
+    svc = KeyLoanService(session, TEST_KEY)
+    assert svc.expire_loans_on_reset() == 1
+    assert loan.status == "expired"
+
+
+def test_frozen_future_expires_on_not_killed_by_cycle_rollover(lender_env):
+    """New loans with frozen expires_on must not use UTC date vs cycle_start."""
+    env = lender_env
+    session = env["session"]
+    account = env["accounts"][0]
+    loan = _make_loan(session, env, account, env["member"])
+    loan.created_at = datetime.now(timezone.utc) - timedelta(days=40)
+    loan.expires_on = date.today() + timedelta(days=20)
+    for snap in session.scalars(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
+    ).all():
+        session.delete(snap)
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime.now(timezone.utc),
+            cycle_start=date.today() - timedelta(days=2),
+            cycle_end=date.today() + timedelta(days=28),
+            limit_cents=2000,
+            used_cents=100,
+            remaining_cents=1900,
+        )
+    )
+    session.flush()
+
+    svc = KeyLoanService(session, TEST_KEY)
+    assert svc.expire_loans_on_reset() == 0
+    assert loan.status == "active"
+
+
 def test_expire_skips_loans_before_deadline(lender_env):
     env = lender_env
     session = env["session"]
     account = env["accounts"][0]
     loan = _make_loan(session, env, account, env["member"])
+    loan.expires_on = date.today() + timedelta(days=10)
     env["tool_repo"].update_account(
         account.id,
         usage_resets_on=date.today() + timedelta(days=20),
@@ -194,6 +281,10 @@ def test_loan_payload_exposes_loan_expires_on(lender_env):
 
     payload = loan_payload(loan, session)
     assert payload["loan_expires_on"] == "2026-07-25"
+
+    loan.expires_on = date(2026, 6, 1)
+    session.flush()
+    assert loan_payload(loan, session)["loan_expires_on"] == "2026-06-01"
 
 
 def test_read_self_loan_shows_expire_date(lender_env):

@@ -33,7 +33,7 @@ def test_teams_api_not_available(monkeypatch):
         def get(self, *args, **kwargs):
             return FakeResponse()
 
-    monkeypatch.setattr("pulse.integrations.cursor_teams.httpx.Client", FakeClient)
+    monkeypatch.setattr("pulse.integrations.cursor_teams.outbound_client", FakeClient)
     client = CursorTeamsClient(CursorTeamsConfig(enabled=True, admin_api_key="test-key"))
     data = client.fetch_usage_summary("2026-06")
     assert data["status"] == "not_available"

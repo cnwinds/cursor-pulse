@@ -29,6 +29,8 @@ Cursor Pulse 是**自托管 monorepo**，含三套运行时与可选数据面。
 
 本地可用 `cursor-pulse.bat` / `.sh` / `.ps1` 统一启停。
 
+三类「代理」勿混淆：Cursor MITM、进程内互调、出站翻墙 — 见 [PROXY_LAYERS.md](PROXY_LAYERS.md)。
+
 ## 数据库
 
 | 位置 | 归属 |

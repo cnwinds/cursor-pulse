@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from pulse.http_clients import outbound_client
+
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api2.cursor.sh"
@@ -166,7 +168,7 @@ class CursorApiClient:
 
     def exchange_user_api_key_response(self, api_key: str) -> dict:
         api_key = api_key.strip()
-        with httpx.Client(timeout=self.timeout) as client:
+        with outbound_client(timeout=self.timeout) as client:
             resp = client.post(
                 f"{self.api_base}/auth/exchange_user_api_key",
                 headers={
@@ -233,7 +235,7 @@ class CursorApiClient:
             if delay:
                 time.sleep(delay)
             try:
-                with httpx.Client(timeout=self.timeout) as client:
+                with outbound_client(timeout=self.timeout) as client:
                     resp = client.post(
                         f"{self.api_base}/aiserver.v1.DashboardService/{method}",
                         headers={

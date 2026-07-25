@@ -32,17 +32,35 @@ def _utc_now() -> str:
 
 
 def _child_env() -> dict[str, str]:
-    """Merge project .env into child process env (Assistant reads os.environ only)."""
+    """Merge project .env into child process env (Assistant reads os.environ only).
+
+    Values from ``.env`` win when the process env is missing or empty, so a blank
+    exported shell variable cannot block DingTalk / service tokens.
+    """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     env_file = project_root() / ".env"
     if env_file.is_file():
         try:
             from dotenv import dotenv_values
+
+            for key, value in dotenv_values(env_file).items():
+                if not key or value is None:
+                    continue
+                text = str(value)
+                if key not in env or not str(env.get(key) or "").strip():
+                    env[key] = text
         except ImportError:
-            return env
-        for key, value in dotenv_values(env_file).items():
-            if key and value is not None and key not in os.environ:
-                env[key] = value
+            pass
+    # Keep loopback / local service calls off system HTTP(S)_PROXY (e.g. mihomo).
+    no_proxy_extras = ("127.0.0.1", "localhost", "::1")
+    current = env.get("NO_PROXY") or env.get("no_proxy") or ""
+    parts = [p.strip() for p in str(current).split(",") if p.strip()]
+    for host in no_proxy_extras:
+        if host not in parts:
+            parts.append(host)
+    merged = ",".join(parts)
+    env["NO_PROXY"] = merged
+    env["no_proxy"] = merged
     return env
 
 
@@ -182,14 +200,35 @@ def _find_listening_pid(port: int) -> int | None:
 
 
 def _is_project_channel_command(command_line: str) -> bool:
-    """Match `pulse channel` or deprecated `pulse serve` for this project."""
+    """Match long-running `pulse channel` / deprecated `pulse serve` workers only."""
     normalized = command_line.lower()
     root = str(project_root()).lower()
     if root not in normalized:
         return False
-    if re.search(r"(?:^|[\s\"'])channel(?:\s|$)", normalized):
+    # Do not treat assistant, shells, or `pulse dev …` wrappers as channel.
+    if "assistant_platform" in normalized:
+        return False
+    if re.search(r"(?:^|[\s\"'/])(?:ba)?sh(?:\s|$)", normalized):
+        return False
+    if re.search(r"\bpulse(?:\.cli)?\s+dev\b", normalized):
+        return False
+    # `pulse -c config.yaml channel --reload` / `python -m pulse.cli channel`
+    if re.search(
+        r"(?:^|[\s\"'/])(?:pulse(?:\.cli)?|python(?:3)?\s+-m\s+pulse\.cli)"
+        r"(?:\s+\S+)*\s+channel(?:\s|$)",
+        normalized,
+    ):
         return True
-    return bool(re.search(r"(?:^|[\s\"'])serve(?:\s|$)", normalized))
+    # deprecated: `pulse serve` (not uvicorn / assistant)
+    if "uvicorn" in normalized:
+        return False
+    return bool(
+        re.search(
+            r"(?:^|[\s\"'/])(?:pulse(?:\.cli)?|python(?:3)?\s+-m\s+pulse\.cli)"
+            r"(?:\s+\S+)*\s+serve(?:\s|$)",
+            normalized,
+        )
+    )
 
 
 def _is_project_web_command(command_line: str) -> bool:
@@ -324,7 +363,29 @@ def _resolve_services(names: list[str] | None) -> list[str]:
     unknown = [name for name in names if name not in SERVICES]
     if unknown:
         raise DevManagerError(f"未知服务: {', '.join(unknown)}；可选: {', '.join(SERVICES)}")
-    return names
+    # Keep canonical boot order even when caller lists services out of order.
+    requested = set(names)
+    ordered = [name for name in DEFAULT_SERVICES if name in requested]
+    ordered.extend(name for name in names if name not in ordered)
+    return ordered
+
+
+def _dingtalk_configured(env: dict[str, str]) -> bool:
+    """True if Stream credentials exist in .env or team_settings.dingtalk (DB)."""
+    if (env.get("DINGTALK_APP_KEY") or "").strip() and (
+        env.get("DINGTALK_APP_SECRET") or ""
+    ).strip():
+        return True
+    try:
+        from pulse.config import load_config
+
+        cfg = load_config("config.yaml")
+        return bool(
+            (cfg.dingtalk.app_key or "").strip()
+            and (cfg.dingtalk.app_secret or "").strip()
+        )
+    except Exception:
+        return False
 
 
 def _resolve_existing_services(names: list[str] | None) -> list[str]:
@@ -387,12 +448,27 @@ def status() -> list[dict[str, Any]]:
 def start(services: list[str] | None = None, *, config_path: str = "config.yaml") -> list[str]:
     _ensure_dirs()
     started: list[str] = []
-    for name in _resolve_services(services):
+    child_env = _child_env()
+    targets = _resolve_services(services)
+    if "channel" in targets and not _dingtalk_configured(child_env):
+        print(
+            "[dev] 跳过 channel：未找到钉钉 app_key/app_secret"
+            "（可写在 .env 的 DINGTALK_APP_*，或管理后台「系统设置 → 钉钉」入库后重试）"
+        )
+        targets = [name for name in targets if name != "channel"]
+
+    for name in targets:
         if is_running(name):
-            print(f"[dev] {name} 已在运行 (pid={_load_state(name)['pid']})")
+            state = _load_state(name) or {}
+            print(f"[dev] {name} 已在运行 (pid={state.get('pid', '?')})")
             continue
 
-        command, cwd, extra = build_command(name, config_path=config_path)
+        try:
+            command, cwd, extra = build_command(name, config_path=config_path)
+        except FileNotFoundError as exc:
+            print(f"[dev] 跳过 {name}: {exc}")
+            continue
+
         log_path = _log_file(name)
         log_handle = open(log_path, "a", encoding="utf-8", buffering=1)
         log_handle.write(f"\n===== start {_utc_now()} =====\n")
@@ -403,7 +479,7 @@ def start(services: list[str] | None = None, *, config_path: str = "config.yaml"
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
             "stdin": subprocess.DEVNULL,
-            "env": _child_env(),
+            "env": child_env,
         }
         if sys.platform == "win32":
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -432,6 +508,17 @@ def start(services: list[str] | None = None, *, config_path: str = "config.yaml"
         print(f"[dev] 已启动 {name} ({meta.label}) pid={proc.pid} → {url}")
         print(f"[dev] 日志: {log_path}")
         started.append(name)
+
+        # Channel/assistant can exit immediately on missing config; surface that fast.
+        if name in {"channel", "assistant"}:
+            time.sleep(1.2)
+            if proc.poll() is not None:
+                _clear_state(name)
+                started.remove(name)
+                print(
+                    f"[dev] 错误: {name} 启动后立即退出 (code={proc.returncode})，"
+                    f"请查看 {log_path}"
+                )
 
     if started:
         _wait_for_ports(started)

@@ -139,6 +139,7 @@ class KeyLoanService:
         borrower_member_id: str,
         baseline_used_cents: int,
         auto_revoke_on_reset: bool = True,
+        expires_on: date | None = None,
         note: str | None = None,
         delivery_mode: str = DELIVERY_PROXY_ALIAS,
         alias_key_hash: str | None = None,
@@ -151,6 +152,7 @@ class KeyLoanService:
             borrower_member_id=borrower_member_id,
             baseline_used_cents=baseline_used_cents,
             auto_revoke_on_reset=auto_revoke_on_reset,
+            expires_on=expires_on,
             note=note,
             status="active",
             delivery_mode=delivery_mode,
@@ -217,18 +219,19 @@ class KeyLoanService:
         self.session.flush()
         return loan, borrowed
 
-    def expire_loans_on_reset(self, today: date | None = None) -> int:
+    def expire_loans_on_reset(
+        self,
+        today: date | None = None,
+        *,
+        account_id: str | None = None,
+    ) -> int:
         today = today or date.today()
         expired = 0
         loans = self.list_active_loans()
         for loan in loans:
-            if not loan.auto_revoke_on_reset:
+            if account_id and loan.source_account_id != account_id:
                 continue
-            account = self.session.get(AiAccount, loan.source_account_id)
-            if not account:
-                continue
-            deadline = account_loan_deadline(account)
-            if not deadline or deadline > today:
+            if not self.loan_should_auto_expire(loan, today=today):
                 continue
             try:
                 self.revoke_loan(loan.id, revoke_remote=True)
@@ -247,6 +250,32 @@ class KeyLoanService:
             loan.status = "expired"
             expired += 1
         return expired
+
+    def loan_should_auto_expire(
+        self, loan: KeyLoan, *, today: date | None = None
+    ) -> bool:
+        """Whether an active loan should be reclaimed for billing-cycle reset.
+
+        Triggers:
+        1. Frozen ``expires_on <= today`` (primary path for new loans)
+        2. Legacy null ``expires_on`` only:
+           - snapshot cycle rolled past loan creation, or
+           - live account deadline <= today
+        """
+        if not loan.auto_revoke_on_reset or loan.status != "active":
+            return False
+        today = today or date.today()
+        if loan.expires_on is not None:
+            return loan.expires_on <= today
+        # Legacy rows without a frozen deadline (pre-migration / stuck after sync).
+        snapshot = self.latest_snapshot(loan.source_account_id)
+        if snapshot and _loan_created_date(loan) < snapshot.cycle_start:
+            return True
+        account = self.session.get(AiAccount, loan.source_account_id)
+        if not account:
+            return False
+        deadline = account_loan_deadline(account)
+        return bool(deadline and deadline <= today)
 
     def active_loan_for_borrower(self, borrower_member_id: str) -> KeyLoan | None:
         loans = self.list_active_loans_for_borrower(borrower_member_id)
@@ -350,7 +379,7 @@ def _latest_snapshots_by_account(session: Session, team_id: str) -> dict[str, Ac
 def account_loan_deadline(account: AiAccount) -> date | None:
     """账号上借用 key 的自动回收日：额度重置日与订阅到期日取先到者。
 
-    回收/展示侧使用，数据源为 account.usage_resets_on；打分侧见
+    发放时冻结到 KeyLoan.expires_on；展示优先读冻结值。打分侧见
     burn_rate.lender_deadline（数据源快照 cycle_end，
     与 usage_resets_on 同源自 Cursor billingCycleEnd）。
     """
@@ -358,6 +387,22 @@ def account_loan_deadline(account: AiAccount) -> date | None:
     if account.renews_on and (deadline is None or account.renews_on < deadline):
         deadline = account.renews_on
     return deadline
+
+
+def _loan_created_date(loan: KeyLoan) -> date:
+    created = loan.created_at
+    if created.tzinfo is not None:
+        return created.astimezone(timezone.utc).date()
+    return created.date()
+
+
+def loan_display_expires_on(loan: KeyLoan, account: AiAccount | None) -> date | None:
+    """UI/API 展示用回收日：优先冻结值，否则回退账号当前 deadline。"""
+    if loan.expires_on is not None:
+        return loan.expires_on
+    if account is None:
+        return None
+    return account_loan_deadline(account)
 
 
 def _active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, int]:
@@ -517,12 +562,14 @@ def issue_loan_key(
         user_facing_key = alias_plaintext
         user_facing_hint = alias_key_hint
 
+    deadline = account_loan_deadline(account) if auto_revoke_on_reset else None
     loan = loan_svc.create_loan_record(
         source_account_id=source_account_id,
         credential_id=loan_cred.id,
         borrower_member_id=borrower_member_id,
         baseline_used_cents=snapshot.used_cents,
         auto_revoke_on_reset=auto_revoke_on_reset,
+        expires_on=deadline,
         note=note,
         delivery_mode=mode,
         alias_key_hash=alias_key_hash,
@@ -533,7 +580,6 @@ def issue_loan_key(
     if account.primary_member_id:
         primary = session.get(Member, account.primary_member_id)
         primary_member_name = primary.display_name if primary else None
-    deadline = account_loan_deadline(account)
     if mode == DELIVERY_PROXY_ALIAS:
         warning = (
             "此为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。"
@@ -646,7 +692,7 @@ def loan_payload(loan: KeyLoan, session: Session) -> dict:
         - loan.baseline_used_cents,
         0,
     )
-    deadline = account_loan_deadline(account) if account else None
+    deadline = loan_display_expires_on(loan, account)
     _, proxy_cost_cents = loan_proxy_totals(session, loan.id)
     delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
     if delivery_mode == DELIVERY_PROXY_ALIAS:

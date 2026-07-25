@@ -1,0 +1,60 @@
+# Dev overlay: bind-mount source so code changes do NOT require image rebuild.
+#
+# Usage (from docker/):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# After editing Python: web/assistant auto-reload; channel needs:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart channel
+#
+# After editing Vue admin:
+#   (repo root) cd web-admin && npm run build
+#   then: docker compose ... restart web   # static is bind-mounted
+#
+# Back to production image (no mounts):
+#   docker compose up -d --build
+
+name: cursor-pulse
+
+x-dev-python: &dev-python
+  environment:
+    PULSE_CONFIG: /app/config/config.yaml
+    # Prefer bind-mounted /app/{pulse,assistant_platform} over site-packages
+    PYTHONPATH: /app
+  volumes:
+    - ./data:/app/data
+    - ./config.yaml:/app/config/config.yaml:ro
+    - ./.env:/app/.env:ro
+    - ../pulse:/app/pulse
+    - ../assistant_platform:/app/assistant_platform
+
+services:
+  init-db:
+    <<: *dev-python
+
+  web:
+    <<: *dev-python
+    command:
+      - pulse
+      - web
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --reload
+
+  assistant:
+    <<: *dev-python
+    environment:
+      PULSE_CONFIG: /app/config/config.yaml
+      PYTHONPATH: /app
+      ASSISTANT_HOST: "0.0.0.0"
+      ASSISTANT_PORT: "8090"
+      PULSE_BASE_URL: http://web:8080
+    # Watch source dirs; assistant CLI already supports --reload via pulse assistant,
+    # but compose runs python -m — use watchfiles-friendly uvicorn via pulse if available.
+    # Fall back: restart assistant after edits (`compose restart assistant`).
+    command: ["python", "-m", "assistant_platform", "serve"]
+
+  channel:
+    <<: *dev-python
+    command: ["pulse", "channel", "--reload"]

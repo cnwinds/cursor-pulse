@@ -78,7 +78,7 @@ def _headers(token: str) -> dict[str, str]:
         ),
     ],
 )
-@patch("httpx.Client")
+@patch("pulse.web.assistant_skills_api.internal_client")
 def test_skills_endpoints_proxy_read_requests(
     mock_client_cls, api_env, path: str, upstream_path: str
 ):

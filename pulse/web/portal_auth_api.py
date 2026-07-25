@@ -23,15 +23,23 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         return member_payload(user.member)
 
     @app.get("/api/auth/dingtalk/login-url")
-    def dingtalk_login_url(session: Session = Depends(get_db)):
-        from pulse.web.dingtalk_oauth import DingTalkOAuthError, build_login_url
+    def dingtalk_login_url(
+        session: Session = Depends(get_db),
+        redirect_uri: str | None = None,
+    ):
+        from pulse.web.dingtalk_oauth import (
+            DingTalkOAuthError,
+            build_login_url,
+            resolve_oauth_redirect_uri,
+        )
 
         runtime = effective_config_for_tenant(session, config)
         try:
-            url, state = build_login_url(runtime)
+            resolved = resolve_oauth_redirect_uri(runtime, redirect_uri)
+            url, state = build_login_url(runtime, redirect_uri=resolved)
         except DingTalkOAuthError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"url": url, "state": state}
+        return {"url": url, "state": state, "redirect_uri": resolved}
 
     @app.post("/api/auth/dingtalk/callback")
     def dingtalk_callback(body: DingTalkCallbackBody, session: Session = Depends(get_db)):

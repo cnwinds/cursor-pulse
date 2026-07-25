@@ -63,6 +63,7 @@ def test_key_loans_alias_columns_and_unique_index_migrated(tmp_path):
     assert "alias_key_hash" in cols
     assert "alias_key_hint" in cols
     assert "alias_encrypted_key" in cols
+    assert "expires_on" in cols
     indexes = {idx["name"]: idx for idx in inspect(engine).get_indexes("key_loans")}
     assert "ix_key_loans_alias_key_hash" in indexes
     assert bool(indexes["ix_key_loans_alias_key_hash"].get("unique"))

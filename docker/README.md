@@ -92,6 +92,36 @@ docker compose ps
 docker compose logs -f web channel assistant
 ```
 
+### 3.1 改代码不想每次 rebuild？（推荐开发态）
+
+生产 compose **把代码打进镜像**，所以 `up -d --build` 慢是正常的。开发请用更快方式：
+
+**A. Docker 源码挂载（复用已有镜像，秒级生效）**
+
+```bash
+cd docker
+# 需已有 cursor-pulse:latest（至少成功 build 过一次）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+| 改什么 | 怎么生效 |
+|--------|----------|
+| `pulse/`（web API） | 容器内 `--reload`，保存即重载 |
+| `channel` | `--reload` 自动重启；不行则 `restart channel` |
+| `assistant` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml restart assistant` |
+| Vue 管理后台 | 仓库根目录执行 `cd web-admin && npm run build`（约几十秒），刷新浏览器（static 已挂载） |
+
+回到纯镜像生产态：`docker compose up -d --build`。
+
+**B. 本机 venv（最快，适合天天改）**
+
+```bash
+pip install -e ".[dev,web]"
+./cursor-pulse.sh start web admin   # API :8080 + Vite :5173 热更新
+```
+
+Docker 留给生产部署即可。
+
 访问：`http://<服务器IP>:8080/admin/`（或经宿主机 Nginx 反代 HTTPS）。
 SPA 构建产物打包在镜像内 `pulse/web/static/`（与 `pip install` 同源），勿再依赖 `/app/web-admin/dist`。
 
@@ -161,7 +191,7 @@ server {
 
 ## 6. 可选：独立 Proxy
 
-Go MITM 数据面**单独**编排，不随主 `up` 启动：
+Go MITM 数据面**单独**编排，不随主 `up` 启动。变量分层（MITM / 控制面 / 翻墙）见 [PROXY_LAYERS.md](../docs/PROXY_LAYERS.md)。
 
 ```bash
 cd /opt/cursor-pulse/docker

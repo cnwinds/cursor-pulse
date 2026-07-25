@@ -46,7 +46,7 @@ def _bridge_config(**flags: bool) -> AppConfig:
 
 def test_invoke_via_assistant_posts_and_returns_user_message():
     cfg = _bridge_config()
-    with patch("pulse.channels.capability_bridge.httpx.Client") as Client:
+    with patch("pulse.channels.capability_bridge.internal_client") as Client:
         client = Client.return_value.__enter__.return_value
         client.post.return_value = MagicMock(
             status_code=200,
@@ -76,7 +76,7 @@ def test_invoke_via_assistant_posts_and_returns_user_message():
 
 def test_invoke_via_assistant_raises_on_http_error():
     cfg = _bridge_config()
-    with patch("pulse.channels.capability_bridge.httpx.Client") as Client:
+    with patch("pulse.channels.capability_bridge.internal_client") as Client:
         client = Client.return_value.__enter__.return_value
         response = MagicMock(status_code=500)
         response.raise_for_status.side_effect = httpx.HTTPStatusError(

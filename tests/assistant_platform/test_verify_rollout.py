@@ -592,7 +592,7 @@ def test_web_search_failure_degrades_gracefully(caplog):
     mock_client = MagicMock()
     mock_client.post.side_effect = httpx.TimeoutException("slow")
 
-    with patch("pulse.capabilities.web.tavily.httpx.Client") as Client:
+    with patch("pulse.capabilities.web.tavily.outbound_client") as Client:
         Client.return_value.__enter__.return_value = mock_client
         Client.return_value.__exit__.return_value = False
         from assistant_platform.contracts.provider import CapabilityInvokeRequest

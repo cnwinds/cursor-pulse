@@ -6,6 +6,7 @@ import httpx
 from fastapi import Depends, HTTPException
 
 from pulse.config import AppConfig
+from pulse.http_clients import internal_client
 from pulse.web.assistant_actor import sign_actor_headers
 from pulse.web.deps import PortalUser
 
@@ -50,7 +51,7 @@ def _proxy_assistant(
     mirror = config.assistant_mirror
     url = f"{mirror.base_url.rstrip('/')}{path}"
     try:
-        with httpx.Client(timeout=mirror.timeout_seconds) as client:
+        with internal_client(timeout=mirror.timeout_seconds) as client:
             response = client.request(
                 "GET",
                 url,

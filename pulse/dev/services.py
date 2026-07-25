@@ -97,6 +97,16 @@ def ensure_proxy_binary(root: Path | None = None) -> Path:
     return binary
 
 
+def _venv_python(root: Path) -> str:
+    if sys.platform == "win32":
+        candidate = root / ".venv" / "Scripts" / "python.exe"
+    else:
+        candidate = root / ".venv" / "bin" / "python"
+    if candidate.exists():
+        return str(candidate)
+    return sys.executable
+
+
 def build_command(service: str, *, config_path: str = "config.yaml") -> tuple[list[str], Path, dict]:
     """Return (command argv, working directory, popen kwargs extras)."""
     root = project_root()
@@ -104,14 +114,24 @@ def build_command(service: str, *, config_path: str = "config.yaml") -> tuple[li
 
     if service == "web":
         return (
-            [*pulse, "-c", config_path, "web", "--reload"],
+            [
+                *pulse,
+                "-c",
+                config_path,
+                "web",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8080",
+                "--reload",
+            ],
             root,
             {},
         )
 
     if service == "admin":
         return (
-            [npm_executable(), "run", "dev"],
+            [npm_executable(), "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"],
             root / "web-admin",
             {"shell": sys.platform == "win32"},
         )
@@ -125,7 +145,13 @@ def build_command(service: str, *, config_path: str = "config.yaml") -> tuple[li
 
     if service == "assistant":
         return (
-            [sys.executable, "-m", "assistant_platform", "serve", "--reload"],
+            [
+                _venv_python(root),
+                "-m",
+                "assistant_platform",
+                "serve",
+                "--reload",
+            ],
             root,
             {},
         )
@@ -142,11 +168,13 @@ def build_command(service: str, *, config_path: str = "config.yaml") -> tuple[li
 
 
 SERVICES: dict[str, DevService] = {
-    "web": DevService("web", "管理后台 API", 8080, "http://127.0.0.1:8080"),
-    "admin": DevService("admin", "Vue 开发前端", 5173, "http://127.0.0.1:5173"),
+    "web": DevService("web", "管理后台 API", 8080, "http://0.0.0.0:8080"),
+    "admin": DevService("admin", "Vue 开发前端", 5173, "http://0.0.0.0:5173"),
     "channel": DevService("channel", "渠道适配 + 调度", None, None),
     "assistant": DevService("assistant", "Assistant Platform", 8090, "http://127.0.0.1:8090"),
     "proxy": DevService("proxy", "Cursor 代理（Go 数据面）", 8317, "http://0.0.0.0:8317"),
 }
 
-DEFAULT_SERVICES = ("web", "admin", "channel", "assistant")
+# Boot order matters: web before proxy/assistant clients; assistant before channel mirror.
+DEFAULT_SERVICES = ("web", "assistant", "channel", "admin", "proxy")
+ALL_SERVICES = ("web", "admin", "channel", "assistant", "proxy")

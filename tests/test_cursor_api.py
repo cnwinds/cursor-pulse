@@ -55,7 +55,7 @@ def test_map_usage_event():
     assert dto.external_id
 
 
-@patch("httpx.Client")
+@patch("pulse.integrations.cursor_api.outbound_client")
 def test_exchange_api_key(mock_client_cls):
     _mock_exchange(mock_client_cls, _fake_jwt())
 
@@ -64,7 +64,7 @@ def test_exchange_api_key(mock_client_cls):
     assert token.startswith("hdr.")
 
 
-@patch("httpx.Client")
+@patch("pulse.integrations.cursor_api.outbound_client")
 def test_get_access_token_uses_cache(mock_client_cls):
     jwt_token = _fake_jwt()
     _mock_exchange(mock_client_cls, jwt_token)
@@ -77,7 +77,7 @@ def test_get_access_token_uses_cache(mock_client_cls):
     assert post.call_count == 1
 
 
-@patch("httpx.Client")
+@patch("pulse.integrations.cursor_api.outbound_client")
 def test_get_access_token_force_refresh(mock_client_cls):
     first = _fake_jwt(exp=int(time.time()) + 3600)
     second = _fake_jwt(exp=int(time.time()) + 7200)
@@ -93,7 +93,7 @@ def test_get_access_token_force_refresh(mock_client_cls):
     assert mock_post.call_count == 2
 
 
-@patch("httpx.Client")
+@patch("pulse.integrations.cursor_api.outbound_client")
 def test_get_access_token_expired_cache_refreshes(mock_client_cls):
     expired = _fake_jwt(exp=int(time.time()) - 60)
     fresh = _fake_jwt(exp=int(time.time()) + 3600)
@@ -109,7 +109,7 @@ def test_get_access_token_expired_cache_refreshes(mock_client_cls):
     assert mock_post.call_count == 2
 
 
-@patch("httpx.Client")
+@patch("pulse.integrations.cursor_api.outbound_client")
 def test_post_dashboard_retries_on_401(mock_client_cls):
     jwt_token = _fake_jwt()
     refreshed = _fake_jwt(exp=int(time.time()) + 7200)

@@ -2,6 +2,8 @@
 
 Cursor CLI（agent）多账号额度透明轮换代理，作为 **Pulse 数据面** 运行：从控制面拉取凭证池、拦截 exchange 做会话授权、上报用量与换号事件。
 
+> 与系统 `HTTP_PROXY`、控制面互调不是同一层。分层与变量对照见 [docs/PROXY_LAYERS.md](../docs/PROXY_LAYERS.md)。
+
 ## 构建
 
 需要 Go 1.22+（零第三方依赖）：

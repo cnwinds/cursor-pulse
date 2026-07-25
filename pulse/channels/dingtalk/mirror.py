@@ -14,6 +14,7 @@ from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
 from pulse.config import AppConfig, AssistantMirrorConfig
+from pulse.http_clients import internal_async_client, internal_client
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def _post_to_assistant(
     last_exc: Exception | None = None
     for attempt in range(_MIRROR_RETRY_ATTEMPTS):
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with internal_client(timeout=timeout) as client:
                 resp = client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 return resp
@@ -51,7 +52,7 @@ async def _post_to_assistant_async(
     last_exc: Exception | None = None
     for attempt in range(_MIRROR_RETRY_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with internal_async_client(timeout=timeout) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 return resp

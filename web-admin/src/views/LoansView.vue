@@ -162,47 +162,53 @@
         <div>proxy 估算（非账单）：${{ (usageSummary.proxy_cost_cents / 100).toFixed(2) }}（{{ usageSummary.request_count }} 次请求 · {{ formatTokensM(usageSummary.proxy_total_tokens) }}）</div>
       </div>
       <h4 class="usage-section-title">按模型汇总（本地估算）</h4>
-      <el-table :data="usageByModel" style="width: 100%" v-loading="usagesLoading">
-        <el-table-column prop="model" label="模型" min-width="140" />
-        <el-table-column prop="request_count" label="请求数" width="80" />
-        <el-table-column label="tokens" width="100">
+      <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading">
+        <el-table-column prop="model" label="模型" min-width="180" />
+        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+        <el-table-column label="tokens" width="110" align="right">
           <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
         </el-table-column>
-        <el-table-column label="费用" width="100">
+        <el-table-column label="费用" width="110" align="right">
           <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
       <h4 class="usage-section-title">proxy 明细（按天 · 本地估算）</h4>
+      <p class="usage-hint">点击整行展开 / 收起当天明细</p>
       <el-table
         :data="usageByDay"
-        style="width: 100%"
+        class="usage-fill-table day-usage-table"
         v-loading="usagesLoading"
         row-key="day"
+        :expand-row-keys="expandedDayKeys"
+        @expand-change="onDayExpandChange"
+        @row-click="onDayRowClick"
       >
-        <el-table-column type="expand">
+        <el-table-column type="expand" width="48">
           <template #default="{ row }">
-            <el-table :data="row.items" size="small" class="day-detail-table">
-              <el-table-column label="时间" width="170">
-                <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
-              </el-table-column>
-              <el-table-column prop="model" label="模型" min-width="140" />
-              <el-table-column label="tokens" width="100">
-                <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
-              </el-table-column>
-              <el-table-column label="费用" width="100">
-                <template #default="{ row: item }">
-                  ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
-                </template>
-              </el-table-column>
-            </el-table>
+            <div class="day-detail-wrap">
+              <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
+                <el-table-column label="时间" min-width="170">
+                  <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
+                </el-table-column>
+                <el-table-column prop="model" label="模型" min-width="160" />
+                <el-table-column label="tokens" width="110" align="right">
+                  <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
+                </el-table-column>
+                <el-table-column label="费用" width="110" align="right">
+                  <template #default="{ row: item }">
+                    ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="day" label="日期" width="140" />
-        <el-table-column prop="request_count" label="请求数" width="80" />
-        <el-table-column label="tokens" width="100">
+        <el-table-column prop="day" label="日期" min-width="160" />
+        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+        <el-table-column label="tokens" width="110" align="right">
           <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
         </el-table-column>
-        <el-table-column label="费用" width="100">
+        <el-table-column label="费用" width="110" align="right">
           <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
@@ -331,6 +337,7 @@ const usagesTitle = ref('')
 const usageByDay = ref<LoanUsageByDayRow[]>([])
 const usageByModel = ref<LoanUsageByModelRow[]>([])
 const usageSummary = ref<LoanUsageSummary | null>(null)
+const expandedDayKeys = ref<string[]>([])
 
 interface LoanUsageRow {
   id: string
@@ -495,11 +502,32 @@ function closeKeyReveal() {
   revealedKey.value = null
 }
 
+function toggleDayExpand(row: LoanUsageByDayRow) {
+  const key = row.day
+  if (expandedDayKeys.value.includes(key)) {
+    expandedDayKeys.value = expandedDayKeys.value.filter((k) => k !== key)
+  } else {
+    expandedDayKeys.value = [...expandedDayKeys.value, key]
+  }
+}
+
+function onDayExpandChange(row: LoanUsageByDayRow, expandedRows: LoanUsageByDayRow[]) {
+  expandedDayKeys.value = expandedRows.map((r) => r.day)
+}
+
+function onDayRowClick(row: LoanUsageByDayRow, _column: unknown, event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  // Expand icon already toggles via expand-change; avoid double-toggle.
+  if (target?.closest('.el-table__expand-icon')) return
+  toggleDayExpand(row)
+}
+
 async function openUsages(row: LoanRow) {
   usagesTitle.value = row.borrower_name || row.source_account_identifier || row.id.slice(0, 8)
   usageByDay.value = []
   usageByModel.value = []
   usageSummary.value = null
+  expandedDayKeys.value = []
   usagesVisible.value = true
   usagesLoading.value = true
   try {
@@ -602,11 +630,33 @@ onMounted(loadLoans)
   font-size: 14px;
   font-weight: 600;
 }
-.usage-section-title + .el-table + .usage-section-title {
+.usage-section-title + .usage-fill-table + .usage-section-title {
   margin-top: 20px;
 }
+.usage-hint {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.usage-fill-table {
+  width: 100%;
+}
+.day-usage-table :deep(.el-table__body tr) {
+  cursor: pointer;
+}
+.day-usage-table :deep(.el-table__expanded-cell) {
+  padding: 0;
+}
+.day-detail-wrap {
+  padding: 8px 12px 12px;
+  background: var(--el-fill-color-lighter);
+}
 .day-detail-table {
-  margin: 4px 12px 12px 48px;
+  width: 100%;
+  --el-table-bg-color: transparent;
+}
+.day-detail-table :deep(.el-table__body tr) {
+  cursor: default;
 }
 .mb {
   margin-bottom: 12px;

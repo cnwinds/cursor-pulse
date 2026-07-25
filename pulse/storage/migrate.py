@@ -40,6 +40,7 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
     "alias_key_hash": "VARCHAR(64)",
     "alias_key_hint": "VARCHAR(32)",
     "alias_encrypted_key": "TEXT",
+    "expires_on": "DATE",
 }
 
 

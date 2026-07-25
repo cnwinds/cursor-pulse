@@ -94,6 +94,27 @@ class CursorSyncService:
             session, encryption_key, cursor_client=self.cursor_client
         )
 
+    def _expire_loans_after_sync(self, account_id: str) -> None:
+        """Reclaim auto-revoke loans for the synced account after cycle refresh."""
+        try:
+            from pulse.tool_center.key_loans import KeyLoanService
+
+            expired = KeyLoanService(
+                self.session,
+                self.encryption_key,
+                cursor_client=self.cursor_client,
+            ).expire_loans_on_reset(account_id=account_id)
+            if expired:
+                self.session.commit()
+                logger.info(
+                    "expired %s key loan(s) after cursor sync account=%s",
+                    expired,
+                    account_id,
+                )
+        except Exception:
+            logger.warning("post-sync key loan expire failed", exc_info=True)
+            self.session.rollback()
+
     def _enforce_on_demand(self, account: AiAccount, token: str, api_key: str) -> None:
         if not self.enforce_on_demand_disabled:
             return
@@ -214,6 +235,7 @@ class CursorSyncService:
             cred.last_sync_error = None
             _recompute_account_summaries(self.session, team_id, account_id)
             self.session.commit()
+            self._expire_loans_after_sync(account_id)
 
             if results:
                 total_events = sum(r.event_count for r in results)

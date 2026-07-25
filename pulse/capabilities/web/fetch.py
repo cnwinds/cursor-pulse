@@ -16,6 +16,7 @@ from pulse.capabilities.web.ssrf import (
     resolve_and_validate_url,
 )
 from pulse.capabilities.web.types import WebFetchResult
+from pulse.http_clients import outbound_client
 
 _ALLOWED_CONTENT_TYPES = (
     "text/html",
@@ -108,7 +109,7 @@ def safe_fetch(
         raise SearchProviderError("invalid_arguments", "缺少 url")
 
     owns_client = client is None
-    http = client or httpx.Client(timeout=timeout, follow_redirects=False)
+    http = client or outbound_client(timeout=timeout, follow_redirects=False)
     try:
         for _ in range(max_redirects + 1):
             try:

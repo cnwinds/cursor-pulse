@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Local / mode-1 control plane: prepare workspace then start all services.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,8 +11,7 @@ pulse_bin() {
   elif command -v pulse >/dev/null 2>&1; then
     command -v pulse
   else
-    echo "未找到 pulse，请先执行: python -m venv .venv && .venv/bin/pip install -e '.[dev,web]'" >&2
-    exit 1
+    return 1
   fi
 }
 
@@ -23,47 +23,119 @@ python_bin() {
   elif command -v python >/dev/null 2>&1; then
     command -v python
   else
-    echo "未找到 python，请先执行: python -m venv .venv && .venv/bin/pip install -e '.[dev,web]'" >&2
+    echo "未找到 python，请先安装 Python 3.11+" >&2
     exit 1
+  fi
+}
+
+ensure_venv() {
+  if [[ -x "$ROOT/.venv/bin/pulse" ]]; then
+    return 0
+  fi
+  echo "[setup] 创建 .venv 并安装依赖 (. [dev,web])…"
+  local py
+  py="$(python_bin)"
+  "$py" -m venv "$ROOT/.venv"
+  "$ROOT/.venv/bin/pip" install -U pip
+  "$ROOT/.venv/bin/pip" install -e ".[dev,web]"
+}
+
+prepare_workspace() {
+  ensure_venv
+  local keep_docker=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--keep-docker" ]]; then
+      keep_docker=1
+    fi
+  done
+  if (( keep_docker )); then
+    "$(python_bin)" -m pulse.dev.prepare --keep-docker
+  else
+    "$(python_bin)" -m pulse.dev.prepare
   fi
 }
 
 usage() {
   cat <<'EOF'
-Cursor Pulse 开发环境管理
+Cursor Pulse 本地开发（模式 1）
 
 用法:
-  ./cursor-pulse.sh start [web] [admin] [channel] [assistant] [proxy]   启动服务（默认全部不含 proxy）
-  ./cursor-pulse.sh stop  [web] [admin] [channel] [assistant] [proxy]   停止服务
-  ./cursor-pulse.sh restart [web] [admin] [channel] [assistant] [proxy] 重启服务（默认全部不含 proxy）
-  ./cursor-pulse.sh log <web|admin|channel|assistant|proxy> [-f] [-n N]  查看日志
-  ./cursor-pulse.sh status                      查看运行状态
+  ./cursor-pulse.sh start [服务…] [--keep-docker]   准备环境并启动（默认全部）
+  ./cursor-pulse.sh stop  [服务…]                   停止服务
+  ./cursor-pulse.sh restart [服务…] [--keep-docker] 重启
+  ./cursor-pulse.sh prepare [--keep-docker]         只准备 data/.env/代理，不启动
+  ./cursor-pulse.sh log <服务> [-f] [-n N]           查看日志
+  ./cursor-pulse.sh status                          运行状态
 
-服务:
-  web        管理后台 API          http://127.0.0.1:8080
-  admin      Vue 开发前端          http://127.0.0.1:5173
-  channel    渠道适配 + 调度
-  assistant  Assistant Platform    http://127.0.0.1:8090
-  proxy      Cursor 代理（Go）     http://127.0.0.1:8317  （需 Go；不在默认 start）
+服务: web | admin | channel | assistant | proxy
+  默认 start = web + assistant + channel + admin + proxy
+  channel 若缺少 DINGTALK_APP_KEY/SECRET 会自动跳过并提示
 
-代理建议：先 start 起 web，再 ./cursor-pulse.sh start proxy。
+准备内容:
+  - data/ → docker/data（共用生产库）
+  - .env 从 docker/.env 合并，并改写本机 URL / CORS
+  - web 监听 0.0.0.0:8080；Vite 0.0.0.0:5173
+  - 构建 Go proxy（如有 go）
+  - 停掉占用端口的 docker web/assistant/channel/proxy（可用 --keep-docker 跳过）
+
+访问:
+  管理后台（热更新）  http://127.0.0.1:5173  或  http://<局域网IP>:5173
+  API                 http://127.0.0.1:8080
+  Assistant           http://127.0.0.1:8090
+  Proxy               http://127.0.0.1:8317
 
 日志目录: .dev/logs/
 EOF
 }
 
-PULSE="$(pulse_bin)"
+filter_keep_docker() {
+  local -a out=()
+  local a
+  for a in "$@"; do
+    [[ "$a" == "--keep-docker" ]] && continue
+    out+=("$a")
+  done
+  if ((${#out[@]})); then
+    printf '%s\n' "${out[@]}"
+  fi
+}
+
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-  start|stop|restart)
-    if (($#)); then
-      exec "$PULSE" dev "$cmd" "$@"
+  prepare|setup)
+    prepare_workspace "$@"
+    ;;
+  start)
+    prepare_workspace "$@"
+    mapfile -t services < <(filter_keep_docker "$@")
+    PULSE="$(pulse_bin)"
+    if ((${#services[@]})); then
+      exec "$PULSE" dev start "${services[@]}"
     fi
-    exec "$PULSE" dev "$cmd"
+    exec "$PULSE" dev start
+    ;;
+  restart)
+    prepare_workspace "$@"
+    mapfile -t services < <(filter_keep_docker "$@")
+    PULSE="$(pulse_bin)"
+    if ((${#services[@]})); then
+      exec "$PULSE" dev restart "${services[@]}"
+    fi
+    exec "$PULSE" dev restart
+    ;;
+  stop)
+    ensure_venv
+    PULSE="$(pulse_bin)"
+    if (($#)); then
+      exec "$PULSE" dev stop "$@"
+    fi
+    exec "$PULSE" dev stop
     ;;
   log|logs)
+    ensure_venv
     service="web"
     args=()
     for arg in "$@"; do
@@ -75,7 +147,8 @@ case "$cmd" in
     exec "$(python_bin)" -m pulse.dev logs "$service" "${args[@]}"
     ;;
   status)
-    exec "$PULSE" dev status
+    ensure_venv
+    exec "$(pulse_bin)" dev status
     ;;
   help|-h|--help)
     usage

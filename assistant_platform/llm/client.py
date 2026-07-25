@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import httpx
 
+from pulse.http_clients import outbound_client
+
 
 class AssistantLlmClient:
     def __init__(
@@ -31,7 +33,7 @@ class AssistantLlmClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=self.timeout_seconds) as client:
+        with outbound_client(timeout=self.timeout_seconds) as client:
             response = client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -56,7 +58,7 @@ class AssistantLlmClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=self.timeout_seconds) as client:
+        with outbound_client(timeout=self.timeout_seconds) as client:
             response = client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+from pulse.http_clients import internal_client
 
 
 class PulseCapabilityClient:
@@ -22,7 +23,7 @@ class PulseCapabilityClient:
         self._base_url = base_url.rstrip("/")
         self._internal_token = internal_token
         self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(timeout=timeout)
+        self._client = http_client or internal_client(timeout=timeout)
 
     def close(self) -> None:
         if self._owns_client:

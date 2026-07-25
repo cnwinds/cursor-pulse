@@ -425,6 +425,8 @@ class KeyLoan(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
     auto_revoke_on_reset: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Frozen at issue: account_loan_deadline snapshot. Expire uses this, not live usage_resets_on.
+    expires_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # cursor_direct: 用户持 cr*；proxy_alias: 用户持 pka_，底层 cr* 仅服务端/管理员可见
     delivery_mode: Mapped[str] = mapped_column(String(32), default="cursor_direct")

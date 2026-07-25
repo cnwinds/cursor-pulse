@@ -56,7 +56,7 @@ def test_mirror_posts_to_assistant_and_creates_session(assistant_client):
         routed.raise_for_status = response.raise_for_status
         return routed
 
-    with patch("pulse.channels.dingtalk.mirror.httpx.Client") as Client, patch(
+    with patch("pulse.channels.dingtalk.mirror.internal_client") as Client, patch(
         "pulse.channels.dingtalk.mirror.time.sleep"
     ):
         http_client = Client.return_value.__enter__.return_value

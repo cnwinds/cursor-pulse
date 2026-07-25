@@ -15,7 +15,7 @@
 | 数据库 | `data/pulse.db` 或 Postgres | |
 | 原始文件 | `data/raw/` | 手工提交的附件等 |
 
-本地一键：`.\cursor-pulse.bat start` / `./cursor-pulse.sh start`。架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+本地一键：`.\cursor-pulse.bat start` / `./cursor-pulse.sh start`。架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。代理分层（MITM / 内部互调 / 翻墙）见 [PROXY_LAYERS.md](PROXY_LAYERS.md)。
 
 ## 2. 部署
 

@@ -8,6 +8,7 @@ import httpx
 
 from pulse.capabilities.web.provider import SearchProviderError
 from pulse.capabilities.web.types import WebSearchHit, WebSearchResponse
+from pulse.http_clients import outbound_client
 
 
 def _utcnow_iso() -> str:
@@ -58,7 +59,7 @@ class TavilySearchProvider:
             if self._client is not None:
                 response = self._client.post(self._search_url, json=payload)
             else:
-                with httpx.Client(timeout=self._timeout) as client:
+                with outbound_client(timeout=self._timeout) as client:
                     response = client.post(self._search_url, json=payload)
             response.raise_for_status()
             data = response.json()

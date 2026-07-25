@@ -61,7 +61,7 @@ def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@patch("pulse.web.assistant_prompts_api.httpx.Client")
+@patch("pulse.web.assistant_prompts_api.internal_client")
 def test_prompts_list_proxies_file_readonly_endpoint(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -83,7 +83,7 @@ def test_prompts_list_proxies_file_readonly_endpoint(mock_client_cls, api_env):
     )
 
 
-@patch("pulse.web.assistant_prompts_api.httpx.Client")
+@patch("pulse.web.assistant_prompts_api.internal_client")
 def test_prompts_preview_proxies_file_readonly_endpoint(mock_client_cls, api_env):
     mock_response = MagicMock()
     mock_response.status_code = 200

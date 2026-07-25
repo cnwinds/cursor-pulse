@@ -31,7 +31,7 @@ def test_complete_with_tools_sends_messages_and_parses_tool_calls():
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = payload_out
 
-    with patch("assistant_platform.llm.client.httpx.Client") as Client:
+    with patch("assistant_platform.llm.client.outbound_client") as Client:
         Client.return_value.__enter__.return_value.post.return_value = mock_resp
         result = client.complete_with_tools(
             messages=[

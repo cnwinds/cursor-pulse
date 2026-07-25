@@ -51,7 +51,7 @@ async def test_mirror_posts_when_enabled_async():
     incoming.sender_staff_id = "u"
     incoming.sender_id = "u"
     incoming.sender_nick = "N"
-    with patch("pulse.channels.dingtalk.mirror.httpx.AsyncClient") as AsyncClient:
+    with patch("pulse.channels.dingtalk.mirror.internal_async_client") as AsyncClient:
         client = AsyncClient.return_value.__aenter__.return_value
         client.post = AsyncMock(
             return_value=MagicMock(status_code=200, json=lambda: {"created": True})
@@ -87,7 +87,7 @@ async def test_mirror_retries_with_async_sleep():
     ok_resp = MagicMock(status_code=200)
     ok_resp.raise_for_status = MagicMock()
     with (
-        patch("pulse.channels.dingtalk.mirror.httpx.AsyncClient") as AsyncClient,
+        patch("pulse.channels.dingtalk.mirror.internal_async_client") as AsyncClient,
         patch("pulse.channels.dingtalk.mirror.asyncio.sleep", new_callable=AsyncMock) as sleep,
     ):
         client = AsyncClient.return_value.__aenter__.return_value
@@ -118,7 +118,7 @@ def test_mirror_posts_when_enabled_sync_wrapper():
     incoming.sender_staff_id = "u"
     incoming.sender_id = "u"
     incoming.sender_nick = "N"
-    with patch("pulse.channels.dingtalk.mirror.httpx.Client") as Client:
+    with patch("pulse.channels.dingtalk.mirror.internal_client") as Client:
         client = Client.return_value.__enter__.return_value
         client.post.return_value = MagicMock(status_code=200, json=lambda: {"created": True})
         mirror_dingtalk_message_sync(

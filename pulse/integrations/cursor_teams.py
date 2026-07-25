@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import httpx
 
 from pulse.config import CursorTeamsConfig
+from pulse.http_clients import outbound_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class CursorTeamsClient:
 
         url = f"{self.config.api_base_url.rstrip('/')}/teams/v1/usage"
         params = {"period": period}
-        with httpx.Client(timeout=30) as client:
+        with outbound_client(timeout=30) as client:
             response = client.get(url, headers=self._headers(), params=params)
             if response.status_code == 404:
                 logger.warning("Cursor Teams API 端点未就绪，返回占位结构")
