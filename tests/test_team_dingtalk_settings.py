@@ -120,3 +120,46 @@ def test_apply_team_dingtalk_overrides_merges_db(dingtalk_settings_client):
     assert merged.dingtalk.app_key == "db-key"
     assert merged.dingtalk.app_secret == "db-secret"
     assert merged.dingtalk.group_open_conversation_id == "cid-db=="
+
+
+def test_patch_feishu_and_bot_settings(dingtalk_settings_client):
+    client, config, owner, _team_id, _sf = dingtalk_settings_client
+    token = create_access_token(config, owner)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    bot_res = client.patch(
+        "/api/settings/bot",
+        headers=headers,
+        json={"data": {"name": "feishu"}},
+    )
+    assert bot_res.status_code == 200
+    assert bot_res.json()["bot"]["name"] == "feishu"
+
+    fs_res = client.patch(
+        "/api/settings/feishu",
+        headers=headers,
+        json={
+            "data": {
+                "app_id": "cli_test",
+                "app_secret": "fs-secret",
+                "group_chat_id": "oc_group_1",
+            }
+        },
+    )
+    assert fs_res.status_code == 200
+    body = fs_res.json()
+    assert body["feishu"]["app_id"] == "cli_test"
+    assert body["feishu"]["app_secret"] == "***"
+    assert body["feishu"]["group_chat_id"] == "oc_group_1"
+
+    reveal = client.get("/api/settings/feishu/reveal/app_secret", headers=headers)
+    assert reveal.status_code == 200
+    assert reveal.json()["value"] == "fs-secret"
+
+    int_res = client.get("/api/system/integrations", headers=headers)
+    assert int_res.status_code == 200
+    intg = int_res.json()
+    assert intg["bot_platform"] == "feishu"
+    assert intg["feishu"]["app_configured"] is True
+    assert intg["feishu"]["group_configured"] is True
+    assert intg["im_group_configured"] is True

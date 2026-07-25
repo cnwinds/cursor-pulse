@@ -21,6 +21,7 @@ def _portal_user_row(member: Member) -> dict:
         "id": member.id,
         "display_name": member.display_name,
         "channel_user_id": member.channel_user_id,
+        "channel": getattr(member, "channel", None) or "web",
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "portal_permissions": member.portal_permissions,
@@ -36,6 +37,7 @@ def _portal_directory_row(member: Member) -> dict:
         "id": member.id,
         "display_name": member.display_name,
         "channel_user_id": member.channel_user_id,
+        "channel": getattr(member, "channel", None) or "dingtalk",
         "department_name": member.department_name,
         "portal_status": member.portal_status,
     }

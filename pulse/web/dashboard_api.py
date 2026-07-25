@@ -145,14 +145,26 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
     except Exception:
         pass
 
+    from pulse.web.channel_status import resolve_im_group_status
+
     pulse_llm_data = effective_raw.get("llm", {})
     dingtalk_data = effective_raw.get("dingtalk", {})
+    feishu_data = effective_raw.get("feishu", {})
+    im_status = resolve_im_group_status(effective_raw)
     return {
+        "bot_platform": im_status["bot_platform"],
+        "im_group_configured": im_status["im_group_configured"],
         "dingtalk": {
             "app_configured": bool(dingtalk_data.get("app_key") and dingtalk_data.get("app_secret")),
             "robot_code": bool(dingtalk_data.get("robot_code")),
-            "group_configured": bool(dingtalk_data.get("group_open_conversation_id")),
+            "group_configured": im_status["dingtalk_group_configured"],
             "group_title": dingtalk_data.get("group_title") or "",
+        },
+        "feishu": {
+            "app_configured": bool(feishu_data.get("app_id") and feishu_data.get("app_secret")),
+            "group_configured": im_status["feishu_group_configured"],
+            "group_chat_id": feishu_data.get("group_chat_id") or "",
+            "bot_open_id": bool(feishu_data.get("bot_open_id")),
         },
         "pulse_llm": {
             "enabled": effective["llm"]["enabled"],
@@ -183,7 +195,7 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
         },
         "database": {"kind": db_kind, "url_hint": storage_url.split("///")[-1][:80]},
         "runtime_note": (
-            "钉钉集成可在团队设置中配置；修改应用凭证或机器人群后需重启 pulse channel。"
+            "消息渠道与钉钉/飞书凭证可在团队设置中配置；修改 bot 平台、应用凭证或工作群后需重启 pulse channel。"
             " 收集窗口、错峰同步账号间隔等团队设置保存后立即参与调度；"
             " 巡检间隔（tick）在 pulse channel 启动时注册，修改后需重启 channel。"
         ),
@@ -198,6 +210,7 @@ def build_pending_actions(session: Session, team_id: str, actor: Member) -> dict
                 "id": member.id,
                 "display_name": member.display_name,
                 "channel_user_id": member.channel_user_id,
+                "channel": getattr(member, "channel", None) or "web",
             }
             for member in list_pending_portal_users(session, team_id)
         ]
@@ -275,13 +288,34 @@ def build_dashboard_overview(
         select(ReminderLog).order_by(ReminderLog.sent_at.desc()).limit(5)
     ).all()
 
+    from pulse.web.channel_status import resolve_im_group_status
+
+    # Prefer team overrides; fall back to process config for empty sections.
+    merged_for_im = {
+        "bot": {"name": (effective.get("bot") or {}).get("name") or config.bot.name},
+        "dingtalk": {
+            "group_open_conversation_id": (effective.get("dingtalk") or {}).get(
+                "group_open_conversation_id"
+            )
+            or config.dingtalk.group_open_conversation_id,
+        },
+        "feishu": {
+            "group_chat_id": (effective.get("feishu") or {}).get("group_chat_id")
+            or config.feishu.group_chat_id,
+        },
+    }
+    im_status = resolve_im_group_status(merged_for_im)
+
     return {
         "period": period,
         "summary": {
             "current_period": period,
             "team_slug": config.tenant.slug,
             "timezone": effective["collection"]["timezone"],
-            "group_configured": bool(config.dingtalk.group_open_conversation_id),
+            "bot_platform": im_status["bot_platform"],
+            "im_group_configured": im_status["im_group_configured"],
+            # 兼容旧前端字段名
+            "group_configured": im_status["im_group_configured"],
             "llm_report": effective["llm"]["enabled"],
             "alerts_enabled": effective["alerts"]["enabled"],
             "bi_webhook": bool(effective["integrations"]["webhook_url"]),

@@ -107,3 +107,80 @@ def test_add_job_dedupes_reply_send_by_message_id():
     second = repo.add_job(job_type="reply.send", payload=payload)
     db.commit()
     assert first.id == second.id
+
+
+def test_claim_prefers_session_process_over_session_close():
+    """Live turns must not wait behind older close/distill jobs."""
+    Session = __import__("assistant_platform.storage.db", fromlist=["init_assistant_db"]).init_assistant_db("sqlite://")
+    db = Session()
+    repo = AssistantRepository(db)
+    repo.add_job(
+        job_type="session.close",
+        payload={"session_id": "sess-old"},
+    )
+    db.commit()
+    repo.add_job(
+        job_type="session.process",
+        payload={"session_id": "sess-live", "message_id": "m1"},
+    )
+    db.commit()
+
+    claimed = claim_next_job(db, blocked_session_ids=set())
+    assert claimed is not None
+    assert claimed.job_type == "session.process"
+    assert claimed.payload_json["session_id"] == "sess-live"
+
+
+def test_claim_respects_allowed_job_types():
+    Session = __import__("assistant_platform.storage.db", fromlist=["init_assistant_db"]).init_assistant_db("sqlite://")
+    db = Session()
+    repo = AssistantRepository(db)
+    repo.add_job(
+        job_type="session.process",
+        payload={"session_id": "sess-a", "message_id": "m1"},
+    )
+    repo.add_job(
+        job_type="session.close",
+        payload={"session_id": "sess-b"},
+    )
+    db.commit()
+
+    from assistant_platform.jobs.claim import BACKGROUND_JOB_TYPES, INTERACTIVE_JOB_TYPES
+
+    bg = claim_next_job(
+        db, blocked_session_ids=set(), allowed_job_types=BACKGROUND_JOB_TYPES
+    )
+    assert bg is not None
+    assert bg.job_type == "session.close"
+
+    interactive = claim_next_job(
+        db, blocked_session_ids=set(), allowed_job_types=INTERACTIVE_JOB_TYPES
+    )
+    assert interactive is not None
+    assert interactive.job_type == "session.process"
+
+
+def test_interactive_claim_not_starved_by_close_backlog():
+    """SQL allow-list must not let 100+ older closes fill the claim window."""
+    from assistant_platform.jobs.claim import INTERACTIVE_JOB_TYPES
+
+    Session = __import__("assistant_platform.storage.db", fromlist=["init_assistant_db"]).init_assistant_db("sqlite://")
+    db = Session()
+    repo = AssistantRepository(db)
+    for i in range(120):
+        repo.add_job(job_type="session.close", payload={"session_id": f"close-{i}"})
+    db.commit()
+    repo.add_job(
+        job_type="session.process",
+        payload={"session_id": "sess-live", "message_id": "m-live"},
+    )
+    db.commit()
+
+    claimed = claim_next_job(
+        db,
+        blocked_session_ids=set(),
+        allowed_job_types=INTERACTIVE_JOB_TYPES,
+    )
+    assert claimed is not None
+    assert claimed.job_type == "session.process"
+    assert claimed.payload_json["session_id"] == "sess-live"

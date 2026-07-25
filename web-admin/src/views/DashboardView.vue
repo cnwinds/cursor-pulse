@@ -14,7 +14,7 @@
           <div v-for="user in pendingActions.portal_users" :key="user.id" class="portal-pending-item">
             <div>
               <div class="portal-name">{{ user.display_name }}</div>
-              <div class="portal-meta">钉钉 · {{ user.channel_user_id }}</div>
+              <div class="portal-meta">{{ channelMeta(user.channel, user.channel_user_id) }}</div>
             </div>
             <router-link to="/users" class="view-all">去审批 →</router-link>
           </div>
@@ -95,8 +95,8 @@
               {{ formatNumber(data?.metrics_highlights?.total_tokens) }}
             </el-descriptions-item>
             <el-descriptions-item label="总费用">{{ costLabel }}</el-descriptions-item>
-            <el-descriptions-item label="钉钉群">
-              {{ data?.summary?.group_configured ? '已配置' : '未配置' }}
+            <el-descriptions-item label="工作群">
+              {{ imGroupConfigured ? '已配置' : '未配置' }}
             </el-descriptions-item>
             <el-descriptions-item label="异常告警">
               {{ data?.summary?.alerts_enabled ? '已开启' : '已关闭' }}
@@ -117,9 +117,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import client from '@/api/client'
+import { channelMeta } from '@/utils/channel'
 
 interface PendingActions {
-  portal_users: { id: string; display_name: string; channel_user_id: string }[]
+  portal_users: {
+    id: string
+    display_name: string
+    channel_user_id: string
+    channel?: string
+  }[]
   total_count: number
 }
 
@@ -141,6 +147,13 @@ const syncPct = computed(() => {
 const costLabel = computed(() => {
   const c = data.value?.metrics_highlights?.total_cost_usd
   return c != null ? `$${Number(c).toFixed(2)}` : '—'
+})
+
+const imGroupConfigured = computed(() => {
+  const summary = data.value?.summary
+  if (!summary) return false
+  if (summary.im_group_configured != null) return Boolean(summary.im_group_configured)
+  return Boolean(summary.group_configured)
 })
 
 const statCards = computed(() => {

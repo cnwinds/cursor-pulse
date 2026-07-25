@@ -58,7 +58,7 @@
             collapse-tags
             collapse-tags-tooltip
             :disabled="field.readonly"
-            placeholder="选择钉钉成员"
+            placeholder="选择成员"
             style="width: 100%"
           >
             <el-option

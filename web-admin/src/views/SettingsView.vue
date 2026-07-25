@@ -32,6 +32,19 @@
         </el-table>
       </el-tab-pane>
 
+      <el-tab-pane label="消息渠道" name="channels">
+        <el-table :data="channelRows" stripe class="settings-table" @row-click="openItem">
+          <el-table-column prop="name" label="项目" min-width="160" />
+          <el-table-column prop="summary" label="状态" min-width="220" />
+          <el-table-column prop="process" label="来源" width="120" />
+          <el-table-column label="" width="56" align="center">
+            <template #default="{ row }">
+              <el-icon v-if="row.editable" class="edit-icon"><Edit /></el-icon>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane label="集成与 LLM" name="integrations">
         <el-table :data="integrationRows" stripe class="settings-table" @row-click="openItem">
           <el-table-column prop="name" label="项目" min-width="160" />
@@ -119,6 +132,8 @@ const forms = reactive({
   integrations: {} as Record<string, unknown>,
   cursor_sync: {} as Record<string, unknown>,
   dingtalk: {} as Record<string, unknown>,
+  feishu: {} as Record<string, unknown>,
+  bot: {} as Record<string, unknown>,
   admin: {} as Record<string, unknown>,
 })
 
@@ -180,6 +195,7 @@ const ITEM_PLANS: Record<string, SavePlan[]> = {
     },
   ],
   bi_push: [{ section: 'integrations', keys: ['webhook_url', 'push_on_report', 'webhook_secret'] }],
+  bot: [{ section: 'bot', keys: ['name'] }],
   dingtalk: [
     {
       section: 'dingtalk',
@@ -190,6 +206,12 @@ const ITEM_PLANS: Record<string, SavePlan[]> = {
         'group_open_conversation_id',
         'sync_root_dept_id',
       ],
+    },
+  ],
+  feishu: [
+    {
+      section: 'feishu',
+      keys: ['app_id', 'app_secret', 'bot_open_id', 'group_chat_id'],
     },
   ],
   web_search: [
@@ -346,73 +368,114 @@ function webSearchSummary(): string {
   return keyOk ? `已启用 · 最多 ${ws.max_results ?? 5} 条` : '已启用但未配置 Key'
 }
 
-const integrationRows = computed<SettingRow[]>(() => {
+function botPlatformSummary(): string {
+  const name = String(forms.bot.name || integrations.value?.bot_platform || 'none')
+  const labels: Record<string, string> = {
+    none: '仅 Web（无 IM）',
+    dingtalk: '钉钉',
+    feishu: '飞书',
+    wecom: '企业微信（占位）',
+  }
+  return labels[name] || name
+}
+
+function dingtalkSummary(intg: any): string {
+  if (intg.dingtalk.app_configured && intg.dingtalk.group_configured) {
+    return intg.dingtalk.group_title
+      ? `工作群：${intg.dingtalk.group_title}`
+      : '应用与群已配置'
+  }
+  if (intg.dingtalk.app_configured) return '应用已配置，群未配置'
+  return '未完整配置'
+}
+
+function feishuSummary(intg: any): string {
+  const fs = intg.feishu || {}
+  if (fs.app_configured && fs.group_configured) {
+    return fs.group_chat_id ? `工作群：${fs.group_chat_id}` : '应用与群已配置'
+  }
+  if (fs.app_configured) return '应用已配置，群未配置'
+  return '未完整配置'
+}
+
+const channelRows = computed<SettingRow[]>(() => {
   const intg = integrations.value
   if (!intg) return []
   return [
     {
+      id: 'bot',
+      name: '运行平台',
+      summary: botPlatformSummary(),
+      process: '团队设置',
+      editable: true,
+    },
+    {
       id: 'dingtalk',
       name: '钉钉集成',
-      summary: intg.dingtalk.app_configured && intg.dingtalk.group_configured
-        ? intg.dingtalk.group_title
-          ? `工作群：${intg.dingtalk.group_title}`
-          : '应用与群已配置'
-        : intg.dingtalk.app_configured
-          ? '应用已配置，群未配置'
-          : '未完整配置',
+      summary: dingtalkSummary(intg),
       process: '团队设置',
       editable: true,
     },
     {
-      id: 'assistant_llm',
-      name: '助手 LLM（对话）',
-      summary: forms.assistant_llm.enabled && (forms.assistant_llm.api_key === '***' || forms.assistant_llm.api_key)
-        ? [
-            forms.assistant_llm.model || '—',
-            forms.chat_memory.embedding?.enabled
-              ? `嵌入 ${forms.chat_memory.embedding?.model || '—'}`
-              : '嵌入关',
-          ].join(' · ')
-        : forms.assistant_llm.enabled
-          ? '已启用但未配置 Key'
-          : '未启用',
-      process: '团队设置',
-      editable: true,
-    },
-    {
-      id: 'chat_memory',
-      name: '聊天记忆',
-      summary: chatMemorySummary(),
-      process: '团队设置',
-      editable: true,
-    },
-    {
-      id: 'web_search',
-      name: '联网搜索（Tavily）',
-      summary: webSearchSummary(),
-      process: '团队设置',
-      editable: true,
-    },
-    {
-      id: 'pulse_llm',
-      name: 'Pulse LLM（月报 / 截图）',
-      summary: forms.llm.enabled
-        ? `${forms.llm.model}${forms.llm.vision_enabled ? ' · 含视觉' : ''}`
-        : '未启用',
-      process: '团队设置',
-      editable: true,
-    },
-    {
-      id: 'bi_push',
-      name: 'BI 推送',
-      summary: forms.integrations.webhook_url
-        ? `已配置${forms.integrations.push_on_report ? ' · 月报推送' : ''}`
-        : '未配置',
+      id: 'feishu',
+      name: '飞书集成',
+      summary: feishuSummary(intg),
       process: '团队设置',
       editable: true,
     },
   ]
 })
+
+const integrationRows = computed<SettingRow[]>(() => [
+  {
+    id: 'assistant_llm',
+    name: '助手 LLM（对话）',
+    summary: forms.assistant_llm.enabled && (forms.assistant_llm.api_key === '***' || forms.assistant_llm.api_key)
+      ? [
+          forms.assistant_llm.model || '—',
+          forms.chat_memory.embedding?.enabled
+            ? `嵌入 ${forms.chat_memory.embedding?.model || '—'}`
+            : '嵌入关',
+        ].join(' · ')
+      : forms.assistant_llm.enabled
+        ? '已启用但未配置 Key'
+        : '未启用',
+    process: '团队设置',
+    editable: true,
+  },
+  {
+    id: 'chat_memory',
+    name: '聊天记忆',
+    summary: chatMemorySummary(),
+    process: '团队设置',
+    editable: true,
+  },
+  {
+    id: 'web_search',
+    name: '联网搜索（Tavily）',
+    summary: webSearchSummary(),
+    process: '团队设置',
+    editable: true,
+  },
+  {
+    id: 'pulse_llm',
+    name: 'Pulse LLM（月报 / 截图）',
+    summary: forms.llm.enabled
+      ? `${forms.llm.model}${forms.llm.vision_enabled ? ' · 含视觉' : ''}`
+      : '未启用',
+    process: '团队设置',
+    editable: true,
+  },
+  {
+    id: 'bi_push',
+    name: 'BI 推送',
+    summary: forms.integrations.webhook_url
+      ? `已配置${forms.integrations.push_on_report ? ' · 月报推送' : ''}`
+      : '未配置',
+    process: '团队设置',
+    editable: true,
+  },
+])
 
 const FIELD_DEFS: Record<string, SettingsField> = {
   timezone: { key: 'timezone', label: '时区', hint: '如 Asia/Shanghai' },
@@ -430,7 +493,12 @@ const FIELD_DEFS: Record<string, SettingsField> = {
   },
   report_time: { key: 'report_time', label: '月报发送时间' },
   report_on_first_business_day: { key: 'report_on_first_business_day', label: '月报在首个工作日', type: 'switch' },
-  publish_report_to_group: { key: 'publish_report_to_group', label: '月报群发钉钉群', type: 'switch' },
+  publish_report_to_group: {
+    key: 'publish_report_to_group',
+    label: '月报群发工作群',
+    type: 'switch',
+    hint: '按当前消息渠道发送到已配置的工作群',
+  },
   pre_publish_start_time: {
     key: 'pre_publish_start_time',
     label: '发布前数据刷新时间',
@@ -448,21 +516,21 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     key: 'on_demand_notify_member_ids',
     label: '关闭时通知这些人',
     type: 'member_multi',
-    hint: '可搜索选择钉钉成员；未保存过时默认预填管理员',
+    hint: '可搜索选择成员；未保存过时默认预填管理员',
     showWhen: (model) => model.enforce_on_demand_disabled !== false,
   },
   on_demand_notify_primary: {
     key: 'on_demand_notify_primary',
     label: '同时通知主使用人',
     type: 'switch',
-    hint: '向该账号的主使用人发送钉钉私聊（与上表去重）',
+    hint: '向该账号的主使用人发送私聊（与上表去重；需消息渠道可用）',
     showWhen: (model) => model.enforce_on_demand_disabled !== false,
   },
   on_demand_notify_admins_on_api_failure: {
     key: 'on_demand_notify_admins_on_api_failure',
     label: '接口失败时通知管理员',
     type: 'switch',
-    hint: 'GetHardLimit 失败时单独通知平台管理员（DINGTALK_ADMIN_USER_IDS），应对 API 变更',
+    hint: 'GetHardLimit 失败时单独通知平台管理员，应对 API 变更',
     showWhen: (model) => model.enforce_on_demand_disabled !== false,
   },
   default_interval_minutes: {
@@ -537,6 +605,17 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     secretSection: 'integrations',
     hint: '留空或 *** 表示不修改',
   },
+  bot_name: {
+    key: 'name',
+    label: '当前消息渠道',
+    type: 'select',
+    hint: 'none = 仅 Web；改平台后需重启 pulse channel 进程',
+    options: [
+      { value: 'none', label: '仅 Web（无 IM）' },
+      { value: 'dingtalk', label: '钉钉' },
+      { value: 'feishu', label: '飞书' },
+    ],
+  },
   app_key: { key: 'app_key', label: 'AppKey', hint: '钉钉开放平台 → 应用凭证' },
   app_secret: {
     key: 'app_secret',
@@ -561,7 +640,29 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     key: 'sync_root_dept_id',
     label: '通讯录同步根部门 ID',
     type: 'number',
-    hint: '默认 1（全公司）',
+    hint: '默认 1（全公司）；仅钉钉通讯录同步使用',
+  },
+  feishu_app_id: {
+    key: 'app_id',
+    label: 'App ID',
+    hint: '飞书开放平台 → 应用凭证',
+  },
+  feishu_app_secret: {
+    key: 'app_secret',
+    label: 'App Secret',
+    type: 'secret',
+    secretSection: 'feishu',
+    hint: '留空或 *** 表示不修改',
+  },
+  feishu_bot_open_id: {
+    key: 'bot_open_id',
+    label: '机器人 open_id',
+    hint: '可选；用于过滤机器人自发消息',
+  },
+  feishu_group_chat_id: {
+    key: 'group_chat_id',
+    label: '工作群 chat_id',
+    hint: '群消息发送目标；可在飞书群信息中查看',
   },
   cm_archive_enabled: {
     key: 'enabled',
@@ -813,6 +914,8 @@ function applySettings(data: Record<string, any>) {
   }
   forms.integrations = { ...data.integrations }
   forms.dingtalk = { ...data.dingtalk }
+  forms.feishu = { ...(data.feishu || {}) }
+  forms.bot = { name: data.bot?.name || 'none', ...(data.bot || {}) }
   forms.admin = { ...(data.admin || {}) }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
@@ -841,6 +944,8 @@ async function loadRuntime() {
 function sectionModel(section: string): Record<string, unknown> {
   if (section === 'memory') return { ...forms.memory }
   if (section === 'dingtalk') return { ...forms.dingtalk }
+  if (section === 'feishu') return { ...forms.feishu }
+  if (section === 'bot') return { ...forms.bot }
   return { ...(forms as Record<string, Record<string, unknown>>)[section] }
 }
 
@@ -919,6 +1024,11 @@ function fieldsForItem(itemId: string): SettingsField[] {
         if (itemId === 'assistant_llm' && key === 'enabled') return FIELD_DEFS.assistant_enabled
         if (itemId === 'assistant_llm' && key === 'model') return FIELD_DEFS.assistant_model
         if (itemId === 'assistant_llm' && key === 'api_key') return FIELD_DEFS.assistant_api_key
+        if (itemId === 'bot' && key === 'name') return FIELD_DEFS.bot_name
+        if (itemId === 'feishu' && key === 'app_id') return FIELD_DEFS.feishu_app_id
+        if (itemId === 'feishu' && key === 'app_secret') return FIELD_DEFS.feishu_app_secret
+        if (itemId === 'feishu' && key === 'bot_open_id') return FIELD_DEFS.feishu_bot_open_id
+        if (itemId === 'feishu' && key === 'group_chat_id') return FIELD_DEFS.feishu_group_chat_id
         const field = FIELD_DEFS[key]
         if (
           itemId === 'cursor_sync_tick' &&
@@ -1018,7 +1128,7 @@ function openItem(row: SettingRow) {
         '（未记录，请在群内 @ 机器人发「启动」）',
     }
     dialog.notice =
-      '保存后 pulse web 扫码登录立即生效；修改应用凭证或机器人群后需重启 pulse channel。'
+      '保存后 Web 扫码登录立即生效；修改应用凭证或工作群后需重启 pulse channel。'
   } else if (row.id === 'current_period') {
     dialog.fields = [
       { key: 'period', label: '当前账期', readonly: true },
@@ -1033,7 +1143,10 @@ function openItem(row: SettingRow) {
     dialog.fields = fieldsForItem(row.id)
     dialog.model = modelForItem(row.id)
     dialog.notice = {
-      pulse_llm: '用于月报叙事与钉钉截图解析，不影响助手对话。修改后 pulse channel 下次调用时生效。',
+      bot: '选择运行时消息渠道。改为钉钉/飞书后需配置对应集成，并重启 pulse channel 进程。',
+      feishu:
+        '飞书自建应用凭证；保存后 OAuth 登录立即生效，修改凭证或工作群后需重启 pulse channel。',
+      pulse_llm: '用于月报叙事与截图解析，不影响助手对话。修改后 pulse channel 下次调用时生效。',
       assistant_llm:
         '用于助手对话、意图理解与向量嵌入。嵌入 API 复用上方 Key 与 Base URL。保存后新请求即生效（无需重启 assistant）。',
       chat_memory:
@@ -1042,7 +1155,7 @@ function openItem(row: SettingRow) {
         '联网搜索 capability（Tavily）：开启总开关后配置 Key 与限流。保存后下一次 web.search / web.fetch 即生效。',
       bi_push: '月报生成后可推送到 BI Webhook。',
       monthly_report:
-        '首个工作日：先按「发布前数据刷新时间」提升 Cursor 同步优先级，再按「月报发送时间」发群。修改后需重启 pulse channel。',
+        '首个工作日：先按「发布前数据刷新时间」提升 Cursor 同步优先级，再按「月报发送时间」发工作群。修改后需重启 pulse channel。',
     }[row.id] || ''
   }
   dialog.open = true

@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>用户与权限</h2>
-        <p class="desc">审批首次扫码的钉钉用户，分配后台角色。超级管理员可授权其他超管。</p>
+        <p class="desc">审批首次 OAuth/扫码登录的用户，分配后台角色。超级管理员可授权其他超管。</p>
       </div>
     </header>
 
@@ -11,7 +11,7 @@
       <div class="panel-head">
         <div>
           <h3>待审批</h3>
-          <p class="panel-desc">首次扫码登录后台的钉钉账号</p>
+          <p class="panel-desc">首次 OAuth/扫码登录后台的账号</p>
         </div>
         <el-badge :value="pendingUsers.length" :hidden="!pendingUsers.length" type="warning" />
       </div>
@@ -24,7 +24,7 @@
             <el-avatar :size="40">{{ user.display_name.slice(0, 1) }}</el-avatar>
             <div>
               <div class="name">{{ user.display_name }}</div>
-              <div class="meta">钉钉 · {{ user.channel_user_id }}</div>
+              <div class="meta">{{ channelMeta(user.channel, user.channel_user_id) }}</div>
             </div>
           </div>
           <div class="pending-actions">
@@ -42,9 +42,15 @@
             <h3>已开通用户</h3>
             <el-badge :value="activeUsers.length" type="info" />
           </div>
-          <p class="panel-desc">已分配后台角色的钉钉账号</p>
+          <p class="panel-desc">已分配后台角色的账号</p>
         </div>
-        <el-button type="primary" @click="openDirectoryDialog">从通讯录添加</el-button>
+        <el-button
+          v-if="dingtalkDirectoryAvailable"
+          type="primary"
+          @click="openDirectoryDialog"
+        >
+          从通讯录添加
+        </el-button>
       </div>
 
       <el-table :data="activeUsers" stripe class="users-table">
@@ -54,7 +60,7 @@
               <el-avatar :size="32">{{ row.display_name.slice(0, 1) }}</el-avatar>
               <div>
                 <div>{{ row.display_name }}</div>
-                <div class="meta">钉钉 · {{ row.channel_user_id }}</div>
+                <div class="meta">{{ channelMeta(row.channel, row.channel_user_id) }}</div>
               </div>
             </div>
           </template>
@@ -166,7 +172,7 @@
                   <el-avatar :size="28">{{ row.display_name.slice(0, 1) }}</el-avatar>
                   <div>
                     <div>{{ row.display_name }}</div>
-                    <div class="meta">钉钉 · {{ row.channel_user_id }}</div>
+                    <div class="meta">{{ channelMeta(row.channel || 'dingtalk', row.channel_user_id) }}</div>
                   </div>
                 </div>
               </template>
@@ -238,11 +244,13 @@ import type { LoadFunction } from 'element-plus/es/components/tree/src/tree.type
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { channelMeta } from '@/utils/channel'
 
 interface PortalUserRow {
   id: string
   display_name: string
   channel_user_id: string
+  channel?: string
   portal_status: string
   portal_role: string | null
   portal_permissions?: string[]
@@ -259,6 +267,7 @@ interface DirectoryCandidate {
   member_id?: string
   display_name: string
   channel_user_id: string
+  channel?: string
   department_name: string | null
   portal_status: string | null
 }
@@ -281,6 +290,11 @@ const saving = ref(false)
 const pendingUsers = ref<PortalUserRow[]>([])
 const activeUsers = ref<PortalUserRow[]>([])
 const roles = ref<RoleDef[]>([])
+const botPlatform = ref('none')
+const dingtalkAppConfigured = ref(false)
+const dingtalkDirectoryAvailable = computed(
+  () => botPlatform.value === 'dingtalk' && dingtalkAppConfigured.value,
+)
 const approveVisible = ref(false)
 const approveTarget = ref<PortalUserRow | null>(null)
 const selectedRole = ref('operator')
@@ -329,14 +343,19 @@ function roleTagType(role: string | null) {
 async function load() {
   loading.value = true
   try {
-    const [pendingRes, activeRes, rolesRes] = await Promise.all([
+    const [pendingRes, activeRes, rolesRes, intgRes] = await Promise.all([
       client.get('/api/portal/users/pending'),
       client.get('/api/portal/users'),
       client.get('/api/portal/roles'),
+      client.get('/api/system/integrations').catch(() => null),
     ])
     pendingUsers.value = pendingRes.data
     activeUsers.value = activeRes.data
     roles.value = rolesRes.data
+    if (intgRes?.data) {
+      botPlatform.value = String(intgRes.data.bot_platform || 'none')
+      dingtalkAppConfigured.value = Boolean(intgRes.data.dingtalk?.app_configured)
+    }
   } finally {
     loading.value = false
   }
@@ -427,9 +446,12 @@ const loadDirectoryTreeNode: LoadFunction = async (node, resolve) => {
 
 function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   const memberId = row.member_id || row.id
-  const displayName = row.display_name || row.label
-  const dingtalkUserId = row.channel_user_id || ''
+  const displayName =
+    ('display_name' in row && row.display_name) || row.label || ''
+  const channelUserId = row.channel_user_id || ''
   const portalStatus = row.portal_status
+  const channel =
+    ('channel' in row && row.channel) || 'dingtalk'
 
   if (portalStatus === 'active') {
     ElMessage.info('该用户已开通后台')
@@ -448,7 +470,8 @@ function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   openApprove({
     id: memberId,
     display_name: displayName,
-    channel_user_id: dingtalkUserId,
+    channel_user_id: channelUserId,
+    channel,
     portal_status: portalStatus || '',
     portal_role: null,
   })

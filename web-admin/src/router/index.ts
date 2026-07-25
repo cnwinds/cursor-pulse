@@ -79,6 +79,10 @@ const router = createRouter({
           redirect: (to) => ({ path: '/settings', query: { ...to.query, tab: 'integrations' } }),
         },
         {
+          path: 'channels',
+          redirect: (to) => ({ path: '/settings', query: { ...to.query, tab: 'channels' } }),
+        },
+        {
           path: 'users',
           name: 'users',
           component: () => import('@/views/UsersView.vue'),

@@ -16,6 +16,7 @@ from pulse.settings.team_store import (
 
 REVEALABLE_SETTING_SECRETS: dict[str, frozenset[str]] = {
     "dingtalk": frozenset({"app_secret"}),
+    "feishu": frozenset({"app_secret"}),
     "llm": frozenset({"api_key"}),
     "assistant_llm": frozenset({"api_key"}),
     "web_search": frozenset({"api_key"}),
@@ -55,6 +56,11 @@ def settings_for_api(base: AppConfig, session: Session, team_id: str) -> dict[st
         if dingtalk.get(key):
             dingtalk = {**dingtalk, key: "***"}
     data["dingtalk"] = dingtalk
+    feishu = data.get("feishu", {})
+    for key in ("app_secret",):
+        if feishu.get(key):
+            feishu = {**feishu, key: "***"}
+    data["feishu"] = feishu
     return data
 
 

@@ -16,12 +16,17 @@ from assistant_platform.conversation.turn_recovery import (
     recover_stale_processing_jobs,
     recover_stale_turns,
 )
-from assistant_platform.jobs.claim import claim_next_job
+from assistant_platform.jobs.claim import (
+    BACKGROUND_JOB_TYPES,
+    INTERACTIVE_JOB_TYPES,
+    claim_next_job,
+)
 from assistant_platform.integrations.channel_reply import send_channel_reply
 
 logger = logging.getLogger(__name__)
 
 _RETENTION_INTERVAL_SECONDS = 6 * 60 * 60
+_SESSION_TRACKED_JOB_TYPES = frozenset({"session.process", "session.close"})
 
 
 def _handle_reply_send(payload: dict, config: AssistantConfig) -> None:
@@ -42,7 +47,15 @@ def _run_job(session, job, config: AssistantConfig) -> None:
 
 
 class JobWorkerPool:
-    """Job workers. Default 1 for SQLite; multi-worker needs Postgres for reliability."""
+    """Split interactive chat jobs from background close/distill jobs.
+
+    Interactive workers handle ``session.process`` / ``reply.send`` so live
+    multi-user chats are not blocked by archive summarization.
+
+    Background workers exclusively claim ``session.close`` (and future heavy
+    memory jobs). Default interactive count is configurable via
+    ``job_worker_count``; background count via ``job_bg_worker_count``.
+    """
 
     def __init__(
         self,
@@ -60,49 +73,71 @@ class JobWorkerPool:
         self._last_retention_at = 0.0
 
     def start(self) -> None:
-        count = max(1, self._config.llm.job_worker_count)
-        for index in range(count):
+        interactive = max(1, self._config.llm.job_worker_count)
+        background = max(0, getattr(self._config.llm, "job_bg_worker_count", 1))
+        for index in range(interactive):
             thread = threading.Thread(
                 target=self._worker_loop,
-                args=(index,),
-                name=f"assistant-job-{index}",
+                args=(f"interactive-{index}", INTERACTIVE_JOB_TYPES, index == 0),
+                name=f"assistant-job-interactive-{index}",
                 daemon=True,
             )
             thread.start()
             self._threads.append(thread)
-        logger.info("Assistant job pool started with %s workers", count)
+        for index in range(background):
+            thread = threading.Thread(
+                target=self._worker_loop,
+                args=(f"background-{index}", BACKGROUND_JOB_TYPES, False),
+                name=f"assistant-job-background-{index}",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+        logger.info(
+            "Assistant job pool started: %s interactive + %s background workers",
+            interactive,
+            background,
+        )
 
     def join(self, timeout: float | None = 2.0) -> None:
         for thread in self._threads:
             thread.join(timeout=timeout)
 
-    def _worker_loop(self, worker_index: int) -> None:
+    def _worker_loop(
+        self,
+        worker_name: str,
+        allowed_job_types: frozenset[str],
+        run_maintenance: bool,
+    ) -> None:
         llm_cfg = self._config.llm
         while not self._stop.is_set():
             session = self._session_factory()
             session_id: str | None = None
             try:
-                if worker_index == 0:
+                if run_maintenance:
                     self._maybe_run_retention(session)
-
-                stale_turns = recover_stale_turns(
-                    session, timeout_seconds=llm_cfg.turn_timeout_seconds
-                )
-                stale_jobs = recover_stale_processing_jobs(
-                    session, timeout_seconds=llm_cfg.job_processing_timeout_seconds
-                )
-                if stale_turns or stale_jobs:
-                    session.commit()
+                    stale_turns = recover_stale_turns(
+                        session, timeout_seconds=llm_cfg.turn_timeout_seconds
+                    )
+                    stale_jobs = recover_stale_processing_jobs(
+                        session, timeout_seconds=llm_cfg.job_processing_timeout_seconds
+                    )
+                    if stale_turns or stale_jobs:
+                        session.commit()
 
                 with self._lock:
                     blocked = set(self._active_sessions)
-                job = claim_next_job(session, blocked_session_ids=blocked)
+                job = claim_next_job(
+                    session,
+                    blocked_session_ids=blocked,
+                    allowed_job_types=allowed_job_types,
+                )
                 if job is None:
                     session.close()
                     self._stop.wait(0.5)
                     continue
 
-                if job.job_type in ("session.process", "session.close"):
+                if job.job_type in _SESSION_TRACKED_JOB_TYPES:
                     raw_session_id = job.payload_json.get("session_id")
                     if raw_session_id:
                         session_id = str(raw_session_id)
@@ -110,9 +145,9 @@ class JobWorkerPool:
                             self._active_sessions.add(session_id)
 
                 logger.info(
-                    "reply.timing stage=job_claimed worker=%d job_type=%s job_id=%s "
+                    "reply.timing stage=job_claimed worker=%s job_type=%s job_id=%s "
                     "session_id=%s created_at=%s at=%s",
-                    worker_index,
+                    worker_name,
                     job.job_type,
                     job.id,
                     job.payload_json.get("session_id", ""),
@@ -122,9 +157,9 @@ class JobWorkerPool:
                 job_t0 = time.monotonic()
                 _run_job(session, job, self._config)
                 logger.info(
-                    "reply.timing stage=job_done worker=%d job_type=%s job_id=%s "
+                    "reply.timing stage=job_done worker=%s job_type=%s job_id=%s "
                     "elapsed_ms=%d",
-                    worker_index,
+                    worker_name,
                     job.job_type,
                     job.id,
                     int((time.monotonic() - job_t0) * 1000),
@@ -135,7 +170,7 @@ class JobWorkerPool:
                 if job.job_type == "session.process" and session_id:
                     reschedule_session_after_turn(self._session_factory, session_id)
             except Exception:
-                logger.exception("assistant job worker failed")
+                logger.exception("assistant job worker failed worker=%s", worker_name)
                 session.rollback()
             finally:
                 if session_id:

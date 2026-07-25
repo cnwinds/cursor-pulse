@@ -23,6 +23,8 @@ EDITABLE_SECTIONS = frozenset(
         "admin",
         "cursor_sync",
         "dingtalk",
+        "feishu",
+        "bot",
     }
 )
 

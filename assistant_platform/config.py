@@ -75,7 +75,12 @@ class AssistantLlmConfig(BaseModel):
     agent_max_interim_replies: int = 3
     turn_timeout_seconds: int = 300
     inbox_max_per_drain: int = 5
-    job_worker_count: int = 1
+    # Interactive chat workers (session.process / reply.send). Default 4 so
+    # several users can chat in parallel; SQLite still serializes writes via IMMEDIATE.
+    job_worker_count: int = 4
+    # Background workers for session.close (archive / distill). Isolated so
+    # summarization cannot block live turns.
+    job_bg_worker_count: int = 1
     job_processing_timeout_seconds: int = 600
 
 
@@ -167,7 +172,8 @@ def load_assistant_config() -> AssistantConfig:
             inbox_max_per_drain=int(
                 os.environ.get("ASSISTANT_INBOX_MAX_PER_DRAIN", "5")
             ),
-            job_worker_count=int(os.environ.get("ASSISTANT_JOB_WORKER_COUNT", "1")),
+            job_worker_count=int(os.environ.get("ASSISTANT_JOB_WORKER_COUNT", "4")),
+            job_bg_worker_count=int(os.environ.get("ASSISTANT_JOB_BG_WORKER_COUNT", "1")),
             job_processing_timeout_seconds=int(
                 os.environ.get("ASSISTANT_JOB_PROCESSING_TIMEOUT_SECONDS", "600")
             ),
@@ -205,6 +211,7 @@ def _apply_team_assistant_llm_overrides(config: AssistantConfig) -> AssistantCon
         "turn_timeout_seconds",
         "inbox_max_per_drain",
         "job_worker_count",
+        "job_bg_worker_count",
         "job_processing_timeout_seconds",
     ):
         if key in overrides and overrides[key] not in (None, ""):

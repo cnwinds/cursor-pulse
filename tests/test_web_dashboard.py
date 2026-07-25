@@ -88,6 +88,9 @@ def test_system_integrations(dash_client):
     assert res.status_code == 200
     body = res.json()
     assert "dingtalk" in body
+    assert "feishu" in body
+    assert "bot_platform" in body
+    assert "im_group_configured" in body
     assert "pulse_llm" in body
     assert "assistant_llm" in body
     assert "runtime_note" in body

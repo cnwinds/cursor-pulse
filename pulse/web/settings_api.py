@@ -19,14 +19,19 @@ from pulse.web.settings_store import (
 def register_settings_routes(app, config: AppConfig, get_db, require_capability, team_repo_fn):
     @app.get("/api/config/summary", dependencies=[Depends(require_capability("settings:read"))])
     def config_summary(session: Session = Depends(get_db)):
+        from pulse.web.channel_status import resolve_im_group_status
+
         team, _repo = team_repo_fn(session)
         effective = settings_for_api(config, session, team.id)
-        dingtalk = effective.get("dingtalk", {})
+        im_status = resolve_im_group_status(effective)
         return {
             "current_period": current_period(config),
             "team_slug": config.tenant.slug,
             "timezone": effective["collection"]["timezone"],
-            "group_configured": bool(dingtalk.get("group_open_conversation_id")),
+            "bot_platform": im_status["bot_platform"],
+            "im_group_configured": im_status["im_group_configured"],
+            # 兼容旧前端字段名
+            "group_configured": im_status["im_group_configured"],
             "llm_report": effective["llm"]["enabled"],
             "llm_vision": effective["llm"]["vision_enabled"],
             "alerts_enabled": effective["alerts"]["enabled"],
