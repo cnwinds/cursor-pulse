@@ -164,10 +164,20 @@ def resolve_on_demand_notify_dingtalk_ids(
         if not member:
             logger.warning("on-demand notify: member %s not found", mid)
             continue
-        uid = (member.channel_user_id or "").strip()
+        from pulse.identity.service import external_id_for
+
+        uid = (
+            external_id_for(session, member, "dingtalk")
+            or external_id_for(session, member, "feishu")
+            or (
+                (member.channel_user_id or "").strip()
+                if (member.channel or "") in ("dingtalk", "feishu")
+                else ""
+            )
+        )
         if not uid:
             logger.warning(
-                "on-demand notify: member %s has no channel_user_id", mid
+                "on-demand notify: member %s has no IM identity", mid
             )
             continue
         if uid in seen:

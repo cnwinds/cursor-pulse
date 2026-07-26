@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
@@ -148,17 +148,28 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         return _oauth_pending_or_auth(config=config, session=session, member=member)
 
     @app.post("/api/auth/login")
-    def password_login(body: PasswordLoginBody, session: Session = Depends(get_db)):
+    def password_login(
+        body: PasswordLoginBody,
+        request: Request,
+        session: Session = Depends(get_db),
+    ):
         import hmac
 
         from pulse.identity.service import resolve_member
-        from pulse.web.passwords import looks_like_password_hash, verify_password
+        from pulse.web.login_throttle import check_login_allowed, record_login_attempt
+        from pulse.web.passwords import hash_password, looks_like_password_hash, verify_password
         from pulse.web.permissions import can_access_portal
         from pulse.web.portal import ADMIN_LOGIN_USERNAME, ensure_admin_member
 
         username = (body.username or "").strip()
         if not username or not body.password:
             raise HTTPException(status_code=401, detail="账号或密码错误")
+
+        client_ip = request.client.host if request.client else None
+        throttled = check_login_allowed(ip=client_ip, username=username)
+        if throttled:
+            raise HTTPException(status_code=429, detail=throttled)
+        record_login_attempt(ip=client_ip, username=username)
 
         team, repo = team_repo_fn(session)
         member = resolve_member(
@@ -179,6 +190,8 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
 
         # Bootstrap: env ADMIN_PASSWORD for reserved admin username only.
         if username != ADMIN_LOGIN_USERNAME:
+            # Equalize timing vs hash verify on the miss path.
+            verify_password(body.password, hash_password("timing-dummy-not-a-real-user"))
             raise HTTPException(status_code=401, detail="账号或密码错误")
         if not config.web.admin_password:
             raise HTTPException(status_code=503, detail="未配置超管密码（ADMIN_PASSWORD）")
@@ -194,8 +207,6 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         if not member.password_hash and looks_like_password_hash(stored):
             member.password_hash = stored
         elif not member.password_hash:
-            from pulse.web.passwords import hash_password
-
             member.password_hash = hash_password(body.password)
         member.last_portal_login_at = datetime.now(timezone.utc)
         session.commit()

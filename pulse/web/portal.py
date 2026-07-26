@@ -124,7 +124,13 @@ def reconcile_oauth_member(
     legacy = [row for row in rows if looks_like_open_id(row.channel_user_id)]
     if len(legacy) != 1:
         return None
+    from pulse.identity.service import ensure_identity
+
     legacy[0].channel_user_id = enterprise_userid
+    legacy[0].channel = "dingtalk"
+    ensure_identity(
+        repo.session, legacy[0], channel="dingtalk", external_id=enterprise_userid
+    )
     repo.session.flush()
     return legacy[0]
 
@@ -135,6 +141,8 @@ def _cleanup_legacy_oauth_duplicates(
     display_name: str,
     keep_id: str,
 ) -> None:
+    from pulse.identity.service import list_identities
+
     rows = list(
         repo.session.scalars(
             select(Member).where(
@@ -147,6 +155,9 @@ def _cleanup_legacy_oauth_duplicates(
         if row.id == keep_id:
             continue
         if looks_like_open_id(row.channel_user_id) and not row.ingestions:
+            for identity in list_identities(repo.session, row.id):
+                repo.session.delete(identity)
+            repo.session.flush()
             repo.session.delete(row)
     repo.session.flush()
 
@@ -373,8 +384,6 @@ def create_local_portal_user(
         username = validate_web_username(username)
     except IdentityError as exc:
         raise PortalAdminError(str(exc)) from exc
-    if username.lower() == ADMIN_LOGIN_USERNAME:
-        raise PortalAdminError(f"用户名 {ADMIN_LOGIN_USERNAME} 为系统保留名")
     if resolve_member(session, team_id, channel="web", external_id=username):
         raise PortalAdminError(f"用户名已存在: {username}")
     name = (display_name or "").strip() or username

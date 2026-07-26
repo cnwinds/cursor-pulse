@@ -2,6 +2,7 @@
 
 from pulse.identity.service import (
     ensure_identity,
+    external_id_for,
     link_identity,
     list_identities,
     merge_members,
@@ -12,6 +13,7 @@ from pulse.identity.service import (
 
 __all__ = [
     "ensure_identity",
+    "external_id_for",
     "link_identity",
     "list_identities",
     "merge_members",

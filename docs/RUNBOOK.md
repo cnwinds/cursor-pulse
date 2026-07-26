@@ -36,7 +36,8 @@ pulse web
 ```
 
 登录后在 **用户管理 → 创建用户** 添加本地账号（用户名 + 密码），并在台账中选为负责人。  
-`ADMIN_PASSWORD` 仅用于首次 bootstrap / 超管 `admin`；已设 `password_hash` 的用户以库内密码为准。
+`ADMIN_PASSWORD` 仅用于首次 bootstrap / 超管 `admin`；已设 `password_hash` 的用户以库内密码为准。  
+首次用 `ADMIN_PASSWORD` 成功登录后会写入 `admin` 的 `password_hash`，之后以库内密码为准——轮换环境变量不会自动改库，需在用户管理「设密码」或 `pulse admin bootstrap` 更新。
 
 ### 2.0b 门户身份三种路径
 

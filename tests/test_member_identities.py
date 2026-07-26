@@ -347,7 +347,185 @@ def test_merge_keeps_higher_portal_role(identity_client):
     session.flush()
     ensure_identity(session, keep, channel="web", external_id="keep3")
     ensure_identity(session, drop, channel="dingtalk", external_id="dt-drop3")
-    merged = merge_members(session, keep=keep, drop=drop)
+    # Actor is owner so promotion to owner is allowed.
+    merged = merge_members(session, keep=keep, drop=drop, actor=_owner)
     session.commit()
     assert merged.portal_role == "owner"
+    session.close()
+
+
+def test_set_password_keeps_dingtalk_primary_cache(identity_client):
+    client, config, owner, team_id, sf = identity_client
+    token = create_access_token(config, owner)
+    headers = {"Authorization": f"Bearer {token}"}
+    session = sf()
+    im_user = Member(
+        team_id=team_id,
+        channel="dingtalk",
+        channel_user_id="dt-keep-im",
+        display_name="ImUser",
+        status="active",
+        portal_status="active",
+        portal_role="operator",
+    )
+    session.add(im_user)
+    session.flush()
+    ensure_identity(session, im_user, channel="dingtalk", external_id="dt-keep-im")
+    member_id = im_user.id
+    session.commit()
+    session.close()
+
+    res = client.put(
+        f"/api/portal/users/{member_id}/password",
+        headers=headers,
+        json={"password": "im-secret1", "username": "imuser"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["channel"] == "dingtalk"
+    assert body["channel_user_id"] == "dt-keep-im"
+
+    session = sf()
+    from pulse.identity.service import external_id_for
+
+    member = session.get(Member, member_id)
+    assert external_id_for(session, member, "dingtalk") == "dt-keep-im"
+    assert external_id_for(session, member, "web") == "imuser"
+    session.close()
+
+
+def test_merge_rewrites_ledger_primary(identity_client):
+    _client, _config, owner, team_id, sf = identity_client
+    session = sf()
+    keep = Member(
+        team_id=team_id,
+        channel="web",
+        channel_user_id="keep-ledger",
+        display_name="KeepL",
+        status="active",
+        portal_status="active",
+        portal_role="operator",
+    )
+    drop = Member(
+        team_id=team_id,
+        channel="dingtalk",
+        channel_user_id="dt-ledger",
+        display_name="DropL",
+        status="active",
+    )
+    session.add_all([keep, drop])
+    session.flush()
+    ensure_identity(session, keep, channel="web", external_id="keep-ledger")
+    ensure_identity(session, drop, channel="dingtalk", external_id="dt-ledger")
+    vendor = AiVendor(slug="cursor-ledger-test", name="Cursor")
+    session.add(vendor)
+    session.flush()
+    plan = AiPlan(
+        vendor_id=vendor.id,
+        plan_name="Pro",
+        slug="pro-ledger",
+        billing_type="subscription",
+        price_amount=20,
+        price_currency="USD",
+    )
+    session.add(plan)
+    session.flush()
+    account = AiAccount(
+        team_id=team_id,
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        account_identifier="ledger@example.com",
+        primary_member_id=drop.id,
+    )
+    session.add(account)
+    session.flush()
+    account_id = account.id
+    drop_id = drop.id
+    keep_id = keep.id
+    merge_members(session, keep=keep, drop=drop, actor=owner)
+    session.commit()
+    session.expire_all()
+    assert session.get(AiAccount, account_id).primary_member_id == keep_id
+    assert session.get(Member, drop_id) is None
+    session.close()
+
+
+def test_cleanup_legacy_oauth_deletes_identities(identity_client):
+    _client, _config, _owner, team_id, sf = identity_client
+    session = sf()
+    from pulse.storage.repository import Repository
+    from pulse.web.portal import _cleanup_legacy_oauth_duplicates
+
+    keep = Member(
+        team_id=team_id,
+        channel="dingtalk",
+        channel_user_id="enterprise-uid-1",
+        display_name="SameName",
+        status="active",
+    )
+    legacy = Member(
+        team_id=team_id,
+        channel="dingtalk",
+        channel_user_id="openidLegacyABC",
+        display_name="SameName",
+        status="active",
+    )
+    session.add_all([keep, legacy])
+    session.flush()
+    ensure_identity(session, keep, channel="dingtalk", external_id="enterprise-uid-1")
+    ensure_identity(session, legacy, channel="dingtalk", external_id=legacy.channel_user_id)
+    legacy_id = legacy.id
+    repo = Repository(session, team_id)
+    _cleanup_legacy_oauth_duplicates(repo, display_name="SameName", keep_id=keep.id)
+    session.commit()
+    assert session.get(Member, legacy_id) is None
+    assert (
+        session.scalars(
+            select(MemberIdentity).where(MemberIdentity.member_id == legacy_id)
+        ).first()
+        is None
+    )
+    session.close()
+
+
+def test_link_reserved_admin_username_rejected(identity_client):
+    client, config, owner, _team_id, _sf = identity_client
+    token = create_access_token(config, owner)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = client.post(
+        "/api/portal/users",
+        headers=headers,
+        json={
+            "username": "eve",
+            "display_name": "Eve",
+            "password": "eve-secret",
+            "portal_role": "operator",
+        },
+    ).json()
+    res = client.post(
+        f"/api/portal/users/{created['id']}/identities",
+        headers=headers,
+        json={"channel": "web", "external_id": "admin", "merge": False},
+    )
+    assert res.status_code == 400
+    assert "保留" in res.json()["detail"]
+
+
+def test_merge_rejects_dropping_actor(identity_client):
+    _client, _config, owner, team_id, sf = identity_client
+    session = sf()
+    other = Member(
+        team_id=team_id,
+        channel="web",
+        channel_user_id="other-keep",
+        display_name="Other",
+        status="active",
+        portal_status="active",
+        portal_role="operator",
+    )
+    session.add(other)
+    session.flush()
+    ensure_identity(session, other, channel="web", external_id="other-keep")
+    with pytest.raises(IdentityError, match="当前登录"):
+        merge_members(session, keep=other, drop=owner, actor=owner)
     session.close()

@@ -21,13 +21,19 @@ from pulse.web.schemas import (
 )
 
 
-def _portal_user_row(member: Member, session: Session | None = None) -> dict:
-    identities: list[dict] = []
+def _portal_user_row(
+    member: Member,
+    session: Session | None = None,
+    *,
+    identities: list[dict] | None = None,
+) -> dict:
     has_password = bool(member.password_hash)
-    if session is not None:
-        from pulse.identity.service import identities_payload
+    if identities is None:
+        identities = []
+        if session is not None:
+            from pulse.identity.service import identities_payload
 
-        identities = identities_payload(session, member)
+            identities = identities_payload(session, member)
     return {
         "id": member.id,
         "display_name": member.display_name,
@@ -43,6 +49,28 @@ def _portal_user_row(member: Member, session: Session | None = None) -> dict:
         ),
         "created_at": member.created_at.isoformat(),
     }
+
+
+def _portal_user_rows(session: Session, members: list[Member]) -> list[dict]:
+    by_member: dict[str, list[dict]] = {m.id: [] for m in members}
+    if members:
+        from sqlalchemy import select
+
+        from pulse.storage.models import MemberIdentity
+
+        ids = [m.id for m in members]
+        rows = session.scalars(
+            select(MemberIdentity)
+            .where(MemberIdentity.member_id.in_(ids))
+            .order_by(MemberIdentity.channel.asc(), MemberIdentity.external_id.asc())
+        ).all()
+        for row in rows:
+            by_member.setdefault(row.member_id, []).append(
+                {"channel": row.channel, "external_id": row.external_id}
+            )
+    return [
+        _portal_user_row(m, session, identities=by_member.get(m.id, [])) for m in members
+    ]
 
 
 def _portal_directory_row(member: Member) -> dict:
@@ -77,10 +105,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         from pulse.web.portal import list_pending_portal_users
 
         team, _ = team_repo_fn(session)
-        return [
-            _portal_user_row(m, session)
-            for m in list_pending_portal_users(session, team.id)
-        ]
+        return _portal_user_rows(session, list_pending_portal_users(session, team.id))
 
     @app.get(
         "/api/portal/users",
@@ -90,9 +115,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         from pulse.web.portal import list_portal_users
 
         team, _ = team_repo_fn(session)
-        return [
-            _portal_user_row(m, session) for m in list_portal_users(session, team.id)
-        ]
+        return _portal_user_rows(session, list_portal_users(session, team.id))
 
     @app.post(
         "/api/portal/users",
@@ -251,12 +274,21 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("admin:users")),
     ):
-        from pulse.identity.service import IdentityError, link_identity
+        from pulse.identity.service import IdentityError, link_identity, resolve_member
 
         team, _ = team_repo_fn(session)
         member = session.get(Member, member_id)
         if member is None or member.team_id != team.id:
             raise HTTPException(404, detail="成员不存在")
+        drop_snapshot = None
+        if body.merge:
+            other = resolve_member(
+                session, team.id, channel=body.channel, external_id=body.external_id
+            )
+            if other is not None and other.id != member.id:
+                drop_snapshot = (
+                    f"drop={other.id}/{other.display_name}/role={other.portal_role}"
+                )
         try:
             member = link_identity(
                 session,
@@ -264,17 +296,20 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
                 channel=body.channel,
                 external_id=body.external_id,
                 merge_if_taken=body.merge,
+                actor=user.member,
             )
         except IdentityError as exc:
             raise HTTPException(400, detail=str(exc)) from exc
+        detail = f"{member.id} + {body.channel}:{body.external_id}"
+        if body.merge:
+            detail += f" merge {drop_snapshot or ''} -> role={member.portal_role}"
         log_admin_action(
             session,
             team_id=team.id,
             member_id=user.member.id,
             action="portal.user.link_identity",
             capability="admin:users",
-            detail=f"{member.id} + {body.channel}:{body.external_id}"
-            + (" merge" if body.merge else ""),
+            detail=detail,
         )
         session.commit()
         return _portal_user_row(member, session)

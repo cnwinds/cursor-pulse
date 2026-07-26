@@ -30,6 +30,7 @@ def test_feishu_oauth_listed_when_credentials_present():
     )
     providers = list_auth_providers(cfg)
     by_id = {p["id"]: p for p in providers}
-    assert by_id["password"]["enabled"] is False
+    # Password login stays available for local users even without ADMIN_PASSWORD.
+    assert by_id["password"]["enabled"] is True
     assert by_id["feishu_oauth"]["enabled"] is True
     assert by_id["feishu_oauth"]["login_url_path"] == "/api/auth/feishu/login-url"

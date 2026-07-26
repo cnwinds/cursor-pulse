@@ -136,7 +136,7 @@
         <el-form-item label="角色">
           <el-select v-model="createForm.portal_role" style="width: 100%">
             <el-option
-              v-for="role in roles"
+              v-for="role in createRoles"
               :key="role.id"
               :label="role.label"
               :value="role.id"
@@ -401,6 +401,7 @@ const saving = ref(false)
 const pendingUsers = ref<PortalUserRow[]>([])
 const activeUsers = ref<PortalUserRow[]>([])
 const roles = ref<RoleDef[]>([])
+const createRoles = computed(() => roles.value.filter((r) => r.id !== 'custom'))
 const dingtalkAppConfigured = ref(false)
 const dingtalkDirectoryAvailable = computed(() => dingtalkAppConfigured.value)
 const createVisible = ref(false)

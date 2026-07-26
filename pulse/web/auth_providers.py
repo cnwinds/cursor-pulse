@@ -23,7 +23,8 @@ def list_auth_providers(config: AppConfig) -> list[dict[str, Any]]:
             "id": "password",
             "label": "本地密码",
             "kind": "password",
-            "enabled": bool((config.web.admin_password or "").strip()),
+            # Local users may exist without ADMIN_PASSWORD; login validates per-account.
+            "enabled": True,
         }
     ]
     if (config.dingtalk.app_key or "").strip() and (config.dingtalk.app_secret or "").strip():

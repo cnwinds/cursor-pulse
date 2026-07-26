@@ -708,7 +708,10 @@ def _migrate_member_identities_table(engine: Engine) -> None:
                     "member_id": member_id,
                     "channel": ch,
                     "external_id": ext,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    # Match SQLAlchemy SQLite DateTime bind format (naive UTC).
+                    "created_at": datetime.now(timezone.utc)
+                    .replace(tzinfo=None)
+                    .strftime("%Y-%m-%d %H:%M:%S.%f"),
                 },
             )
             created += 1
