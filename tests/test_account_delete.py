@@ -24,10 +24,10 @@ def account_env(session):
     seed_v2_catalog(session, team)
     session.commit()
     tool_repo = ToolCenterRepository(session, team.id)
-    zhipu_vendor = next(v for v in tool_repo.list_vendors() if v.slug == "zhipu")
-    plan = next(p for p in tool_repo.list_plans(zhipu_vendor.id))
+    cursor_vendor = next(v for v in tool_repo.list_vendors() if v.slug == "cursor")
+    plan = next(p for p in tool_repo.list_plans(cursor_vendor.id))
     account = tool_repo.create_account(
-        vendor_id=zhipu_vendor.id,
+        vendor_id=cursor_vendor.id,
         plan_id=plan.id,
         account_identifier="delete-me@test.com",
         status="trial",

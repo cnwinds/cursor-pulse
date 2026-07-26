@@ -20,10 +20,6 @@ topics:
     topic_key: unbind
     label: 解绑 Key
     aliases: [unbind, 解绑, 解绑key, 解绑 key]
-  - skill_id: usage.other/overview
-    topic_key: manual
-    label: 上报
-    aliases: [manual, 上报, 用量, 截图, 手工上报]
   - skill_id: key.loan/tasks/borrow
     topic_key: borrow
     label: 借 Key
@@ -48,30 +44,14 @@ topics:
     topic_key: tip
     label: 心得
     aliases: [tip, 心得, 技巧, 分享, 技巧库]
-  - skill_id: team.admin/tasks/report
-    topic_key: report
-    label: 报告
-    aliases: [report, 报告, 月报]
   - skill_id: team.admin/tasks/status
     topic_key: status
     label: 状态
     aliases: [status, 状态, 提交进度]
-  - skill_id: team.admin/tasks/aggregate
-    topic_key: aggregate
-    label: 聚合
-    aliases: [aggregate, 聚合]
   - skill_id: team.admin/tasks/members
     topic_key: members
     label: 成员
     aliases: [members, 成员]
-  - skill_id: team.admin/tasks/alerts
-    topic_key: alerts
-    label: 告警
-    aliases: [alerts, 告警]
-  - skill_id: team.admin/tasks/export
-    topic_key: export
-    label: 导出
-    aliases: [export, 导出]
   - skill_id: team.admin/tasks/guide-image
     topic_key: guide_image
     label: 设置引导图

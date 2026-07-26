@@ -20,16 +20,11 @@ from pulse.capabilities.handlers.knowledge_tip import (
 )
 from pulse.capabilities.handlers.quota_self_read import handle_quota_self_read
 from pulse.capabilities.handlers.text_capabilities import (
-    handle_alerts_run,
     handle_bot_help,
     handle_cursor_key_unbind,
     handle_members_manage,
-    handle_report_publish,
     handle_submission_self_read,
     handle_submission_status_read,
-    handle_usage_aggregate,
-    handle_usage_export,
-    handle_usage_manual_submit,
 )
 from pulse.capabilities.handlers.usage_query import handle_usage_query
 from pulse.capabilities.handlers.usage_self_read import handle_usage_self_read
@@ -47,14 +42,9 @@ HANDLERS: dict[tuple[str, str], Handler] = {
     ("submission.status.read", "1"): handle_submission_status_read,
     ("usage.self.read", "1"): handle_usage_self_read,
     ("usage.query", "1"): handle_usage_query,
-    ("usage.manual.submit", "1"): handle_usage_manual_submit,
-    ("usage.aggregate", "1"): handle_usage_aggregate,
-    ("usage.export", "1"): handle_usage_export,
     ("cursor.key.bind", "1"): handle_cursor_key_bind,
     ("cursor.key.unbind", "1"): handle_cursor_key_unbind,
-    ("report.publish", "1"): handle_report_publish,
     ("members.manage", "1"): handle_members_manage,
-    ("alerts.run", "1"): handle_alerts_run,
     ("key.loan.request", "1"): handle_key_loan_request,
     ("key.loan.return", "1"): handle_key_loan_return,
     ("key.loan.self.read", "1"): handle_key_loan_self_read,

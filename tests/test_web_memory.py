@@ -66,7 +66,6 @@ def test_audit_logs(memory_client):
     assert res.status_code == 200
     body = res.json()
     assert "admin_actions" in body
-    assert "alerts" in body
 
 
 def test_portal_grant(memory_client):

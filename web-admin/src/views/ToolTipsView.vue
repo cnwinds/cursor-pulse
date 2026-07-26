@@ -83,7 +83,7 @@ const periodOptions = computed(() => {
 })
 
 const canWrite = computed(() => auth.hasPermission('knowledge:write'))
-const canPublish = computed(() => auth.hasPermission('reports:publish'))
+const canPublish = computed(() => auth.hasPermission('knowledge:write'))
 
 async function load() {
   loading.value = true

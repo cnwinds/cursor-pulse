@@ -9,14 +9,11 @@ from pulse.storage.models import AiAccount, AiPlan, AiVendor, Team
 
 
 def seed_v2_catalog(session: Session, team: Team) -> dict[str, int]:
-    """预置厂家、套餐与 3 个 Cursor Pro+ 试用账号。幂等：按 slug 跳过已存在记录。"""
+    """预置 Cursor 厂家、套餐与 3 个 Pro+ 试用账号。幂等：按 slug 跳过已存在记录。"""
     counts = {"vendors": 0, "plans": 0, "accounts": 0}
 
     vendors_spec = [
         ("cursor", "Cursor", "https://cursor.com/docs/models-and-pricing"),
-        ("zhipu", "智谱", "https://open.bigmodel.cn"),
-        ("minimax", "MiniMax", "https://platform.minimax.io/docs/pricing/overview"),
-        ("codex", "Codex (OpenAI)", "https://developers.openai.com/codex/pricing"),
     ]
     vendor_ids: dict[str, str] = {}
     for slug, name, website in vendors_spec:
@@ -67,42 +64,6 @@ def seed_v2_catalog(session: Session, team: Team) -> dict[str, int]:
             True,
             400.0,
             ["api_key"],
-        ),
-        (
-            "zhipu",
-            "glm_coding_lite",
-            "GLM Coding Lite",
-            "subscription_quota",
-            49,
-            "CNY",
-            {"mcp_calls_per_month": 100},
-            False,
-            None,
-            ["screenshot", "manual"],
-        ),
-        (
-            "minimax",
-            "token_plus",
-            "Token Plan Plus",
-            "subscription_quota",
-            20,
-            "USD",
-            {"estimated_calls_per_month": 34000},
-            False,
-            None,
-            ["screenshot", "manual"],
-        ),
-        (
-            "codex",
-            "chatgpt_plus",
-            "ChatGPT Plus (Codex)",
-            "rolling_window",
-            20,
-            "USD",
-            {"local_messages_per_5h": {"min": 15, "max": 80}},
-            False,
-            None,
-            ["screenshot", "manual"],
         ),
     ]
 
@@ -171,7 +132,7 @@ def seed_v2_catalog(session: Session, team: Team) -> dict[str, int]:
                 account_identifier=identifier,
                 ownership="company",
                 status="trial",
-                shared_note="试用池共享账号，请指定主使用人后提交用量",
+                shared_note="试用池共享账号，请指定主使用人并绑定 API Key",
             )
         )
         counts["accounts"] += 1

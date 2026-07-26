@@ -119,7 +119,7 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
     _op(
         "submission.self.read",
         "查看本人提交",
-        "查看本人当前账期的用量提交状态（含 Cursor 自动同步与非 Cursor 手工上报）。",
+        "查看本人当前账期的 Cursor 用量提交状态（API Key 自动同步）。",
     ),
     _op(
         "usage.self.read",
@@ -142,34 +142,9 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
         "基于已同步或已上报的数据，由大模型理解自然语言问题并回答本人或团队用量（排名、模型分布、合计等）。",
     ),
     _op(
-        "usage.aggregate",
-        "用量聚合",
-        "重新聚合指定账期的团队用量数据，仅管理员可用。",
-        risk_level="write",
-    ),
-    _op(
-        "report.publish",
-        "发布月报",
-        "生成团队月报；默认仅私聊预览，不发群，仅管理员可用。",
-        risk_level="write",
-        timeout_seconds=120.0,
-    ),
-    _op(
         "members.manage",
         "成员管理",
-        "查看或维护团队成员与催办名单，仅管理员可用。",
-        risk_level="write",
-    ),
-    _op(
-        "alerts.run",
-        "异常告警",
-        "运行团队用量异常检测并输出告警，仅管理员可用。",
-        risk_level="write",
-    ),
-    _op(
-        "usage.export",
-        "导出用量",
-        "导出团队用量 CSV，仅管理员可用。",
+        "查看或维护团队成员名单，仅管理员可用。",
         risk_level="write",
     ),
     _op(
@@ -234,12 +209,6 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
         },
     ),
     _op(
-        "usage.manual.submit",
-        "手工上报",
-        "上报非 Cursor 工具用量（文本或截图识别），提交后直接入库计入统计；Cursor 请绑定 Key 自动同步。",
-        risk_level="write",
-    ),
-    _op(
         "knowledge.tip.create",
         "提交技巧",
         (
@@ -264,7 +233,7 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
                 },
                 "vendor_slug": {
                     "type": "string",
-                    "description": "关联工具：cursor/zhipu/minimax/codex，可选",
+                    "description": "关联工具：cursor，可选",
                 },
                 "period": {"type": "string", "description": "账期 YYYY-MM，可选"},
             },
@@ -404,7 +373,6 @@ SELF_SERVICE_KEYS = [
     "key.loan.request",
     "key.loan.return",
     "key.loan.self.read",
-    "usage.manual.submit",
     "knowledge.tip.create",
     "knowledge.tip.list",
     "knowledge.tip.read",
@@ -415,11 +383,7 @@ SELF_SERVICE_KEYS = [
 OWNER_EXTRA_KEYS = [
     "submission.status.read",
     "guide_image.update",
-    "usage.aggregate",
-    "report.publish",
     "members.manage",
-    "alerts.run",
-    "usage.export",
     "key.loan.list",
     "key.loan.revoke",
 ]

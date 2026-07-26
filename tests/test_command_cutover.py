@@ -29,83 +29,6 @@ def _invoke_request(*, member_id: str, team_id: str, capability_key: str, argume
     )
 
 
-def test_owner_can_publish_report_without_dingtalk_admin_ids():
-    session = init_db("sqlite:///:memory:")()
-    try:
-        _team, repo = make_team_repo(session)
-        member = repo.add_member("owner-user", "Owner")
-        member.portal_role = "owner"
-        repo.commit()
-
-        config = AppConfig(tenant=TenantConfig(slug="test", name="Test"))
-        config.admin.channel_user_ids = []
-
-        with patch(
-            "pulse.capabilities.handlers.text_capabilities.publish_report_to_group",
-            return_value="月报正文",
-        ):
-            result = invoke_capability(
-                session,
-                request=_invoke_request(
-                    member_id=member.id,
-                    team_id=repo.team_id,
-                    capability_key="report.publish",
-                    arguments={"period": "2026-07"},
-                ),
-                config=config,
-            )
-
-        assert result.status == "succeeded"
-        assert "无权限" not in _msg(result)
-        assert "暂未发群" in _msg(result)
-        assert "月报正文" in _msg(result)
-    finally:
-        session.close()
-
-
-def test_owner_can_publish_report_to_group_when_enabled():
-    session = init_db("sqlite:///:memory:")()
-    try:
-        _team, repo = make_team_repo(session)
-        member = repo.add_member("owner-user", "Owner")
-        member.portal_role = "owner"
-        repo.commit()
-
-        config = AppConfig(
-            tenant=TenantConfig(slug="test", name="Test"),
-            collection=CollectionConfig(publish_report_to_group=True),
-        )
-        config.admin.channel_user_ids = []
-        messenger = MagicMock()
-
-        messenger = MagicMock()
-        with (
-            patch(
-                "pulse.capabilities.handlers.text_capabilities.publish_report_to_group",
-                return_value="月报正文",
-            ),
-            patch(
-                "pulse.capabilities.handlers.text_capabilities._optional_messenger",
-                return_value=messenger,
-            ),
-        ):
-            result = invoke_capability(
-                session,
-                request=_invoke_request(
-                    member_id=member.id,
-                    team_id=repo.team_id,
-                    capability_key="report.publish",
-                    arguments={"period": "2026-07"},
-                ),
-                config=config,
-            )
-
-        assert result.status == "succeeded"
-        assert "无权限" not in _msg(result)
-        assert "月报已发布" in _msg(result)
-    finally:
-        session.close()
-
 from assistant_platform.conversation.intents import match_capability_intent
 from pulse.channels.commands import _looks_like_help, _looks_like_self_loan_read
 from pulse.channels.dingtalk.handler import DingTalkChannelHandler
@@ -126,12 +49,7 @@ from tests.conftest import make_team_repo
         ("你能提供什么帮助", None),
         ("我的用量", "usage.self.read"),
         ("查询 我的用量", None),
-        ("聚合 2026-07", "usage.aggregate"),
-        ("报告", "report.publish"),
         ("成员", "members.manage"),
-        ("告警", "alerts.run"),
-        ("导出", "usage.export"),
-        ("上报 智谱 85", "usage.manual.submit"),
         ("借 Key 不够用了", None),
         ("归还 Key", "key.loan.return"),
         ("我的借用", "key.loan.self.read"),

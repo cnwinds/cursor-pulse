@@ -1,17 +1,11 @@
 from __future__ import annotations
 
 from pulse.ingestion.adapters.cursor_api import CursorApiAdapter
-from pulse.ingestion.adapters.manual_csv import ManualCsvAdapter
-from pulse.ingestion.adapters.manual_text import ManualTextAdapter
-from pulse.ingestion.adapters.manual_vision import ManualVisionAdapter
 from pulse.ingestion.protocols import IngestionAdapter
 from pulse.ingestion.types import IngestionContext
 
 DEFAULT_ADAPTERS: list[IngestionAdapter] = [
     CursorApiAdapter(),
-    ManualCsvAdapter(),
-    ManualVisionAdapter(),
-    ManualTextAdapter(),
 ]
 
 

@@ -11,10 +11,7 @@ from sqlalchemy import select
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.key_loan import handle_key_loan_request
-from pulse.capabilities.handlers.text_capabilities import (
-    handle_report_publish,
-    handle_submission_self_read,
-)
+from pulse.capabilities.handlers.text_capabilities import handle_submission_self_read
 from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.routing_metrics import reset, snapshot
 from pulse.config import AppConfig, TenantConfig
@@ -63,37 +60,6 @@ def test_handle_submission_self_read_no_record():
         )
         assert result.status == "succeeded"
         assert "暂无提交记录" in _msg(result)
-    finally:
-        session.close()
-
-
-def test_handle_report_publish_owner_preview():
-    session = init_db("sqlite:///:memory:")()
-    try:
-        team, repo = _team_repo(session)
-        member = repo.add_member("owner-user", "Owner")
-        member.portal_role = "owner"
-        repo.commit()
-        config = AppConfig(tenant=TenantConfig(slug="test", name="Test"))
-        config.admin.channel_user_ids = []
-        with patch(
-            "pulse.capabilities.handlers.text_capabilities.publish_report_to_group",
-            return_value="月报正文",
-        ):
-            result = handle_report_publish(
-                session,
-                request=_request(
-                    member_id=member.id,
-                    team_id=team.id,
-                    capability_key="report.publish",
-                    arguments={"text": "报告 2026-07"},
-                ),
-                config=config,
-                op={},
-            )
-        assert result.status == "succeeded"
-        assert "暂未发群" in _msg(result)
-        assert "月报正文" in _msg(result)
     finally:
         session.close()
 

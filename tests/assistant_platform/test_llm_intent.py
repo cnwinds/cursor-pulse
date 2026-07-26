@@ -54,7 +54,7 @@ def test_normalize_rejects_unknown_key():
     allowed = {c.key: c for c in _caps()}
     raw = IntentClassification(
         decision="capability",
-        capability_key="usage.export",
+        capability_key="unknown.capability",
         confidence=0.9,
         clarify_question="",
         needs_args=False,

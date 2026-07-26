@@ -24,9 +24,9 @@ def owner_member():
     return owner
 
 
-def test_plan_nudge_with_permission(owner_member):
-    plans = _plan_with_rules("帮我催一下没交的人", owner_member, DEFAULT_ROUTER)
-    assert any(p[0] == "nudge_unsubmitted" for p in plans)
+def test_plan_send_group_tip_with_permission(owner_member):
+    plans = _plan_with_rules("在群里发个提醒：记得绑定 Key", owner_member, DEFAULT_ROUTER)
+    assert any(p[0] == "send_group_tip" for p in plans)
 
 
 def test_plan_denied_without_portal():
@@ -41,7 +41,9 @@ def test_plan_denied_without_portal():
     assert plans == []
 
 
-def test_admin_tool_router_still_has_nudge(owner_member):
-    assert "nudge_unsubmitted" in DEFAULT_ROUTER._tools
+def test_admin_tool_router_has_current_tools(owner_member):
+    assert "send_group_tip" in DEFAULT_ROUTER._tools
+    assert "run_evolution" in DEFAULT_ROUTER._tools
+    assert "nudge_unsubmitted" not in DEFAULT_ROUTER._tools
     assert "list_pending_reviews" not in DEFAULT_ROUTER._tools
     assert "confirm_ingestion" not in DEFAULT_ROUTER._tools

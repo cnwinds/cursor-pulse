@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pulse.channels.base import NullMessenger
+from pulse.channels.base import NullMessenger, messenger_delivered
 from pulse.channels.commands_common import channel_member
 from pulse.channels.inbound import InboundMessage, dispatch_text_command
-from pulse.channels.reminders.scheduler import _send_ok
 from pulse.config import AppConfig, BotPlatformConfig
 from pulse.storage.db import init_db
 from pulse.web.portal import get_team_member, identity_channel_for_config, sync_portal_owners_from_config
@@ -88,7 +87,7 @@ def test_channel_member_respects_channel(tmp_path):
     session.close()
 
 
-def test_send_ok_false_for_null_messenger_skip():
-    assert _send_ok({"ok": True, "skipped": True}) is False
-    assert _send_ok(None) is True
-    assert _send_ok({"ok": True}) is True
+def test_messenger_delivered_false_for_null_messenger_skip():
+    assert messenger_delivered({"ok": True, "skipped": True}) is False
+    assert messenger_delivered(None) is True
+    assert messenger_delivered({"ok": True}) is True

@@ -1,11 +1,11 @@
 # 架构说明
 
-Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可选 Assistant 与可选数据面。
+Cursor Pulse 是**自托管 monorepo**：Cursor 控制面 + 可选 IM + 可选 Assistant + 可选数据面（MITM Proxy）。
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  web-admin  │────▶│  Pulse web API   │◀────│ Channel runtime │
-│  (Vue SPA)  │     │  + 调度 / 能力桥  │     │ none/dingtalk/  │
+│  (Vue SPA)  │     │  + sync / loans  │     │ none/dingtalk/  │
 └─────────────┘     └────────┬─────────┘     │ feishu          │
                              │ 内部 HTTP      └─────────────────┘
                     ┌────────▼─────────┐
@@ -17,14 +17,14 @@ Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可�
                     └──────────────────┘
 ```
 
-身份模型：`Member` 表示人（台账 / 门户角色 / 密码）；`MemberIdentity`（`channel` + `external_id`）表示登录与 IM 寻址键。一人可绑定 web / 钉钉 / 飞书 多身份。`Member.channel` / `channel_user_id` 为展示用冗余缓存。业务逻辑通过 `resolve_member` 查找，不直接依赖某一 IM SDK。
+身份模型：`Member` 表示人（台账 / 门户角色 / 密码）；`MemberIdentity`（`channel` + `external_id`）表示登录与 IM 寻址键。一人可绑定 web / 钉钉 / 飞书 多身份。业务逻辑通过 `resolve_member` 查找，不直接依赖某一 IM SDK。
 
 ## 进程
 
 | 进程 | 启动方式 | 默认端口 | 职责 |
 |------|----------|----------|------|
 | Pulse web | `pulse web` | `:8080` | 门户 JWT API、内部 Provider、静态管理后台 |
-| Channel | `pulse channel` | — | IM 入站（可选）+ 定时任务；`BOT_PLATFORM=none` 时仅调度保活 |
+| Channel | `pulse channel` | — | 可选 IM 入站 + **Cursor 同步 tick / 借 Key 过期**；`BOT_PLATFORM=none` 时仅调度 |
 | Assistant | `python -m assistant_platform serve` | `:8090` | 会话 / 技能 / 能力调用（开启镜像时） |
 | 管理 UI（开发） | `web-admin` 下 `npm run dev` | `:5173` | Vue 门户 |
 | Proxy（可选） | `cursor-pulse start proxy` | `:8317` | HTTPS MITM + 用量上报 |
@@ -44,7 +44,7 @@ Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可�
 | 飞书实现 | `pulse/channels/feishu/` | WebSocket（`lark-oapi`）+ OpenAPI |
 | 企微 | `pulse/channels/platforms/wecom.py` | 占位 stub |
 
-`create_messenger` / `create_runtime` 按 `bot.name` / `BOT_PLATFORM` 选择实现。
+`create_messenger` / `create_runtime` 按 `bot.name` / `BOT_PLATFORM` 选择实现。IM **不**用于用量 CSV/截图采集。
 
 ## 数据库
 
@@ -53,17 +53,21 @@ Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可�
 | `data/pulse.db`（或 `DATABASE_URL`） | Pulse 控制面 |
 | `data/assistant.db`（`ASSISTANT_DATABASE_URL`） | Assistant |
 
-## 用量采集
+## 用量（仅 Cursor）
 
-- **Cursor：** 绑定 User API Key → 定时/按需 API 同步（不依赖 IM）
-- **其他工具：** 可选经 IM 手工提交 CSV/XLSX / 截图 / 文本
+1. 管理后台创建 Cursor 台账账号并指定主使用人  
+2. 绑定 User API Key（加密存储）  
+3. `pulse channel` 定时 `cursor_sync` 拉取用量事件并刷新额度快照  
+4. 可选：借 Key（`pka_` 代理别名）与 Go Proxy 上报  
 
-## HTTP 面（建议对外支持）
+不支持其他 AI 厂商台账，也不接受 CSV / 截图 / 文本手工上报。
+
+## HTTP 面
 
 **门户（JWT / 门户登录）**
 
 - `/api/auth/providers` — 可用登录方式（password / dingtalk_oauth / feishu_oauth）
-- `/api/auth/*`、`/api/v2/*`（账号、凭证、额度、借贷、Assistant 代理等）
+- `/api/auth/*`、`/api/v2/*`（账号、凭证、额度、借贷、Proxy Key、Assistant 代理等）
 - `/health`
 
 **内部（service token；未配置应失败关闭）**
@@ -81,13 +85,11 @@ Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可�
 
 Assistant / Proxy 还需 `PULSE_BASE_URL` 指向 Pulse web（如 `http://127.0.0.1:8080`）。
 
-**On-Demand 强制关闭（Cursor 同步）：** 团队级开关 `cursor_sync.enforce_on_demand_disabled`（默认 true），可在 Web 系统设置编辑；见 [cursor-usage-api.md](cursor-usage-api.md#sethardlimit--设置--关闭-on-demand-spending) 与 [RUNBOOK.md](RUNBOOK.md)。
+**On-Demand 强制关闭（Cursor 同步）：** 团队级开关 `cursor_sync.enforce_on_demand_disabled`（默认 true），可在 Web 系统设置编辑；见 [cursor-usage-api.md](cursor-usage-api.md) 与 [RUNBOOK.md](RUNBOOK.md)。
 
 **Assistant**
 
 - `/api/assistant/v1/*`；生产通常经 Pulse 门户代理。
-
-遗留非 v2 的 `/api/*` 仍可能存在，新客户端优先 v2。
 
 ## 目录
 
@@ -98,14 +100,4 @@ Assistant / Proxy 还需 `PULSE_BASE_URL` 指向 Pulse web（如 `http://127.0.0
 | `proxy/` | Go 模块（默认 Docker 镜像不含） |
 | `web-admin/` | Vue 管理后台 |
 | `docker/` | 正式 compose / Dockerfile |
-| `scripts/` | 辅助脚本 |
-
-Pulse 与 Assistant 目前仍有源码互引，视为同一产品边界。
-
-## 配置
-
-- `config.yaml` ← `config.example.yaml`（非密钥结构）
-- `.env` ← `.env.example`（密钥与开关）
-- Docker：在 `docker/` 下执行 `scripts/setup.sh` 后编辑 `docker/.env`
-
-切勿提交真实密钥。占位令牌 `change-me-*` 会在 Pulse web 启动时被拒绝。
+| `docs/` | 架构 / 运维 / API 笔记 |

@@ -31,20 +31,6 @@ from pulse.channels.dingtalk.work_group import (
 from pulse.channels.dingtalk.messenger import DingTalkMessenger
 from pulse.channels.inbound import InboundMessage, dispatch_text_command
 from pulse.config import AppConfig
-from pulse.extract.text_parser import looks_like_usage_csv
-from pulse.extract.summary import format_group_ack
-from pulse.llm.client import build_llm_client
-from pulse.llm.vision import extract_vendor_usage_from_screenshot
-from pulse.tool_center.manual import (
-    ManualUsageCommand,
-    ManualUsageService,
-    infer_vendor_slug_from_text,
-    pick_account_for_screenshot,
-    pick_account_for_vendor,
-    vendor_display_name,
-)
-from pulse.tool_center.repository import ToolCenterRepository
-from pulse.periods import current_period
 from pulse.tenant.context import team_repository
 
 logger = logging.getLogger(__name__)
@@ -96,7 +82,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         detail: str,
     ) -> None:
         if channel == "group":
-            self.reply_text(format_group_ack(user_name), incoming)
+            self.reply_text(f"@{user_name} 已收到，详情见私聊。", incoming)
             self.messenger.send_oto_text(user_id, detail)
         else:
             self.reply_text(detail, incoming)
@@ -200,12 +186,6 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             await self._begin_guide_image_upload(incoming, user_id, user_name)
             return
 
-        # 粘贴 CSV 仍走本地（非文本命令）
-        if text and looks_like_usage_csv(text):
-            channel = "group" if is_group else "private"
-            await self._handle_pasted_csv(text, incoming, user_id, user_name, channel)
-            return
-
         if handle_picture_locally and picture_code:
             if user_id in self._pending_guide_upload:
                 await self._save_guide_image_from_picture(
@@ -255,30 +235,17 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         if text:
             return
 
-        file_path, unsupported_name = self._download_attachment(incoming, raw)
-        if unsupported_name:
+        # Cursor-only: never download usage attachments (CSV/XLSX); just guide bind-key.
+        if (
+            extract_file_attachment(raw, incoming)
+            or incoming_message_type(raw, incoming) == "file"
+        ):
             self.reply_text(
-                f"收到文件「{unsupported_name}」，但仅支持非 Cursor 厂商的用量 CSV/Excel（.csv / .xlsx）。\n\n"
+                "Cursor 用量请绑定 API Key 自动同步，不再接受文件上传。\n\n"
                 f"{CURSOR_BIND_GUIDE}",
                 incoming,
             )
             return
-        if file_path:
-            channel = "group" if is_group else "private"
-            await self._handle_csv_file(file_path, incoming, user_id, user_name, channel)
-            return
-
-        if incoming_message_type(raw, incoming) == "file":
-            logger.warning(
-                "Unhandled file message: msg_id=%s keys=%s extensions=%s",
-                incoming.message_id,
-                sorted(raw.keys()),
-                sorted(getattr(incoming, "extensions", {}).keys()),
-            )
-            self.reply_text(
-                "收到文件但无法识别或下载。Cursor 请绑定 API Key；其他工具请发送用量 CSV/Excel。",
-                incoming,
-            )
 
     async def _begin_guide_image_upload(
         self,
@@ -310,43 +277,6 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             "请在下一条消息发送 Cursor 绑 Key 引导截图（图片消息）。",
             incoming,
         )
-    async def _handle_csv_file(
-        self,
-        file_path: Path,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        channel: str,
-    ) -> None:
-        self._send_user_detail(
-            incoming=incoming,
-            user_id=user_id,
-            user_name=user_name,
-            channel=channel,
-            detail=(
-                "Cursor 已改用 API Key 自动同步，不再接受 CSV 上传。\n\n"
-                f"{CURSOR_BIND_GUIDE}"
-            ),
-        )
-
-    async def _handle_pasted_csv(
-        self,
-        text: str,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        channel: str,
-    ) -> None:
-        self._send_user_detail(
-            incoming=incoming,
-            user_id=user_id,
-            user_name=user_name,
-            channel=channel,
-            detail=(
-                "Cursor 已改用 API Key 自动同步，不再接受 CSV 粘贴。\n\n"
-                f"{CURSOR_BIND_GUIDE}"
-            ),
-        )
 
     async def _handle_picture(
         self,
@@ -358,242 +288,17 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         *,
         text_hint: str = "",
     ) -> None:
-        raw_dir = Path(self.pulse_config.storage.raw_files_dir)
-        dest = inbox_dest(raw_dir, "usage_screenshot.png")
-        try:
-            self.messenger.download_message_file(download_code, dest)
-        except Exception as exc:
-            logger.exception("Picture download failed")
-            msg = f"截图下载失败：{exc}"
-            if is_group:
-                self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, msg)
-            else:
-                self.reply_text(msg, incoming)
-            return
-
         channel = "group" if is_group else "private"
-        session = self.session_factory()
-        primary_accounts: list = []
-        hinted_vendor = None
-        runtime_config = self.pulse_config
-        try:
-            team, repo = team_repository(session, self.pulse_config)
-            from pulse.settings import effective_config
-
-            runtime_config = effective_config(self.pulse_config, session, team.id)
-            member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
-            tool_repo = ToolCenterRepository(session, team.id)
-            primary_accounts = tool_repo.get_primary_accounts_for_member(member.id)
-            hinted_vendor = infer_vendor_slug_from_text(text_hint)
-            screenshot_account = None
-            vendor_slug = "cursor"
-
-            if hinted_vendor:
-                vendor_slug = hinted_vendor
-                try:
-                    screenshot_account = pick_account_for_vendor(primary_accounts, hinted_vendor)
-                except ValueError:
-                    screenshot_account = None
-            else:
-                screenshot_account = pick_account_for_screenshot(primary_accounts)
-                if screenshot_account and screenshot_account.vendor:
-                    vendor_slug = screenshot_account.vendor.slug
-        finally:
-            session.close()
-
-        llm = runtime_config.llm
-        client = build_llm_client(runtime_config)
-
-        if hinted_vendor and not screenshot_account:
-            vendor_name = vendor_display_name(hinted_vendor)
-            self._send_user_detail(
-                incoming=incoming,
-                user_id=user_id,
-                user_name=user_name,
-                channel=channel,
-                detail=(
-                    f"📷 截图已收到，但未找到您名下的{vendor_name}账号。\n\n"
-                    f"台账里已有 {vendor_name} 账号时，请确认：\n"
-                    "· 该账号「主使用人」是您本人\n"
-                    "· 您用绑定了主使用人的同一钉钉账号私聊机器人\n\n"
-                    f"也可改用手工上报，例如：上报 {vendor_name} 85"
-                ),
-            )
-            return
-
-        vendor_vision_slugs = ("zhipu", "minimax", "codex")
-        if vendor_slug in vendor_vision_slugs:
-            if not llm.vision_enabled or not client:
-                vendor_name = vendor_display_name(vendor_slug)
-                self._send_user_detail(
-                    incoming=incoming,
-                    user_id=user_id,
-                    user_name=user_name,
-                    channel=channel,
-                    detail=(
-                        f"📷 已识别为{vendor_name}截图，但视觉识别未就绪。\n\n"
-                        "请在管理后台启用 Pulse LLM 视觉解析并配置 API Key，"
-                        f"或改用手工上报：上报 {vendor_name} <数值>"
-                    ),
-                )
-                return
-            try:
-                await self._submit_vendor_screenshot(
-                    dest,
-                    incoming,
-                    user_id,
-                    user_name,
-                    channel,
-                    is_group,
-                    vendor_slug=vendor_slug,
-                    client=client,
-                    model=llm.vision_model,
-                    threshold=llm.confidence_threshold,
-                    screenshot_account=screenshot_account,
-                )
-                return
-            except Exception as exc:
-                logger.exception("Vendor vision extraction failed")
-                vendor_name = vendor_display_name(vendor_slug)
-                self._send_user_detail(
-                    incoming=incoming,
-                    user_id=user_id,
-                    user_name=user_name,
-                    channel=channel,
-                    detail=(
-                        f"📷 {vendor_name} 截图识别失败：{exc}\n\n"
-                        f"请稍后重试，或改用手工上报：上报 {vendor_name} <数值>"
-                    ),
-                )
-                return
-
-        if primary_accounts and len(primary_accounts) > 1 and not screenshot_account:
-            vendors = sorted({a.vendor.name for a in primary_accounts if a.vendor})
-            reply = (
-                "📷 截图已收到。您有多个工具账号，无法自动判断工具类型。\n\n"
-                f"请使用手工上报：上报 <工具> <数值>\n"
-                f"可选工具：{'、'.join(vendors)}"
-            )
-            if is_group:
-                self.reply_text(format_group_ack(user_name), incoming)
-                self.messenger.send_oto_text(user_id, reply)
-            else:
-                self.reply_text(reply, incoming)
-            return
-
         self._send_user_detail(
             incoming=incoming,
             user_id=user_id,
             user_name=user_name,
             channel=channel,
             detail=(
-                "📷 截图已收到。Cursor 用量请绑定 API Key 自动同步；"
-                "其他工具请发送对应厂商截图或手工上报。\n\n"
+                "📷 截图已收到。Cursor 用量请绑定 API Key 自动同步。\n\n"
                 f"{CURSOR_BIND_GUIDE}"
             ),
         )
-
-    async def _submit_vendor_screenshot(
-        self,
-        dest: Path,
-        incoming: dingtalk_stream.ChatbotMessage,
-        user_id: str,
-        user_name: str,
-        channel: str,
-        is_group: bool,
-        *,
-        vendor_slug: str,
-        client,
-        model: str,
-        threshold: float,
-        screenshot_account,
-    ) -> None:
-        result = extract_vendor_usage_from_screenshot(
-            dest, client, vendor_slug=vendor_slug, model=model
-        )
-        if result.confidence < threshold:
-            warn_lines = result.warnings or ["截图内容不完整或置信度不足"]
-            reply = (
-                f"📷 {vendor_slug} 截图识别置信度不足（{result.confidence:.0%}）。\n\n"
-                + "\n".join(f"· {w}" for w in warn_lines)
-                + f"\n\n请改用手工上报，例如：上报 {vendor_slug} 85"
-            )
-            if is_group:
-                self.reply_text(format_group_ack(user_name), incoming)
-                self.messenger.send_oto_text(user_id, reply)
-            else:
-                self.reply_text(reply, incoming)
-            return
-
-        session = self.session_factory()
-        team, repo = team_repository(session, self.pulse_config)
-        try:
-            member = repo.get_or_create_member(user_id, user_name, channel="dingtalk")
-            period = current_period(self.pulse_config)
-            if result.period_hint and len(result.period_hint) == 7:
-                period = result.period_hint
-
-            command = ManualUsageCommand(
-                vendor_slug=vendor_slug,
-                metric_value=result.primary_metric_value,
-                metric_unit=result.primary_metric_unit,
-                raw_text=f"screenshot:{vendor_slug}",
-            )
-            svc = ManualUsageService(session, team.id)
-            account_id = screenshot_account.id if screenshot_account else None
-            _, account, summary = svc.submit_for_member(
-                member=member,
-                period=period,
-                command=command,
-                submit_channel=channel,
-                account_id=account_id,
-                repo=repo,
-                raw_source=dest,
-                raw_files_dir=Path(self.pulse_config.storage.raw_files_dir),
-                extraction_confidence=result.confidence,
-                breakdown_by_model=result.breakdown_by_model or None,
-                source_type="manual_vision",
-                upgrade_notify=(
-                    self.messenger.send_oto_text,
-                    list(self.pulse_config.admin.channel_user_ids),
-                )
-                if self.pulse_config.admin.channel_user_ids
-                else None,
-            )
-            repo.commit()
-
-            vendor_name = account.vendor.name if account.vendor else vendor_slug
-            ratio = summary.get("quota_usage_ratio")
-            ratio_line = f"\n额度使用率：{ratio}%" if ratio is not None else ""
-            notes = ""
-            if result.warnings:
-                notes = "\n\n" + "\n".join(result.warnings)
-            detail = (
-                f"✅ {period} {vendor_name} 截图用量已入库\n"
-                f"账号：{account.account_identifier}\n"
-                f"主指标：{summary['primary_metric_value']} {summary['primary_metric_unit'].upper()}"
-                f"{ratio_line}"
-                f"\n识别置信度：{result.confidence:.0%}"
-                f"\n已计入统计。"
-                f"{notes}"
-            )
-            if channel == "group":
-                self.reply_text(format_group_ack(user_name), incoming)
-                self.messenger.send_oto_text(user_id, detail)
-            else:
-                self.reply_text(detail, incoming)
-        except Exception as exc:
-            session.rollback()
-            logger.exception("Vendor screenshot ingestion failed")
-            msg = f"截图用量保存失败：{exc}"
-            if is_group:
-                self.reply_text(f"@{user_name} 处理失败，请查看私聊。", incoming)
-                self.messenger.send_oto_text(user_id, msg)
-            else:
-                self.reply_text(msg, incoming)
-        finally:
-            session.close()
 
     async def _save_guide_image_from_picture(
         self,
@@ -655,24 +360,6 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             self.messenger.send_oto_text(user_id, reply)
         else:
             self.reply_text(reply, incoming)
-
-    def _download_attachment(
-        self,
-        incoming: dingtalk_stream.ChatbotMessage,
-        raw: dict,
-    ) -> tuple[Path | None, str | None]:
-        attachment = extract_file_attachment(raw, incoming)
-        if attachment:
-            file_name, download_code = attachment
-            suffix = Path(file_name).suffix.lower()
-            if suffix not in (".csv", ".xlsx", ".xls"):
-                logger.warning("Ignored unsupported usage file: %s", file_name)
-                return None, file_name
-            dest = inbox_dest(Path(self.pulse_config.storage.raw_files_dir), file_name)
-            return self.messenger.download_message_file(download_code, dest), None
-
-        # 图片已在上方单独处理
-        return None, None
 
     def _ensure_group_binding(self, incoming: dingtalk_stream.ChatbotMessage) -> None:
         """首次群消息时自动保存 openConversationId（Stream 回调里的 conversationId）。"""

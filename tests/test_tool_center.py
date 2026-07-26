@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
 
-from decimal import Decimal
-
-from pulse.domain import CostRaw, ParseSummary, ParsedCsv, UsageEventRecord
+from pulse.channels.reminders.scheduler import SyncSchedulerService, build_scheduler
+from pulse.config import AppConfig, CollectionConfig, CredentialConfig, CursorSyncConfig
 from pulse.storage.db import init_db
-from pulse.storage.models import AiPlan, Member, UsageSummary
+from pulse.storage.models import Member, UsageSummary
 from pulse.tool_center.reminders import build_daily_nudge_targets, format_deadline_group_message
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.tool_center.usage import compute_quota_ratio, model_family
-from tests.conftest import make_team_repo
+from tests.conftest import ingest_cursor_fixture, make_team_repo
 
 
 @pytest.fixture
@@ -25,37 +25,6 @@ def session():
     db.close()
 
 
-def _parsed_with_cost(total: float) -> ParsedCsv:
-    rec = UsageEventRecord(
-        event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        event_date=datetime(2026, 6, 1).date(),
-        kind="usage",
-        model="claude-sonnet-4",
-        max_mode=False,
-        tokens_input_cache_write=0,
-        tokens_input_no_cache=0,
-        tokens_cache_read=0,
-        tokens_output=0,
-        tokens_total=0,
-        cost_raw=CostRaw.USAGE_BASED,
-        cost_usd=Decimal(str(total)),
-        cloud_agent_id=None,
-        automation_id=None,
-        source_row_hash="abc",
-    )
-    summary = ParseSummary(
-        period_hint="2026-06",
-        date_min=rec.event_date,
-        date_max=rec.event_date,
-        event_count=1,
-        total_tokens=0,
-        total_cost_usd=Decimal(str(total)),
-        top_models=[],
-        all_included_or_free=False,
-    )
-    return ParsedCsv(records=[rec], summary=summary)
-
-
 def test_model_family_mapping():
     assert model_family("claude-3.5-sonnet") == "Claude"
     assert model_family("gpt-4o") == "GPT"
@@ -63,6 +32,8 @@ def test_model_family_mapping():
 
 
 def test_pro_plus_quota_ratio_uses_70_denominator():
+    from pulse.storage.models import AiPlan
+
     plan = AiPlan(
         vendor_id="v1",
         plan_name="Pro+",
@@ -81,8 +52,8 @@ def test_seed_v2_catalog_idempotent(session):
     first = seed_v2_catalog(session, team)
     session.flush()
     second = seed_v2_catalog(session, team)
-    assert first["vendors"] == 4
-    assert first["plans"] == 6
+    assert first["vendors"] == 1
+    assert first["plans"] == 3
     assert first["accounts"] == 3
     assert second == {"vendors": 0, "plans": 0, "accounts": 0}
 
@@ -104,14 +75,15 @@ def test_account_submission_creates_usage_summary(session):
     session.flush()
     tool_repo.update_account(account.id, primary_member_id=member.id, status="trial")
 
-    repo.save_ingestion(
-        member=member,
-        period="2026-06",
-        parsed=_parsed_with_cost(66.5),
-        submit_channel="private",
+    ingest_cursor_fixture(
+        session,
+        team_id=team.id,
         account_id=account.id,
+        vendor_id=account.vendor_id,
+        member_id=member.id,
+        period="2026-06",
     )
-    repo.commit()
+    session.commit()
 
     summary = session.scalar(
         select(UsageSummary).where(
@@ -120,9 +92,7 @@ def test_account_submission_creates_usage_summary(session):
         )
     )
     assert summary is not None
-    assert float(summary.primary_metric_value) == 66.5
-    assert summary.quota_usage_ratio == 95.0
-    assert summary.breakdown_by_model == {"claude-sonnet-4": 66.5}
+    assert summary.sync_source == "api"
 
 
 def test_daily_nudge_targets_primary_and_admin(session):
@@ -132,14 +102,6 @@ def test_daily_nudge_targets_primary_and_admin(session):
     tool_repo = ToolCenterRepository(session, team.id)
     accounts = tool_repo.list_accounts()
     cursor_account = next(a for a in accounts if a.vendor.slug == "cursor")
-    zhipu_vendor = tool_repo.get_vendor_by_slug("zhipu")
-    zhipu_plan = next(p for p in tool_repo.list_plans(zhipu_vendor.id))
-    zhipu_account = tool_repo.create_account(
-        vendor_id=zhipu_vendor.id,
-        plan_id=zhipu_plan.id,
-        account_identifier="zhipu-nudge@test.com",
-        status="trial",
-    )
     primary = Member(
         team_id=team.id,
         channel_user_id="u1",
@@ -148,9 +110,7 @@ def test_daily_nudge_targets_primary_and_admin(session):
     )
     session.add(primary)
     session.flush()
-    tool_repo.update_account(zhipu_account.id, primary_member_id=primary.id, status="trial")
     tool_repo.update_account(cursor_account.id, primary_member_id=primary.id, status="trial")
-    # another cursor account without primary triggers admin_no_primary
     tool_repo.update_account(
         next(a for a in accounts if a.vendor.slug == "cursor" and a.id != cursor_account.id).id,
         primary_member_id=None,
@@ -158,7 +118,6 @@ def test_daily_nudge_targets_primary_and_admin(session):
 
     targets = build_daily_nudge_targets(tool_repo, "2026-06")
     kinds = {t.kind for t in targets}
-    assert "primary_member" in kinds
     assert "admin_no_primary" in kinds
     assert "no_credential" in kinds
 
@@ -209,7 +168,7 @@ def test_evaluate_upgrade_after_two_months(session):
 
 
 def test_aggregate_account_metrics(session):
-    team, repo = make_team_repo(session)
+    team, _repo = make_team_repo(session)
     seed_v2_catalog(session, team)
     session.flush()
     tool_repo = ToolCenterRepository(session, team.id)

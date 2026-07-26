@@ -19,7 +19,7 @@ def run_app(config: AppConfig) -> None:
         )
     if platform == "dingtalk" and not config.dingtalk.group_open_conversation_id:
         logger.warning(
-            "group_open_conversation_id 未配置：群消息与月报将无法发送。"
+            "group_open_conversation_id 未配置：群消息将无法发送。"
             "请在目标群内 @机器人 一次以自动绑定。"
         )
 
@@ -45,10 +45,7 @@ def run_app(config: AppConfig) -> None:
         config, session_factory, send_group_message, send_private_message, messenger=messenger
     )
     scheduler.start()
-    if config.collection.reminders_enabled:
-        logger.info("Reminder scheduler started (usage submission reminders enabled)")
-    else:
-        logger.info("Reminder scheduler started (usage submission reminders disabled)")
+    logger.info("Sync scheduler started (cursor sync + key loan expiry)")
 
     try:
         runtime.start(config, session_factory, messenger)

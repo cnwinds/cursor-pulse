@@ -45,19 +45,7 @@ class DingTalkConfig(BaseModel):
 
 class CollectionConfig(BaseModel):
     period_format: str = "%Y-%m"
-    start_day: int = 1
-    start_time: str = "09:00"
-    deadline_day: int = 3
-    deadline_time: str = "18:00"
-    daily_check_time: str = "10:00"
-    report_day: int = 4
-    report_time: str = "09:30"
-    report_period_mode: str = "previous"  # previous | current
-    report_on_first_business_day: bool = True
-    readiness_deadline_time: str = "09:25"
     timezone: str = "Asia/Shanghai"
-    reminders_enabled: bool = False
-    publish_report_to_group: bool = False
 
 
 class StorageConfig(BaseModel):
@@ -90,7 +78,7 @@ class FeishuConfig(BaseModel):
 
 
 class CursorTeamsConfig(BaseModel):
-    """Cursor Teams/Enterprise Admin API（与 CSV 收集并存，可选）。"""
+    """Cursor Teams/Enterprise Admin API（可选）。"""
     enabled: bool = False
     api_base_url: str = "https://api.cursor.com"
     admin_api_key: str = ""
@@ -106,10 +94,6 @@ class LLMConfig(BaseModel):
     model: str = "gpt-4o-mini"
     api_key: str = ""
     timeout_seconds: float = 60.0
-    vision_enabled: bool = False
-    vision_model: str = "gpt-4o"
-    confidence_threshold: float = 0.75
-    review_low_confidence: bool = True
 
 
 class AssistantLlmSettings(BaseModel):
@@ -133,19 +117,6 @@ class WebConfig(BaseModel):
 class TenantConfig(BaseModel):
     slug: str = "default"
     name: str = "Default Team"
-
-
-class AlertsConfig(BaseModel):
-    enabled: bool = True
-    member_events_spike_pct: float = 100.0
-    team_events_spike_pct: float = 50.0
-    member_cost_spike_usd: float = 10.0
-
-
-class IntegrationsConfig(BaseModel):
-    webhook_url: str = ""
-    webhook_secret: str = ""
-    push_on_report: bool = True
 
 
 class PersonaConfig(BaseModel):
@@ -173,7 +144,6 @@ class CursorSyncConfig(BaseModel):
     month_close_interval_hours: int | None = None
     max_retry_count: int = 8
     pre_publish_start_time: str = "08:00"
-    readiness_sync_max_age_hours: int = 6
     # On-Demand Spending：同步时强制关闭 + 通知
     enforce_on_demand_disabled: bool = True
     # None = 未配置（回落管理员）；[] = 明确不通知名单中的人
@@ -221,7 +191,8 @@ def format_memory_evolution_cron(day_of_week: int, time: str) -> str:
 
 
 class MemoryConfig(BaseModel):
-    evolution_enabled: bool = True
+    # Offline / CLI-only; not scheduled by pulse channel after Cursor-only cleanup.
+    evolution_enabled: bool = False
     evolution_day_of_week: int = Field(
         default=6,
         ge=EVOLUTION_DAY_DAILY,
@@ -289,8 +260,6 @@ class AppConfig(BaseModel):
     assistant_llm: AssistantLlmSettings = Field(default_factory=AssistantLlmSettings)
     web: WebConfig = Field(default_factory=WebConfig)
     tenant: TenantConfig = Field(default_factory=TenantConfig)
-    alerts: AlertsConfig = Field(default_factory=AlertsConfig)
-    integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     credentials: CredentialConfig = Field(default_factory=CredentialConfig)
@@ -319,8 +288,6 @@ class EnvSettings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_enabled: str = ""
-    vision_enabled: str = ""
-    vision_model: str = ""
     assistant_llm_enabled: str = ""
     assistant_llm_api_key: str = ""
     assistant_llm_base_url: str = ""
@@ -332,8 +299,6 @@ class EnvSettings(BaseSettings):
     web_cors_origins: str = ""
     dingtalk_oauth_redirect_uri: str = ""
     pulse_team_slug: str = ""
-    bi_webhook_url: str = ""
-    bi_webhook_secret: str = ""
     database_url: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
@@ -342,8 +307,6 @@ class EnvSettings(BaseSettings):
     s3_enabled: str = ""
     cursor_teams_api_key: str = ""
     bot_platform: str = ""
-    usage_reminders_enabled: str = ""
-    report_publish_to_group: str = ""
     pulse_credential_encryption_key: str = ""
     assistant_mirror_enabled: str = ""
     assistant_mirror_base_url: str = ""
@@ -435,10 +398,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.llm.model = env.llm_model
     if env.llm_enabled.lower() in ("1", "true", "yes", "on"):
         cfg.llm.enabled = True
-    if env.vision_enabled.lower() in ("1", "true", "yes", "on"):
-        cfg.llm.vision_enabled = True
-    if env.vision_model:
-        cfg.llm.vision_model = env.vision_model
     if env.assistant_llm_api_key:
         cfg.assistant_llm.api_key = env.assistant_llm_api_key
     if env.assistant_llm_base_url:
@@ -465,10 +424,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         ]
     if env.pulse_team_slug:
         cfg.tenant.slug = env.pulse_team_slug
-    if env.bi_webhook_url:
-        cfg.integrations.webhook_url = env.bi_webhook_url
-    if env.bi_webhook_secret:
-        cfg.integrations.webhook_secret = env.bi_webhook_secret
     if env.database_url:
         cfg.storage.database_url = env.database_url
     if env.s3_enabled.lower() in ("1", "true", "yes", "on"):
@@ -486,15 +441,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.cursor_teams.enabled = True
     if env.bot_platform:
         cfg.bot.name = env.bot_platform
-    if env.usage_reminders_enabled.lower() in ("1", "true", "yes", "on"):
-        cfg.collection.reminders_enabled = True
-    elif env.usage_reminders_enabled.lower() in ("0", "false", "no", "off"):
-        cfg.collection.reminders_enabled = False
-    if env.report_publish_to_group.lower() in ("1", "true", "yes", "on"):
-        cfg.collection.publish_report_to_group = True
-    elif env.report_publish_to_group.lower() in ("0", "false", "no", "off"):
-        cfg.collection.publish_report_to_group = False
-
     if env.pulse_credential_encryption_key:
         cfg.credentials.encryption_key = env.pulse_credential_encryption_key
 

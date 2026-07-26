@@ -16,14 +16,14 @@ from pulse.dev.services import DEFAULT_SERVICES, SERVICES
 
 
 def test_default_services():
-    assert DEFAULT_SERVICES == ("web", "admin", "channel", "assistant")
+    assert DEFAULT_SERVICES == ("web", "assistant", "channel", "admin", "proxy")
     assert set(SERVICES) == {"web", "admin", "channel", "assistant", "proxy"}
 
 
-def test_services_includes_proxy_not_default():
+def test_services_includes_proxy():
     assert "proxy" in SERVICES
     assert SERVICES["proxy"].port == 8317
-    assert "proxy" not in DEFAULT_SERVICES
+    assert "proxy" in DEFAULT_SERVICES
 
 
 def test_build_command_proxy(tmp_path, monkeypatch):
@@ -258,7 +258,7 @@ def test_stop_kills_orphan_web_children():
 
 
 def test_restart_without_args_targets_all_defaults():
-    defaults = ["web", "admin", "channel", "assistant"]
+    defaults = list(DEFAULT_SERVICES)
     with (
         patch("pulse.dev.manager.stop") as stop_fn,
         patch("pulse.dev.manager.start", return_value=defaults) as start_fn,

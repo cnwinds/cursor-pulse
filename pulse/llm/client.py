@@ -154,7 +154,7 @@ def build_llm_client(config) -> LLMClient | None:
     llm = config.llm
     if not llm.api_key:
         return None
-    if not (llm.enabled or llm.vision_enabled):
+    if not llm.enabled:
         return None
     return OpenAICompatibleClient(
         api_key=llm.api_key,

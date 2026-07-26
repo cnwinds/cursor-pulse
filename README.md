@@ -1,6 +1,6 @@
 # Cursor Pulse
 
-自托管的 **AI 工具用量计量与额度控制面**。核心能力（账号台账、借 Key、额度看板、Cursor API 同步）仅需 Web + 数据库；**钉钉 / 飞书等 IM 渠道为可选插件**。
+自托管的 **Cursor 用量计量与额度控制面**：账号台账、API Key 同步、借 Key、额度看板与可选 MITM Proxy。核心能力仅需 Web + 数据库；**钉钉 / 飞书等 IM 渠道为可选插件**（不承载用量采集）。
 
 > **许可证：** [MIT](LICENSE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -8,12 +8,12 @@
 
 | 层 | 作用 |
 |----|------|
-| **Pulse**（`pulse/`） | 控制面：数据库、可选 IM 渠道、Web API、内部 Provider API |
+| **Pulse**（`pulse/`） | 控制面：台账、Cursor API 同步、借 Key、Web API、可选 IM |
 | **Assistant**（`assistant_platform/`） | 可选：会话 / 能力 / 记忆服务 |
 | **管理后台**（`web-admin/`） | Vue 门户（开发用 Vite，或构建后由 Pulse web 托管） |
 | **Proxy**（`proxy/`） | 可选：Go HTTPS MITM，截获 Cursor 流量并上报用量 |
 
-Cursor 用量应以 **API Key 自动同步** 为主，不要走 CSV。手工 CSV/XLSX 仅用于非 Cursor 工具。
+用量只通过 **绑定 Cursor User API Key → 自动同步**。本项目不提供 CSV / 截图 / 其他 AI 工具台账。
 
 ## 快速开始（Web-only，无钉钉/飞书）
 
@@ -29,7 +29,7 @@ cp .env.example .env
 # 最少填写：ADMIN_PASSWORD、JWT_SECRET、PULSE_CREDENTIAL_ENCRYPTION_KEY
 # BOT_PLATFORM=none（默认）即可只用管理后台
 
-pulse init-db   # 建表 + 预置厂家/套餐（可用 --no-seed 跳过）
+pulse init-db   # 建表 + 预置 Cursor 套餐/试用账号（可用 --no-seed 跳过）
 pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' --channel web
 pytest --tb=short -q
 ```
@@ -47,15 +47,15 @@ pytest --tb=short -q
 - 管理 UI（Vite）：`cd web-admin && npm install && npm run dev` → `http://127.0.0.1:5173`
 - 登录：本地密码（`admin` + `ADMIN_PASSWORD`）
 
-完整 channel + assistant（+ proxy）见：[docs/bot-commands.md](docs/bot-commands.md)、[docs/RUNBOOK.md](docs/RUNBOOK.md)、[proxy/README.md](proxy/README.md)。
+调度（Cursor 同步 / 借 Key 过期）另开：`pulse channel`。完整栈见 [docs/RUNBOOK.md](docs/RUNBOOK.md)、[proxy/README.md](proxy/README.md)。可选 IM 命令见 [docs/bot-commands.md](docs/bot-commands.md)。
 
 ### 可选 IM 渠道
 
 | `BOT_PLATFORM` | 说明 |
 |----------------|------|
-| `none` | 仅 Web + 调度；提醒出站记日志不发送 |
-| `dingtalk` | 钉钉 Stream 机器人（`DINGTALK_*`，需 `pip install 'cursor-pulse[dingtalk]'`） |
-| `feishu` | 飞书 WebSocket 机器人（`FEISHU_*`，需 `pip install 'cursor-pulse[feishu]'`） |
+| `none` | 仅 Web + 调度；出站提醒记日志不发送 |
+| `dingtalk` | 钉钉 Stream（`DINGTALK_*`，需 `pip install 'cursor-pulse[dingtalk]'`） |
+| `feishu` | 飞书 WebSocket（`FEISHU_*`，需 `pip install 'cursor-pulse[feishu]'`） |
 
 门户登录方式由 `/api/auth/providers` 按凭证动态暴露：未配 IM 时只显示本地密码；配置了钉钉/飞书应用凭证后才出现对应扫码登录。
 
@@ -71,7 +71,7 @@ docker compose up -d --build                    # Web-only：init-db + web + cha
 docker compose --profile full up -d --build     # 含 Assistant
 ```
 
-默认 `BOT_PLATFORM=none`，channel 只跑调度（Cursor 同步 / 借 Key 过期等）。可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
+默认 `BOT_PLATFORM=none`，channel 只跑 Cursor 同步与借 Key 过期。可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
 
 ## 从钉钉-only 升级
 
@@ -91,7 +91,7 @@ docker compose --profile full up -d --build     # 含 Assistant
 | [SECURITY.md](SECURITY.md) | 漏洞报告与密钥处理 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程与 API 面 |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | 运维 |
-| [docs/bot-commands.md](docs/bot-commands.md) | 机器人命令 |
+| [docs/bot-commands.md](docs/bot-commands.md) | 可选 IM 机器人命令 |
 | [docs/cursor-usage-api.md](docs/cursor-usage-api.md) | Cursor 非官方 API 笔记（可能随时失效，自负风险） |
 | [docs/README.md](docs/README.md) | 文档索引 |
 | [proxy/README.md](proxy/README.md) | MITM 代理（CA / 合规风险） |

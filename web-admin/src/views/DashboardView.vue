@@ -32,7 +32,7 @@
     </el-row>
 
     <el-row :gutter="16" class="mt">
-      <el-col :span="12">
+      <el-col :span="24">
         <el-card shadow="never" header="账号同步进度">
           <template v-if="ingestion?.active_count">
             <div class="sync-progress-track">
@@ -50,56 +50,16 @@
           <el-empty v-else description="暂无活跃账号" />
         </el-card>
       </el-col>
-      <el-col :span="12">
-        <el-card shadow="never" header="费用概览（USD）">
-          <template v-if="costSummary?.total_cost_usd">
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="总费用">
-                ${{ Number(costSummary.total_cost_usd).toFixed(2) }}
-              </el-descriptions-item>
-              <el-descriptions-item label="有费用成员">
-                {{ costSummary.members_with_cost ?? '—' }}
-              </el-descriptions-item>
-              <el-descriptions-item label="人均费用">
-                ${{ Number(costSummary.avg_cost_usd || 0).toFixed(2) }}
-              </el-descriptions-item>
-              <el-descriptions-item label="最高单笔">
-                ${{ Number(costSummary.max_cost_usd || 0).toFixed(2) }}
-              </el-descriptions-item>
-            </el-descriptions>
-          </template>
-          <el-empty v-else description="本账期暂无费用数据" />
-        </el-card>
-      </el-col>
     </el-row>
 
     <el-row :gutter="16" class="mt">
-      <el-col :span="12">
-        <el-card shadow="never" header="告警摘要">
-          <template v-if="alertSummary?.total">
-            <div class="summary-chips">
-              <el-tag type="danger" size="small">严重 {{ alertSummary.critical }}</el-tag>
-              <el-tag type="warning" size="small">警告 {{ alertSummary.warning }}</el-tag>
-            </div>
-            <p class="hint">最近 {{ alertSummary.total }} 条告警，详情请查看审计日志</p>
-          </template>
-          <el-empty v-else description="无告警" />
-        </el-card>
-      </el-col>
-      <el-col :span="12">
+      <el-col :span="24">
         <el-card shadow="never" header="运行概览">
-          <el-descriptions :column="1" border size="small">
+          <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="账期">{{ data?.period ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="团队">{{ data?.summary?.team_slug ?? '—' }}</el-descriptions-item>
-            <el-descriptions-item label="Tokens">
-              {{ formatNumber(data?.metrics_highlights?.total_tokens) }}
-            </el-descriptions-item>
-            <el-descriptions-item label="总费用">{{ costLabel }}</el-descriptions-item>
             <el-descriptions-item label="工作群">
               {{ imGroupConfigured ? '已配置' : '未配置' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="异常告警">
-              {{ data?.summary?.alerts_enabled ? '已开启' : '已关闭' }}
             </el-descriptions-item>
             <el-descriptions-item
               v-if="ingestion?.missing_primary_count"
@@ -135,18 +95,11 @@ const data = ref<any>(null)
 const pendingActions = computed<PendingActions | null>(() => data.value?.pending_actions ?? null)
 
 const ingestion = computed(() => data.value?.ingestion ?? data.value?.submission ?? null)
-const costSummary = computed(() => data.value?.cost_summary ?? null)
-const alertSummary = computed(() => data.value?.alert_summary ?? null)
 
 const syncPct = computed(() => {
   const s = ingestion.value
   if (!s?.active_count) return 0
   return Math.round((s.submitted_count / s.active_count) * 100)
-})
-
-const costLabel = computed(() => {
-  const c = data.value?.metrics_highlights?.total_cost_usd
-  return c != null ? `$${Number(c).toFixed(2)}` : '—'
 })
 
 const imGroupConfigured = computed(() => {
@@ -158,23 +111,16 @@ const imGroupConfigured = computed(() => {
 
 const statCards = computed(() => {
   const s = ingestion.value
-  const highlights = data.value?.metrics_highlights
   return [
     { label: '活跃账号', value: formatCount(s?.active_count) },
     { label: '本账期已同步', value: formatCount(s?.submitted_count) },
     { label: '同步率', value: s?.active_count != null ? `${syncPct.value}%` : '—' },
-    { label: '总事件', value: formatNumber(highlights?.total_events) },
+    { label: '待同步', value: formatCount(s?.unsubmitted_count) },
   ]
 })
 
 function formatCount(value: unknown) {
   return value == null ? '—' : String(value)
-}
-
-function formatNumber(value: unknown) {
-  if (value == null) return '—'
-  const n = Number(value)
-  return Number.isFinite(n) ? n.toLocaleString() : '—'
 }
 
 async function reloadOverview() {

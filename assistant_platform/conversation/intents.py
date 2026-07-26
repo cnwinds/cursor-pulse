@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass
 
 from pulse.channels.commands import BIND_CURSOR_RE, UNBIND_CURSOR_RE
-from pulse.tool_center.manual import looks_like_manual_usage
 from assistant_platform.conversation.help import (
     _DETAIL_PREFIX_RE,
     _GENERAL_HELP_EXACT,
@@ -28,15 +27,7 @@ class CapabilityIntent:
 
 
 _PREFIX_COMMANDS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
-    (re.compile(r"^/?aggregate(?:\s+.+)?$", re.IGNORECASE), "usage.aggregate", True),
-    (re.compile(r"^聚合(?:\s+.+)?$"), "usage.aggregate", True),
-    (re.compile(r"^/?report(?:\s+.+)?$", re.IGNORECASE), "report.publish", True),
-    (re.compile(r"^报告(?:\s+.+)?$"), "report.publish", True),
     (re.compile(r"^成员(?:\s+.+)?$"), "members.manage", True),
-    (re.compile(r"^/?alerts(?:\s+.+)?$", re.IGNORECASE), "alerts.run", True),
-    (re.compile(r"^告警(?:\s+.+)?$"), "alerts.run", True),
-    (re.compile(r"^/?export(?:\s+.+)?$", re.IGNORECASE), "usage.export", True),
-    (re.compile(r"^导出(?:\s+.+)?$"), "usage.export", True),
     (re.compile(r"^撤销借用\s+\S+"), "key.loan.revoke", True),
 )
 
@@ -104,13 +95,6 @@ def match_capability_intent(text: str) -> CapabilityIntent | None:
 
     if UNBIND_CURSOR_RE.match(stripped):
         return CapabilityIntent("cursor.key.unbind", {"text": stripped})
-
-    if looks_like_manual_usage(stripped):
-        return CapabilityIntent(
-            "usage.manual.submit",
-            {"text": stripped},
-            confirmed=True,
-        )
 
     for pattern, capability_key, confirmed in _PREFIX_COMMANDS:
         if pattern.match(stripped):

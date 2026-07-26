@@ -30,12 +30,7 @@ def register_settings_routes(app, config: AppConfig, get_db, require_capability,
             "timezone": effective["collection"]["timezone"],
             "bot_platform": im_status["bot_platform"],
             "im_group_configured": im_status["im_group_configured"],
-            # 兼容旧前端字段名
             "group_configured": im_status["im_group_configured"],
-            "llm_report": effective["llm"]["enabled"],
-            "llm_vision": effective["llm"]["vision_enabled"],
-            "alerts_enabled": effective["alerts"]["enabled"],
-            "bi_webhook": bool(effective["integrations"]["webhook_url"]),
         }
 
     @app.get("/api/settings", dependencies=[Depends(require_capability("settings:read"))])

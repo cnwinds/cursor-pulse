@@ -45,8 +45,7 @@ def test_dashboard_overview(dash_client):
     assert "ingestion" in body
     assert body["ingestion"]["active_count"] >= 0
     assert "submitted_count" in body["ingestion"]
-    assert "cost_summary" in body
-    assert "alert_summary" in body
+    assert "sync_stats" in body
     assert "summary" in body
     assert "pending_actions" in body
     assert body["pending_actions"]["total_count"] >= 0
@@ -58,27 +57,11 @@ def test_system_schedule(dash_client):
     res = client.get("/api/system/schedule", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 200
     body = res.json()
-    assert body["reminders_enabled"] is False
     job_ids = {job["id"] for job in body["jobs"]}
-    assert "monthly_report" in job_ids
+    assert "cursor_sync_tick" in job_ids
+    assert "expire_key_loans" in job_ids
     assert "collection_start" not in job_ids
-
-
-def test_system_schedule_memory_evolution_not_scheduled(dash_client):
-    client, config, owner = dash_client
-    token = create_access_token(config, owner)
-    headers = {"Authorization": f"Bearer {token}"}
-    res = client.patch(
-        "/api/settings/memory",
-        headers=headers,
-        json={"data": {"evolution_day_of_week": -1, "evolution_time": "03:15"}},
-    )
-    assert res.status_code == 200
-
-    res = client.get("/api/system/schedule", headers=headers)
-    assert res.status_code == 200
-    job_ids = {job["id"] for job in res.json()["jobs"]}
-    assert "memory_evolution" not in job_ids
+    assert "monthly_report" not in job_ids
 
 
 def test_system_integrations(dash_client):
@@ -91,8 +74,6 @@ def test_system_integrations(dash_client):
     assert "feishu" in body
     assert "bot_platform" in body
     assert "im_group_configured" in body
-    assert "pulse_llm" in body
     assert "assistant_llm" in body
     assert "runtime_note" in body
-    assert "object_storage" not in body
-    assert "cursor_teams" not in body
+    assert "pulse_llm" not in body

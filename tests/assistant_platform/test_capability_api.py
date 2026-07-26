@@ -110,7 +110,7 @@ def test_list_packs_returns_seeded_packs(client):
     assert "cursor_self_service" in keys
     assert "assistant_owner" in keys
     owner_pack = next(item for item in packs if item["key"] == "assistant_owner")
-    assert "report.publish" in owner_pack["capability_keys"]
+    assert "members.manage" in owner_pack["capability_keys"]
 
 
 def test_list_assignments_returns_rows(client):

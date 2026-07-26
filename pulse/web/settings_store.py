@@ -17,10 +17,8 @@ from pulse.settings.team_store import (
 REVEALABLE_SETTING_SECRETS: dict[str, frozenset[str]] = {
     "dingtalk": frozenset({"app_secret"}),
     "feishu": frozenset({"app_secret"}),
-    "llm": frozenset({"api_key"}),
     "assistant_llm": frozenset({"api_key"}),
     "web_search": frozenset({"api_key"}),
-    "integrations": frozenset({"webhook_secret"}),
 }
 
 
@@ -43,14 +41,10 @@ def settings_for_api(base: AppConfig, session: Session, team_id: str) -> dict[st
     team = session.get(Team, team_id)
     if team is not None:
         data["chat_memory"] = effective_chat_memory_dict(team_slug=team.slug)
-    for section in ("llm", "assistant_llm", "web_search"):
+    for section in ("assistant_llm", "web_search"):
         section_data = data.get(section, {})
         if section_data.get("api_key"):
             data[section] = {**section_data, "api_key": "***"}
-    integrations = data.get("integrations", {})
-    if integrations.get("webhook_secret"):
-        integrations = {**integrations, "webhook_secret": "***"}
-        data["integrations"] = integrations
     dingtalk = data.get("dingtalk", {})
     for key in ("app_secret",):
         if dingtalk.get(key):

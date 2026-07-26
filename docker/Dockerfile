@@ -50,7 +50,7 @@ COPY assistant_platform ./assistant_platform
 COPY --from=admin-build /app/pulse/web/static ./pulse/web/static
 
 RUN pip install --upgrade pip \
-    && pip install ".[web,pdf,postgres,s3,feishu,dingtalk]"
+    && pip install ".[web,postgres,s3,feishu,dingtalk]"
 
 RUN mkdir -p data/raw data/inbox
 

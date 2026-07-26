@@ -5,6 +5,8 @@ from pulse.config import load_config
 
 def test_yaml_encryption_key_preserved_when_env_empty(monkeypatch, tmp_path):
     monkeypatch.delenv("PULSE_CREDENTIAL_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr("pulse.config._bootstrap_dotenv", lambda: None)
+    monkeypatch.chdir(tmp_path)
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
         "tenant:\n  slug: enc-test\n"

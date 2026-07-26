@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading">
     <el-tabs v-model="tab">
-      <el-tab-pane label="收集与调度" name="collection">
+      <el-tab-pane label="同步调度" name="collection">
         <el-table
           :data="collectionRows"
           stripe
@@ -14,19 +14,6 @@
           <el-table-column label="" width="56" align="center">
             <template #default="{ row }">
               <el-icon v-if="row.editable" class="edit-icon"><Edit /></el-icon>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
-      <el-tab-pane label="告警" name="alerts">
-        <el-table :data="alertRows" stripe class="settings-table" @row-click="openItem">
-          <el-table-column prop="name" label="项目" min-width="160" />
-          <el-table-column prop="summary" label="当前配置" min-width="220" />
-          <el-table-column prop="process" label="进程" width="120" />
-          <el-table-column label="" width="56" align="center">
-            <template #default>
-              <el-icon class="edit-icon"><Edit /></el-icon>
             </template>
           </el-table-column>
         </el-table>
@@ -45,7 +32,7 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="集成与 LLM" name="integrations">
+      <el-tab-pane label="助手与集成" name="integrations">
         <el-table :data="integrationRows" stripe class="settings-table" @row-click="openItem">
           <el-table-column prop="name" label="项目" min-width="160" />
           <el-table-column prop="summary" label="状态" min-width="220" />
@@ -124,12 +111,9 @@ const loading = computed(() => store.loading || runtimeLoading.value)
 const forms = reactive({
   collection: {} as Record<string, unknown>,
   memory: {} as Record<string, unknown>,
-  alerts: {} as Record<string, unknown>,
-  llm: {} as Record<string, unknown>,
   assistant_llm: {} as Record<string, unknown>,
   chat_memory: {} as Record<string, Record<string, unknown>>,
   web_search: {} as Record<string, unknown>,
-  integrations: {} as Record<string, unknown>,
   cursor_sync: {} as Record<string, unknown>,
   dingtalk: {} as Record<string, unknown>,
   feishu: {} as Record<string, unknown>,
@@ -167,12 +151,7 @@ const dialog = reactive<DialogState>({
 })
 
 const ITEM_PLANS: Record<string, SavePlan[]> = {
-  collection_basics: [{ section: 'collection', keys: ['timezone', 'start_day', 'deadline_day'] }],
-  reminders: [{ section: 'collection', keys: ['reminders_enabled', 'start_day', 'start_time', 'deadline_day', 'deadline_time', 'daily_check_time'] }],
-  monthly_report: [
-    { section: 'collection', keys: ['report_time', 'report_on_first_business_day', 'report_day', 'publish_report_to_group'] },
-    { section: 'cursor_sync', keys: ['pre_publish_start_time'] },
-  ],
+  collection_basics: [{ section: 'collection', keys: ['timezone', 'period_format'] }],
   cursor_sync_tick: [{
     section: 'cursor_sync',
     keys: [
@@ -185,16 +164,12 @@ const ITEM_PLANS: Record<string, SavePlan[]> = {
       'on_demand_notify_admins_on_api_failure',
     ],
   }],
-  memory_evolution: [{ section: 'memory', keys: ['evolution_enabled', 'evolution_day_of_week', 'evolution_time'] }],
-  alerts: [{ section: 'alerts', keys: ['enabled', 'member_events_spike_pct', 'team_events_spike_pct', 'member_cost_spike_usd'] }],
-  pulse_llm: [{ section: 'llm', keys: ['enabled', 'base_url', 'api_key', 'model', 'vision_enabled', 'vision_model'] }],
   assistant_llm: [
     {
       section: 'assistant_llm',
       keys: ['enabled', 'base_url', 'api_key', 'model'],
     },
   ],
-  bi_push: [{ section: 'integrations', keys: ['webhook_url', 'push_on_report', 'webhook_secret'] }],
   bot: [{ section: 'bot', keys: ['name'] }],
   dingtalk: [
     {
@@ -266,27 +241,14 @@ function jobCron(id: string): string {
 
 function collectionBasicsSummary(): string {
   const tz = forms.collection.timezone || schedule.value?.timezone || '—'
-  const start = forms.collection.start_day ?? schedule.value?.collection_window?.start_day ?? '—'
-  const end = forms.collection.deadline_day ?? schedule.value?.collection_window?.deadline_day ?? '—'
-  return `${tz} · 每月 ${start}–${end} 日收集`
-}
-
-function monthlyReportSummary(): string {
-  const onFirstBizDay = forms.collection.report_on_first_business_day !== false
-  if (onFirstBizDay) {
-    return jobCron('monthly_report')
-  }
-  const day = forms.collection.report_day ?? '—'
-  const time = forms.collection.report_time ?? '—'
-  return `每月 ${day} 日 ${time}`
+  return `${tz} · 账期格式 ${forms.collection.period_format || '%Y-%m'}`
 }
 
 const collectionRows = computed<SettingRow[]>(() => {
-  const remindersOn = Boolean(schedule.value?.reminders_enabled)
   const rows: SettingRow[] = [
     {
       id: 'collection_basics',
-      name: '时区与收集窗口',
+      name: '时区与账期',
       summary: collectionBasicsSummary(),
       process: '团队设置',
       editable: true,
@@ -298,20 +260,6 @@ const collectionRows = computed<SettingRow[]>(() => {
       process: '自动计算',
       editable: false,
     },
-    {
-      id: 'reminders',
-      name: '用量提交催办',
-      summary: remindersOn ? '已开启（收集开始 / 每日私聊 / 截止提醒）' : '已关闭',
-      process: 'pulse channel',
-      editable: true,
-    },
-    {
-      id: 'monthly_report',
-      name: '月报发送',
-      summary: monthlyReportSummary(),
-      process: 'pulse channel',
-      editable: true,
-    },
   ]
   rows.push(
     {
@@ -322,29 +270,15 @@ const collectionRows = computed<SettingRow[]>(() => {
       editable: true,
     },
     {
-      id: 'memory_evolution',
-      name: '记忆自进化',
-      summary: forms.memory.evolution_enabled
-        ? jobCron('memory_evolution')
-        : '已关闭',
+      id: 'expire_key_loans',
+      name: 'Key借用到期回收',
+      summary: jobCron('expire_key_loans'),
       process: 'pulse channel',
-      editable: true,
+      editable: false,
     },
   )
   return rows
 })
-
-const alertRows = computed<SettingRow[]>(() => [
-  {
-    id: 'alerts',
-    name: '异常告警',
-    summary: forms.alerts.enabled
-      ? `已开启 · 成员事件 +${forms.alerts.member_events_spike_pct}% · 团队 +${forms.alerts.team_events_spike_pct}% · 费用 $${forms.alerts.member_cost_spike_usd}`
-      : '已关闭',
-    process: 'pulse channel',
-    editable: true,
-  },
-])
 
 function chatMemorySummary(): string {
   const archive = forms.chat_memory.archive || {}
@@ -457,54 +391,11 @@ const integrationRows = computed<SettingRow[]>(() => [
     process: '团队设置',
     editable: true,
   },
-  {
-    id: 'pulse_llm',
-    name: 'Pulse LLM（月报 / 截图）',
-    summary: forms.llm.enabled
-      ? `${forms.llm.model}${forms.llm.vision_enabled ? ' · 含视觉' : ''}`
-      : '未启用',
-    process: '团队设置',
-    editable: true,
-  },
-  {
-    id: 'bi_push',
-    name: 'BI 推送',
-    summary: forms.integrations.webhook_url
-      ? `已配置${forms.integrations.push_on_report ? ' · 月报推送' : ''}`
-      : '未配置',
-    process: '团队设置',
-    editable: true,
-  },
 ])
 
 const FIELD_DEFS: Record<string, SettingsField> = {
   timezone: { key: 'timezone', label: '时区', hint: '如 Asia/Shanghai' },
-  start_day: { key: 'start_day', label: '收集开始日', type: 'number' },
-  deadline_day: { key: 'deadline_day', label: '收集截止日', type: 'number' },
-  start_time: { key: 'start_time', label: '收集开始时间' },
-  reminders_enabled: { key: 'reminders_enabled', label: '启用催办', type: 'switch' },
-  deadline_time: { key: 'deadline_time', label: '收集截止时间' },
-  daily_check_time: { key: 'daily_check_time', label: '每日检查时间' },
-  report_day: {
-    key: 'report_day',
-    label: '月报日',
-    type: 'number',
-    showWhen: (model) => model.report_on_first_business_day === false,
-  },
-  report_time: { key: 'report_time', label: '月报发送时间' },
-  report_on_first_business_day: { key: 'report_on_first_business_day', label: '月报在首个工作日', type: 'switch' },
-  publish_report_to_group: {
-    key: 'publish_report_to_group',
-    label: '月报群发工作群',
-    type: 'switch',
-    hint: '按当前消息渠道发送到已配置的工作群',
-  },
-  pre_publish_start_time: {
-    key: 'pre_publish_start_time',
-    label: '发布前数据刷新时间',
-    showWhen: (model) => model.report_on_first_business_day !== false,
-    hint: '首个工作日上午先刷新 Cursor 用量，再按发送时间发月报',
-  },
+  period_format: { key: 'period_format', label: '账期格式', hint: '如 %Y-%m' },
   sync_enabled: { key: 'enabled', label: '启用同步', type: 'switch' },
   enforce_on_demand_disabled: {
     key: 'enforce_on_demand_disabled',
@@ -570,22 +461,7 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     ],
   },
   evolution_time: { key: 'evolution_time', label: '进化时间' },
-  member_events_spike_pct: { key: 'member_events_spike_pct', label: '成员事件激增 %', type: 'number' },
-  team_events_spike_pct: { key: 'team_events_spike_pct', label: '团队事件激增 %', type: 'number' },
-  member_cost_spike_usd: { key: 'member_cost_spike_usd', label: '成员费用激增 USD', type: 'number' },
-  alerts_enabled: { key: 'enabled', label: '启用告警', type: 'switch' },
-  pulse_enabled: { key: 'enabled', label: '启用 Pulse LLM', type: 'switch' },
   base_url: { key: 'base_url', label: 'API Base URL', hint: 'OpenAI 兼容接口，如 https://api.openai.com/v1' },
-  model: { key: 'model', label: '对话模型' },
-  vision_enabled: { key: 'vision_enabled', label: '启用视觉解析', type: 'switch' },
-  vision_model: { key: 'vision_model', label: '视觉模型' },
-  api_key: {
-    key: 'api_key',
-    label: 'API Key',
-    type: 'secret',
-    secretSection: 'llm',
-    hint: '留空或 *** 表示不修改',
-  },
   assistant_enabled: { key: 'enabled', label: '启用助手 LLM', type: 'switch' },
   assistant_model: { key: 'model', label: '对话模型' },
   assistant_api_key: {
@@ -593,16 +469,6 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     label: 'API Key',
     type: 'secret',
     secretSection: 'assistant_llm',
-    hint: '留空或 *** 表示不修改',
-  },
-  assistant_memory_enabled: { key: 'memory_enabled', label: '启用记忆', type: 'switch' },
-  webhook_url: { key: 'webhook_url', label: 'Webhook URL' },
-  push_on_report: { key: 'push_on_report', label: '月报时推送', type: 'switch' },
-  webhook_secret: {
-    key: 'webhook_secret',
-    label: 'Webhook Secret',
-    type: 'secret',
-    secretSection: 'integrations',
     hint: '留空或 *** 表示不修改',
   },
   bot_name: {
@@ -900,8 +766,6 @@ function applySettings(data: Record<string, any>) {
     evolution_day_of_week: data.memory?.evolution_day_of_week,
     evolution_time: data.memory?.evolution_time,
   }
-  forms.alerts = { ...data.alerts }
-  forms.llm = { ...data.llm }
   forms.assistant_llm = { ...data.assistant_llm }
   forms.web_search = { ...(data.web_search || {}) }
   forms.chat_memory = {
@@ -912,7 +776,6 @@ function applySettings(data: Record<string, any>) {
     embedding: { ...(data.chat_memory?.embedding || {}) },
     backfill: { ...(data.chat_memory?.backfill || {}) },
   }
-  forms.integrations = { ...data.integrations }
   forms.dingtalk = { ...data.dingtalk }
   forms.feishu = { ...(data.feishu || {}) }
   forms.bot = { name: data.bot?.name || 'none', ...(data.bot || {}) }
@@ -1018,9 +881,7 @@ function fieldsForItem(itemId: string): SettingsField[] {
   const fields = plans.flatMap((plan) =>
     plan.keys
       .map((key) => {
-        if (itemId === 'alerts' && key === 'enabled') return FIELD_DEFS.alerts_enabled
         if (itemId === 'cursor_sync_tick' && key === 'enabled') return FIELD_DEFS.sync_enabled
-        if (itemId === 'pulse_llm' && key === 'enabled') return FIELD_DEFS.pulse_enabled
         if (itemId === 'assistant_llm' && key === 'enabled') return FIELD_DEFS.assistant_enabled
         if (itemId === 'assistant_llm' && key === 'model') return FIELD_DEFS.assistant_model
         if (itemId === 'assistant_llm' && key === 'api_key') return FIELD_DEFS.assistant_api_key
@@ -1146,16 +1007,12 @@ function openItem(row: SettingRow) {
       bot: '选择运行时消息渠道。改为钉钉/飞书后需配置对应集成，并重启 pulse channel 进程。',
       feishu:
         '飞书自建应用凭证；保存后 OAuth 登录立即生效，修改凭证或工作群后需重启 pulse channel。',
-      pulse_llm: '用于月报叙事与截图解析，不影响助手对话。修改后 pulse channel 下次调用时生效。',
       assistant_llm:
         '用于助手对话、意图理解与向量嵌入。嵌入 API 复用上方 Key 与 Base URL。保存后新请求即生效（无需重启 assistant）。',
       chat_memory:
         '聊天记忆一站式配置：先开永久归档，再按需开启流水线、召回、回填。嵌入模型在「助手 LLM」中配置。保存后 assistant 新回合/关闭会话任务即生效。',
       web_search:
         '联网搜索 capability（Tavily）：开启总开关后配置 Key 与限流。保存后下一次 web.search / web.fetch 即生效。',
-      bi_push: '月报生成后可推送到 BI Webhook。',
-      monthly_report:
-        '首个工作日：先按「发布前数据刷新时间」提升 Cursor 同步优先级，再按「月报发送时间」发工作群。修改后需重启 pulse channel。',
     }[row.id] || ''
   }
   dialog.open = true
@@ -1173,7 +1030,7 @@ async function saveDialog(patch: Record<string, unknown>) {
   delete cleaned.group_title
   for (const [key, value] of Object.entries(cleaned)) {
     if (value === '***') delete cleaned[key]
-    if ((key === 'api_key' || key === 'webhook_secret' || key === 'app_secret') && value === '') {
+    if ((key === 'api_key' || key === 'app_secret') && value === '') {
       delete cleaned[key]
     }
   }

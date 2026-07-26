@@ -13,10 +13,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from pulse.aggregate.engine import aggregate_period
 from pulse.config import AppConfig
-from pulse.report.service import get_latest_snapshot
-from pulse.storage.models import AlertLog, QueryLog
+from pulse.storage.models import QueryLog
 from pulse.tenant.context import team_repository
 from pulse.web.audit import list_admin_audit_logs
 from pulse.web.deps import PortalUser, require_portal_user
@@ -31,7 +29,6 @@ from pulse.web.accounts_api import register_accounts_v2_routes
 from pulse.web.credentials_api import register_credentials_routes
 from pulse.web.ingestion_status_api import register_ingestion_status_routes
 from pulse.web.knowledge_api import register_knowledge_routes
-from pulse.web.usage_api import register_usage_routes
 from pulse.web.assistant_capabilities_api import register_assistant_capabilities_routes
 from pulse.web.assistant_prompts_api import register_assistant_prompts_routes
 from pulse.web.assistant_sessions_api import register_assistant_sessions_routes
@@ -120,29 +117,6 @@ def create_app(
             return RedirectResponse(url="/admin/", status_code=307)
         return HTMLResponse(DASHBOARD_HTML)
 
-    @app.get("/api/periods/{period}/metrics")
-    def period_metrics(
-        period: str,
-        session: Session = Depends(get_db),
-        refresh: bool = Query(False),
-        authorization: Annotated[str | None, Header()] = None,
-    ):
-        user = require_portal_user(config, session, authorization)
-        if not has_permission(user.member, "metrics:read"):
-            raise HTTPException(status_code=403, detail="缺少权限: metrics:read")
-        if refresh and not has_permission(user.member, "metrics:aggregate"):
-            raise HTTPException(status_code=403, detail="缺少权限: metrics:aggregate")
-        team, _repo = _team_repo(session)
-        if refresh:
-            metrics = aggregate_period(session, period, team_id=team.id)
-            session.commit()
-        else:
-            snap = get_latest_snapshot(session, period, team_id=team.id)
-            if not snap:
-                raise HTTPException(404, detail=f"账期 {period} 无聚合快照")
-            metrics = snap.metrics_json
-        return metrics
-
     @app.get("/api/query-logs", dependencies=[Depends(require_capability("audit:read"))])
     def query_logs(session: Session = Depends(get_db), limit: int = Query(50, le=200)):
         rows = session.scalars(
@@ -158,41 +132,6 @@ def create_app(
             }
             for row in rows
         ]
-
-    @app.get("/api/alerts", dependencies=[Depends(require_capability("audit:read"))])
-    def alerts(session: Session = Depends(get_db), limit: int = Query(50, le=200)):
-        team, _repo = _team_repo(session)
-        rows = session.scalars(
-            select(AlertLog)
-            .where(AlertLog.team_id == team.id)
-            .order_by(AlertLog.created_at.desc())
-            .limit(limit)
-        ).all()
-        return [
-            {
-                "period": row.period,
-                "alert_type": row.alert_type,
-                "severity": row.severity,
-                "message": row.message,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ]
-
-    @app.get("/api/export/{period}", dependencies=[Depends(require_capability("metrics:read"))])
-    def export_bi(period: str, session: Session = Depends(get_db)):
-        from pulse.integrations.webhook import build_bi_payload
-
-        team, _repo = _team_repo(session)
-        snap = get_latest_snapshot(session, period, team_id=team.id)
-        if not snap:
-            raise HTTPException(404, detail=f"账期 {period} 无聚合快照")
-        return build_bi_payload(
-            team_slug=team.slug,
-            team_name=team.name,
-            period=period,
-            metrics=snap.metrics_json,
-        )
 
     @app.post("/api/chat")
     def chat_with_xiaomai(
@@ -254,25 +193,7 @@ def create_app(
     def audit_logs(session: Session = Depends(get_db), limit: int = Query(100, le=500)):
         team, _ = _team_repo(session)
         portal_logs = list_admin_audit_logs(session, team.id, limit=limit)
-        alert_rows = session.scalars(
-            select(AlertLog)
-            .where(AlertLog.team_id == team.id)
-            .order_by(AlertLog.created_at.desc())
-            .limit(limit)
-        ).all()
-        return {
-            "admin_actions": portal_logs,
-            "alerts": [
-                {
-                    "period": row.period,
-                    "alert_type": row.alert_type,
-                    "severity": row.severity,
-                    "message": row.message,
-                    "created_at": row.created_at.isoformat(),
-                }
-                for row in alert_rows
-            ],
-        }
+        return {"admin_actions": portal_logs}
 
     @app.get("/api/dashboard/overview", dependencies=[Depends(require_capability("settings:read"))])
     def dashboard_overview(
@@ -304,7 +225,6 @@ def create_app(
     )
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
-    register_usage_routes(app, get_db, require_capability, _team_repo, config)
     register_quota_routes(app, get_db, require_capability, _team_repo, config)
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)
@@ -422,9 +342,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
   <h2>提交进度</h2>
   <div id="status"></div>
-  <h2>指标快照</h2>
-  <pre id="metrics">（加载中…）</pre>
-  <h2>最近查询</h2>
+  <h2>看板概览</h2>
+  <pre id="overview">（加载中…）</pre>
+  <h2>最近审计</h2>
   <pre id="queries">（加载中…）</pre>
   <script>
     function headers() {
@@ -451,13 +371,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const periodInput = document.getElementById('period');
         if (!periodInput.value) periodInput.value = cfg.current_period;
         const period = periodInput.value;
-        const [status, metrics, queries] = await Promise.all([
+        const [status, overview, queries] = await Promise.all([
           api('/api/v2/ingestion-status?period=' + encodeURIComponent(period)),
-          api('/api/periods/' + period + '/metrics'),
+          api('/api/dashboard/overview'),
           api('/api/query-logs?limit=20'),
         ]);
         renderStatus(status);
-        document.getElementById('metrics').textContent = JSON.stringify(metrics, null, 2);
+        document.getElementById('overview').textContent = JSON.stringify(overview, null, 2);
         document.getElementById('queries').textContent = JSON.stringify(queries, null, 2);
       } catch (e) {
         alert('加载失败：' + e.message);

@@ -1,59 +1,21 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
-from decimal import Decimal
-
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.domain import CostRaw, ParseSummary, ParsedCsv, UsageEventRecord
-from pulse.storage.models import AiAccountMember, Base, Member, UsageSummary
+from pulse.storage.models import AiAccountMember, Base, Member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.tool_center.ingestion_status import build_ingestion_status_payload
 from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
-
-
-def _parsed_with_cost(total: float, period: str = "2026-06", date_max: date | None = None) -> ParsedCsv:
-    end = date_max or date(2026, 6, 30)
-    rec = UsageEventRecord(
-        event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        event_date=date(2026, 6, 1),
-        kind="usage",
-        model="claude-sonnet-4",
-        max_mode=False,
-        tokens_input_cache_write=0,
-        tokens_input_no_cache=0,
-        tokens_cache_read=0,
-        tokens_output=0,
-        tokens_total=0,
-        cost_raw=CostRaw.USAGE_BASED,
-        cost_usd=Decimal(str(total)),
-        cloud_agent_id=None,
-        automation_id=None,
-        source_row_hash="abc",
-    )
-    summary = ParseSummary(
-        period_hint=period,
-        date_min=date(2026, 6, 1),
-        date_max=end,
-        event_count=1,
-        total_tokens=0,
-        total_cost_usd=Decimal(str(total)),
-        top_models=[],
-        all_included_or_free=False,
-    )
-    return ParsedCsv(records=[rec], summary=summary)
+from tests.conftest import ingest_cursor_fixture, make_team_repo
 
 
 @pytest.fixture
@@ -104,24 +66,6 @@ def status_env():
         "secondary_account": secondary_account,
         "team_id": team.id,
     }
-
-
-def _create_zhipu_account(sf, team_id: str, member_id: str) -> str:
-    s = sf()
-    tool_repo = ToolCenterRepository(s, team_id)
-    vendor = tool_repo.get_vendor_by_slug("zhipu")
-    plan = next(p for p in tool_repo.list_plans(vendor.id) if p.slug == "glm_coding_lite")
-    account = tool_repo.create_account(
-        vendor_id=vendor.id,
-        plan_id=plan.id,
-        account_identifier="zhipu-test@company.com",
-        status="trial",
-        primary_member_id=member_id,
-    )
-    account_id = account.id
-    s.commit()
-    s.close()
-    return account_id
 
 
 def test_ingestion_status_admin_sees_all_accounts(status_env):
@@ -188,83 +132,43 @@ def test_ingestion_status_member_sees_primary_and_shared(status_env):
     assert len(ids) == 2
 
 
-def test_ingestion_status_flags_date_mismatch(status_env):
-    client = status_env["client"]
-    config = status_env["config"]
+def test_api_sync_creates_usage_summary(status_env):
     sf = status_env["sf"]
     member_id = status_env["member"].id
-    owner = status_env["owner"]
+    account_id = status_env["account"].id
     team_id = status_env["team_id"]
 
-    zhipu_account_id = _create_zhipu_account(sf, team_id, member_id)
-
     s = sf()
-    _team, repo = make_team_repo(s)
-    member = s.get(Member, member_id)
-    parsed = _parsed_with_cost(10.0, date_max=date(2026, 6, 15))
-    repo.save_ingestion(
-        member=member,
+    tool_repo = ToolCenterRepository(s, team_id)
+    account = tool_repo.get_account(account_id)
+    ingest_cursor_fixture(
+        s,
+        team_id=team_id,
+        account_id=account_id,
+        vendor_id=account.vendor_id,
+        member_id=member_id,
         period="2026-06",
-        parsed=parsed,
-        submit_channel="private",
-        account_id=zhipu_account_id,
     )
-    repo.commit()
-    s.close()
-
-    token = create_access_token(config, owner)
-    res = client.get(
-        "/api/v2/submission-status",
-        params={"period": "2026-06"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    row = next(r for r in res.json()["accounts"] if r["account_id"] == zhipu_account_id)
-    assert row["ingestion_state"] == "manual_submitted"
-    assert row["submission_state"] == "submitted_warning"
-    assert any("截止日" in issue for issue in row["issues"])
-
-
-def test_confirm_pending_creates_usage_summary(status_env):
-    sf = status_env["sf"]
-    member_id = status_env["member"].id
-    team_id = status_env["team_id"]
-
-    zhipu_account_id = _create_zhipu_account(sf, team_id, member_id)
-
-    s = sf()
-    _team, repo = make_team_repo(s)
-    member = s.get(Member, member_id)
-    parsed = _parsed_with_cost(20.0)
-    pending = repo.save_ingestion(
-        member=member,
-        period="2026-06",
-        parsed=parsed,
-        submit_channel="private",
-        account_id=zhipu_account_id,
-        status="pending_review",
-    )
-    repo.commit()
-    pending_id = pending.id
+    s.commit()
     s.close()
 
     s = sf()
-    _team, repo = make_team_repo(s)
-    repo.confirm_ingestion(pending_id)
-    repo.commit()
-    s.close()
+    from pulse.storage.models import UsageSummary
 
-    s = sf()
     summary = s.scalar(
         select(UsageSummary).where(
-            UsageSummary.account_id == zhipu_account_id,
+            UsageSummary.account_id == account_id,
             UsageSummary.period == "2026-06",
         )
     )
     assert summary is not None
+    assert summary.sync_source == "api"
     s.close()
 
 
 def test_build_payload_missing_primary(status_env):
+    from pulse.tool_center.ingestion_status import build_ingestion_status_payload
+
     sf = status_env["sf"]
     owner = status_env["owner"]
     team_id = status_env["team_id"]

@@ -214,8 +214,8 @@ def _is_project_channel_command(command_line: str) -> bool:
         return False
     # `pulse -c config.yaml channel --reload` / `python -m pulse.cli channel`
     if re.search(
-        r"(?:^|[\s\"'/])(?:pulse(?:\.cli)?|python(?:3)?\s+-m\s+pulse\.cli)"
-        r"(?:\s+\S+)*\s+channel(?:\s|$)",
+        r"(?:^|[\s\"'/\\])(?:pulse(?:\.(?:cli|exe))?|python(?:3)?\s+-m\s+pulse\.cli)"
+        r"(?:[\"']|\s+\S+)*\s+channel(?:\s|$)",
         normalized,
     ):
         return True
@@ -224,8 +224,8 @@ def _is_project_channel_command(command_line: str) -> bool:
         return False
     return bool(
         re.search(
-            r"(?:^|[\s\"'/])(?:pulse(?:\.cli)?|python(?:3)?\s+-m\s+pulse\.cli)"
-            r"(?:\s+\S+)*\s+serve(?:\s|$)",
+            r"(?:^|[\s\"'/\\])(?:pulse(?:\.(?:cli|exe))?|python(?:3)?\s+-m\s+pulse\.cli)"
+            r"(?:[\"']|\s+\S+)*\s+serve(?:\s|$)",
             normalized,
         )
     )

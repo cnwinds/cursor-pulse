@@ -2,7 +2,4 @@
 
 __all__ = [
     "CursorApiAdapter",
-    "ManualCsvAdapter",
-    "ManualTextAdapter",
-    "ManualVisionAdapter",
 ]

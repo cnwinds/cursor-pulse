@@ -39,18 +39,17 @@ def test_build_help_detail_loads_skill_docs():
 
 def test_build_help_detail_denies_admin_skill_for_member():
     keys = {"bot.help", "quota.self.read"}
-    text = build_help_message_from_keys(keys, topic="report")
+    text = build_help_message_from_keys(keys, topic="status")
     assert "暂无权限" in text
 
 
 def test_phase_b_all_skill_files_have_docs():
     reg = SkillRegistry(root=Path("assistant_platform/skills"))
     member = SkillActorContext("m1", "member", frozenset({"quota.self.read"}))
-    admin = SkillActorContext("m1", "owner", frozenset({"usage.aggregate"}))
+    admin = SkillActorContext("m1", "owner", frozenset({"members.manage"}))
     for skill_id in (
         "cursor.self/overview",
         "key.loan/overview",
-        "usage.other/overview",
         "knowledge.share/overview",
         "web.research/overview",
         "bot.guide/overview",

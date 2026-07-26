@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -39,24 +38,4 @@ class UsageEventRecord:
     source_row_hash: str
 
 
-@dataclass(frozen=True)
-class ParseSummary:
-    period_hint: str | None
-    date_min: date
-    date_max: date
-    event_count: int
-    total_tokens: int
-    total_cost_usd: Decimal
-    top_models: list[tuple[str, int]]
-    all_included_or_free: bool
-
-
-@dataclass(frozen=True)
-class ParsedCsv:
-    records: list[UsageEventRecord]
-    summary: ParseSummary
-
-
 SubmitChannelLiteral = Literal["private", "group"]
-
-COMPUTATION_VERSION = "aggregate-v2"

@@ -46,7 +46,7 @@ ORGANIZE_SYSTEM = """你是 AI 开发工具使用心得整理助手。将用户�
 
 要求：
 1. 输出必须是合法 JSON，不要 markdown 代码块。
-2. 字段：title（≤40字）、body（整理后的正文，保留原意）、tags（字符串数组，2-5个）、vendor_slug（cursor/zhipu/minimax/codex 或 null）。
+2. 字段：title（≤40字）、body（整理后的正文，保留原意）、tags（字符串数组，2-5个）、vendor_slug（cursor 或 null）。
 3. 不要编造用户未提到的具体数字或花费。
 4. 语气简洁、可复用，适合团队内部分享。"""
 
@@ -83,19 +83,13 @@ def _organize_with_rules(raw: str) -> dict:
     body = raw.strip()
     tags: list[str] = []
     lower = raw.lower()
-    for slug, keywords in (
-        ("cursor", ("cursor", "composer", "tab")),
-        ("zhipu", ("glm", "智谱")),
-        ("minimax", ("minimax",)),
-        ("codex", ("codex", "chatgpt")),
-    ):
-        if any(k in lower for k in keywords):
-            tags.append(slug)
+    if any(k in lower for k in ("cursor", "composer", "tab")):
+        tags.append("cursor")
     return {
         "title": title,
         "body": body,
         "tags": tags or ["general"],
-        "vendor_slug": tags[0] if tags else None,
+        "vendor_slug": "cursor" if tags else None,
     }
 
 
@@ -197,14 +191,11 @@ def infer_tip_tags(title: str, body: str, tags: list[str] | None = None) -> list
             return cleaned[:5]
     lower = f"{title}\n{body}".lower()
     found: list[str] = []
-    for slug, keywords in (
-        ("cursor", ("cursor", "composer", "tab", "@codebase", "@file")),
-        ("zhipu", ("glm", "智谱")),
-        ("minimax", ("minimax",)),
-        ("codex", ("codex", "chatgpt")),
+    if any(
+        k in lower
+        for k in ("cursor", "composer", "tab", "@codebase", "@file")
     ):
-        if any(k in lower for k in keywords):
-            found.append(slug)
+        found.append("cursor")
     return found or ["general"]
 
 

@@ -43,7 +43,7 @@ class CursorTeamsClient:
                     "source": "cursor_teams_api",
                     "status": "not_available",
                     "fetched_at": datetime.now(timezone.utc).isoformat(),
-                    "message": "Admin API 端点待 Cursor 官方发布；当前请继续使用 CSV 收集。",
+                    "message": "Admin API 端点待 Cursor 官方发布；当前请使用 API Key 自动同步。",
                 }
             response.raise_for_status()
             return response.json()

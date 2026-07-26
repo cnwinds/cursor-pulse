@@ -443,9 +443,18 @@ const directoryTreeProps = {
 
 const allPermissions = [
   'settings:read', 'settings:write',
-  'submissions:read', 'metrics:read', 'metrics:aggregate',
-  'reports:publish', 'memory:read', 'memory:write', 'evolution:run',
-  'tasks:nudge', 'tasks:group_message', 'audit:read', 'admin:users',
+  'submissions:read', 'metrics:read',
+  'memory:read', 'memory:write', 'evolution:run',
+  'tasks:group_message', 'audit:read', 'admin:users',
+  'accounts:read', 'accounts:write', 'loans:self',
+  'knowledge:read', 'knowledge:write',
+  'proxy:read', 'proxy:write',
+  'assistant:capabilities:read', 'assistant:capabilities:write',
+  'assistant:skills:read',
+  'assistant:sessions:read:self', 'assistant:sessions:read:all',
+  'assistant:sessions:export:self', 'assistant:sessions:export:all',
+  'assistant:sessions:delete:self',
+  'assistant:prompts:read',
 ]
 
 const currentUserId = computed(() => auth.user?.id)

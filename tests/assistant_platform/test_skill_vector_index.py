@@ -43,17 +43,18 @@ def _write_docs(root: Path) -> None:
         "陪用户聊聊天气 心情 周末 电影 音乐 美食 旅行。\n",
         encoding="utf-8",
     )
-    (docs / "team.admin" / "aggregate.md").write_text(
+    (docs / "team.admin" / "tasks").mkdir(parents=True, exist_ok=True)
+    (docs / "team.admin" / "tasks" / "members.md").write_text(
         "---\n"
-        "name: 团队额度汇总\n"
-        "summary: 汇总全团队 Cursor 额度用量\n"
+        "name: 成员管理\n"
+        "summary: 管理团队成员名单\n"
         "when_to_use:\n"
-        "  - 管理员查团队额度 quota 用量 usage 汇总\n"
+        "  - 管理员查成员 members 名单\n"
         "audience: [admin]\n"
-        "aliases: [团队额度, quota, usage]\n"
+        "aliases: [成员, members]\n"
         "---\n"
-        "# 团队额度汇总\n"
-        "汇总全团队 Cursor 额度 quota 用量 usage 明细。\n",
+        "# 成员管理\n"
+        "查看或维护团队成员 members 名单。\n",
         encoding="utf-8",
     )
 
@@ -63,7 +64,7 @@ def _member() -> SkillActorContext:
 
 
 def _admin() -> SkillActorContext:
-    return SkillActorContext("m1", "owner", frozenset({"usage.aggregate"}))
+    return SkillActorContext("m1", "owner", frozenset({"members.manage"}))
 
 
 def _make_index(tmp_path: Path, db):
@@ -86,7 +87,7 @@ def test_sync_populates_embedding_rows(tmp_path: Path):
     assert set(rows) == {
         "cursor.self/tasks/quota",
         "chat.smalltalk/hello",
-        "team.admin/aggregate",
+        "team.admin/tasks/members",
     }
     quota = rows["cursor.self/tasks/quota"]
     assert quota.rel_path == "cursor.self/tasks/quota.md"
@@ -109,7 +110,7 @@ def test_route_cards_matches_query_over_smalltalk(tmp_path: Path):
     assert "cursor.self/tasks/quota" in ids
     assert ids[0] == "cursor.self/tasks/quota"
     # Admin-only skill hidden from member even if semantically similar.
-    assert "team.admin/aggregate" not in ids
+    assert "team.admin/tasks/members" not in ids
     db.close()
 
 
@@ -121,9 +122,9 @@ def test_route_cards_admin_sees_admin_skill(tmp_path: Path):
     index.sync()
     db.commit()
 
-    cards = index.route_cards("团队额度 quota 用量 usage 汇总", _admin())
+    cards = index.route_cards("成员 members 名单", _admin())
     ids = [c.skill_id for c in cards]
-    assert "team.admin/aggregate" in ids
+    assert "team.admin/tasks/members" in ids
     db.close()
 
 
@@ -160,7 +161,7 @@ def test_sync_updates_on_content_change_and_deletes(tmp_path: Path):
         encoding="utf-8",
     )
     # Delete a file → row removed on resync.
-    (tmp_path / "docs" / "team.admin" / "aggregate.md").unlink()
+    (tmp_path / "docs" / "team.admin" / "tasks" / "members.md").unlink()
 
     index2 = _make_index(tmp_path, db)
     index2.sync()

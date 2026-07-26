@@ -129,7 +129,7 @@ def _in_month_close_window(config: AppConfig, now: datetime) -> bool:
         first_bd.year,
         first_bd.month,
         first_bd.day,
-        *_split_hm(config.collection.report_time),
+        *_split_hm(getattr(config.collection, "report_time", "10:00")),
         tzinfo=local.tzinfo,
     )
     month_start = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

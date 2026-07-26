@@ -117,12 +117,12 @@ def register_knowledge_routes(app, get_db, require_capability, team_repo_fn, con
 
     @app.post(
         "/api/v2/knowledge/digest/{period}/publish",
-        dependencies=[Depends(require_capability("reports:publish"))],
+        dependencies=[Depends(require_capability("knowledge:write"))],
     )
     def publish_digest(
         period: str,
         session: Session = Depends(get_db),
-        user=Depends(require_capability("reports:publish")),
+        user=Depends(require_capability("knowledge:write")),
     ):
         team, _ = team_repo_fn(session)
         svc = KnowledgeService(session, team.id, config)
@@ -148,7 +148,7 @@ def register_knowledge_routes(app, get_db, require_capability, team_repo_fn, con
             team_id=team.id,
             member_id=user.member.id,
             action="knowledge.publish_digest",
-            capability="reports:publish",
+            capability="knowledge:write",
             detail=period,
         )
         session.commit()

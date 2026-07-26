@@ -1,30 +1,33 @@
 ---
 name: 团队运营管理
-summary: 月报、聚合、提交进度、成员、告警、导出、引导图等管理操作。
+summary: 成员管理、提交进度、引导图等 Cursor 运营操作。
 audience: [admin]
 when_to_use:
-  - 管理员想了解团队运营管理功能总览/入口（具体状态/聚合/报告/成员/告警/导出/引导图见任务索引对应文档）
+  - 管理员想了解团队运营管理功能总览/入口
 ---
 
 # 团队运营管理
 
 管理员运营类操作集中在此技能；各任务分节按需 `load_skill_docs(..., section=steps)` 查看。
 
+用量采集仅支持 **Cursor API Key 自动同步**。月报、聚合、CSV 导出、告警等能力已移除；请使用 Web 管理后台查看额度与同步状态。
+
 ## 任务索引
 
 | 说法 | tool |
 |------|------|
 | 状态 / `/status` | `submission_status_read` |
-| 聚合 / `/aggregate` | `usage_aggregate` |
-| 报告 / `/report` | `report_publish` |
 | 成员 … | `members_manage` |
-| 告警 / `/alerts` | `alerts_run` |
-| 导出 / `/export` | `usage_export` |
 | 设置引导图 | `guide_image_update` |
 
-## 遗留说明
+## Web 管理（推荐）
 
-历史「待审 / 确认 / 拒绝」摄取流程已停用；新上报直接入库。仅处理历史遗留数据时参考旧文档，勿提示新上报需要审核。
+| 功能 | 入口 |
+|------|------|
+| 台账 / 绑 Key / 同步 | 账号台账 |
+| 额度 / 借用 | 额度看板、借用记录 |
+| Proxy Key | 代理 Key |
+| 用户权限 | 用户与权限 |
 
 ### 展示版式（按 tool `result` 排版）
 

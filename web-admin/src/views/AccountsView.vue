@@ -52,13 +52,8 @@
           <el-tag v-if="row.suggest_dedicated" type="warning">建议独立号</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button
-            v-if="canWrite && supportsManual(row)"
-            link
-            @click="openManual(row)"
-          >上报</el-button>
           <el-button
             v-if="isCursorRow(row) && canManageCredential(row)"
             link
@@ -216,36 +211,6 @@
         <el-button type="primary" :loading="credentialBinding" @click="bindCredential">绑定</el-button>
       </template>
     </el-dialog>
-
-    <el-dialog v-model="manualVisible" title="手工上报用量" width="420px">
-      <p class="manual-hint">账号：{{ manualAccount?.account_identifier }}（{{ manualAccount?.vendor_name }}）</p>
-      <el-form label-width="80px">
-        <el-form-item label="账期">
-          <el-select v-model="manualPeriod" style="width: 100%">
-            <el-option v-for="p in periodOptions" :key="p" :label="p" :value="p" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="主指标">
-          <el-input-number v-model="manualValue" :min="0" :precision="2" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="单位">
-          <el-select v-model="manualUnit" clearable style="width: 100%">
-            <el-option label="calls（调用次数）" value="calls" />
-            <el-option label="messages（消息）" value="messages" />
-            <el-option label="prompts" value="prompts" />
-            <el-option label="CNY" value="cny" />
-            <el-option label="USD" value="usd" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="manualNote" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="manualVisible = false">取消</el-button>
-        <el-button type="primary" :loading="manualSaving" @click="submitManual">提交</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -255,7 +220,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { formatChinaTime } from '@/utils/time'
-import type { UsageSummary } from '@/utils/usage'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
@@ -307,13 +271,6 @@ const plans = ref<Plan[]>([])
 const members = ref<Member[]>([])
 const dialogVisible = ref(false)
 const editing = ref<Account | null>(null)
-const manualVisible = ref(false)
-const manualSaving = ref(false)
-const manualAccount = ref<Account | null>(null)
-const manualValue = ref<number>(0)
-const manualUnit = ref<string>('')
-const manualNote = ref('')
-const manualPeriod = ref('')
 const credentialVisible = ref(false)
 const credentialAccount = ref<Account | null>(null)
 const credentialStatus = ref<CredentialStatus | null>(null)
@@ -539,7 +496,6 @@ async function loadAll() {
     vendors.value = vendorRes.data
     plans.value = planRes.data
     members.value = memberRes.data
-    if (!manualPeriod.value) manualPeriod.value = periodOptions.value[0]
     await loadCredentialStatuses()
   } finally {
     loading.value = false
@@ -581,55 +537,6 @@ function openEdit(row: Account) {
 
 function onVendorChange() {
   form.plan_id = filteredPlans.value[0]?.id || ''
-}
-
-function supportsManual(row: Account) {
-  const plan = plans.value.find((p) => p.id === row.plan_id)
-  const methods = plan?.usage_submit_methods || []
-  return methods.includes('manual') || methods.includes('screenshot')
-}
-
-async function openManual(row: Account) {
-  manualAccount.value = row
-  manualPeriod.value = periodOptions.value[0]
-  manualValue.value = 0
-  manualUnit.value = ''
-  manualNote.value = ''
-  try {
-    const res = await client.get('/api/v2/usage-summaries', {
-      params: { period: manualPeriod.value },
-    })
-    const summary = (res.data as UsageSummary[]).find((s) => s.account_id === row.id)
-    if (summary) {
-      manualValue.value = summary.primary_metric_value || 0
-      manualUnit.value = summary.primary_metric_unit || ''
-    }
-  } catch {
-    /* ignore */
-  }
-  manualVisible.value = true
-}
-
-async function submitManual() {
-  if (!manualAccount.value || manualValue.value <= 0) {
-    ElMessage.warning('请填写有效用量')
-    return
-  }
-  manualSaving.value = true
-  try {
-    await client.post(`/api/v2/accounts/${manualAccount.value.id}/usage/manual`, {
-      period: manualPeriod.value,
-      metric_value: manualValue.value,
-      metric_unit: manualUnit.value || undefined,
-      note: manualNote.value || undefined,
-    })
-    ElMessage.success('用量已入库')
-    manualVisible.value = false
-  } catch {
-    ElMessage.error('提交失败')
-  } finally {
-    manualSaving.value = false
-  }
 }
 
 async function removeAccount() {

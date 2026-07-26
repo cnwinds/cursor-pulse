@@ -28,11 +28,10 @@ def build_daily_nudge_targets(
     tool_repo: ToolCenterRepository,
     period: str,
 ) -> list[NudgeTarget]:
-    """解析每日催办目标：无主使用人 → 管理员；Cursor 检查凭证；其他厂商检查手工提交。"""
+    """解析每日催办目标：无主使用人 → 管理员；Cursor 检查 API Key 凭证与同步状态。"""
     targets: list[NudgeTarget] = []
     active = tool_repo.list_active_accounts()
     credentials = _credential_map(tool_repo.session, [a.id for a in active])
-    submitted = tool_repo.get_submitted_account_ids(period)
 
     for account in active:
         if not account.primary_member_id:
@@ -42,16 +41,14 @@ def build_daily_nudge_targets(
         member = tool_repo.session.get(Member, account.primary_member_id)
         vendor_slug = account.vendor.slug if account.vendor else ""
 
-        if vendor_slug == "cursor":
-            cred = credentials.get(account.id)
-            if not cred or cred.status != "active":
-                targets.append(NudgeTarget(kind="no_credential", account=account, member=member))
-            elif cred.last_sync_status == "failed":
-                targets.append(NudgeTarget(kind="sync_failed", account=account, member=member))
+        if vendor_slug != "cursor":
             continue
 
-        if account.id not in submitted:
-            targets.append(NudgeTarget(kind="primary_member", account=account, member=member))
+        cred = credentials.get(account.id)
+        if not cred or cred.status != "active":
+            targets.append(NudgeTarget(kind="no_credential", account=account, member=member))
+        elif cred.last_sync_status == "failed":
+            targets.append(NudgeTarget(kind="sync_failed", account=account, member=member))
 
     return targets
 
@@ -75,7 +72,7 @@ def format_deadline_group_message(
     lines.extend(
         [
             "",
-            "Cursor 账号请绑定 API Key；其他工具请私聊机器人提交用量。",
+            "Cursor 账号请绑定 API Key 自动同步。",
             "（群内不公示个人明细）",
         ]
     )

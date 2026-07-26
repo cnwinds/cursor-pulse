@@ -66,3 +66,43 @@ def make_team_repo(session: Session, slug: str = "test"):
         return team, Repository(session, team.id)
     except ImportError:
         return team, None
+
+
+def ingest_cursor_fixture(
+    session: Session,
+    *,
+    team_id: str,
+    account_id: str,
+    vendor_id: str,
+    member_id: str,
+    period: str = "2026-07",
+    fixture_name: str = "cursor_usage_events.json",
+    event_index: int = 0,
+):
+    """Insert confirmed usage via Cursor API sync path (test helper)."""
+    import json
+    from pathlib import Path
+
+    from pulse.ingestion.adapters.cursor_api import CursorApiAdapter
+    from pulse.ingestion.service import UsageIngestionService
+    from pulse.ingestion.types import IngestionContext
+    from pulse.integrations.cursor_api import map_usage_event
+
+    raw = json.loads((Path(__file__).parent / "fixtures" / fixture_name).read_text())[
+        "usageEventsDisplay"
+    ][event_index]
+    dto = map_usage_event(raw)
+    context = IngestionContext(
+        account_id=account_id,
+        vendor_id=vendor_id,
+        vendor_slug="cursor",
+        billing_period=period,
+        member_id=member_id,
+        channel="test",
+        source_type="api_sync",
+        triggered_by=member_id,
+        events=[dto],
+        metadata={"source": "test"},
+    )
+    service = UsageIngestionService(session, team_id)
+    return service.ingest(context=context, adapter=CursorApiAdapter())

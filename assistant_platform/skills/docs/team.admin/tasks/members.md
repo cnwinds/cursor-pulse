@@ -1,15 +1,15 @@
 ---
 name: 成员管理
-summary: 管理员查看或维护催办成员名单（新增/移除）。
+summary: 管理员查看或维护团队成员名单（新增/移除）。
 audience: [admin]
 when_to_use:
-  - 管理员查看或维护成员催办名单
+  - 管理员查看或维护成员名单
 ---
 
 ## 成员管理
 
 - `成员` — 查看 active 成员名单
-- `成员 添加 <userid> <姓名>` — 加入催办名单
+- `成员 添加 <userid> <姓名>` — 加入成员名单
 - `成员 移除 <userid>` — 设为 inactive
 
 调用 tool `members_manage`。

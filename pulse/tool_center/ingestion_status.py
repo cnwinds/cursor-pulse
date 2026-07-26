@@ -20,17 +20,12 @@ from pulse.web.permissions import has_permission
 
 SOURCE_TYPE_LABELS: dict[str, str] = {
     "manual_csv": "CSV 导出文件",
-    "manual_vision": "控制台截图",
-    "manual_text": "手工录入数值",
     "api_sync": "API 自动同步",
 }
 
 SUBMIT_METHOD_LABELS: dict[str, str] = {
     "csv": "CSV 导出文件",
     "csv_export": "CSV 导出文件",
-    "screenshot": "控制台截图",
-    "manual": "手工录入数值",
-    "text": "文本粘贴",
     "api": "API 自动同步",
     "api_key": "API Key 自动同步",
 }
@@ -66,10 +61,6 @@ def resolve_account_ingestion_status(
         ):
             return "sync_stale"
         return "synced"
-    if pending_ingestion:
-        return "manual_pending"
-    if summary:
-        return "manual_submitted"
     return "unsubmitted"
 
 
@@ -154,8 +145,6 @@ def _latest_ingestion(
 def _source_type_to_input_type(source_type: str) -> str:
     mapping = {
         "manual_csv": "csv",
-        "manual_vision": "screenshot",
-        "manual_text": "manual",
         "api_sync": "api",
     }
     return mapping.get(source_type, source_type)
@@ -297,73 +286,9 @@ def build_account_ingestion_status(
                 base["submission"] = payload
         return base
 
-    if state == "manual_pending" and pending:
-        date_min, date_max = _ingestion_date_range(session, pending.id)
-        confidence = _avg_confidence(session, pending.id)
-        payload = _ingestion_payload(session, pending, member_names=member_names)
-        base["ingestion_state"] = "manual_pending"
-        base["submission_state"] = "pending_review"
-        base["ingestion"] = payload
-        base["submission"] = payload
-        base["issues"] = _assess_date_compliance(period, date_min, date_max)
-        if confidence is not None and confidence < 0.85:
-            base["issues"].append(f"截图识别置信度偏低（{confidence:.0%}）")
-        base["action_hint"] = "已提交（历史待审记录，新提交直接入库）"
-        return base
-
-    if state == "manual_submitted" and usage_summary:
-        ingestion = (
-            session.get(UsageIngestion, usage_summary.latest_ingestion_id)
-            if usage_summary.latest_ingestion_id
-            else latest_ingestion
-        )
-        date_min, date_max = (
-            _ingestion_date_range(session, ingestion.id) if ingestion else (None, None)
-        )
-        issues = _assess_date_compliance(period, date_min, date_max)
-        if ingestion and ingestion.member_id != account.primary_member_id:
-            submitter = member_names.get(ingestion.member_id or "", "他人")
-            issues.append(f"提交人 {submitter} 非台账主使用人 {primary_name}")
-        if ingestion and ingestion.source_type != "manual_text":
-            if date_min is None:
-                issues.append("提交数据缺少可校验的日期范围")
-        base["ingestion_state"] = "manual_submitted"
-        base["submission_state"] = "submitted_warning" if issues else "submitted_ok"
-        payload = (
-            _ingestion_payload(
-                session,
-                ingestion,
-                member_names=member_names,
-                usage_summary=usage_summary,
-            )
-            if ingestion
-            else {
-                "id": None,
-                "id_prefix": None,
-                "status": "confirmed",
-                "source_type": None,
-                "input_type": None,
-                "ingested_at": None,
-                "submitted_at": None,
-                "submitted_by_member_id": usage_summary.submitted_by_member_id,
-                "submitted_by_name": member_names.get(usage_summary.submitted_by_member_id),
-                "data_date_min": date_min.isoformat() if date_min else None,
-                "data_date_max": date_max.isoformat() if date_max else None,
-                "extraction_confidence": None,
-                "primary_metric_value": float(usage_summary.primary_metric_value),
-                "primary_metric_unit": usage_summary.primary_metric_unit,
-                "quota_usage_ratio": usage_summary.quota_usage_ratio,
-            }
-        )
-        base["ingestion"] = payload
-        base["submission"] = payload
-        base["issues"] = issues
-        base["action_hint"] = "已完成" if not issues else "已提交但需核对"
-        return base
-
     base["ingestion_state"] = "unsubmitted"
     base["submission_state"] = "not_submitted"
-    base["action_hint"] = f"待主使用人 {primary_name} 提交"
+    base["action_hint"] = "仅支持 Cursor 账号自动同步"
     return base
 
 
@@ -425,12 +350,7 @@ def build_ingestion_status_payload(
         "sync_failed": 0,
         "sync_stale": 0,
         "synced": 0,
-        "manual_pending": 0,
-        "manual_submitted": 0,
         "unsubmitted": 0,
-        "pending_review": 0,
-        "submitted_ok": 0,
-        "submitted_warning": 0,
         "not_submitted": 0,
     }
 
@@ -454,13 +374,10 @@ def build_ingestion_status_payload(
 
     period_start, period_end = period_date_range(period)
     cursor_done = {"synced", "sync_stale"}
-    manual_done = {"manual_submitted", "manual_pending", "submitted_ok", "submitted_warning", "pending_review"}
     submitted_count = sum(
         1
         for row in account_rows
         if row.get("ingestion_state") in cursor_done
-        or row.get("submission_state") in manual_done
-        or row.get("ingestion_state") == "manual_submitted"
     )
 
     groups: dict[str, dict[str, Any]] = {}
@@ -478,8 +395,7 @@ def build_ingestion_status_payload(
         groups[key]["accounts"].append(row)
         groups[key]["total"] += 1
         state = row.get("ingestion_state", "")
-        sub_state = row.get("submission_state", "")
-        if state in cursor_done or state == "manual_submitted" or sub_state in manual_done:
+        if state in cursor_done:
             groups[key]["completed"] += 1
 
     group_list = sorted(

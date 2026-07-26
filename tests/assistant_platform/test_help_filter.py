@@ -99,7 +99,7 @@ def test_build_help_detail_denies_admin_command_for_member():
     caps = resolve_capabilities(
         session, team_id=TEAM_ID, role=None, member_id="member-self"
     )
-    text = build_help_detail("报告", caps)
+    text = build_help_detail("状态", caps)
 
     assert "暂无权限" in text
     session.close()

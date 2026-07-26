@@ -5,12 +5,8 @@ from dataclasses import dataclass
 
 _ADMIN_MARKER_KEYS = frozenset(
     {
-        "usage.aggregate",
-        "report.publish",
         "submission.status.read",
         "members.manage",
-        "alerts.run",
-        "usage.export",
         "guide_image.update",
     }
 )

@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.periods import current_period
-from pulse.report.service import get_latest_snapshot
-from pulse.storage.models import AlertLog, Member, ReminderLog, UsageIngestion
+from pulse.storage.models import Member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.permissions import has_permission
 from pulse.web.portal import list_pending_portal_users
 from pulse.web.settings_store import effective_config_dict, settings_for_api
-
-
-_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
 def _format_interval_minutes(minutes: int) -> str:
@@ -25,85 +20,56 @@ def _format_interval_minutes(minutes: int) -> str:
     return f"{minutes} 分钟"
 
 
+def _period_for_effective(config: AppConfig, effective: dict) -> str:
+    """Compute billing period using team-effective timezone / format."""
+    from pulse.config import CollectionConfig
+
+    collection = effective.get("collection") or {}
+    cfg = config.model_copy(
+        update={
+            "collection": CollectionConfig(
+                timezone=str(collection.get("timezone") or config.collection.timezone),
+                period_format=str(
+                    collection.get("period_format") or config.collection.period_format
+                ),
+            )
+        }
+    )
+    return current_period(cfg)
+
+
 def build_schedule_plan(config: AppConfig, session: Session, team_id: str) -> dict:
     effective = effective_config_dict(config, session, team_id)
     collection = effective["collection"]
-    memory = effective["memory"]
-
-    reminders_enabled = bool(collection.get("reminders_enabled", False))
-
-    jobs = []
-    if reminders_enabled:
-        jobs.extend(
-            [
-                {
-                    "id": "collection_start",
-                    "name": "收集开始群通知",
-                    "cron": f"每月 {collection['start_day']} 日 {collection['start_time']}",
-                    "process": "pulse channel",
-                    "enabled": True,
-                },
-                {
-                    "id": "daily_nudge",
-                    "name": "每日私聊催未提交",
-                    "cron": f"每天 {collection['daily_check_time']}（账期内）",
-                    "process": "pulse channel",
-                    "enabled": True,
-                },
-                {
-                    "id": "deadline_reminder",
-                    "name": "截止日群 @全员",
-                    "cron": f"每月 {collection['deadline_day']} 日 {collection['deadline_time']}",
-                    "process": "pulse channel",
-                    "enabled": True,
-                },
-            ]
-        )
     cursor_sync = effective.get("cursor_sync", config.cursor_sync.model_dump())
-    if collection.get("report_on_first_business_day", True):
-        pre_time = cursor_sync.get("pre_publish_start_time", "08:00")
-        report_cron = (
-            f"每月第一个工作日 {pre_time} 刷新 · {collection['report_time']} 发送"
-        )
-    else:
-        report_cron = f"每月 {collection['report_day']} 日 {collection['report_time']}"
-    jobs.append(
-        {
-            "id": "monthly_report",
-            "name": "月报发送",
-            "cron": report_cron,
-            "process": "pulse channel",
-            "enabled": True,
-        }
-    )
-    jobs.append(
+
+    jobs = [
         {
             "id": "cursor_sync_tick",
-            "name": "Cursor账号同步",
+            "name": "Cursor 账号同步",
             "cron": (
                 f"每 {cursor_sync.get('tick_interval_minutes', 2)} 分钟巡检 · "
                 f"账号间隔 {_format_interval_minutes(cursor_sync.get('default_interval_minutes', 1440))}"
             ),
             "process": "pulse channel",
             "enabled": bool(cursor_sync.get("enabled", True)),
-        }
-    )
-    # Memory evolution scheduler disabled pending semantic module migration.
-    # if memory.get("evolution_enabled"):
-    #     jobs.append(...)
+        },
+        {
+            "id": "expire_key_loans",
+            "name": "Key 借用到期回收",
+            "cron": "每天 03:00",
+            "process": "pulse channel",
+            "enabled": True,
+        },
+    ]
 
     return {
         "timezone": collection["timezone"],
-        "current_period": current_period(config),
-        "reminders_enabled": reminders_enabled,
-        "collection_window": {
-            "start_day": collection["start_day"],
-            "deadline_day": collection["deadline_day"],
-        },
+        "current_period": _period_for_effective(config, effective),
         "jobs": jobs,
         "note": (
             "调度任务在 pulse channel 进程中运行；仅 pulse web 时此处为配置预览。"
-            + ("" if reminders_enabled else " 用量提交催办已关闭。")
+            " 巡检间隔（tick）在 pulse channel 启动时注册，修改后需重启 channel。"
         ),
     }
 
@@ -147,7 +113,6 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
 
     from pulse.web.channel_status import resolve_im_group_status
 
-    pulse_llm_data = effective_raw.get("llm", {})
     dingtalk_data = effective_raw.get("dingtalk", {})
     feishu_data = effective_raw.get("feishu", {})
     im_status = resolve_im_group_status(effective_raw)
@@ -166,17 +131,7 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
             "group_chat_id": feishu_data.get("group_chat_id") or "",
             "bot_open_id": bool(feishu_data.get("bot_open_id")),
         },
-        "pulse_llm": {
-            "enabled": effective["llm"]["enabled"],
-            "vision_enabled": effective["llm"]["vision_enabled"],
-            "model": effective["llm"]["model"],
-            "api_key_configured": bool(pulse_llm_data.get("api_key")),
-        },
         "assistant_llm": assistant_llm,
-        "integrations": {
-            "bi_webhook": bool(effective["integrations"]["webhook_url"]),
-            "push_on_report": effective["integrations"].get("push_on_report", True),
-        },
         "memory": {
             "evolution_enabled": effective["memory"]["evolution_enabled"],
         },
@@ -196,7 +151,7 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
         "database": {"kind": db_kind, "url_hint": storage_url.split("///")[-1][:80]},
         "runtime_note": (
             "消息渠道与钉钉/飞书凭证可在团队设置中配置；修改 bot 平台、应用凭证或工作群后需重启 pulse channel。"
-            " 收集窗口、错峰同步账号间隔等团队设置保存后立即参与调度；"
+            " 错峰同步账号间隔等团队设置保存后立即参与调度；"
             " 巡检间隔（tick）在 pulse channel 启动时注册，修改后需重启 channel。"
         ),
     }
@@ -230,67 +185,27 @@ def build_dashboard_overview(
     repo,
     actor: Member | None = None,
 ) -> dict:
-    period = current_period(config)
     effective = settings_for_api(config, session, team_id)
+    effective_raw = effective_config_dict(config, session, team_id)
+    period = _period_for_effective(config, effective_raw)
 
     tool_repo = ToolCenterRepository(session, team_id)
     active_accounts = tool_repo.list_active_accounts()
     submitted_account_ids = tool_repo.get_submitted_account_ids(period)
-    unsubmitted_accounts = tool_repo.get_unsubmitted_accounts(period)
     missing_primary = tool_repo.accounts_missing_primary()
 
-    pending_count = len(
-        [
-            a
-            for a in unsubmitted_accounts
-            if session.scalar(
-                select(UsageIngestion.id).where(
-                    UsageIngestion.account_id == a.id,
-                    UsageIngestion.billing_period == period,
-                    UsageIngestion.status == "pending_review",
-                )
-            )
-        ]
-    )
-    submitted_count = len(submitted_account_ids) + pending_count
+    submitted_count = len(submitted_account_ids)
     active_count = len(active_accounts)
+    unsubmitted_count = max(0, active_count - submitted_count)
 
-    metrics_highlights: dict = {}
-    cost_summary: dict = {}
-    snap = get_latest_snapshot(session, period, team_id=team_id)
-    if snap and snap.metrics_json:
-        mj = snap.metrics_json
-        metrics_highlights = {
-            "total_events": mj.get("total_events", 0),
-            "total_tokens": mj.get("total_tokens", 0),
-            "total_cost_usd": mj.get("total_cost_usd", 0),
-            "member_count": mj.get("member_count", len(active_accounts)),
-        }
-        by_member = mj.get("cost_by_member") or []
-        costs = [float(row.get("value") or 0) for row in by_member if float(row.get("value") or 0) > 0]
-        total_cost = float(metrics_highlights.get("total_cost_usd") or 0)
-        members_with_cost = len(costs)
-        cost_summary = {
-            "total_cost_usd": total_cost,
-            "members_with_cost": members_with_cost,
-            "avg_cost_usd": round(total_cost / members_with_cost, 4) if members_with_cost else 0,
-            "max_cost_usd": round(max(costs), 4) if costs else 0,
-        }
-
-    alert_rows = session.scalars(
-        select(AlertLog)
-        .where(AlertLog.team_id == team_id)
-        .order_by(AlertLog.created_at.desc())
-        .limit(5)
-    ).all()
-
-    reminder_rows = session.scalars(
-        select(ReminderLog).order_by(ReminderLog.sent_at.desc()).limit(5)
-    ).all()
+    sync_stats = {
+        "synced": submitted_count,
+        "pending": 0,
+        "missing": unsubmitted_count,
+    }
 
     from pulse.web.channel_status import resolve_im_group_status
 
-    # Prefer team overrides; fall back to process config for empty sections.
     merged_for_im = {
         "bot": {"name": (effective.get("bot") or {}).get("name") or config.bot.name},
         "dingtalk": {
@@ -314,39 +229,20 @@ def build_dashboard_overview(
             "timezone": effective["collection"]["timezone"],
             "bot_platform": im_status["bot_platform"],
             "im_group_configured": im_status["im_group_configured"],
-            # 兼容旧前端字段名
             "group_configured": im_status["im_group_configured"],
-            "llm_report": effective["llm"]["enabled"],
-            "alerts_enabled": effective["alerts"]["enabled"],
-            "bi_webhook": bool(effective["integrations"]["webhook_url"]),
         },
         "ingestion": {
             "active_count": active_count,
             "submitted_count": submitted_count,
-            "unsubmitted_count": max(0, active_count - submitted_count),
-            "pending_review_count": pending_count,
+            "unsubmitted_count": unsubmitted_count,
+            "pending_review_count": 0,
             "missing_primary_count": len(missing_primary),
         },
-        # 兼容旧前端字段名
         "submission": {
             "active_count": active_count,
             "submitted_count": submitted_count,
-            "unsubmitted_count": max(0, active_count - submitted_count),
+            "unsubmitted_count": unsubmitted_count,
         },
-        "metrics_highlights": metrics_highlights,
-        "cost_summary": cost_summary,
-        "alert_summary": {
-            "total": len(alert_rows),
-            "critical": sum(1 for r in alert_rows if r.severity == "critical"),
-            "warning": sum(1 for r in alert_rows if r.severity != "critical"),
-        },
-        "recent_reminders": [
-            {
-                "type": r.type,
-                "period": r.period,
-                "sent_at": r.sent_at.isoformat(),
-            }
-            for r in reminder_rows
-        ],
+        "sync_stats": sync_stats,
         "pending_actions": build_pending_actions(session, team_id, actor) if actor else None,
     }

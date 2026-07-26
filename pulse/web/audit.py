@@ -34,7 +34,7 @@ ACTION_LABELS: dict[str, str] = {
     "quota.loan_key": "外借密钥",
     "quota.revoke_loan": "收回外借",
     "quota.request_self_loan": "自助申请 Key",
-    "usage.manual_submit": "手动提交用量",
+    "usage.manual_submit": "手动提交用量（历史）",
     # Historical / reserved (AccessRequest API not shipped)
     "access_request.approve": "批准工具申请（未实现）",
     "access_request.assign_trial": "分配试用账号（未实现）",
@@ -64,7 +64,8 @@ CAPABILITY_LABELS: dict[str, str] = {
     "admin:users": "用户管理",
     "loans:self": "自助借用 Key",
     "knowledge:write": "知识库编辑",
-    "reports:publish": "报告发布",
+    "settings:read": "设置查看",
+    "settings:write": "设置编辑",
 }
 
 DELETE_MODE_LABELS = {

@@ -20,7 +20,7 @@ def test_skill_actor_admin():
     actor = SkillActorContext(
         member_id="m1",
         role="owner",
-        authorized_capability_keys=frozenset({"usage.aggregate"}),
+        authorized_capability_keys=frozenset({"members.manage"}),
     )
     assert actor.is_admin
     assert actor.audiences == frozenset({"member", "admin"})
@@ -30,7 +30,7 @@ def test_list_cards_filters_admin_skill_files():
     reg = SkillRegistry(root=Path("assistant_platform/skills"))
     member = SkillActorContext("m1", "member", frozenset({"quota.self.read"}))
     admin = SkillActorContext(
-        "m1", "owner", frozenset({"usage.aggregate", "quota.self.read"})
+        "m1", "owner", frozenset({"members.manage", "quota.self.read"})
     )
     member_ids = {c.skill_id for c in reg.list_cards(member)}
     admin_ids = {c.skill_id for c in reg.list_cards(admin)}
@@ -54,7 +54,7 @@ def test_load_docs_rejects_invisible_skill():
 
 def test_load_docs_admin_only_file_hidden_from_member():
     reg = SkillRegistry(root=Path("assistant_platform/skills"))
-    admin = SkillActorContext("m1", "owner", frozenset({"usage.aggregate"}))
+    admin = SkillActorContext("m1", "owner", frozenset({"members.manage"}))
     member = SkillActorContext("m1", "member", frozenset({"key.loan.request"}))
     admin_doc = reg.load_docs("key.loan/admin", actor=admin, token_budget=4000)
     assert "key_loan_list" in admin_doc.markdown
@@ -75,7 +75,7 @@ def test_load_docs_injects_when_to_use_as_适用场景():
 
 def test_load_docs_missing_file_raises():
     reg = SkillRegistry(root=Path("assistant_platform/skills"))
-    admin = SkillActorContext("m1", "owner", frozenset({"usage.aggregate"}))
+    admin = SkillActorContext("m1", "owner", frozenset({"members.manage"}))
     try:
         reg.load_docs("team.admin/does-not-exist", actor=admin)
         raise AssertionError("expected ValueError")

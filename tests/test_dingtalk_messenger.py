@@ -83,7 +83,7 @@ def test_extract_picture_download_code_from_richtext_raw():
         "content": {
             "richText": [
                 {"downloadCode": "img123"},
-                {"text": "提交智谱的用量"},
+                {"text": "查看我的用量"},
             ]
         },
     }
@@ -96,7 +96,7 @@ def test_extract_incoming_text_from_richtext():
             self._data = data
 
     class RichTextContent:
-        rich_text_list = [{"text": "提交智谱的用量"}]
+        rich_text_list = [{"text": "查看我的用量"}]
 
         def to_dict(self):
             return {"richText": self.rich_text_list}
@@ -107,9 +107,9 @@ def test_extract_incoming_text_from_richtext():
         rich_text_content = RichTextContent()
 
         def get_text_list(self):
-            return ["提交智谱的用量"]
+            return ["查看我的用量"]
 
-    assert extract_incoming_text(Incoming()) == "提交智谱的用量"
+    assert extract_incoming_text(Incoming()) == "查看我的用量"
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ def test_picture_with_text_skips_assistant_mirror(bot_env):
     incoming.image_content = None
 
     def get_text_list():
-        return ["提交智谱的用量"]
+        return ["查看我的用量"]
 
     def get_image_list():
         return ["img-code-1"]
@@ -164,7 +164,7 @@ def test_picture_with_text_skips_assistant_mirror(bot_env):
         "content": {
             "richText": [
                 {"downloadCode": "img-code-1"},
-                {"text": "提交智谱的用量"},
+                {"text": "查看我的用量"},
             ]
         },
     }
@@ -179,7 +179,7 @@ def test_picture_with_text_skips_assistant_mirror(bot_env):
         asyncio.run(run())
         mirror.assert_not_called()
         handle_picture.assert_called_once()
-        assert handle_picture.call_args.kwargs.get("text_hint") == "提交智谱的用量"
+        assert handle_picture.call_args.kwargs.get("text_hint") == "查看我的用量"
 
 
 @pytest.fixture
