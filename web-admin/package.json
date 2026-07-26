@@ -12,10 +12,12 @@
     "@element-plus/icons-vue": "^2.3.1",
     "axios": "^1.7.9",
     "dompurify": "^3.4.12",
+    "echarts": "^6.1.0",
     "element-plus": "^2.9.0",
     "marked": "^18.0.6",
     "pinia": "^2.3.0",
     "vue": "^3.5.13",
+    "vue-echarts": "^8.0.1",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {

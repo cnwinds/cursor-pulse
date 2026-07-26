@@ -29,6 +29,10 @@
             <el-icon><TrendCharts /></el-icon>
             <span>额度看板</span>
           </el-menu-item>
+          <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/usage-analytics">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>用量分析</span>
+          </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/loans">
             <el-icon><Share /></el-icon>
             <span>借用记录</span>

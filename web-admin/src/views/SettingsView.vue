@@ -151,7 +151,7 @@ const dialog = reactive<DialogState>({
 })
 
 const ITEM_PLANS: Record<string, SavePlan[]> = {
-  collection_basics: [{ section: 'collection', keys: ['timezone', 'period_format'] }],
+  collection_basics: [{ section: 'collection', keys: ['timezone'] }],
   cursor_sync_tick: [{
     section: 'cursor_sync',
     keys: [
@@ -240,25 +240,17 @@ function jobCron(id: string): string {
 }
 
 function collectionBasicsSummary(): string {
-  const tz = forms.collection.timezone || schedule.value?.timezone || '—'
-  return `${tz} · 账期格式 ${forms.collection.period_format || '%Y-%m'}`
+  return String(forms.collection.timezone || schedule.value?.timezone || '—')
 }
 
 const collectionRows = computed<SettingRow[]>(() => {
   const rows: SettingRow[] = [
     {
       id: 'collection_basics',
-      name: '时区与账期',
+      name: '时区',
       summary: collectionBasicsSummary(),
       process: '团队设置',
       editable: true,
-    },
-    {
-      id: 'current_period',
-      name: '当前账期',
-      summary: schedule.value?.current_period ?? '—',
-      process: '自动计算',
-      editable: false,
     },
   ]
   rows.push(
@@ -394,8 +386,11 @@ const integrationRows = computed<SettingRow[]>(() => [
 ])
 
 const FIELD_DEFS: Record<string, SettingsField> = {
-  timezone: { key: 'timezone', label: '时区', hint: '如 Asia/Shanghai' },
-  period_format: { key: 'period_format', label: '账期格式', hint: '如 %Y-%m' },
+  timezone: {
+    key: 'timezone',
+    label: '时区',
+    hint: '用于同步调度与时间展示，如 Asia/Shanghai',
+  },
   sync_enabled: { key: 'enabled', label: '启用同步', type: 'switch' },
   enforce_on_demand_disabled: {
     key: 'enforce_on_demand_disabled',
@@ -990,20 +985,12 @@ function openItem(row: SettingRow) {
     }
     dialog.notice =
       '保存后 Web 扫码登录立即生效；修改应用凭证或工作群后需重启 pulse channel。'
-  } else if (row.id === 'current_period') {
-    dialog.fields = [
-      { key: 'period', label: '当前账期', readonly: true },
-      { key: 'timezone', label: '计算时区', readonly: true },
-    ]
-    dialog.model = {
-      period: schedule.value?.current_period ?? '—',
-      timezone: forms.collection.timezone || schedule.value?.timezone || '—',
-    }
-    dialog.notice = '账期由系统按当前日期和时区自动计算，不可手动修改。'
   } else {
     dialog.fields = fieldsForItem(row.id)
     dialog.model = modelForItem(row.id)
     dialog.notice = {
+      collection_basics:
+        '仅影响调度与时间展示。用量/额度按各 Cursor 账号自身账单周期，不再使用团队「统计月」配置。',
       bot: '选择运行时消息渠道。改为钉钉/飞书后需配置对应集成，并重启 pulse channel 进程。',
       feishu:
         '飞书自建应用凭证；保存后 OAuth 登录立即生效，修改凭证或工作群后需重启 pulse channel。',

@@ -45,6 +45,12 @@ const router = createRouter({
           meta: { permission: 'accounts:read', title: '额度看板' },
         },
         {
+          path: 'usage-analytics',
+          name: 'usage-analytics',
+          component: () => import('@/views/UsageAnalyticsView.vue'),
+          meta: { permission: 'accounts:read', title: '用量分析' },
+        },
+        {
           path: 'loans',
           name: 'loans',
           component: () => import('@/views/LoansView.vue'),

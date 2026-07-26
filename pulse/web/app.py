@@ -42,6 +42,7 @@ from pulse.web.pricing_api import register_pricing_routes
 from pulse.web.proxy_keys_api import register_proxy_keys_routes
 from pulse.web.quota_api import register_quota_routes
 from pulse.web.settings_api import register_settings_routes
+from pulse.web.usage_analytics_api import register_usage_analytics_routes
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +227,7 @@ def create_app(
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
     register_quota_routes(app, get_db, require_capability, _team_repo, config)
+    register_usage_analytics_routes(app, get_db, require_capability, _team_repo, config)
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)
     register_internal_proxy_routes(app, get_db, config)
