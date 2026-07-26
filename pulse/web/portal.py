@@ -36,22 +36,24 @@ def get_team_member(
     *,
     channel: str | None = None,
 ) -> Member | None:
-    stmt = select(Member).where(
-        Member.team_id == team_id,
-        Member.channel_user_id == channel_user_id,
-    )
+    from pulse.identity.service import resolve_member
+
     if channel is not None:
-        return session.scalar(stmt.where(Member.channel == channel))
-    rows = list(session.scalars(stmt.order_by(Member.channel.asc())).all())
-    if not rows:
-        return None
-    if len(rows) == 1:
-        return rows[0]
+        return resolve_member(
+            session, team_id, channel=channel, external_id=channel_user_id
+        )
     for preferred in ("web", "dingtalk", "feishu"):
-        for row in rows:
-            if row.channel == preferred:
-                return row
-    return rows[0]
+        member = resolve_member(
+            session, team_id, channel=preferred, external_id=channel_user_id
+        )
+        if member is not None:
+            return member
+    return session.scalar(
+        select(Member).where(
+            Member.team_id == team_id,
+            Member.channel_user_id == channel_user_id,
+        )
+    )
 
 
 def sync_portal_owners_from_config(
@@ -81,6 +83,10 @@ def sync_portal_owners_from_config(
                 portal_role="owner",
             )
             session.add(member)
+            session.flush()
+            from pulse.identity.service import ensure_identity
+
+            ensure_identity(session, member, channel=channel, external_id=uid)
             updated += 1
         elif member.portal_role != "owner":
             member.portal_role = "owner"
@@ -146,6 +152,8 @@ def _cleanup_legacy_oauth_duplicates(
 
 
 def ensure_admin_member(repo: Repository) -> Member:
+    from pulse.identity.service import ensure_identity, refresh_member_primary_cache
+
     member = repo.get_or_create_member(
         ADMIN_LOGIN_USERNAME, ADMIN_DISPLAY_NAME, channel="web"
     )
@@ -153,6 +161,10 @@ def ensure_admin_member(repo: Repository) -> Member:
     member.status = "active"
     member.portal_status = "active"
     member.portal_role = "owner"
+    ensure_identity(
+        repo.session, member, channel="web", external_id=ADMIN_LOGIN_USERNAME
+    )
+    refresh_member_primary_cache(repo.session, member)
     return member
 
 
@@ -164,6 +176,8 @@ def bootstrap_portal_owner(
     password: str,
     channel: str = "web",
 ) -> Member:
+    from pulse.identity.service import ensure_identity, refresh_member_primary_cache
+
     member = repo.get_or_create_member(channel_user_id, display_name, channel=channel)
     member.channel = channel
     member.status = "active"
@@ -171,6 +185,10 @@ def bootstrap_portal_owner(
     member.portal_role = "owner"
     member.password_hash = hash_password(password)
     member.last_portal_login_at = datetime.now(timezone.utc)
+    ensure_identity(
+        repo.session, member, channel=channel, external_id=channel_user_id
+    )
+    refresh_member_primary_cache(repo.session, member)
     return member
 
 
@@ -183,7 +201,11 @@ def grant_portal_role(
     display_name: str = "",
     permissions: list[str] | None = None,
 ) -> Member:
-    member = get_team_member(session, team_id, channel_user_id)
+    from pulse.identity.service import ensure_identity
+
+    member = get_team_member(session, team_id, channel_user_id, channel="web")
+    if member is None:
+        member = get_team_member(session, team_id, channel_user_id)
     if member is None:
         member = Member(
             team_id=team_id,
@@ -193,6 +215,10 @@ def grant_portal_role(
             status="active",
         )
         session.add(member)
+        session.flush()
+        ensure_identity(
+            session, member, channel="web", external_id=channel_user_id
+        )
     member.portal_role = role
     member.portal_permissions = permissions if role == "custom" else None
     member.portal_status = "active"
@@ -223,6 +249,27 @@ def revoke_portal_access(
     return member
 
 
+def delete_member_by_id(
+    session: Session,
+    team_id: str,
+    member_id: str,
+) -> Member:
+    member = session.get(Member, member_id)
+    if member is None or member.team_id != team_id:
+        raise PortalAdminError("成员不存在")
+    label = member.channel_user_id or member.display_name or member.id
+    if member.ingestions:
+        raise PortalAdminError(f"{label} 有 {len(member.ingestions)} 条摄取记录，无法删除")
+    from pulse.identity.service import list_identities
+
+    for identity in list_identities(session, member.id):
+        session.delete(identity)
+    session.flush()
+    session.delete(member)
+    session.flush()
+    return member
+
+
 def delete_member_without_ingestions(
     session: Session,
     team_id: str,
@@ -231,13 +278,7 @@ def delete_member_without_ingestions(
     member = get_team_member(session, team_id, channel_user_id)
     if member is None:
         raise PortalAdminError(f"未找到成员: {channel_user_id}")
-    if member.ingestions:
-        raise PortalAdminError(
-            f"{channel_user_id} 有 {len(member.ingestions)} 条摄取记录，无法删除"
-        )
-    session.delete(member)
-    session.flush()
-    return member
+    return delete_member_by_id(session, team_id, member.id)
 
 
 delete_member_without_submissions = delete_member_without_ingestions
@@ -308,6 +349,53 @@ def list_portal_users(session: Session, team_id: str) -> list[Member]:
             .order_by(Member.display_name)
         ).all()
     )
+
+
+def create_local_portal_user(
+    session: Session,
+    team_id: str,
+    *,
+    username: str,
+    display_name: str,
+    password: str,
+    role: str,
+    permissions: list[str] | None = None,
+) -> Member:
+    from pulse.identity.service import (
+        IdentityError,
+        ensure_identity,
+        resolve_member,
+        set_member_password,
+        validate_web_username,
+    )
+
+    try:
+        username = validate_web_username(username)
+    except IdentityError as exc:
+        raise PortalAdminError(str(exc)) from exc
+    if username.lower() == ADMIN_LOGIN_USERNAME:
+        raise PortalAdminError(f"用户名 {ADMIN_LOGIN_USERNAME} 为系统保留名")
+    if resolve_member(session, team_id, channel="web", external_id=username):
+        raise PortalAdminError(f"用户名已存在: {username}")
+    name = (display_name or "").strip() or username
+    member = Member(
+        team_id=team_id,
+        channel="web",
+        channel_user_id=username,
+        display_name=name,
+        status="active",
+        portal_status="active",
+        portal_role=role,
+        portal_permissions=permissions if role == "custom" else None,
+    )
+    session.add(member)
+    session.flush()
+    ensure_identity(session, member, channel="web", external_id=username)
+    try:
+        set_member_password(session, member, password)
+    except IdentityError as exc:
+        raise PortalAdminError(str(exc)) from exc
+    return member
 
 
 def approve_portal_user(

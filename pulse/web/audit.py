@@ -46,6 +46,9 @@ ACTION_LABELS: dict[str, str] = {
     "portal.user.reject": "拒绝门户申请",
     "portal.user.disable": "禁用门户用户",
     "portal.user.delete": "删除门户用户",
+    "portal.user.create": "创建本地用户",
+    "portal.user.link_identity": "关联渠道身份",
+    "portal.user.set_password": "设置用户密码",
 }
 
 CHANNEL_LABELS: dict[str, str] = {

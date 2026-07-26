@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
-from pulse.storage.models import Base, Team
+from pulse.storage.models import Base, MemberIdentity, Team
 
 logger = logging.getLogger(__name__)
 
@@ -657,4 +659,58 @@ def migrate_schema(engine: Engine) -> None:
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
 
     Base.metadata.create_all(engine)
+    _migrate_member_identities_table(engine)
     # personamem tables are initialized by assistant_platform (assistant.db), not pulse.db.
+
+
+def _migrate_member_identities_table(engine: Engine) -> None:
+    """Create member_identities and backfill one row per existing Member."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "members" not in tables:
+        return
+    if "member_identities" not in tables:
+        MemberIdentity.__table__.create(engine)
+        logger.info("Created member_identities table")
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, team_id, channel, channel_user_id FROM members "
+                "WHERE team_id IS NOT NULL AND channel_user_id IS NOT NULL "
+                "AND TRIM(channel_user_id) != ''"
+            )
+        ).fetchall()
+        created = 0
+        for member_id, team_id, channel, external_id in rows:
+            ch = (channel or "dingtalk").strip() or "dingtalk"
+            ext = (external_id or "").strip()
+            if not ext:
+                continue
+            exists = conn.execute(
+                text(
+                    "SELECT 1 FROM member_identities "
+                    "WHERE team_id = :team_id AND channel = :channel AND external_id = :external_id"
+                ),
+                {"team_id": team_id, "channel": ch, "external_id": ext},
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                text(
+                    "INSERT INTO member_identities "
+                    "(id, team_id, member_id, channel, external_id, created_at) "
+                    "VALUES (:id, :team_id, :member_id, :channel, :external_id, :created_at)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "team_id": team_id,
+                    "member_id": member_id,
+                    "channel": ch,
+                    "external_id": ext,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            created += 1
+        if created:
+            logger.info("Backfilled %s member_identities rows", created)

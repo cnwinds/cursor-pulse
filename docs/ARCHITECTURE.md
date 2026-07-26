@@ -17,7 +17,7 @@ Cursor Pulse 是**自托管 monorepo**，含控制面、可选 IM 渠道、可�
                     └──────────────────┘
 ```
 
-身份模型：`Member.channel`（`web` / `dingtalk` / `feishu`）+ `Member.channel_user_id`。业务逻辑只认这对键，不直接依赖某一 IM SDK。
+身份模型：`Member` 表示人（台账 / 门户角色 / 密码）；`MemberIdentity`（`channel` + `external_id`）表示登录与 IM 寻址键。一人可绑定 web / 钉钉 / 飞书 多身份。`Member.channel` / `channel_user_id` 为展示用冗余缓存。业务逻辑通过 `resolve_member` 查找，不直接依赖某一 IM SDK。
 
 ## 进程
 

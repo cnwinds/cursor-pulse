@@ -4,8 +4,8 @@
       <el-result icon="info" title="等待管理员审批">
         <template #sub-title>
           <p>你好，<strong>{{ userName }}</strong></p>
-          <p class="hint">你已通过 OAuth/扫码登录，账号正在等待超级管理员审批开通后台权限。</p>
-          <p class="hint">审批通过后请重新登录。</p>
+          <p class="hint">账号正在等待超级管理员审批开通后台权限。</p>
+          <p class="hint">审批通过后请使用原登录方式重新登录。</p>
         </template>
         <template #extra>
           <el-button type="primary" @click="recheck">重新检查</el-button>

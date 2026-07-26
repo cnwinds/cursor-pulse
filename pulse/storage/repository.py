@@ -16,7 +16,7 @@ from pulse.ingestion.types import IngestionContext
 from pulse.pricing.cursor_tables import get_cursor_pricing_table
 from pulse.pricing.estimator import resolve_cost_fields
 from pulse.pricing.types import PricingTable
-from pulse.storage.models import AiAccount, Member, UsageIngestion, UsageRecord
+from pulse.storage.models import AiAccount, Member, MemberIdentity, UsageIngestion, UsageRecord
 from pulse.tool_center.account_pick import filter_cursor_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.ingestion_status import period_date_range
@@ -53,13 +53,32 @@ class Repository:
     def get_member_by_channel_user_id(
         self, channel_user_id: str, *, channel: str | None = None
     ) -> Member | None:
-        stmt = select(Member).where(
-            Member.team_id == self.team_id,
-            Member.channel_user_id == channel_user_id,
-        )
+        from pulse.identity.service import resolve_member
+
         if channel is not None:
-            stmt = stmt.where(Member.channel == channel)
-        return self.session.scalar(stmt)
+            return resolve_member(
+                self.session,
+                self.team_id,
+                channel=channel,
+                external_id=channel_user_id,
+            )
+        # Prefer web, then dingtalk, then feishu when channel omitted.
+        for preferred in ("web", "dingtalk", "feishu"):
+            member = resolve_member(
+                self.session,
+                self.team_id,
+                channel=preferred,
+                external_id=channel_user_id,
+            )
+            if member is not None:
+                return member
+        # Legacy: any Member row with this channel_user_id
+        return self.session.scalar(
+            select(Member).where(
+                Member.team_id == self.team_id,
+                Member.channel_user_id == channel_user_id,
+            )
+        )
 
     def get_or_create_member(
         self,
@@ -68,8 +87,13 @@ class Repository:
         *,
         channel: str = "dingtalk",
     ) -> Member:
+        from pulse.identity.service import ensure_identity, refresh_member_primary_cache
+
         member = self.get_member_by_channel_user_id(channel_user_id, channel=channel)
         if member:
+            ensure_identity(
+                self.session, member, channel=channel, external_id=channel_user_id
+            )
             if display_name and member.display_name != display_name:
                 # 避免用渠道 user id 覆盖管理员/通讯录已配置的真实姓名。
                 if (
@@ -88,6 +112,10 @@ class Repository:
         )
         self.session.add(member)
         self.session.flush()
+        ensure_identity(
+            self.session, member, channel=channel, external_id=channel_user_id
+        )
+        refresh_member_primary_cache(self.session, member)
         return member
 
     def list_active_members(self) -> list[Member]:

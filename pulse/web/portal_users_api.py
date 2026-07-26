@@ -13,15 +13,28 @@ from pulse.web.permissions import (
     PORTAL_ROLE_LABELS,
     ROLE_PERMISSIONS,
 )
-from pulse.web.schemas import PortalApproveBody
+from pulse.web.schemas import (
+    PortalApproveBody,
+    PortalCreateUserBody,
+    PortalLinkIdentityBody,
+    PortalSetPasswordBody,
+)
 
 
-def _portal_user_row(member: Member) -> dict:
+def _portal_user_row(member: Member, session: Session | None = None) -> dict:
+    identities: list[dict] = []
+    has_password = bool(member.password_hash)
+    if session is not None:
+        from pulse.identity.service import identities_payload
+
+        identities = identities_payload(session, member)
     return {
         "id": member.id,
         "display_name": member.display_name,
         "channel_user_id": member.channel_user_id,
         "channel": getattr(member, "channel", None) or "web",
+        "identities": identities,
+        "has_password": has_password,
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "portal_permissions": member.portal_permissions,
@@ -64,7 +77,10 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         from pulse.web.portal import list_pending_portal_users
 
         team, _ = team_repo_fn(session)
-        return [_portal_user_row(m) for m in list_pending_portal_users(session, team.id)]
+        return [
+            _portal_user_row(m, session)
+            for m in list_pending_portal_users(session, team.id)
+        ]
 
     @app.get(
         "/api/portal/users",
@@ -74,7 +90,49 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         from pulse.web.portal import list_portal_users
 
         team, _ = team_repo_fn(session)
-        return [_portal_user_row(m) for m in list_portal_users(session, team.id)]
+        return [
+            _portal_user_row(m, session) for m in list_portal_users(session, team.id)
+        ]
+
+    @app.post(
+        "/api/portal/users",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_create_user(
+        body: PortalCreateUserBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.web.portal import PortalAdminError, create_local_portal_user
+
+        if body.portal_role not in ROLE_PERMISSIONS and body.portal_role != "custom":
+            raise HTTPException(400, detail="无效的 portal_role")
+        perms = None
+        if body.portal_role == "custom":
+            perms = [p for p in (body.portal_permissions or []) if p in ALL_PERMISSIONS]
+        team, _ = team_repo_fn(session)
+        try:
+            member = create_local_portal_user(
+                session,
+                team.id,
+                username=body.username,
+                display_name=body.display_name,
+                password=body.password,
+                role=body.portal_role,
+                permissions=perms,
+            )
+        except PortalAdminError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.create",
+            capability="admin:users",
+            detail=f"{body.username} -> {body.portal_role}",
+        )
+        session.commit()
+        return _portal_user_row(member, session)
 
     @app.get(
         "/api/portal/users/directory-search",
@@ -184,6 +242,104 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         }
 
     @app.post(
+        "/api/portal/users/{member_id}/identities",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_link_identity(
+        member_id: str,
+        body: PortalLinkIdentityBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.identity.service import IdentityError, link_identity
+
+        team, _ = team_repo_fn(session)
+        member = session.get(Member, member_id)
+        if member is None or member.team_id != team.id:
+            raise HTTPException(404, detail="成员不存在")
+        try:
+            member = link_identity(
+                session,
+                member,
+                channel=body.channel,
+                external_id=body.external_id,
+                merge_if_taken=body.merge,
+            )
+        except IdentityError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.link_identity",
+            capability="admin:users",
+            detail=f"{member.id} + {body.channel}:{body.external_id}"
+            + (" merge" if body.merge else ""),
+        )
+        session.commit()
+        return _portal_user_row(member, session)
+
+    @app.put(
+        "/api/portal/users/{member_id}/password",
+        dependencies=[Depends(require_capability("admin:users"))],
+    )
+    def portal_set_password(
+        member_id: str,
+        body: PortalSetPasswordBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("admin:users")),
+    ):
+        from pulse.identity.service import (
+            IdentityError,
+            ensure_identity,
+            link_identity,
+            list_identities,
+            set_member_password,
+        )
+
+        team, _ = team_repo_fn(session)
+        member = session.get(Member, member_id)
+        if member is None or member.team_id != team.id:
+            raise HTTPException(404, detail="成员不存在")
+        has_web = any(i.channel == "web" for i in list_identities(session, member.id))
+        if not has_web:
+            username = (body.username or "").strip()
+            if not username and member.channel == "web":
+                username = member.channel_user_id
+            if not username:
+                raise HTTPException(
+                    400,
+                    detail="请提供 username，为该用户创建 Web 登录名后再设密码",
+                )
+            try:
+                link_identity(
+                    session, member, channel="web", external_id=username, merge_if_taken=False
+                )
+            except IdentityError as exc:
+                raise HTTPException(400, detail=str(exc)) from exc
+        elif member.channel == "web":
+            try:
+                ensure_identity(
+                    session, member, channel="web", external_id=member.channel_user_id
+                )
+            except IdentityError:
+                pass
+        try:
+            set_member_password(session, member, body.password)
+        except IdentityError as exc:
+            raise HTTPException(400, detail=str(exc)) from exc
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="portal.user.set_password",
+            capability="admin:users",
+            detail=member.id,
+        )
+        session.commit()
+        return _portal_user_row(member, session)
+
+    @app.post(
         "/api/portal/users/{member_id}/approve",
         dependencies=[Depends(require_capability("admin:users"))],
     )
@@ -220,7 +376,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             detail=f"{member.channel_user_id} -> {member.portal_role}",
         )
         session.commit()
-        return _portal_user_row(member)
+        return _portal_user_row(member, session)
 
     @app.post(
         "/api/portal/users/{member_id}/reject",
@@ -247,7 +403,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             detail=member.channel_user_id,
         )
         session.commit()
-        return _portal_user_row(member)
+        return _portal_user_row(member, session)
 
     @app.post(
         "/api/portal/users/{member_id}/disable",
@@ -276,7 +432,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             detail=member.channel_user_id,
         )
         session.commit()
-        return _portal_user_row(member)
+        return _portal_user_row(member, session)
 
     @app.delete(
         "/api/portal/users/{member_id}",
@@ -287,7 +443,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("admin:users")),
     ):
-        from pulse.web.portal import PortalAdminError, delete_member_without_ingestions
+        from pulse.web.portal import PortalAdminError, delete_member_by_id
 
         team, _ = team_repo_fn(session)
         member = session.get(Member, member_id)
@@ -296,7 +452,7 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
         if member_id == user.member.id:
             raise HTTPException(400, detail="不能删除当前登录账号")
         try:
-            deleted = delete_member_without_ingestions(session, team.id, member.channel_user_id)
+            deleted = delete_member_by_id(session, team.id, member_id)
         except PortalAdminError as exc:
             raise HTTPException(400, detail=str(exc)) from exc
         log_admin_action(

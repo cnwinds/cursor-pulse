@@ -3,33 +3,34 @@
     <header class="page-header">
       <div>
         <h2>用户与权限</h2>
-        <p class="desc">审批首次 OAuth/扫码登录的用户，分配后台角色。超级管理员可授权其他超管。</p>
+        <p class="desc">
+          可创建本地用户（挂台账）、审批 OAuth 首次登录，并在启用钉钉/飞书后关联渠道身份。
+        </p>
       </div>
     </header>
 
-    <section class="panel pending-panel">
-      <div class="panel-head">
-        <div>
+    <section class="panel pending-panel" :class="{ 'is-empty': !pendingUsers.length }">
+      <div class="panel-head pending-head">
+        <div class="panel-head-title">
           <h3>待审批</h3>
-          <p class="panel-desc">首次 OAuth/扫码登录后台的账号</p>
+          <el-badge :value="pendingUsers.length" :hidden="!pendingUsers.length" type="warning" />
+          <span class="panel-desc pending-desc">首次 OAuth/扫码登录后台的账号</span>
         </div>
-        <el-badge :value="pendingUsers.length" :hidden="!pendingUsers.length" type="warning" />
+        <span v-if="!pendingUsers.length" class="pending-empty-hint">暂无待审批</span>
       </div>
 
-      <el-empty v-if="!pendingUsers.length" description="暂无待审批用户" />
-
-      <div v-else class="pending-list">
+      <div v-if="pendingUsers.length" class="pending-list">
         <div v-for="user in pendingUsers" :key="user.id" class="pending-card">
           <div class="user-info">
-            <el-avatar :size="40">{{ user.display_name.slice(0, 1) }}</el-avatar>
+            <el-avatar :size="32">{{ user.display_name.slice(0, 1) }}</el-avatar>
             <div>
               <div class="name">{{ user.display_name }}</div>
               <div class="meta">{{ channelMeta(user.channel, user.channel_user_id) }}</div>
             </div>
           </div>
           <div class="pending-actions">
-            <el-button type="primary" @click="openApprove(user)">审批开通</el-button>
-            <el-button @click="rejectUser(user)">拒绝</el-button>
+            <el-button type="primary" size="small" @click="openApprove(user)">审批开通</el-button>
+            <el-button size="small" @click="rejectUser(user)">拒绝</el-button>
           </div>
         </div>
       </div>
@@ -42,15 +43,17 @@
             <h3>已开通用户</h3>
             <el-badge :value="activeUsers.length" type="info" />
           </div>
-          <p class="panel-desc">已分配后台角色的账号</p>
+          <p class="panel-desc">已分配后台角色的账号（本地 / 钉钉 / 飞书）</p>
         </div>
-        <el-button
-          v-if="dingtalkDirectoryAvailable"
-          type="primary"
-          @click="openDirectoryDialog"
-        >
-          从通讯录添加
-        </el-button>
+        <div class="panel-actions">
+          <el-button type="primary" @click="openCreateDialog">创建用户</el-button>
+          <el-button
+            v-if="dingtalkDirectoryAvailable"
+            @click="openDirectoryDialog"
+          >
+            从钉钉通讯录添加
+          </el-button>
+        </div>
       </div>
 
       <el-table :data="activeUsers" stripe class="users-table">
@@ -65,21 +68,38 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="角色" width="140">
+        <el-table-column label="已绑定渠道" min-width="160">
+          <template #default="{ row }">
+            <div class="identity-tags">
+              <el-tag
+                v-for="idrow in row.identities || []"
+                :key="`${idrow.channel}:${idrow.external_id}`"
+                size="small"
+                type="info"
+              >
+                {{ channelLabel(idrow.channel) }}
+              </el-tag>
+              <span v-if="!(row.identities || []).length" class="meta">—</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="角色" width="120">
           <template #default="{ row }">
             <el-tag :type="roleTagType(row.portal_role)">{{ roleLabel(row.portal_role) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.portal_status === 'active' ? 'success' : 'info'">
               {{ row.portal_status === 'active' ? '已启用' : '已禁用' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="260">
+        <el-table-column label="操作" min-width="320">
           <template #default="{ row }">
             <el-button link type="primary" @click="openApprove(row)">编辑角色</el-button>
+            <el-button link type="primary" @click="openLinkDialog(row)">关联渠道</el-button>
+            <el-button link type="primary" @click="openPasswordDialog(row)">设密码</el-button>
             <el-button
               v-if="row.portal_status === 'active'"
               link
@@ -101,6 +121,90 @@
         </el-table-column>
       </el-table>
     </section>
+
+    <el-dialog v-model="createVisible" title="创建本地用户" width="480px" destroy-on-close>
+      <el-form label-width="88px">
+        <el-form-item label="用户名" required>
+          <el-input v-model="createForm.username" placeholder="登录用，如 zhangsan" />
+        </el-form-item>
+        <el-form-item label="显示名" required>
+          <el-input v-model="createForm.display_name" placeholder="姓名" />
+        </el-form-item>
+        <el-form-item label="密码" required>
+          <el-input v-model="createForm.password" type="password" show-password placeholder="至少 6 位" />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="createForm.portal_role" style="width: 100%">
+            <el-option
+              v-for="role in roles"
+              :key="role.id"
+              :label="role.label"
+              :value="role.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="linkVisible"
+      :title="linkTarget ? `关联渠道 · ${linkTarget.display_name}` : '关联渠道'"
+      width="480px"
+      destroy-on-close
+    >
+      <p class="dialog-desc">将钉钉/飞书 userid 挂到此人；若已被占用可勾选合并（台账保留当前用户）。</p>
+      <el-form label-width="100px">
+        <el-form-item label="渠道" required>
+          <el-select v-model="linkForm.channel" style="width: 100%">
+            <el-option label="Web 用户名" value="web" />
+            <el-option label="钉钉" value="dingtalk" />
+            <el-option label="飞书" value="feishu" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="外部 ID" required>
+          <el-input
+            v-model="linkForm.external_id"
+            :placeholder="linkForm.channel === 'web' ? '登录用户名' : 'IM userid / open_id'"
+          />
+        </el-form-item>
+        <el-form-item label="冲突时合并">
+          <el-switch v-model="linkForm.merge" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="linkVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitLink">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="passwordVisible"
+      :title="passwordTarget ? `设置密码 · ${passwordTarget.display_name}` : '设置密码'"
+      width="440px"
+      destroy-on-close
+    >
+      <p class="dialog-desc">设置后可用本地密码登录。若尚无 Web 用户名，请一并填写。</p>
+      <el-form label-width="100px">
+        <el-form-item
+          v-if="!hasWebIdentity(passwordTarget)"
+          label="Web 用户名"
+          required
+        >
+          <el-input v-model="passwordForm.username" placeholder="登录用户名" />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <el-input v-model="passwordForm.password" type="password" show-password placeholder="至少 6 位" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitPassword">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="approveVisible"
@@ -239,18 +343,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { LoadFunction } from 'element-plus/es/components/tree/src/tree.type'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { channelMeta } from '@/utils/channel'
+import { channelLabel, channelMeta } from '@/utils/channel'
+
+interface IdentityRow {
+  channel: string
+  external_id: string
+}
 
 interface PortalUserRow {
   id: string
   display_name: string
   channel_user_id: string
   channel?: string
+  identities?: IdentityRow[]
+  has_password?: boolean
   portal_status: string
   portal_role: string | null
   portal_permissions?: string[]
@@ -290,11 +401,28 @@ const saving = ref(false)
 const pendingUsers = ref<PortalUserRow[]>([])
 const activeUsers = ref<PortalUserRow[]>([])
 const roles = ref<RoleDef[]>([])
-const botPlatform = ref('none')
 const dingtalkAppConfigured = ref(false)
-const dingtalkDirectoryAvailable = computed(
-  () => botPlatform.value === 'dingtalk' && dingtalkAppConfigured.value,
-)
+const dingtalkDirectoryAvailable = computed(() => dingtalkAppConfigured.value)
+const createVisible = ref(false)
+const createForm = reactive({
+  username: '',
+  display_name: '',
+  password: '',
+  portal_role: 'operator',
+})
+const linkVisible = ref(false)
+const linkTarget = ref<PortalUserRow | null>(null)
+const linkForm = reactive({
+  channel: 'dingtalk',
+  external_id: '',
+  merge: false,
+})
+const passwordVisible = ref(false)
+const passwordTarget = ref<PortalUserRow | null>(null)
+const passwordForm = reactive({
+  username: '',
+  password: '',
+})
 const approveVisible = ref(false)
 const approveTarget = ref<PortalUserRow | null>(null)
 const selectedRole = ref('operator')
@@ -353,7 +481,6 @@ async function load() {
     activeUsers.value = activeRes.data
     roles.value = rolesRes.data
     if (intgRes?.data) {
-      botPlatform.value = String(intgRes.data.bot_platform || 'none')
       dingtalkAppConfigured.value = Boolean(intgRes.data.dingtalk?.app_configured)
     }
   } finally {
@@ -392,6 +519,103 @@ function openDirectoryDialog() {
   directoryQuery.value = ''
   directorySearchResults.value = []
   directoryVisible.value = true
+}
+
+function hasWebIdentity(user: PortalUserRow | null) {
+  if (!user) return false
+  return (user.identities || []).some((i) => i.channel === 'web') || user.channel === 'web'
+}
+
+function openCreateDialog() {
+  createForm.username = ''
+  createForm.display_name = ''
+  createForm.password = ''
+  createForm.portal_role = 'operator'
+  createVisible.value = true
+}
+
+async function submitCreate() {
+  if (!createForm.username.trim() || !createForm.display_name.trim() || !createForm.password) {
+    ElMessage.warning('请填写用户名、显示名和密码')
+    return
+  }
+  saving.value = true
+  try {
+    await client.post('/api/portal/users', {
+      username: createForm.username.trim(),
+      display_name: createForm.display_name.trim(),
+      password: createForm.password,
+      portal_role: createForm.portal_role,
+    })
+    ElMessage.success('已创建用户')
+    createVisible.value = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '创建失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+function openLinkDialog(row: PortalUserRow) {
+  linkTarget.value = row
+  linkForm.channel = dingtalkAppConfigured.value ? 'dingtalk' : 'web'
+  linkForm.external_id = ''
+  linkForm.merge = false
+  linkVisible.value = true
+}
+
+async function submitLink() {
+  if (!linkTarget.value || !linkForm.external_id.trim()) {
+    ElMessage.warning('请填写外部 ID')
+    return
+  }
+  saving.value = true
+  try {
+    await client.post(`/api/portal/users/${linkTarget.value.id}/identities`, {
+      channel: linkForm.channel,
+      external_id: linkForm.external_id.trim(),
+      merge: linkForm.merge,
+    })
+    ElMessage.success('已关联渠道身份')
+    linkVisible.value = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '关联失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+function openPasswordDialog(row: PortalUserRow) {
+  passwordTarget.value = row
+  passwordForm.username = ''
+  passwordForm.password = ''
+  passwordVisible.value = true
+}
+
+async function submitPassword() {
+  if (!passwordTarget.value || !passwordForm.password) {
+    ElMessage.warning('请填写密码')
+    return
+  }
+  if (!hasWebIdentity(passwordTarget.value) && !passwordForm.username.trim()) {
+    ElMessage.warning('请填写 Web 用户名')
+    return
+  }
+  saving.value = true
+  try {
+    const body: Record<string, string> = { password: passwordForm.password }
+    if (passwordForm.username.trim()) body.username = passwordForm.username.trim()
+    await client.put(`/api/portal/users/${passwordTarget.value.id}/password`, body)
+    ElMessage.success('密码已更新')
+    passwordVisible.value = false
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '设置失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 watch(directoryTab, (tab) => {
@@ -561,6 +785,17 @@ onMounted(load)
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 16px;
+  gap: 12px;
+}
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.identity-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .panel-head-title {
   display: flex;
@@ -602,18 +837,38 @@ onMounted(load)
   color: #94a3b8;
   font-size: 13px;
 }
+.pending-panel {
+  padding: 12px 16px;
+  margin-top: 16px;
+}
+.pending-panel.is-empty .pending-head {
+  margin-bottom: 0;
+}
+.pending-head {
+  align-items: center;
+  margin-bottom: 10px;
+}
+.pending-desc {
+  font-weight: 400;
+}
+.pending-empty-hint {
+  color: #94a3b8;
+  font-size: 13px;
+  white-space: nowrap;
+}
 .pending-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 .pending-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 16px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 10px;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   background: #f8fafc;
 }
 .user-info,

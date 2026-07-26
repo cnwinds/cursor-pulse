@@ -70,6 +70,33 @@ class Member(Base):
         back_populates="member",
         foreign_keys="UsageIngestion.member_id",
     )
+    identities: Mapped[list["MemberIdentity"]] = relationship(
+        back_populates="member",
+        # Do not use delete-orphan: reassigning identity.member_id during merge
+        # would otherwise delete the row instead of moving it.
+        cascade="save-update, merge",
+    )
+
+
+class MemberIdentity(Base):
+    """Login / IM addressing key for a person (Member).
+
+    One Member may have web + dingtalk + feishu identities; ledger FKs stay on members.id.
+    """
+
+    __tablename__ = "member_identities"
+    __table_args__ = (
+        UniqueConstraint("team_id", "channel", "external_id", name="uq_member_identity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), index=True)
+    member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(32), index=True)
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    member: Mapped[Member] = relationship(back_populates="identities")
 
 
 class UsageIngestion(Base):

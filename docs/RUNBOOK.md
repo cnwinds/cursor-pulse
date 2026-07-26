@@ -35,6 +35,19 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' -
 pulse web
 ```
 
+登录后在 **用户管理 → 创建用户** 添加本地账号（用户名 + 密码），并在台账中选为负责人。  
+`ADMIN_PASSWORD` 仅用于首次 bootstrap / 超管 `admin`；已设 `password_hash` 的用户以库内密码为准。
+
+### 2.0b 门户身份三种路径
+
+| 路径 | 做法 |
+|------|------|
+| 纯 Web | 创建本地用户 → 挂台账 → 用户名密码登录 |
+| 先本地后 IM | 创建用户并挂台账 → 配置钉钉/飞书 → **关联渠道** 绑定 IM userid；之后扫码与密码均可登录同一人 |
+| 先 IM | 钉钉通讯录同步 / 飞书 OAuth 待审批 → 审批开通 → 可挂台账；可用「设密码」补 Web 登录名 |
+
+一人可有多条 `member_identities`（web / dingtalk / feishu）；台账始终挂 `members.id`，关联渠道不改台账外键。合并冲突（双方都是不同账号主使用人）时需先改台账负责人。
+
 ### 2.1 钉钉（可选）
 
 1. 创建**企业内部应用**，启用机器人，模式选 **Stream**。

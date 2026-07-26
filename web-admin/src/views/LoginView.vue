@@ -32,13 +32,20 @@
         </div>
 
         <form v-if="activeTab === 'password'" class="login-form" @submit.prevent="loginPassword">
-          <p class="admin-hint">超管账号：<strong>admin</strong></p>
+          <p class="admin-hint">本地账号登录；首次部署可用超管 <strong>admin</strong> + ADMIN_PASSWORD</p>
+          <el-input
+            v-model="form.username"
+            placeholder="用户名"
+            size="large"
+            autocomplete="username"
+          />
           <el-input
             v-model="form.password"
             type="password"
             placeholder="密码"
             size="large"
             show-password
+            autocomplete="current-password"
           />
           <el-button type="primary" size="large" class="full" native-type="submit" :loading="pwdLoading">
             登录
@@ -94,7 +101,7 @@ const loadingProviders = ref(true)
 const activeTab = ref<ProviderId>('password')
 const oauthLoading = ref(false)
 const pwdLoading = ref(false)
-const form = reactive({ password: '' })
+const form = reactive({ username: 'admin', password: '' })
 
 const visibleTabs = computed(() => {
   // Always show password tab so bootstrap is possible; mark disabled via hint if needed.
@@ -151,13 +158,25 @@ async function loginOAuth(providerId: ProviderId) {
 }
 
 async function loginPassword() {
+  if (!form.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
   if (!form.password) {
     ElMessage.warning('请输入密码')
     return
   }
   pwdLoading.value = true
   try {
-    const { data } = await client.post('/api/auth/login', { username: 'admin', password: form.password })
+    const { data } = await client.post('/api/auth/login', {
+      username: form.username.trim(),
+      password: form.password,
+    })
+    if (data?.status === 'pending') {
+      ElMessage.info(data.message || '等待审批')
+      router.push('/pending-approval')
+      return
+    }
     auth.setSession(data.access_token, data.user)
     const redirect = (route.query.redirect as string) || '/'
     router.push(redirect)

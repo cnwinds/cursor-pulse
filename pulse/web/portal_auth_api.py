@@ -137,7 +137,8 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
 
         _team, repo = team_repo_fn(session)
         member = repo.get_or_create_member(userid, name, channel="feishu")
-        member.channel = "feishu"
+        # Do not overwrite primary display cache (prefer web) when already linked.
+        member.channel = member.channel or "feishu"
         if member.portal_status is None:
             member.portal_status = "pending"
         if name and member.display_name != name:
@@ -150,10 +151,34 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
     def password_login(body: PasswordLoginBody, session: Session = Depends(get_db)):
         import hmac
 
+        from pulse.identity.service import resolve_member
         from pulse.web.passwords import looks_like_password_hash, verify_password
+        from pulse.web.permissions import can_access_portal
         from pulse.web.portal import ADMIN_LOGIN_USERNAME, ensure_admin_member
 
-        if body.username != ADMIN_LOGIN_USERNAME:
+        username = (body.username or "").strip()
+        if not username or not body.password:
+            raise HTTPException(status_code=401, detail="账号或密码错误")
+
+        team, repo = team_repo_fn(session)
+        member = resolve_member(
+            session, team.id, channel="web", external_id=username
+        )
+
+        # Member password_hash takes precedence when present.
+        if member is not None and member.password_hash:
+            if not verify_password(body.password, member.password_hash):
+                raise HTTPException(status_code=401, detail="账号或密码错误")
+            if member.portal_status == "pending":
+                return _oauth_pending_or_auth(config=config, session=session, member=member)
+            if not can_access_portal(member):
+                raise HTTPException(status_code=403, detail="账号未开通或已禁用")
+            member.last_portal_login_at = datetime.now(timezone.utc)
+            session.commit()
+            return auth_response(config, member)
+
+        # Bootstrap: env ADMIN_PASSWORD for reserved admin username only.
+        if username != ADMIN_LOGIN_USERNAME:
             raise HTTPException(status_code=401, detail="账号或密码错误")
         if not config.web.admin_password:
             raise HTTPException(status_code=503, detail="未配置超管密码（ADMIN_PASSWORD）")
@@ -165,8 +190,13 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         if not ok:
             raise HTTPException(status_code=401, detail="账号或密码错误")
 
-        _team, repo = team_repo_fn(session)
         member = ensure_admin_member(repo)
+        if not member.password_hash and looks_like_password_hash(stored):
+            member.password_hash = stored
+        elif not member.password_hash:
+            from pulse.web.passwords import hash_password
+
+            member.password_hash = hash_password(body.password)
         member.last_portal_login_at = datetime.now(timezone.utc)
         session.commit()
         return auth_response(config, member)
