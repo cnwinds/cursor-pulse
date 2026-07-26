@@ -135,11 +135,11 @@
           </el-select>
         </el-form-item>
         <el-form-item label="借出账号" required>
-          <el-select v-model="loanForm.source_account_id" filterable placeholder="推荐或手动选择" style="width: 100%">
+          <el-select v-model="loanForm.source_account_id" filterable placeholder="推荐 Top 10" style="width: 100%">
             <el-option
               v-for="r in recommend"
               :key="r.account_id"
-              :label="`${r.account_identifier}（剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天）`"
+              :label="lenderOptionLabel(r)"
               :value="r.account_id"
             />
           </el-select>
@@ -291,8 +291,16 @@ interface Member {
 interface RecommendItem {
   account_id: string
   account_identifier: string
+  primary_member_name?: string | null
   remaining_headroom_pct: number
   days_until_reset: number
+}
+
+function lenderOptionLabel(r: RecommendItem) {
+  const id = r.account_identifier || r.account_id
+  const owner = r.primary_member_name?.trim()
+  const head = owner ? `${id} · ${owner}` : id
+  return `${head}（剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天）`
 }
 
 interface LoanRow {
@@ -404,10 +412,10 @@ async function loadLoans() {
 async function loadLoanDialogData() {
   const [membersRes, recommendRes] = await Promise.all([
     client.get('/api/v2/members'),
-    client.get('/api/v2/quota-board/recommend'),
+    client.get('/api/v2/quota-board/recommend', { params: { limit: 10 } }),
   ])
   members.value = membersRes.data
-  recommend.value = recommendRes.data
+  recommend.value = (recommendRes.data as RecommendItem[]).slice(0, 10)
   if (!loanForm.value.source_account_id && recommend.value.length) {
     loanForm.value.source_account_id = recommend.value[0].account_id
   }

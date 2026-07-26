@@ -82,7 +82,11 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
                 member_id=user.member.id,
             )
             sync_service = CursorSyncService(session, enc_key)
-            sync_result = sync_service.sync_account(account_id, channel="web")
+            sync_result = sync_service.sync_account(
+                account_id,
+                channel="web",
+                member_id=user.member.id,
+            )
             log_admin_action(
                 session,
                 team_id=team.id,

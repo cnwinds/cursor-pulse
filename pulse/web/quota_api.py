@@ -176,13 +176,17 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         "/api/v2/quota-board/recommend",
         dependencies=[Depends(require_capability("accounts:read"))],
     )
-    def quota_recommend(session: Session = Depends(get_db)):
+    def quota_recommend(
+        limit: int = Query(default=10, ge=1, le=50),
+        session: Session = Depends(get_db),
+    ):
         team, _ = team_repo_fn(session)
         today = date.today()
         candidates = build_lender_candidates(session, team.id)
-        return recommend_lenders(
+        ranked = recommend_lenders(
             candidates, today, loan_selection=config.tool_center.loan_selection
         )
+        return ranked[:limit]
 
     @app.get(
         "/api/v2/loans",

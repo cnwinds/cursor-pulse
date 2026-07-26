@@ -115,6 +115,7 @@ class LenderCandidate:
     account_identifier: str
     renews_on: date | None = None
     active_loans: int = 0
+    primary_member_name: str | None = None
 
 
 def lender_deadline(cycle_end: date, renews_on: date | None) -> date:
@@ -219,6 +220,7 @@ def _score_payload(
     return {
         "account_id": cand.account_id,
         "account_identifier": cand.account_identifier,
+        "primary_member_name": cand.primary_member_name,
         "score": round(score, 4),
         "deadline": deadline.isoformat(),
         "days_to_deadline": days,

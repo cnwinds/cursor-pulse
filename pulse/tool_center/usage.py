@@ -6,7 +6,11 @@ from datetime import date
 
 from pulse.pricing.estimator import aggregate_cursor_billing
 from pulse.storage.models import AiAccount, AiPlan, UsageRecord
-from pulse.tool_center.billing_cycle import billing_cycle_for_period
+from pulse.tool_center.billing_cycle import (
+    billing_cycle_for_period,
+    period_first_day,
+    period_last_day,
+)
 
 
 def model_family(model_name: str) -> str:
@@ -52,7 +56,7 @@ def build_usage_summary(
     unit = currency_unit or plan.price_currency
     unit = unit.lower() if unit else "usd"
 
-    if plan.billing_type == "fixed_monthly_pool" and records:
+    if plan.billing_type == "fixed_monthly_pool":
         billing = aggregate_cursor_billing(records)
         cursor_pools = billing["cursor_pools"]
         api_pool = dict(cursor_pools["api"])
@@ -61,6 +65,8 @@ def build_usage_summary(
         ratio = compute_quota_ratio(plan, api_spend)
         if ratio is not None:
             api_pool["usage_ratio"] = ratio
+        elif not records:
+            api_pool["usage_ratio"] = 0.0
         if plan.quota_denominator:
             api_pool["quota_usd"] = float(plan.quota_denominator)
         cursor_pools = {
@@ -76,7 +82,7 @@ def build_usage_summary(
             "primary_metric_unit": unit,
             "reported_spend_usd": billing["reported_spend_usd"],
             "estimated_included_spend_usd": billing["estimated_included_spend_usd"],
-            "quota_usage_ratio": ratio,
+            "quota_usage_ratio": ratio if ratio is not None else (0.0 if not records else None),
             "breakdown_by_model": api_breakdown,
             "cursor_pools": cursor_pools,
             "external_models": billing["external_models"],
@@ -99,6 +105,39 @@ def build_usage_summary(
     }
 
 
+_CYCLE_DISPLAY_KEYS = (
+    "primary_metric_value",
+    "primary_metric_unit",
+    "reported_spend_usd",
+    "estimated_included_spend_usd",
+    "quota_usage_ratio",
+    "breakdown_by_model",
+    "cursor_pools",
+    "external_models",
+    "excluded_event_count",
+    "estimation_coverage_pct",
+    "unmatched_models",
+)
+
+
+def snapshot_cycle_for_period(
+    *,
+    cycle_start: date | None,
+    cycle_end: date | None,
+    period: str,
+) -> tuple[date, date] | None:
+    """若快照账期与自然月 period 有交集，则用快照区间（与额度进度条同源）。"""
+    if cycle_start is None or cycle_end is None:
+        return None
+    if cycle_end <= cycle_start:
+        return None
+    month_start = period_first_day(period)
+    month_end = period_last_day(period)
+    if cycle_start <= month_end and cycle_end > month_start:
+        return cycle_start, cycle_end
+    return None
+
+
 def build_account_usage_summary(
     *,
     account: AiAccount,
@@ -106,14 +145,19 @@ def build_account_usage_summary(
     records: list[UsageRecord],
     period: str,
     plan_at_date: Callable[[date], AiPlan | None] | None = None,
+    cycle_bounds: tuple[date, date] | None = None,
 ) -> dict:
-    """自然月全量 + 订阅周期额度（有 usage_resets_on 时）。"""
-    base = build_usage_summary(plan=plan, records=records)
+    """有账单周期时，汇总与额度看板展示均按该周期对齐。
 
-    if not account.usage_resets_on:
-        return base
+    cycle_bounds 优先（通常来自最新配额快照）；否则用 usage_resets_on 推算。
+    """
+    if cycle_bounds is not None:
+        cycle_start, cycle_end = cycle_bounds
+    elif account.usage_resets_on:
+        cycle_start, cycle_end = billing_cycle_for_period(account.usage_resets_on, period)
+    else:
+        return build_usage_summary(plan=plan, records=records)
 
-    cycle_start, cycle_end = billing_cycle_for_period(account.usage_resets_on, period)
     cycle_records = [
         r
         for r in records
@@ -127,12 +171,11 @@ def build_account_usage_summary(
     denominator = (
         float(cycle_plan.quota_denominator) if cycle_plan.quota_denominator is not None else None
     )
-    result = dict(base)
+    result = {key: cycle_summary[key] for key in _CYCLE_DISPLAY_KEYS if key in cycle_summary}
     result["billing_cycle_start"] = cycle_start
     result["billing_cycle_end"] = cycle_end
     result["plan_id_used"] = cycle_plan.id
     result["quota_denominator_snapshot"] = denominator
     result["cycle_metric_value"] = cycle_summary["primary_metric_value"]
     result["cycle_quota_usage_ratio"] = cycle_summary.get("quota_usage_ratio")
-    result["quota_usage_ratio"] = cycle_summary.get("quota_usage_ratio")
     return result

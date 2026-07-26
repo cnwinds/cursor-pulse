@@ -426,15 +426,27 @@ def build_lender_candidates(
     snapshots = _latest_snapshots_by_account(session, team_id)
     loan_counts = _active_loan_counts_by_account(session, team_id)
     repo = ToolCenterRepository(session, team_id)
+    accounts = [
+        account
+        for account in repo.list_active_accounts()
+        if account.vendor
+        and account.vendor.slug == "cursor"
+        and account.id not in exclude_account_ids
+        and snapshots.get(account.id)
+    ]
+    primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
+    member_names: dict[str, str] = {}
+    if primary_ids:
+        member_names = {
+            m.id: m.display_name
+            for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))
+        }
     candidates: list[LenderCandidate] = []
-    for account in repo.list_active_accounts():
-        if not account.vendor or account.vendor.slug != "cursor":
-            continue
-        if account.id in exclude_account_ids:
-            continue
-        snap = snapshots.get(account.id)
-        if not snap:
-            continue
+    for account in accounts:
+        snap = snapshots[account.id]
+        primary_name = None
+        if account.primary_member_id:
+            primary_name = member_names.get(account.primary_member_id)
         candidates.append(
             LenderCandidate(
                 snapshot=snap,
@@ -442,6 +454,7 @@ def build_lender_candidates(
                 account_identifier=account.account_identifier,
                 renews_on=account.renews_on,
                 active_loans=loan_counts.get(account.id, 0),
+                primary_member_name=primary_name,
             )
         )
     return candidates

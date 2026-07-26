@@ -6,19 +6,31 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from pulse.web.audit import log_admin_action
+from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
+from pulse.ingestion.plan_infer import (
+    cycle_end_from_period_usage,
+    default_cursor_plan,
+    infer_plan_from_period_usage,
+)
+from pulse.ingestion.sync import CursorSyncService
+from pulse.integrations.cursor_api import CursorApiClient
+from pulse.storage.models import AiVendor
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.web.audit import log_admin_action
+
+_ACCOUNT_STATUS_VALUES = frozenset({"trial", "shared", "dedicated", "suspended"})
 
 
 class AccountCreateBody(BaseModel):
-    vendor_id: str
-    plan_id: str
+    vendor_id: str | None = None
+    plan_id: str | None = None
     account_identifier: str = ""
     status: str = "shared"
     primary_member_id: str | None = None
     shared_note: str | None = None
     ownership: str = "company"
     usage_resets_on: str | None = None
+    api_key: str | None = None
 
 
 class AccountPatchBody(BaseModel):
@@ -55,6 +67,16 @@ def _coerce_account_date_fields(fields: dict) -> dict:
     return out
 
 
+def _validate_account_status(status: str) -> str:
+    value = (status or "").strip()
+    if value not in _ACCOUNT_STATUS_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"账号类型无效：须为 {', '.join(sorted(_ACCOUNT_STATUS_VALUES))}",
+        )
+    return value
+
+
 def _account_payload(account) -> dict:
     return {
         "id": account.id,
@@ -80,7 +102,14 @@ def _account_payload(account) -> dict:
     }
 
 
-def register_accounts_v2_routes(app, get_db, require_capability, team_repo_fn, log_action=log_admin_action):
+def register_accounts_v2_routes(
+    app,
+    get_db,
+    require_capability,
+    team_repo_fn,
+    log_action=log_admin_action,
+    config=None,
+):
     @app.get("/api/v2/vendors", dependencies=[Depends(require_capability("accounts:read"))])
     def list_vendors(session: Session = Depends(get_db)):
         team, _ = team_repo_fn(session)
@@ -134,28 +163,117 @@ def register_accounts_v2_routes(app, get_db, require_capability, team_repo_fn, l
     ):
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
-        account = repo.create_account(
-            vendor_id=body.vendor_id,
-            plan_id=body.plan_id,
-            account_identifier=(body.account_identifier or "").strip(),
-            status=body.status,
-            primary_member_id=body.primary_member_id,
-            shared_note=body.shared_note,
-            ownership=body.ownership,
-            usage_resets_on=_parse_optional_date(body.usage_resets_on),
-        )
-        if body.usage_resets_on:
-            account.resets_on_source = "manual-locked"
-        session.commit()
-        log_action(
-            session,
-            team_id=team.id,
-            member_id=user.member.id,
-            action="account.create",
-            capability="accounts:write",
-            detail=account.account_identifier or account.id,
-        )
-        session.commit()
+        api_key = (body.api_key or "").strip()
+        if not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="新增账号须填写 API Key（套餐、账号标识与用量重置将自动获取）",
+            )
+        if not api_key.startswith("crsr_"):
+            raise HTTPException(status_code=400, detail="API Key 须以 crsr_ 开头")
+        if config is None:
+            raise HTTPException(status_code=503, detail="服务未配置凭证加密")
+        enc_key = (config.credentials.encryption_key or "").strip()
+        if not enc_key:
+            raise HTTPException(
+                status_code=503,
+                detail="未配置凭证加密密钥（PULSE_CREDENTIAL_ENCRYPTION_KEY）",
+            )
+
+        if body.vendor_id:
+            vendor = session.get(AiVendor, body.vendor_id)
+        else:
+            vendor = repo.get_vendor_by_slug("cursor")
+        if vendor is None or vendor.slug != "cursor":
+            raise HTTPException(status_code=400, detail="仅支持新增 Cursor 账号")
+
+        plans = repo.list_plans(vendor.id)
+        if not plans:
+            raise HTTPException(status_code=400, detail="未配置 Cursor 套餐，请先初始化目录")
+        status = _validate_account_status(body.status)
+
+        try:
+            cursor_client = CursorApiClient()
+            token = cursor_client.get_access_token(api_key)
+            key_email = cursor_client.resolve_api_key_account_email(api_key)
+            period_usage = cursor_client.get_current_period_usage(token, api_key=api_key)
+
+            if body.plan_id:
+                plan = next((p for p in plans if p.id == body.plan_id), None)
+                if plan is None:
+                    raise HTTPException(status_code=400, detail="套餐不存在或不属于 Cursor")
+            else:
+                plan = infer_plan_from_period_usage(plans, period_usage) or default_cursor_plan(
+                    plans
+                )
+            if plan is None:
+                raise HTTPException(status_code=400, detail="无法确定 Cursor 套餐")
+
+            identifier = (body.account_identifier or "").strip() or (key_email or "")
+            manual_resets = _parse_optional_date(body.usage_resets_on)
+            usage_resets_on = manual_resets or cycle_end_from_period_usage(period_usage)
+
+            account = repo.create_account(
+                vendor_id=vendor.id,
+                plan_id=plan.id,
+                account_identifier=identifier,
+                status=status,
+                primary_member_id=body.primary_member_id,
+                shared_note=body.shared_note,
+                ownership=body.ownership,
+                usage_resets_on=usage_resets_on,
+            )
+            if manual_resets:
+                account.resets_on_source = "manual-locked"
+            elif usage_resets_on:
+                account.resets_on_source = "api"
+
+            cred_service = CredentialService(session, enc_key, cursor_client=cursor_client)
+            cred = cred_service.bind_cursor_api_key(
+                account_id=account.id,
+                api_key=api_key,
+                member_id=user.member.id,
+            )
+            CursorSyncService(session, enc_key, cursor_client=cursor_client).sync_account(
+                account.id,
+                channel="web",
+                member_id=user.member.id,
+            )
+            log_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="credential.bind",
+                capability="accounts:write",
+                detail=f"{account.id}:{cred.key_hint}",
+            )
+            log_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="account.create",
+                capability="accounts:write",
+                detail=account.account_identifier or account.id,
+            )
+            session.commit()
+        except HTTPException:
+            session.rollback()
+            raise
+        except AccountEmailMismatchError as exc:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "account_email_mismatch",
+                    "message": str(exc),
+                    "ledger_email": exc.ledger_email,
+                    "key_email": exc.key_email,
+                },
+            ) from exc
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         account = repo.get_account(account.id)
         return _account_payload(account)
 
@@ -171,6 +289,8 @@ def register_accounts_v2_routes(app, get_db, require_capability, team_repo_fn, l
         account = repo.get_account(account_id)
         if not account:
             raise HTTPException(status_code=404, detail="账号不存在")
+        if body.status is not None:
+            _validate_account_status(body.status)
         fields = _coerce_account_date_fields(
             body.model_dump(
                 exclude_unset=True,

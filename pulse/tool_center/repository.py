@@ -281,23 +281,43 @@ class ToolCenterRepository:
             return self.get_plan(account.plan_id)
         return None
 
+    def latest_quota_snapshot(self, account_id: str) -> AccountQuotaSnapshot | None:
+        return self.session.scalar(
+            select(AccountQuotaSnapshot)
+            .where(AccountQuotaSnapshot.account_id == account_id)
+            .order_by(AccountQuotaSnapshot.captured_at.desc())
+            .limit(1)
+        )
+
     def build_summary_for_account(
         self,
         account: AiAccount,
         records: list,
         period: str,
     ) -> dict:
-        from pulse.tool_center.usage import build_account_usage_summary
+        from pulse.tool_center.usage import (
+            build_account_usage_summary,
+            snapshot_cycle_for_period,
+        )
 
         plan = self.get_plan(account.plan_id)
         if not plan:
             raise ValueError("账号套餐不存在")
+        snap = self.latest_quota_snapshot(account.id)
+        cycle_bounds = None
+        if snap is not None:
+            cycle_bounds = snapshot_cycle_for_period(
+                cycle_start=snap.cycle_start,
+                cycle_end=snap.cycle_end,
+                period=period,
+            )
         return build_account_usage_summary(
             account=account,
             plan=plan,
             records=records,
             period=period,
             plan_at_date=lambda d: self.resolve_plan_at_date(account.id, d),
+            cycle_bounds=cycle_bounds,
         )
 
     def update_account(self, account_id: str, **fields) -> AiAccount:

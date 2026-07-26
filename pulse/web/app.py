@@ -219,7 +219,7 @@ def create_app(
     register_settings_routes(app, config, get_db, require_capability, _team_repo)
     register_pricing_routes(app, get_db, require_capability, _team_repo)
     register_portal_users_routes(app, config, get_db, require_capability, _team_repo)
-    register_accounts_v2_routes(app, get_db, require_capability, _team_repo)
+    register_accounts_v2_routes(app, get_db, require_capability, _team_repo, config=config)
     register_credentials_routes(
         app, get_db, require_capability, _team_repo, config, require_user=_require_user
     )

@@ -316,11 +316,14 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     assert res.status_code == 200
     data = res.json()
     assert len(data) >= 1
+    assert len(data) <= 10
     item = data[0]
     assert item["account_id"] == account.id
     assert "deadline" in item
     assert "surplus_cents" in item
     assert "active_loans" in item
+    assert "primary_member_name" in item
+    assert item["primary_member_name"] == quota_env["borrower"].display_name
 
 
 def test_loan_key_enforces_account_cap(quota_env):

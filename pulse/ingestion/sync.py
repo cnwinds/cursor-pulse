@@ -153,7 +153,11 @@ class CursorSyncService:
                 )
 
     def sync_account(
-        self, account_id: str, *, channel: str = "scheduler"
+        self,
+        account_id: str,
+        *,
+        channel: str = "scheduler",
+        member_id: str | None = None,
     ) -> IngestionResult:
         cred = self.credential_service.get_primary_credential(account_id)
         if not cred or not cred.sync_enabled:
@@ -170,6 +174,9 @@ class CursorSyncService:
         team_id = account.team_id
         if not team_id:
             raise ValueError("account has no team_id")
+
+        usage_member_id = member_id or account.primary_member_id
+        triggered_by = usage_member_id or "system"
 
         try:
             api_key = self.credential_service.decrypt_api_key(cred)
@@ -209,10 +216,10 @@ class CursorSyncService:
                     vendor_id=account.vendor_id,
                     vendor_slug=account.vendor.slug,
                     billing_period=billing_period,
-                    member_id=None,
+                    member_id=usage_member_id,
                     channel=channel,
                     source_type="api_sync",
-                    triggered_by="system",
+                    triggered_by=triggered_by,
                     events=period_events,
                     metadata={
                         "sync_source": "cursor_api",

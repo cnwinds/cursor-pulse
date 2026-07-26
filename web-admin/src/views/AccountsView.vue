@@ -2,11 +2,11 @@
   <div class="accounts-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>AI 工具账号台账</h2>
-        <p class="desc">管理各厂家账号、主使用人与套餐。用量与额度请查看「额度看板」。</p>
+        <h2>Cursor 账号台账</h2>
+        <p class="desc">管理 Cursor 账号、主使用人与套餐。用量与额度请查看「额度看板」。</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="openCreate">新增账号</el-button>
+        <el-button type="primary" :disabled="!cursorVendor" @click="openCreate">新增账号</el-button>
       </div>
     </header>
 
@@ -16,9 +16,8 @@
           {{ row.account_identifier || '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="厂家" width="100" prop="vendor_name" />
       <el-table-column label="套餐" width="120" prop="plan_name" />
-      <el-table-column label="状态" width="100">
+      <el-table-column label="类型" width="100">
         <template #default="{ row }">
           <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
@@ -52,36 +51,21 @@
           <el-tag v-if="row.suggest_dedicated" type="warning">建议独立号</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button
-            v-if="isCursorRow(row) && canManageCredential(row)"
+            v-if="canOpenEdit(row)"
             link
-            @click="openCredential(row)"
-          >Key</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            type="primary"
+            @click="openEdit(row)"
+          >编辑</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑账号' : '新增账号'" width="520px">
       <el-form label-width="100px">
-        <el-form-item v-if="!editing" label="厂家">
-          <el-select v-model="form.vendor_id" style="width: 100%" @change="onVendorChange">
-            <el-option v-for="v in vendors" :key="v.id" :label="v.name" :value="v.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="!editing" label="套餐">
-          <el-select v-model="form.plan_id" style="width: 100%">
-            <el-option
-              v-for="p in filteredPlans"
-              :key="p.id"
-              :label="`${p.plan_name} (${p.price_amount} ${p.price_currency})`"
-              :value="p.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="editing" label="套餐">
+        <el-form-item v-if="editing && canWrite" label="套餐">
           <el-select v-model="form.plan_id" style="width: 100%">
             <el-option
               v-for="p in editPlans"
@@ -91,41 +75,25 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="editing && isCursorAccount" label="升级生效日">
-          <el-date-picker
-            v-model="form.plan_effective_from"
-            type="date"
-            value-format="YYYY-MM-DD"
-            placeholder="套餐变更日期，如 2026-06-24"
-            style="width: 100%"
-            clearable
-          />
+        <el-form-item v-if="editing && canWrite" label="账号标识">
+          <el-input v-model="form.account_identifier" placeholder="邮箱或登录名" />
         </el-form-item>
-        <el-form-item v-if="editing && isCursorAccount" label="原套餐">
-          <el-select v-model="form.previous_plan_id" clearable style="width: 100%" placeholder="续费升级前档位">
-            <el-option
-              v-for="p in editPlans"
-              :key="p.id"
-              :label="`${p.plan_name} (${p.price_amount} ${p.price_currency})`"
-              :value="p.id"
-            />
-          </el-select>
-          <p class="field-hint">6/24 从 Pro 升到 Pro+ 时：原套餐选 Pro，生效日填 2026-06-24</p>
-        </el-form-item>
-        <el-form-item label="账号标识">
-          <el-input v-model="form.account_identifier" placeholder="邮箱或登录名（可留空，绑定 Key 后自动填入）" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="form.status" style="width: 100%">
+        <el-form-item v-if="!editing || canWrite" label="类型">
+          <el-select v-model="form.status" style="width: 100%" :disabled="Boolean(editing) && !canWrite">
             <el-option label="试用" value="trial" />
             <el-option label="共享" value="shared" />
             <el-option label="独立" value="dedicated" />
-            <el-option label="可用" value="available" />
             <el-option label="停用" value="suspended" />
           </el-select>
         </el-form-item>
-        <el-form-item label="主使用人">
-          <el-select v-model="form.primary_member_id" clearable filterable style="width: 100%">
+        <el-form-item v-if="!editing || canWrite" label="主使用人">
+          <el-select
+            v-model="form.primary_member_id"
+            clearable
+            filterable
+            style="width: 100%"
+            :disabled="Boolean(editing) && !canWrite"
+          >
             <el-option
               v-for="m in members"
               :key="m.id"
@@ -133,11 +101,18 @@
               :value="m.id"
             />
           </el-select>
+          <p v-if="form.status === 'dedicated'" class="field-hint">独立账号建议指定主使用人</p>
         </el-form-item>
-        <el-form-item label="共享说明">
-          <el-input v-model="form.shared_note" type="textarea" :rows="2" />
+        <el-form-item v-if="!editing || canWrite" label="备注">
+          <el-input
+            v-model="form.shared_note"
+            type="textarea"
+            :rows="2"
+            placeholder="例如共享范围、值班说明等"
+            :disabled="Boolean(editing) && !canWrite"
+          />
         </el-form-item>
-        <el-form-item v-if="isCursorAccount" label="用量重置">
+        <el-form-item v-if="editing && canWrite && isCursorAccount" label="用量重置">
           <el-date-picker
             v-model="form.usage_resets_on"
             type="date"
@@ -146,7 +121,31 @@
             style="width: 100%"
             clearable
           />
-          <p class="field-hint">在 Cursor Dashboard → Usage 查看 Resets on 日期</p>
+          <p class="field-hint">一般由同步自动更新；仅在需锁定时手动填写</p>
+        </el-form-item>
+        <el-form-item label="API Key" :required="!editing">
+          <div v-if="editing && editCredential" class="credential-meta">
+            <el-tag :type="credentialTagType(editCredential)" size="small">
+              {{ credentialBadgeLabel(editCredential) }}
+            </el-tag>
+            <span v-if="editCredential.key_hint" class="muted">当前：{{ editCredential.key_hint }}</span>
+            <span v-if="editCredential.last_sync_at" class="muted">
+              上次同步：{{ formatChinaTime(editCredential.last_sync_at) }}
+            </span>
+            <span v-if="editCredential.last_sync_error" class="sync-error">
+              {{ editCredential.last_sync_error }}
+            </span>
+          </div>
+          <el-input
+            v-model="form.api_key"
+            type="password"
+            show-password
+            :placeholder="editing ? '留空表示不更换；填写 crsr_… 则重新绑定' : 'crsr_…（必填，将自动获取套餐、账号与重置日）'"
+            autocomplete="off"
+          />
+          <p class="field-hint">
+            {{ editing ? '填写新 Key 并保存即可换绑并同步' : '套餐、账号标识、用量重置日由 Key 同步后自动写入' }}
+          </p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -160,55 +159,27 @@
           >
             删除
           </el-button>
+          <el-button
+            v-if="editing && editCredential?.bound && canManageCredential(editing)"
+            type="danger"
+            text
+            :loading="credentialUnbinding"
+            @click="unbindCredential"
+          >
+            解绑 Key
+          </el-button>
+          <el-button
+            v-if="editing && editCredential?.bound && canManageCredential(editing)"
+            text
+            :loading="credentialSyncing"
+            @click="syncCredential"
+          >
+            立即同步
+          </el-button>
           <div class="dialog-footer-spacer" />
           <el-button @click="dialogVisible = false">取消</el-button>
           <el-button type="primary" :loading="saving" @click="save">保存</el-button>
         </div>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="credentialVisible" title="Cursor API Key" width="480px">
-      <p class="manual-hint">
-        账号：{{ credentialAccount?.account_identifier || '（未填写，绑定后自动填入）' }}
-      </p>
-      <div v-if="credentialStatus" class="credential-meta">
-        <el-tag :type="credentialTagType(credentialStatus)" size="small">
-          {{ credentialBadgeLabel(credentialStatus) }}
-        </el-tag>
-        <span v-if="credentialStatus.key_hint" class="muted">密钥：{{ credentialStatus.key_hint }}</span>
-        <span v-if="credentialStatus.last_sync_at" class="muted">
-          上次同步：{{ formatChinaTime(credentialStatus.last_sync_at) }}
-        </span>
-        <span v-if="credentialStatus.last_sync_error" class="sync-error">
-          {{ credentialStatus.last_sync_error }}
-        </span>
-      </div>
-      <el-form label-width="90px">
-        <el-form-item label="API Key">
-          <el-input
-            v-model="apiKeyInput"
-            type="password"
-            show-password
-            placeholder="crsr_..."
-            autocomplete="off"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button
-          v-if="credentialStatus?.bound"
-          type="danger"
-          plain
-          :loading="credentialUnbinding"
-          @click="unbindCredential"
-        >解绑</el-button>
-        <el-button
-          v-if="canWrite && credentialStatus?.bound"
-          :loading="credentialSyncing"
-          @click="syncCredential"
-        >立即同步</el-button>
-        <el-button @click="credentialVisible = false">取消</el-button>
-        <el-button type="primary" :loading="credentialBinding" @click="bindCredential">绑定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -227,6 +198,7 @@ const canWrite = computed(() => auth.hasPermission('accounts:write'))
 interface Vendor {
   id: string
   name: string
+  slug?: string
 }
 interface Plan {
   id: string
@@ -271,24 +243,10 @@ const plans = ref<Plan[]>([])
 const members = ref<Member[]>([])
 const dialogVisible = ref(false)
 const editing = ref<Account | null>(null)
-const credentialVisible = ref(false)
-const credentialAccount = ref<Account | null>(null)
-const credentialStatus = ref<CredentialStatus | null>(null)
+const editCredential = ref<CredentialStatus | null>(null)
 const credentialMap = ref<Record<string, CredentialStatus>>({})
-const apiKeyInput = ref('')
-const credentialBinding = ref(false)
 const credentialUnbinding = ref(false)
 const credentialSyncing = ref(false)
-
-const now = new Date()
-const periodOptions = computed(() => {
-  const list: string[] = []
-  for (let i = 0; i < 6; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    list.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-  }
-  return list
-})
 
 const form = reactive({
   vendor_id: '',
@@ -297,28 +255,28 @@ const form = reactive({
   status: 'shared',
   primary_member_id: null as string | null,
   shared_note: '',
+  api_key: '',
   usage_resets_on: null as string | null,
-  plan_effective_from: null as string | null,
-  previous_plan_id: null as string | null,
-  plan_change_note: '',
 })
+
+const cursorVendor = computed(
+  () => vendors.value.find((v) => v.slug === 'cursor' || v.name === 'Cursor') || null,
+)
 
 const editPlans = computed(() => {
   if (editing.value) {
     return plans.value.filter((p) => p.vendor_id === editing.value!.vendor_id)
   }
-  return filteredPlans.value
+  if (!cursorVendor.value) return []
+  return plans.value.filter((p) => p.vendor_id === cursorVendor.value!.id)
 })
 
 const isCursorAccount = computed(() => {
   if (editing.value) {
     return editing.value.vendor_name === 'Cursor'
   }
-  const vendor = vendors.value.find((v) => v.id === form.vendor_id)
-  return vendor?.name === 'Cursor'
+  return Boolean(cursorVendor.value)
 })
-
-const filteredPlans = computed(() => plans.value.filter((p) => p.vendor_id === form.vendor_id))
 
 function memberName(id: string | null) {
   if (!id) return ''
@@ -330,7 +288,6 @@ function statusLabel(s: string) {
     trial: '试用',
     shared: '共享',
     dedicated: '独立',
-    available: '可用',
     suspended: '停用',
   }
   return map[s] || s
@@ -374,6 +331,10 @@ function canManageCredential(row: Account) {
   return row.primary_member_id === auth.user?.id
 }
 
+function canOpenEdit(row: Account) {
+  return canWrite.value || (isCursorRow(row) && canManageCredential(row))
+}
+
 async function loadCredentialStatuses() {
   const cursorAccounts = accounts.value.filter(isCursorRow)
   const entries = await Promise.all(
@@ -389,16 +350,18 @@ async function loadCredentialStatuses() {
   credentialMap.value = Object.fromEntries(entries)
 }
 
-async function openCredential(row: Account) {
-  credentialAccount.value = row
-  apiKeyInput.value = ''
-  credentialVisible.value = true
+async function loadEditCredential(accountId: string) {
   try {
-    const res = await client.get(`/api/v2/accounts/${row.id}/credentials`)
-    credentialStatus.value = res.data
-    credentialMap.value[row.id] = res.data
+    const res = await client.get(`/api/v2/accounts/${accountId}/credentials`)
+    editCredential.value = res.data
+    credentialMap.value[accountId] = res.data
   } catch {
-    credentialStatus.value = { bound: false, key_hint: null, last_sync_at: null, last_sync_status: 'never' }
+    editCredential.value = {
+      bound: false,
+      key_hint: null,
+      last_sync_at: null,
+      last_sync_status: 'never',
+    }
   }
 }
 
@@ -412,46 +375,20 @@ function credentialErrorDetail(e: unknown) {
   return '绑定失败'
 }
 
-async function bindCredential() {
-  if (!credentialAccount.value) return
-  const apiKey = apiKeyInput.value.trim()
-  if (!apiKey.startsWith('crsr_')) {
-    ElMessage.warning('API Key 须以 crsr_ 开头')
-    return
-  }
-  credentialBinding.value = true
-  try {
-    const res = await client.post(`/api/v2/accounts/${credentialAccount.value.id}/credentials`, {
-      api_key: apiKey,
-    })
-    credentialStatus.value = res.data
-    credentialMap.value[credentialAccount.value.id] = res.data
-    apiKeyInput.value = ''
-    await loadAll()
-    const updated = accounts.value.find((a) => a.id === credentialAccount.value?.id)
-    if (updated) credentialAccount.value = updated
-    ElMessage.success('API Key 已绑定')
-  } catch (e: unknown) {
-    ElMessage.error(credentialErrorDetail(e))
-  } finally {
-    credentialBinding.value = false
-  }
-}
-
 async function unbindCredential() {
-  if (!credentialAccount.value) return
+  if (!editing.value) return
   await ElMessageBox.confirm('解绑后将停止自动同步，确定？', '解绑 API Key', { type: 'warning' })
   credentialUnbinding.value = true
   try {
-    await client.delete(`/api/v2/accounts/${credentialAccount.value.id}/credentials`)
+    await client.delete(`/api/v2/accounts/${editing.value.id}/credentials`)
     const cleared: CredentialStatus = {
       bound: false,
       key_hint: null,
       last_sync_at: null,
       last_sync_status: 'never',
     }
-    credentialStatus.value = cleared
-    credentialMap.value[credentialAccount.value.id] = cleared
+    editCredential.value = cleared
+    credentialMap.value[editing.value.id] = cleared
     ElMessage.success('已解绑')
   } catch (e: unknown) {
     const err = e as { response?: { data?: { detail?: string } } }
@@ -462,18 +399,26 @@ async function unbindCredential() {
 }
 
 async function syncCredential() {
-  if (!credentialAccount.value) return
+  if (!editing.value) return
   credentialSyncing.value = true
   try {
-    const res = await client.post(`/api/v2/accounts/${credentialAccount.value.id}/sync`)
+    const res = await client.post(`/api/v2/accounts/${editing.value.id}/sync`)
     const updated: CredentialStatus = {
       bound: true,
-      key_hint: credentialStatus.value?.key_hint ?? null,
+      key_hint: editCredential.value?.key_hint ?? null,
       last_sync_at: res.data.last_sync_at,
       last_sync_status: res.data.last_sync_status,
     }
-    credentialStatus.value = updated
-    credentialMap.value[credentialAccount.value.id] = updated
+    editCredential.value = updated
+    credentialMap.value[editing.value.id] = updated
+    await loadAll()
+    const refreshed = accounts.value.find((a) => a.id === editing.value?.id)
+    if (refreshed) {
+      editing.value = refreshed
+      form.account_identifier = refreshed.account_identifier
+      form.plan_id = refreshed.plan_id
+      form.usage_resets_on = refreshed.usage_resets_on
+    }
     ElMessage.success(`同步完成，${res.data.event_count} 条事件`)
   } catch (e: unknown) {
     const err = e as { response?: { data?: { detail?: string } } }
@@ -503,40 +448,41 @@ async function loadAll() {
 }
 
 function resetForm() {
-  form.vendor_id = vendors.value[0]?.id || ''
-  form.plan_id = ''
+  form.vendor_id = cursorVendor.value?.id || ''
+  form.plan_id = editPlans.value[0]?.id || ''
   form.account_identifier = ''
   form.status = 'shared'
   form.primary_member_id = null
   form.shared_note = ''
+  form.api_key = ''
   form.usage_resets_on = null
-  form.plan_effective_from = null
-  form.previous_plan_id = null
-  form.plan_change_note = ''
 }
 
 function openCreate() {
+  if (!cursorVendor.value) {
+    ElMessage.warning('未找到 Cursor 厂家，请先执行数据库初始化（seed）')
+    return
+  }
   editing.value = null
+  editCredential.value = null
   resetForm()
   dialogVisible.value = true
 }
 
-function openEdit(row: Account) {
+async function openEdit(row: Account) {
   editing.value = row
   form.account_identifier = row.account_identifier
   form.plan_id = row.plan_id
-  form.status = row.status
+  form.status = row.status === 'available' ? 'shared' : row.status
   form.primary_member_id = row.primary_member_id
   form.shared_note = row.shared_note || ''
+  form.api_key = ''
   form.usage_resets_on = row.usage_resets_on
-  form.plan_effective_from = null
-  form.previous_plan_id = null
-  form.plan_change_note = ''
+  editCredential.value = credentialMap.value[row.id] ?? null
   dialogVisible.value = true
-}
-
-function onVendorChange() {
-  form.plan_id = filteredPlans.value[0]?.id || ''
+  if (isCursorRow(row)) {
+    await loadEditCredential(row.id)
+  }
 }
 
 async function removeAccount() {
@@ -566,41 +512,68 @@ async function save() {
   saving.value = true
   try {
     if (editing.value) {
-      const patchBody: Record<string, unknown> = {
-        account_identifier: form.account_identifier.trim(),
-        status: form.status,
-        primary_member_id: form.primary_member_id,
-        shared_note: form.shared_note || null,
-        usage_resets_on: form.usage_resets_on,
+      const apiKey = form.api_key.trim()
+      if (apiKey && !apiKey.startsWith('crsr_')) {
+        ElMessage.warning('API Key 须以 crsr_ 开头')
+        return
       }
-      if (form.plan_id !== editing.value.plan_id) {
-        patchBody.plan_id = form.plan_id
-        if (form.plan_effective_from) patchBody.plan_effective_from = form.plan_effective_from
-        if (form.plan_change_note) patchBody.plan_change_note = form.plan_change_note
+      if (!canWrite.value && !apiKey) {
+        ElMessage.warning('请填写新的 API Key')
+        return
       }
-      if (form.previous_plan_id && form.plan_effective_from) {
-        patchBody.previous_plan_id = form.previous_plan_id
-        patchBody.plan_effective_from = form.plan_effective_from
-        if (form.plan_change_note) patchBody.plan_change_note = form.plan_change_note
+      if (canWrite.value) {
+        const patchBody: Record<string, unknown> = {
+          account_identifier: form.account_identifier.trim(),
+          status: form.status,
+          primary_member_id: form.primary_member_id,
+          shared_note: form.shared_note || null,
+          usage_resets_on: form.usage_resets_on,
+        }
+        if (form.plan_id !== editing.value.plan_id) {
+          patchBody.plan_id = form.plan_id
+        }
+        await client.patch(`/api/v2/accounts/${editing.value.id}`, patchBody)
       }
-      await client.patch(`/api/v2/accounts/${editing.value.id}`, patchBody)
-      ElMessage.success('已更新')
+      if (apiKey) {
+        if (!canManageCredential(editing.value)) {
+          ElMessage.error('无权更换 API Key')
+          return
+        }
+        await client.post(`/api/v2/accounts/${editing.value.id}/credentials`, {
+          api_key: apiKey,
+        })
+        ElMessage.success(canWrite.value ? '已更新并更换 API Key' : 'API Key 已更换')
+      } else {
+        ElMessage.success('已更新')
+      }
     } else {
-      if (!form.plan_id) {
-        ElMessage.warning('请选择套餐')
+      if (!cursorVendor.value) {
+        ElMessage.warning('未找到 Cursor 厂家，请先执行数据库初始化（seed）')
+        return
+      }
+      const apiKey = form.api_key.trim()
+      if (!apiKey) {
+        ElMessage.warning('请填写 API Key')
+        return
+      }
+      if (!apiKey.startsWith('crsr_')) {
+        ElMessage.warning('API Key 须以 crsr_ 开头')
         return
       }
       await client.post('/api/v2/accounts', {
-        ...form,
-        account_identifier: form.account_identifier.trim(),
-        usage_resets_on: isCursorAccount.value ? form.usage_resets_on : null,
+        vendor_id: cursorVendor.value.id,
+        status: form.status,
+        primary_member_id: form.primary_member_id,
+        shared_note: form.shared_note || null,
+        api_key: apiKey,
       })
-      ElMessage.success('已创建')
+      ElMessage.success('已创建并同步账号信息')
     }
     dialogVisible.value = false
     await loadAll()
   } catch (e: unknown) {
-    ElMessage.error('保存失败')
+    const detail = credentialErrorDetail(e)
+    ElMessage.error(detail === '绑定失败' ? '保存失败' : detail)
   } finally {
     saving.value = false
   }
@@ -627,11 +600,6 @@ onMounted(loadAll)
 }
 .muted {
   color: #94a3b8;
-}
-.manual-hint {
-  margin-bottom: 12px;
-  color: #64748b;
-  font-size: 14px;
 }
 .field-hint {
   margin-top: 6px;

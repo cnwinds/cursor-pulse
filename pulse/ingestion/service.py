@@ -126,12 +126,23 @@ class UsageIngestionService:
         if not plan:
             raise ValueError("账号套餐不存在")
 
+        from pulse.tool_center.usage import snapshot_cycle_for_period
+
+        snap = tool_repo.latest_quota_snapshot(account.id)
+        cycle_bounds = None
+        if snap is not None:
+            cycle_bounds = snapshot_cycle_for_period(
+                cycle_start=snap.cycle_start,
+                cycle_end=snap.cycle_end,
+                period=context.billing_period,
+            )
         summary = build_account_usage_summary(
             account=account,
             plan=plan,
             records=records,
             period=context.billing_period,
             plan_at_date=lambda d: tool_repo.resolve_plan_at_date(account.id, d),
+            cycle_bounds=cycle_bounds,
         )
         sync_source = "api" if context.source_type == "api_sync" else "manual"
         now = datetime.now(timezone.utc)
