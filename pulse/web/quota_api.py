@@ -24,6 +24,7 @@ from pulse.tool_center.key_loans import (
     build_lender_candidates,
     issue_loan_key,
     loan_payload,
+    request_self_service_loan,
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
@@ -31,6 +32,7 @@ from pulse.tool_center.repository import ToolCenterRepository
 from pulse.util.datetime_fmt import format_china_date
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
+from pulse.web.permissions import has_permission
 
 
 class LoanKeyBody(BaseModel):
@@ -39,6 +41,10 @@ class LoanKeyBody(BaseModel):
     auto_revoke_on_reset: bool = True
     key_name: str | None = None
     delivery_mode: Literal["proxy_alias", "cursor_direct"] = "proxy_alias"
+
+
+class SelfLoanBody(BaseModel):
+    note: str | None = None
 
 
 def _encryption_key(config) -> str:
@@ -215,6 +221,82 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "active_count": active_count,
         }
 
+    @app.get("/api/v2/loans/mine")
+    def list_my_loans(
+        status: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("loans:self")),
+    ):
+        team, _ = team_repo_fn(session)
+        base = (
+            select(KeyLoan)
+            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+            .where(
+                AiAccount.team_id == team.id,
+                KeyLoan.borrower_member_id == user.member.id,
+            )
+        )
+        if status:
+            base = base.where(KeyLoan.status == status)
+        total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+        active_count = session.scalar(
+            select(func.count())
+            .select_from(KeyLoan)
+            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+            .where(
+                AiAccount.team_id == team.id,
+                KeyLoan.borrower_member_id == user.member.id,
+                KeyLoan.status == "active",
+            )
+        ) or 0
+        loans = session.scalars(
+            base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
+        ).all()
+        return {
+            "items": [loan_payload(loan, session) for loan in loans],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "active_count": active_count,
+        }
+
+    @app.post("/api/v2/loans/request-self")
+    def request_self_loan(
+        body: SelfLoanBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("loans:self")),
+    ):
+        """Member self-service key loan (Web path; same rules as IM 「申请key」)."""
+        team, _ = team_repo_fn(session)
+        enc_key = _encryption_key(config)
+        try:
+            result = request_self_service_loan(
+                session,
+                enc_key,
+                team_id=team.id,
+                borrower=user.member,
+                note=body.note,
+                bound_by_member_id=user.member.id,
+                loan_selection=config.tool_center.loan_selection,
+            )
+            log_admin_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="quota.request_self_loan",
+                capability="loans:self",
+                detail=result.get("loan_id") or "",
+            )
+            session.commit()
+            return result
+        except KeyLoanError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post(
         "/api/v2/accounts/{account_id}/loan-key",
         dependencies=[Depends(require_capability("accounts:write"))],
@@ -371,15 +453,12 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "items": items_all[:limit],
         }
 
-    @app.get(
-        "/api/v2/loans/{loan_id}/client-setup",
-        dependencies=[Depends(require_capability("accounts:write"))],
-    )
+    @app.get("/api/v2/loans/{loan_id}/client-setup")
     def loan_client_setup(
         loan_id: str,
         shell: str = Query(default="powershell", pattern="^(bash|powershell)$"),
         session: Session = Depends(get_db),
-        user: PortalUser = Depends(require_capability("accounts:write")),
+        user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
         loan = session.scalar(
@@ -389,6 +468,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         )
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
+        is_admin = has_permission(user.member, "accounts:write")
+        is_borrower = loan.borrower_member_id == user.member.id
+        if not is_admin and not is_borrower:
+            raise HTTPException(status_code=403, detail="无权查看该借用的客户端命令")
         if loan.status != "active":
             raise HTTPException(status_code=410, detail="借用已结束，无法获取代理命令")
 
@@ -454,14 +537,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "key_hint": cred.key_hint if cred else None,
         }
 
-    @app.post(
-        "/api/v2/loans/{loan_id}/revoke",
-        dependencies=[Depends(require_capability("accounts:write"))],
-    )
+    @app.post("/api/v2/loans/{loan_id}/revoke")
     def revoke_loan(
         loan_id: str,
         session: Session = Depends(get_db),
-        user: PortalUser = Depends(require_capability("accounts:write")),
+        user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
         loan = session.scalar(
@@ -471,6 +551,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         )
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
+        is_admin = has_permission(user.member, "accounts:write")
+        is_borrower = loan.borrower_member_id == user.member.id
+        if not is_admin and not is_borrower:
+            raise HTTPException(status_code=403, detail="无权撤销该借用")
 
         enc_key = _encryption_key(config)
         loan_svc = KeyLoanService(session, enc_key)
@@ -481,7 +565,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 team_id=team.id,
                 member_id=user.member.id,
                 action="quota.revoke_loan",
-                capability="accounts:write",
+                capability="accounts:write" if is_admin else "loans:self",
                 detail=loan_id,
             )
             session.commit()

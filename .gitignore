@@ -4,6 +4,9 @@ data/
 .env.*
 !.env.example
 config.yaml
+config.yaml.bak*
+*.bak
+*.bak.*
 *.db
 *.sqlite
 *.sqlite3

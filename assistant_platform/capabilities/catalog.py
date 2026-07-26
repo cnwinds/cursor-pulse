@@ -134,7 +134,7 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
     _op(
         "bot.help",
         "帮助",
-        "列出当前用户可用的钉钉命令与自助能力说明。",
+        "列出当前用户可用的渠道命令与自助能力说明。",
     ),
     _op(
         "usage.query",

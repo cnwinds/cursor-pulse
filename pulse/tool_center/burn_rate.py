@@ -354,8 +354,11 @@ def recommend_lenders(
     本身即 [0,1] 绝对值直接入分。打平按 account_id 字典序保证确定性。
     """
     cfg = loan_selection or LoanSelectionConfig()
-    today = today or date.today()
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if today is None:
+        today = now.date()
     ranked, _ = _rank_passing_candidates(
         candidates, cfg, today, now, enforce_loan_cap=enforce_loan_cap
     )
@@ -372,8 +375,11 @@ def explain_lender_selection(
 ) -> dict:
     """与 recommend_lenders 同源打分，额外返回硬过滤排除项。"""
     cfg = loan_selection or LoanSelectionConfig()
-    today = today or date.today()
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if today is None:
+        today = now.date()
     ranked, excluded = _rank_passing_candidates(
         candidates, cfg, today, now, enforce_loan_cap=enforce_loan_cap
     )

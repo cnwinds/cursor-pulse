@@ -74,12 +74,20 @@ def test_assert_jwt_secret_configured_rejects_production_without_secret(monkeypa
         assert_jwt_secret_configured(config)
 
 
+def test_assert_jwt_secret_configured_rejects_short_production_secret(monkeypatch):
+    monkeypatch.setenv("PULSE_ENV", "production")
+    config = AppConfig(web=WebConfig(jwt_secret="too-short"))
+    with pytest.raises(ValueError, match="32 bytes"):
+        assert_jwt_secret_configured(config)
+
+
 def test_production_with_jwt_secret_works(member, monkeypatch):
     monkeypatch.setenv("PULSE_ENV", "production")
-    config = AppConfig(web=WebConfig(jwt_secret="prod-jwt-secret"))
+    config = AppConfig(web=WebConfig(jwt_secret="prod-jwt-secret-at-least-32-bytes!!"))
     token = create_access_token(config, member)
     payload = decode_access_token(config, token)
     assert payload["sub"] == "mem-1"
+    assert_jwt_secret_configured(config)
 
 
 def test_no_secret_raises(member, monkeypatch):

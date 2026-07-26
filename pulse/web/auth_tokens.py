@@ -30,15 +30,24 @@ def _warn_admin_token_fallback() -> None:
 
 
 def assert_jwt_secret_configured(config) -> None:
-    """Reject missing JWT_SECRET in production; warn once when falling back in dev."""
+    """Reject missing/short JWT_SECRET in production; warn once when falling back in dev."""
     jwt_secret = (config.web.jwt_secret or "").strip()
     if _is_production() and not jwt_secret:
         raise ValueError(
             "JWT_SECRET is required when PULSE_ENV=production "
             "(admin_token cannot substitute for JWT signing)."
         )
+    if _is_production() and jwt_secret and len(jwt_secret.encode("utf-8")) < 32:
+        raise ValueError(
+            "JWT_SECRET must be at least 32 bytes when PULSE_ENV=production "
+            "(RFC 7518 §3.2 recommendation for HS256)."
+        )
     if not jwt_secret and (config.web.admin_token or "").strip():
         _warn_admin_token_fallback()
+    elif jwt_secret and len(jwt_secret.encode("utf-8")) < 32:
+        logger.warning(
+            "JWT_SECRET is shorter than 32 bytes; use a longer secret in production."
+        )
 
 
 def _secret(config) -> str:

@@ -64,7 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     p_reprice_proxy.add_argument("--loan-id", default=None)
     p_reprice_proxy.add_argument("--proxy-key-id", default=None)
 
-    p_init = sub.add_parser("init-db", help="Initialize database schema")
+    p_init = sub.add_parser(
+        "init-db",
+        help="Initialize database schema and seed AI tool catalog (vendors/plans)",
+    )
+    p_init.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Skip seeding vendors/plans/trial accounts",
+    )
 
     p_rotate_key = sub.add_parser(
         "rotate-credential-key",
@@ -209,7 +217,25 @@ def main(argv: list[str] | None = None) -> int:
     session_factory = init_db(config.storage.database_url)
 
     if args.command == "init-db":
-        logger.info("Database initialized at %s", config.storage.database_url)
+        if not args.no_seed:
+            session = session_factory()
+            try:
+                team, _repo = team_repository(session, config)
+                from pulse.tool_center.seed import seed_v2_catalog
+
+                counts = seed_v2_catalog(session, team)
+                session.commit()
+                logger.info(
+                    "Database initialized at %s (seed: vendors=%s plans=%s accounts=%s)",
+                    config.storage.database_url,
+                    counts["vendors"],
+                    counts["plans"],
+                    counts["accounts"],
+                )
+            finally:
+                session.close()
+        else:
+            logger.info("Database initialized at %s (seed skipped)", config.storage.database_url)
         return 0
 
     if args.command == "rotate-credential-key":

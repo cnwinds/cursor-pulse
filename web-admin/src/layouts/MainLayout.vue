@@ -33,6 +33,13 @@
             <el-icon><Share /></el-icon>
             <span>借用记录</span>
           </el-menu-item>
+          <el-menu-item
+            v-if="auth.hasPermission('loans:self') && !auth.hasPermission('accounts:read')"
+            index="/my-loans"
+          >
+            <el-icon><Share /></el-icon>
+            <span>我的借用</span>
+          </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('proxy:read')" index="/proxy-keys">
             <el-icon><Key /></el-icon>
             <span>代理 Key</span>

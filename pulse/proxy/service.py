@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -765,6 +765,22 @@ def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
     return rows, accounts, latest_snaps, loan_counts
 
 
+def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
+    """与配额快照 captured_at 对齐的 today/now，避免墙钟与快照数据脱节。"""
+    captured: list[datetime] = []
+    for snap in latest_snaps.values():
+        if snap.captured_at is None:
+            continue
+        t = snap.captured_at
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        captured.append(t)
+    now = max(captured) if captured else datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.date(), now
+
+
 def list_pool_credentials(
     session: Session,
     *,
@@ -796,9 +812,12 @@ def list_pool_credentials(
             )
         )
 
+    today, now = _pool_scoring_clock(latest_snaps)
     ranked = recommend_lenders(
         candidates,
+        today,
         loan_selection=loan_selection,
+        now=now,
         enforce_loan_cap=False,
     )
     ranked_ids = [item["account_id"] for item in ranked]
@@ -865,9 +884,12 @@ def list_pool_ranking_board(session: Session, *, loan_selection=None) -> dict:
             )
         )
 
+    today, now = _pool_scoring_clock(latest_snaps)
     board = explain_lender_selection(
         candidates,
+        today,
         loan_selection=loan_selection,
+        now=now,
         enforce_loan_cap=False,
     )
     return {

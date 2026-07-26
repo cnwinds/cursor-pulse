@@ -366,3 +366,99 @@ def test_loan_key_enforces_account_cap(quota_env):
         )
         assert res.status_code == 400
         assert "名额已满" in res.json()["detail"]
+
+
+def test_request_self_loan_and_mine_via_web(quota_env):
+    """Web-only self-service: exhausted borrower can request-self and list mine."""
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    own_account = quota_env["cursor_account"]
+    borrower_token = create_access_token(config, borrower)
+
+    mock_client = MagicMock()
+    mock_client.get_access_token.return_value = "session-token"
+    mock_client.create_user_api_key.return_value = {"apiKey": "crsr_loan_self_web_key_value"}
+    mock_client.list_user_api_keys.return_value = [{"id": 77, "name": "pulse-loan-Borrower"}]
+    from tests.conftest import mock_cursor_key_exchange
+
+    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+        s = quota_env["session_factory"]()
+        tool_repo = ToolCenterRepository(s, owner.team_id)
+        cursor_accounts = [a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"]
+        lender = next(a for a in cursor_accounts if a.id != own_account.id)
+
+        # Own account exhausted → eligible for self-service
+        own_snap = s.scalar(
+            select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == own_account.id)
+        )
+        own_snap.total_pct = 95.0
+        own_snap.used_cents = 6650
+        own_snap.remaining_cents = 350
+        own_snap.cycle_start = date.today() - timedelta(days=20)
+        own_snap.cycle_end = date.today() + timedelta(days=10)
+
+        # Lender healthy with headroom
+        s.add(
+            AccountQuotaSnapshot(
+                account_id=lender.id,
+                captured_at=datetime.now(timezone.utc),
+                cycle_start=date.today() - timedelta(days=5),
+                cycle_end=date.today() + timedelta(days=25),
+                limit_cents=7000,
+                used_cents=500,
+                remaining_cents=6500,
+                total_pct=7.0,
+            )
+        )
+
+        cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
+        mock_cursor_key_exchange(mock_client, email=own_account.account_identifier.lower())
+        cred_service.bind_cursor_api_key(
+            account_id=own_account.id,
+            api_key="crsr_own_key_for_self_web_abcdefghijklmnop",
+            member_id=borrower.id,
+        )
+        mock_cursor_key_exchange(mock_client, email=lender.account_identifier.lower())
+        cred_service.bind_cursor_api_key(
+            account_id=lender.id,
+            api_key="crsr_lender_key_for_self_web_abcdefghijklmn",
+            member_id=owner.id,
+        )
+        s.commit()
+        s.close()
+
+        denied = client.get("/api/v2/loans", headers=_headers(borrower_token))
+        assert denied.status_code == 403
+
+        res = client.post(
+            "/api/v2/loans/request-self",
+            headers=_headers(borrower_token),
+            json={"note": "Web 自助借 Key"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["api_key"].startswith("pka_")
+        assert body["delivery_mode"] == "proxy_alias"
+        loan_id = body["loan_id"]
+
+        mine = client.get("/api/v2/loans/mine", headers=_headers(borrower_token))
+        assert mine.status_code == 200
+        assert mine.json()["active_count"] == 1
+        assert mine.json()["items"][0]["id"] == loan_id
+
+        setup = client.get(
+            f"/api/v2/loans/{loan_id}/client-setup",
+            headers=_headers(borrower_token),
+            params={"shell": "bash"},
+        )
+        assert setup.status_code == 200
+        assert "HTTPS_PROXY" in setup.json()["command"]
+
+        revoke = client.post(
+            f"/api/v2/loans/{loan_id}/revoke",
+            headers=_headers(borrower_token),
+        )
+        assert revoke.status_code == 200
+        assert revoke.json()["status"] == "revoked"

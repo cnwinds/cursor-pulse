@@ -484,6 +484,12 @@ class UsageDailyAggregate(Base):
 
 
 class AccessRequest(Base):
+    """Schema reserved for future tool-access workflows.
+
+    Not exposed via REST/UI yet; keep the table for identity-merge FK rewrites
+    and any historical rows. Do not treat as a shipped product feature.
+    """
+
     __tablename__ = "access_requests"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)

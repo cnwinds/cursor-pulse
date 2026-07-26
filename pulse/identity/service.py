@@ -18,7 +18,8 @@ from pulse.storage.models import (
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{2,64}$")
 _RESERVED_WEB_USERNAMES = frozenset({"admin"})
 
-# Prefer IM channels: Member.channel_user_id is still used for IM addressing.
+# Denormalized Member.channel_user_id is used for IM outbound addressing, so
+# prefer IM identities when present; web-only members keep channel=web.
 _PRIMARY_CHANNEL_ORDER = ("dingtalk", "feishu", "web")
 
 # Tables/columns that reference members.id and must be rewritten on merge.

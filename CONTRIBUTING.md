@@ -14,10 +14,10 @@
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
-pip install -e ".[dev,web]"
+pip install -e ".[dev,web]"            # [dev] 已含 dingtalk/feishu 测试依赖
 copy config.example.yaml config.yaml   # Unix 用 cp
-copy .env.example .env                 # 按需填写钉钉 / JWT 等
-pulse init-db
+copy .env.example .env                 # 最少：ADMIN_PASSWORD / JWT_SECRET / 加密密钥
+pulse init-db                          # 建表 + seed 厂家/套餐
 ```
 
 最小 UI/API 联调：
@@ -57,7 +57,8 @@ cd web-admin && npm ci && npm run build   # writes pulse/web/static/
 cd docker
 ./scripts/setup.sh    # Windows Git Bash 可用 bash scripts/setup.sh
 docker compose build
-docker compose up -d    # init-db oneshot 在 up 时自动执行
+docker compose up -d                              # Web-only：init-db + web + channel
+docker compose --profile full up -d               # 含 Assistant
 ```
 
 排查 schema 迁移失败时可手动：`docker compose run --rm init-db`。

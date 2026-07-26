@@ -3,8 +3,13 @@
 import logging
 from pathlib import Path
 
-import dingtalk_stream
-from dingtalk_stream import AckMessage
+try:
+    import dingtalk_stream
+    from dingtalk_stream import AckMessage
+except ImportError as exc:  # pragma: no cover - exercised when [dingtalk] not installed
+    raise ImportError(
+        "钉钉渠道需要 dingtalk-stream。请安装：pip install 'cursor-pulse[dingtalk]'"
+    ) from exc
 
 from pulse.channels.dingtalk.files import (
     extract_file_attachment,

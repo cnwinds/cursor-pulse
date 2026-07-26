@@ -13,6 +13,13 @@
           <el-switch v-model="activeOnly" @change="onFilterChange" />
         </div>
         <el-button @click="loadLoans">刷新</el-button>
+        <el-button
+          v-if="canSelfLoan"
+          :loading="selfRequesting"
+          @click="requestSelfLoan"
+        >
+          自助申请 Key
+        </el-button>
         <el-button v-if="canWrite" type="primary" @click="openLoanDialog">为成员分配 Key</el-button>
       </div>
     </header>
@@ -273,6 +280,8 @@ type ShellKind = 'bash' | 'powershell'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
+const canSelfLoan = computed(() => auth.hasPermission('loans:self'))
+const selfRequesting = ref(false)
 
 interface Member {
   id: string
@@ -417,6 +426,29 @@ function onPageSizeChange() {
 async function openLoanDialog() {
   await loadLoanDialogData()
   loanDialogVisible.value = true
+}
+
+async function requestSelfLoan() {
+  try {
+    await ElMessageBox.confirm(
+      '仅在你名下 Cursor 账号额度告警/耗尽，且存在可借出富余账号时可用。确认申请？',
+      '自助申请 Key',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  selfRequesting.value = true
+  try {
+    const res = await client.post('/api/v2/loans/request-self', { note: 'Web 自助借 Key' })
+    revealedKey.value = res.data
+    keyRevealVisible.value = true
+    await loadLoans()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '申请失败')
+  } finally {
+    selfRequesting.value = false
+  }
 }
 
 async function submitLoan() {

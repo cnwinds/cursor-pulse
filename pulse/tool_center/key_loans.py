@@ -664,7 +664,7 @@ def request_self_service_loan(
         source_account_id=lender["account_id"],
         borrower_member_id=borrower.id,
         bound_by_member_id=bound_by_member_id or borrower.id,
-        note=note or "钉钉自助借 Key",
+        note=note or "自助借 Key",
         auto_revoke_on_reset=True,
         delivery_mode=DELIVERY_PROXY_ALIAS,
         cursor_client=cursor_client,

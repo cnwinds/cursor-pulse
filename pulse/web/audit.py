@@ -33,9 +33,11 @@ ACTION_LABELS: dict[str, str] = {
     "credential.sync": "同步用量",
     "quota.loan_key": "外借密钥",
     "quota.revoke_loan": "收回外借",
+    "quota.request_self_loan": "自助申请 Key",
     "usage.manual_submit": "手动提交用量",
-    "access_request.approve": "批准工具申请",
-    "access_request.assign_trial": "分配试用账号",
+    # Historical / reserved (AccessRequest API not shipped)
+    "access_request.approve": "批准工具申请（未实现）",
+    "access_request.assign_trial": "分配试用账号（未实现）",
     "dingtalk.directory_sync": "同步钉钉通讯录",
     "dingtalk.work_group.bind": "绑定钉钉工作群",
     "knowledge.update": "更新知识库",
@@ -60,7 +62,7 @@ CAPABILITY_LABELS: dict[str, str] = {
     "accounts:read": "账号查看",
     "accounts:write": "账号管理",
     "admin:users": "用户管理",
-    "requests:approve": "审批申请",
+    "loans:self": "自助借用 Key",
     "knowledge:write": "知识库编辑",
     "reports:publish": "报告发布",
 }

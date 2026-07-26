@@ -19,6 +19,7 @@ ALL_PERMISSIONS: frozenset[str] = frozenset(
         "admin:users",
         "accounts:read",
         "accounts:write",
+        "loans:self",
         "knowledge:read",
         "knowledge:write",
         "proxy:read",
@@ -47,6 +48,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "audit:read",
             "accounts:read",
             "accounts:write",
+            "loans:self",
             "knowledge:read",
             "knowledge:write",
             "proxy:read",
@@ -69,6 +71,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "metrics:read",
             "audit:read",
             "accounts:read",
+            "loans:self",
             "knowledge:read",
             "proxy:read",
         }
@@ -77,6 +80,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "knowledge:read",
             "submissions:read",
+            "loans:self",
         }
     ),
 }

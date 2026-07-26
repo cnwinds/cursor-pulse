@@ -454,11 +454,41 @@ def test_loan_client_setup_undecryptable_410(loan_client_env):
     assert res.status_code == 410
 
 
-def test_loan_client_setup_requires_accounts_write(loan_client_env):
+def test_loan_client_setup_allows_borrower_self(loan_client_env):
+    """Borrowers with loans:self may fetch client-setup for their own active loan."""
     env = loan_client_env
     loan_id, _ = _issue_loan(env)
     borrower = env["borrower"]
     token = create_access_token(env["config"], borrower)
+
+    res = env["client"].get(
+        f"/api/v2/loans/{loan_id}/client-setup",
+        headers=_headers(token),
+        params={"shell": "bash"},
+    )
+    assert res.status_code == 200
+    assert "HTTPS_PROXY" in res.json()["command"]
+
+
+def test_loan_client_setup_forbids_unrelated_member(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    s = env["session_factory"]()
+    _, repo = make_team_repo(s)
+    other = repo.add_member("other-user", "Other")
+    other.portal_role = "ai_member"
+    other.portal_status = "active"
+    s.commit()
+    other_id = other.id
+    s.close()
+
+    # Re-load member for token claims
+    s = env["session_factory"]()
+    from pulse.storage.models import Member
+
+    other = s.get(Member, other_id)
+    token = create_access_token(env["config"], other)
+    s.close()
 
     res = env["client"].get(
         f"/api/v2/loans/{loan_id}/client-setup",

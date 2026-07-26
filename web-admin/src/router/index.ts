@@ -51,6 +51,12 @@ const router = createRouter({
           meta: { permission: 'accounts:read', title: '借用记录' },
         },
         {
+          path: 'my-loans',
+          name: 'my-loans',
+          component: () => import('@/views/MyLoansView.vue'),
+          meta: { permission: 'loans:self', title: '我的借用' },
+        },
+        {
           path: 'tool-tips',
           name: 'tool-tips',
           component: () => import('@/views/ToolTipsView.vue'),

@@ -4,10 +4,10 @@
 
 | 容器 | 命令 | 说明 |
 |------|------|------|
-| `init-db` | `pulse init-db` | oneshot，每次 up 幂等迁移；成功后退出 |
-| `web` | `pulse web` | 管理后台 API + Vue 静态页 `/admin/` |
-| `assistant` | `assistant_platform serve` | 会话账本、记忆、能力中心 |
-| `channel` | `pulse channel` | IM 入站（可选）+ 定时调度；`BOT_PLATFORM=none` 时仅调度 |
+| `init-db` | `pulse init-db` | oneshot：建表 + seed 厂家/套餐；成功后退出 |
+| `web` | `pulse web` | 管理后台 API + Vue 静态页 `/admin/`（默认栈） |
+| `channel` | `pulse channel` | 定时调度；`BOT_PLATFORM=none` 时无 IM（默认栈） |
+| `assistant` | `assistant_platform serve` | 可选：`--profile full` 或 `--profile assistant` |
 
 **宿主机映射（勿删）：**
 
@@ -85,13 +85,16 @@ scp -r data/pulse.db data/assistant.db data/raw \
 ```bash
 cd /opt/cursor-pulse/docker
 
-# 构建并启动全部核心服务（自动跑 init-db）
+# Web-only 默认栈（init-db + web + channel；自动 seed）
 # Dockerfile 默认走国内镜像：DaoCloud 基础镜像 / npmmirror / 阿里云 apt+pip
 docker compose up -d --build
 
+# 含 Assistant 的完整栈
+docker compose --profile full up -d --build
+
 # 查看状态
 docker compose ps
-docker compose logs -f web channel assistant
+docker compose logs -f web channel
 ```
 
 ### 3.1 改代码不想每次 rebuild？（推荐开发态）

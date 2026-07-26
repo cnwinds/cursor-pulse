@@ -17,7 +17,7 @@ x-app-common: &app-common
   restart: unless-stopped
 
 services:
-  # Oneshot schema migration — runs automatically on every `compose up`
+  # Oneshot schema migration + catalog seed — runs automatically on every `compose up`
   init-db:
     <<: *app-common
     container_name: cursor-pulse-init-db
@@ -25,7 +25,7 @@ services:
     # -c is a global CLI flag (before subcommand); PULSE_CONFIG env is enough
     command: ["pulse", "init-db"]
 
-  # Optional: docker compose --profile tools run --rm init-v2
+  # Optional re-seed: docker compose --profile tools run --rm init-v2
   init-v2:
     <<: *app-common
     profiles: [tools]
@@ -61,8 +61,10 @@ services:
       retries: 5
       start_period: 20s
 
+  # Optional Assistant — enable with: docker compose --profile full up -d
   assistant:
     <<: *app-common
+    profiles: [full, assistant]
     container_name: cursor-pulse-assistant
     environment:
       PULSE_CONFIG: /app/config/config.yaml
@@ -88,6 +90,7 @@ services:
       retries: 5
       start_period: 25s
 
+  # Scheduler (+ optional IM). Default stack is Web-only: init-db + web + channel.
   channel:
     <<: *app-common
     container_name: cursor-pulse-channel
@@ -96,6 +99,4 @@ services:
       init-db:
         condition: service_completed_successfully
       web:
-        condition: service_healthy
-      assistant:
         condition: service_healthy

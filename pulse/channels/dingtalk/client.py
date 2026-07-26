@@ -2,9 +2,6 @@
 
 import logging
 
-import dingtalk_stream
-
-from pulse.channels.dingtalk.handler import DingTalkChannelHandler
 from pulse.channels.dingtalk.messenger import DingTalkMessenger
 from pulse.config import AppConfig
 
@@ -18,6 +15,16 @@ def start_dingtalk_bot(
 ) -> None:
     if not config.dingtalk.app_key or not config.dingtalk.app_secret:
         raise RuntimeError("DINGTALK_APP_KEY and DINGTALK_APP_SECRET are required")
+
+    try:
+        import dingtalk_stream
+    except ImportError as exc:
+        raise RuntimeError(
+            "钉钉运行时依赖 dingtalk-stream。"
+            "请安装：pip install 'cursor-pulse[dingtalk]' 或 pip install dingtalk-stream"
+        ) from exc
+
+    from pulse.channels.dingtalk.handler import DingTalkChannelHandler
 
     credential = dingtalk_stream.Credential(config.dingtalk.app_key, config.dingtalk.app_secret)
     client = dingtalk_stream.DingTalkStreamClient(credential, logger=logger)

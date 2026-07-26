@@ -69,19 +69,23 @@ _upsert_env ASSISTANT_SERVICE_TOKEN "$TOKEN_A" .env
 _upsert_env PULSE_INTERNAL_SERVICE_TOKEN "$TOKEN_P" .env
 _upsert_env PULSE_INTERNAL_TOKEN "$TOKEN_P" .env
 
-# 若 JWT / 加密密钥为空则生成
+# 若 JWT / 加密密钥 / 超管密码为空则生成
 _upsert_env JWT_SECRET "$(_rand)" .env
 _upsert_env ASSISTANT_SECRET_KEY "$(_rand)" .env
 _upsert_env PULSE_CREDENTIAL_ENCRYPTION_KEY "$(_rand)" .env
+# 首次 Web 登录：用户名 admin + ADMIN_PASSWORD（生成后请自行备份）
+_upsert_env ADMIN_PASSWORD "$(_rand)" .env
+_upsert_env BOT_PLATFORM "none" .env
 
 mkdir -p data/raw/inbox
 echo "目录 data/ 已就绪"
 
 echo ""
 echo "下一步："
-echo "  1. 编辑 docker/.env：填入钉钉凭证；确认 JWT / 加密密钥已生成"
+echo "  1. 查看 docker/.env 中的 ADMIN_PASSWORD（首次用 admin 登录）；IM 凭证可选"
 echo "  2. 若有本地数据，执行: ./scripts/migrate-data.sh <本地 data 目录>"
-echo "  3. docker compose up -d --build"
-echo "     （init-db 会在 up 时自动执行；库与配置在 docker/data、docker/config.yaml）"
+echo "  3. Web-only 最小栈: docker compose up -d --build"
+echo "     完整栈（含 Assistant）: docker compose --profile full up -d --build"
+echo "     （init-db 会自动建表并 seed 厂家/套餐；库在 docker/data）"
 echo ""
 echo "注意：生产环境禁止使用 change-me-* 占位令牌；应用启动时会拒绝。"

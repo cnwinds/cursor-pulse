@@ -22,13 +22,14 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev,web]"
+# 可选 IM：pip install -e ".[dingtalk]" 或 ".[feishu]"
 
 cp config.example.yaml config.yaml
 cp .env.example .env
 # 最少填写：ADMIN_PASSWORD、JWT_SECRET、PULSE_CREDENTIAL_ENCRYPTION_KEY
 # BOT_PLATFORM=none（默认）即可只用管理后台
 
-pulse init-db
+pulse init-db   # 建表 + 预置厂家/套餐（可用 --no-seed 跳过）
 pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' --channel web
 pytest --tb=short -q
 ```
@@ -53,7 +54,7 @@ pytest --tb=short -q
 | `BOT_PLATFORM` | 说明 |
 |----------------|------|
 | `none` | 仅 Web + 调度；提醒出站记日志不发送 |
-| `dingtalk` | 钉钉 Stream 机器人（`DINGTALK_*`） |
+| `dingtalk` | 钉钉 Stream 机器人（`DINGTALK_*`，需 `pip install 'cursor-pulse[dingtalk]'`） |
 | `feishu` | 飞书 WebSocket 机器人（`FEISHU_*`，需 `pip install 'cursor-pulse[feishu]'`） |
 
 门户登录方式由 `/api/auth/providers` 按凭证动态暴露：未配 IM 时只显示本地密码；配置了钉钉/飞书应用凭证后才出现对应扫码登录。
@@ -64,12 +65,13 @@ pytest --tb=short -q
 
 ```bash
 cd docker
-./scripts/setup.sh          # 生成 .env / config.yaml，并写入随机服务令牌
-# 编辑 docker/.env — 至少 JWT / 加密密钥 / ADMIN_PASSWORD；IM 凭证可选
-docker compose up -d --build   # 自动跑 init-db，再起 web/assistant/channel
+./scripts/setup.sh          # 生成 .env / config.yaml，随机 JWT / 加密密钥 / ADMIN_PASSWORD
+# 查看 docker/.env 中的 ADMIN_PASSWORD；IM 凭证可选
+docker compose up -d --build                    # Web-only：init-db + web + channel
+docker compose --profile full up -d --build     # 含 Assistant
 ```
 
-Web-only 时可将 `BOT_PLATFORM=none`，channel 容器只跑调度。可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
+默认 `BOT_PLATFORM=none`，channel 只跑调度（Cursor 同步 / 借 Key 过期等）。可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。详情见 [docker/README.md](docker/README.md)。
 
 ## 从钉钉-only 升级
 

@@ -30,12 +30,14 @@ ADMIN_PASSWORD=<强密码>
 JWT_SECRET=<高熵>
 PULSE_CREDENTIAL_ENCRYPTION_KEY=<高熵>
 
-pulse init-db
+pulse init-db   # 建表 + seed 厂家/套餐（台账下拉依赖此步）
 pulse admin bootstrap --user-id admin --name "管理员" --password '<密码>' --channel web
 pulse web
+# 调度（Cursor 同步 / 借 Key 过期）另开：pulse channel
 ```
 
 登录后在 **用户管理 → 创建用户** 添加本地账号（用户名 + 密码），并在台账中选为负责人。  
+成员可在 **我的借用** 自助申请临时 Key；管理员可在 **借用记录** 代分配。  
 `ADMIN_PASSWORD` 仅用于首次 bootstrap / 超管 `admin`；已设 `password_hash` 的用户以库内密码为准。  
 首次用 `ADMIN_PASSWORD` 成功登录后会写入 `admin` 的 `password_hash`，之后以库内密码为准——轮换环境变量不会自动改库，需在用户管理「设密码」或 `pulse admin bootstrap` 更新。
 
@@ -51,9 +53,10 @@ pulse web
 
 ### 2.1 钉钉（可选）
 
-1. 创建**企业内部应用**，启用机器人，模式选 **Stream**。
-2. 开通收发消息、媒体下载等权限；记录 AppKey / AppSecret / robot_code。
-3. 设置 `BOT_PLATFORM=dingtalk` 与 `DINGTALK_*`；机器人入群，配置 `DINGTALK_GROUP_ID` 或群内 @ 一次自动绑定。
+1. `pip install 'cursor-pulse[dingtalk]'`。
+2. 创建**企业内部应用**，启用机器人，模式选 **Stream**。
+3. 开通收发消息、媒体下载等权限；记录 AppKey / AppSecret / robot_code。
+4. 设置 `BOT_PLATFORM=dingtalk` 与 `DINGTALK_*`；机器人入群，配置 `DINGTALK_GROUP_ID` 或群内 @ 一次自动绑定。
 
 ### 2.1b 飞书（可选）
 
@@ -92,7 +95,8 @@ cp .env.example .env
 cd docker
 ./scripts/setup.sh
 # 编辑 .env（至少 JWT / 加密密钥 / ADMIN_PASSWORD；IM 可选）
-docker compose up -d --build   # init-db 自动执行；data/config 映射到宿主机
+docker compose up -d --build                      # Web-only：init-db + web + channel
+docker compose --profile full up -d --build       # 含 Assistant
 ```
 
 可选 Proxy：`docker compose -f docker-compose.proxy.yml up -d --build`。  
@@ -243,7 +247,8 @@ session.close()
 
 | 命令 | 作用 |
 |------|------|
-| `pulse init-db` / `init-v2 --seed` | 建库 / v2 种子 |
+| `pulse init-db` | 建库 + 幂等 seed 厂家/套餐（`--no-seed` 可跳过） |
+| `pulse init-v2 --seed` | 仅重新 seed 目录（兼容旧命令） |
 | `pulse rotate-credential-key` | 轮换凭证加密密钥后重加密库内 blob |
 | `pulse channel` | 渠道 + 调度 |
 | `pulse web` | 控制面 HTTP |

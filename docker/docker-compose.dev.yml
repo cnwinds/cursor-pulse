@@ -2,8 +2,10 @@
 #
 # Usage (from docker/):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   # with Assistant:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile full up -d
 #
-# After editing Python: web/assistant auto-reload; channel needs:
+# After editing Python: web auto-reload; channel needs:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart channel
 #
 # After editing Vue admin:
