@@ -48,8 +48,9 @@ def make_engine(database_url: str):
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
             # Wait (ms) for a competing writer instead of failing instantly with
-            # "database is locked"; short transactions keep the real wait tiny.
-            cursor.execute("PRAGMA busy_timeout=5000")
+            # "database is locked". Archive stages commit between phases so the
+            # wait covers brief contention, not multi-second HTTP embeds.
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
 
     return engine

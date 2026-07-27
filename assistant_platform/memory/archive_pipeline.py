@@ -340,9 +340,12 @@ def run_archive_pipeline_stage(
         started_at=started,
         last_error=None,
     )
-    session.flush()
+    # Release the write lock before stage work (may call embedding / LLM HTTP).
+    session.commit()
 
     try:
+        archive = _load_archive(session, session_row.id)
+        assert archive is not None
         _run_stage(session, config=config, session_row=session_row, archive=archive, stage=stage)
         archive = _load_archive(session, session_row.id)
         assert archive is not None
@@ -354,6 +357,8 @@ def run_archive_pipeline_stage(
             attempt_count=attempt,
             finished_at=finished,
         )
+        archive.status = _aggregate_pipeline_status(archive).value
+        session.commit()
         duration_ms = int((finished - started).total_seconds() * 1000)
         chunk_count = archive.chunk_total
         log_archive_stage(
@@ -367,6 +372,7 @@ def run_archive_pipeline_stage(
             index_version=archive.index_version,
         )
     except Exception as exc:
+        session.rollback()
         archive = _load_archive(session, session_row.id)
         if archive is not None:
             _set_stage_status(
@@ -378,7 +384,7 @@ def run_archive_pipeline_stage(
                 last_error=str(exc),
             )
             archive.status = ArchivePipelineStatus.FAILED.value
-            session.flush()
+            session.commit()
         log_archive_stage(
             session_id=session_row.id,
             team_id=session_row.team_id,
@@ -390,8 +396,6 @@ def run_archive_pipeline_stage(
         logger.exception("archive pipeline stage %s failed for %s", stage.value, session_row.id)
         raise
 
-    archive.status = _aggregate_pipeline_status(archive).value
-    session.flush()
     return archive
 
 

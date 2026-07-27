@@ -81,7 +81,9 @@ class AssistantLlmConfig(BaseModel):
     # Background workers for session.close (archive / distill). Isolated so
     # summarization cannot block live turns.
     job_bg_worker_count: int = 1
-    job_processing_timeout_seconds: int = 600
+    # Reclaim jobs stuck in ``processing`` after a worker crash / lock failure.
+    # Keep short so interactive chats recover within ~1–2 minutes.
+    job_processing_timeout_seconds: int = 90
 
 
 class SkillsVectorConfig(BaseModel):
@@ -175,7 +177,7 @@ def load_assistant_config() -> AssistantConfig:
             job_worker_count=int(os.environ.get("ASSISTANT_JOB_WORKER_COUNT", "4")),
             job_bg_worker_count=int(os.environ.get("ASSISTANT_JOB_BG_WORKER_COUNT", "1")),
             job_processing_timeout_seconds=int(
-                os.environ.get("ASSISTANT_JOB_PROCESSING_TIMEOUT_SECONDS", "600")
+                os.environ.get("ASSISTANT_JOB_PROCESSING_TIMEOUT_SECONDS", "90")
             ),
         ),
     )

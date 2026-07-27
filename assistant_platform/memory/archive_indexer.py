@@ -19,7 +19,7 @@ from assistant_platform.memory.archive_models import (
     SessionArchiveRow,
     resolve_archive_scope,
 )
-from assistant_platform.memory.vector_index import LocalVectorIndex, VectorIndex, VectorRecord
+from assistant_platform.memory.vector_index import VectorIndex, VectorRecord
 from assistant_platform.memory.embedding import Embedder, HashingEmbedder
 
 logger = logging.getLogger(__name__)
@@ -384,6 +384,16 @@ def index_archived_session(
     if archive.index_status == "ready" and len(existing_chunks) == len(prepared) and prepared:
         return archive
 
+    # Embed before any write burst so HTTP/CPU work does not hold the SQLite
+    # writer lock (critical for concurrent interactive chat).
+    active_embedder = embedder or HashingEmbedder()
+    precomputed: dict[str, list[float]] = {}
+    if embedding_enabled and prepared and vector_index is None:
+        for item in prepared:
+            key = item.content_hash or item.text
+            if key not in precomputed:
+                precomputed[key] = list(active_embedder.embed(item.text))
+
     chunk_ids = session.scalars(
         select(ArchiveChunkRow.id).where(ArchiveChunkRow.session_id == session_row.id)
     ).all()
@@ -398,6 +408,8 @@ def index_archived_session(
 
     chunk_rows: list[ArchiveChunkRow] = []
     for item in prepared:
+        key = item.content_hash or item.text
+        embedding = precomputed.get(key) if embedding_enabled else None
         chunk = ArchiveChunkRow(
             id=str(uuid.uuid4()),
             session_id=session_row.id,
@@ -416,6 +428,8 @@ def index_archived_session(
             index_version=index_version,
             token_count=item.token_count,
             indexed_at=now,
+            embedding_json=embedding,
+            embedding_model=embedding_model if embedding is not None else None,
         )
         session.add(chunk)
         chunk_rows.append(chunk)
@@ -424,13 +438,9 @@ def index_archived_session(
     for chunk in chunk_rows:
         _sync_fts_chunk(session, chunk)
 
-    if embedding_enabled and chunk_rows:
-        index = vector_index or LocalVectorIndex(
-            session,
-            embedder=embedder or HashingEmbedder(),
-            embedding_model=embedding_model,
-        )
-        index.upsert(
+    if embedding_enabled and chunk_rows and vector_index is not None:
+        # Custom vector backends keep their own upsert path.
+        vector_index.upsert(
             [
                 VectorRecord(
                     chunk_id=chunk.id,

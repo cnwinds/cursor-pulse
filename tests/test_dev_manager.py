@@ -4,7 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pulse.dev.manager import (
+    _child_env,
     _find_listening_pid,
+    _is_cursor_mitm_proxy_url,
     _is_project_channel_command,
     _is_project_web_command,
     is_running,
@@ -18,6 +20,55 @@ from pulse.dev.services import DEFAULT_SERVICES, SERVICES
 def test_default_services():
     assert DEFAULT_SERVICES == ("web", "assistant", "channel", "admin", "proxy")
     assert set(SERVICES) == {"web", "admin", "channel", "assistant", "proxy"}
+
+
+def test_is_cursor_mitm_proxy_url():
+    assert _is_cursor_mitm_proxy_url("http://192.168.11.39:8317") is True
+    assert _is_cursor_mitm_proxy_url(
+        "http://192.168.11.39:8317",
+        proxy_public_url="http://192.168.11.39:8317",
+    ) is True
+    assert _is_cursor_mitm_proxy_url("http://127.0.0.1:7890") is False
+
+
+def test_child_env_strips_cursor_mitm_https_proxy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://192.168.11.39:8317")
+    monkeypatch.setenv("HTTP_PROXY", "http://192.168.11.39:8317")
+    monkeypatch.setenv("PROXY_PUBLIC_URL", "http://192.168.11.39:8317")
+    monkeypatch.setenv("PROXY_UPSTREAM_URL", "http://127.0.0.1:7890")
+    env = _child_env()
+    assert "HTTPS_PROXY" not in env
+    assert "HTTP_PROXY" not in env
+    # Real egress upstream must not be stripped from unrelated vars.
+    assert env.get("PROXY_UPSTREAM_URL") == "http://127.0.0.1:7890"
+
+
+def test_child_env_keeps_real_egress_https_proxy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("PROXY_PUBLIC_URL", "http://192.168.11.39:8317")
+    env = _child_env()
+    assert env.get("HTTPS_PROXY") == "http://127.0.0.1:7890"
+
+
+def test_child_env_empty_proxy_in_dotenv_clears_shell_proxy(tmp_path, monkeypatch):
+    """Explicit empty HTTPS_PROXY=/HTTP_PROXY= in .env removes shell exports for children."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "HTTPS_PROXY=\nHTTP_PROXY=\nALL_PROXY=\nASSISTANT_SERVICE_TOKEN=keep-me\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("ASSISTANT_SERVICE_TOKEN", "from-shell")
+    monkeypatch.setattr("pulse.dev.manager.project_root", lambda: tmp_path)
+
+    env = _child_env()
+    assert "HTTPS_PROXY" not in env
+    assert "HTTP_PROXY" not in env
+    assert "ALL_PROXY" not in env
+    # Empty-clear is proxy-only; other shell values are not wiped by blank .env keys.
+    assert env.get("ASSISTANT_SERVICE_TOKEN") == "from-shell"
 
 
 def test_services_includes_proxy():

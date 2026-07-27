@@ -21,12 +21,54 @@ from assistant_platform.jobs.claim import (
     INTERACTIVE_JOB_TYPES,
     claim_next_job,
 )
+from assistant_platform.jobs.db_errors import is_retryable_db_lock_error
 from assistant_platform.integrations.channel_reply import send_channel_reply
 
 logger = logging.getLogger(__name__)
 
 _RETENTION_INTERVAL_SECONDS = 6 * 60 * 60
 _SESSION_TRACKED_JOB_TYPES = frozenset({"session.process", "session.close"})
+_DEFAULT_JOB_MAX_ATTEMPTS = 5
+
+
+def finalize_job_after_failure(
+    session,
+    job,
+    exc: BaseException,
+    *,
+    max_attempts: int = _DEFAULT_JOB_MAX_ATTEMPTS,
+) -> None:
+    """Requeue failed jobs until max attempts, then mark failed.
+
+    Lock contention is always requeued while attempts remain. Other errors on
+    ``session.process`` / ``session.close`` are also requeued so archive can
+    resume after partial stage commits and interactive turns are not silenced
+    by a single transient failure.
+    """
+    job.attempts = (job.attempts or 0) + 1
+    job.updated_at = datetime.now(timezone.utc)
+    resumable = job.job_type in ("session.process", "session.close", "reply.send")
+    if job.attempts < max_attempts and (
+        is_retryable_db_lock_error(exc) or resumable
+    ):
+        job.status = "pending"
+        logger.warning(
+            "requeue job after failure job_id=%s job_type=%s attempts=%s err=%s",
+            job.id,
+            job.job_type,
+            job.attempts,
+            type(exc).__name__,
+        )
+    else:
+        job.status = "failed"
+        logger.error(
+            "mark job failed job_id=%s job_type=%s attempts=%s err=%s",
+            job.id,
+            job.job_type,
+            job.attempts,
+            type(exc).__name__,
+        )
+    session.add(job)
 
 
 def _handle_reply_send(payload: dict, config: AssistantConfig) -> None:
@@ -155,21 +197,39 @@ class JobWorkerPool:
                     datetime.now(timezone.utc).isoformat(),
                 )
                 job_t0 = time.monotonic()
-                _run_job(session, job, self._config)
-                logger.info(
-                    "reply.timing stage=job_done worker=%s job_type=%s job_id=%s "
-                    "elapsed_ms=%d",
-                    worker_name,
-                    job.job_type,
-                    job.id,
-                    int((time.monotonic() - job_t0) * 1000),
-                )
-                job.status = "done"
-                job.attempts = (job.attempts or 0) + 1
-                session.commit()
-                if job.job_type == "session.process" and session_id:
-                    reschedule_session_after_turn(self._session_factory, session_id)
+                try:
+                    _run_job(session, job, self._config)
+                    logger.info(
+                        "reply.timing stage=job_done worker=%s job_type=%s job_id=%s "
+                        "elapsed_ms=%d",
+                        worker_name,
+                        job.job_type,
+                        job.id,
+                        int((time.monotonic() - job_t0) * 1000),
+                    )
+                    job.status = "done"
+                    job.attempts = (job.attempts or 0) + 1
+                    session.commit()
+                    if job.job_type == "session.process" and session_id:
+                        reschedule_session_after_turn(self._session_factory, session_id)
+                except Exception as exc:
+                    logger.exception(
+                        "assistant job worker failed worker=%s job_type=%s job_id=%s",
+                        worker_name,
+                        job.job_type,
+                        job.id,
+                    )
+                    try:
+                        session.rollback()
+                        finalize_job_after_failure(session, job, exc)
+                        session.commit()
+                    except Exception:
+                        logger.exception(
+                            "failed to finalize job after error job_id=%s", job.id
+                        )
+                        session.rollback()
             except Exception:
+                # Claim / maintenance failures: keep the worker loop alive.
                 logger.exception("assistant job worker failed worker=%s", worker_name)
                 session.rollback()
             finally:

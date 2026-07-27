@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.secrets.redact import redact_text
+
+logger = logging.getLogger(__name__)
 
 _MAX_RESULT_CHARS = 24_000
 
@@ -132,8 +135,18 @@ def persist_agent_trace_event(
     else:
         return None
 
-    db_session.add(row)
-    db_session.flush()
-    if commit:
-        db_session.commit()
-    return row
+    try:
+        db_session.add(row)
+        db_session.flush()
+        if commit:
+            db_session.commit()
+        return row
+    except Exception:
+        # Observability must never poison the turn session. Roll back so the
+        # caller can continue producing the user-visible reply.
+        logger.exception("persist agent trace event failed type=%s", event_type)
+        try:
+            db_session.rollback()
+        except Exception:
+            logger.exception("rollback after trace persist failure also failed")
+        raise

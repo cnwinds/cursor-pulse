@@ -31,11 +31,59 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_cursor_mitm_proxy_url(url: str, *, proxy_public_url: str = "") -> bool:
+    """True when URL is the Cursor MITM listen address (layer A), not egress (layer C)."""
+    normalized = (url or "").strip().rstrip("/")
+    if not normalized:
+        return False
+    public = (proxy_public_url or "").strip().rstrip("/")
+    if public and normalized == public:
+        return True
+    # Default / common MITM listen port for cursor-pulse-proxy.
+    return normalized.endswith(":8317")
+
+
+def _strip_cursor_mitm_from_outbound_proxy(env: dict[str, str]) -> None:
+    """Prevent shell HTTPS_PROXY=:8317 from hijacking Python LLM/Cursor egress.
+
+    Layer A (PROXY_PUBLIC_URL / :8317) is for user Cursor CLI only. If the parent
+    shell exported it as HTTPS_PROXY, outbound_client(trust_env=True) would send
+    DashScope/OpenAI through the MITM and get 403 →「助手暂时不可用」.
+    """
+    proxy_public = str(env.get("PROXY_PUBLIC_URL") or "")
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        if _is_cursor_mitm_proxy_url(str(env.get(key) or ""), proxy_public_url=proxy_public):
+            env.pop(key, None)
+
+
+_OUTBOUND_PROXY_ENV_KEYS = frozenset(
+    {
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    }
+)
+
+
 def _child_env() -> dict[str, str]:
     """Merge project .env into child process env (Assistant reads os.environ only).
 
     Values from ``.env`` win when the process env is missing or empty, so a blank
     exported shell variable cannot block DingTalk / service tokens.
+
+    Exception: for outbound proxy keys (``HTTP(S)_PROXY`` / ``ALL_PROXY``), an
+    explicit empty assignment in ``.env`` (e.g. ``HTTPS_PROXY=``) removes the
+    variable from the child env so shell exports cannot force a bad proxy.
     """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     env_file = project_root() / ".env"
@@ -44,13 +92,23 @@ def _child_env() -> dict[str, str]:
             from dotenv import dotenv_values
 
             for key, value in dotenv_values(env_file).items():
-                if not key or value is None:
+                if not key:
+                    continue
+                if key in _OUTBOUND_PROXY_ENV_KEYS:
+                    # Present in .env: empty → clear shell; non-empty → override.
+                    if value is None or not str(value).strip():
+                        env.pop(key, None)
+                    else:
+                        env[key] = str(value).strip()
+                    continue
+                if value is None:
                     continue
                 text = str(value)
                 if key not in env or not str(env.get(key) or "").strip():
                     env[key] = text
         except ImportError:
             pass
+    _strip_cursor_mitm_from_outbound_proxy(env)
     # Keep loopback / local service calls off system HTTP(S)_PROXY (e.g. mihomo).
     no_proxy_extras = ("127.0.0.1", "localhost", "::1")
     current = env.get("NO_PROXY") or env.get("no_proxy") or ""

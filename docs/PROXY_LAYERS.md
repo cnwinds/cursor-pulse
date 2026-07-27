@@ -49,6 +49,7 @@ Pulse web / channel
 | 会话账本 / Assistant BFF **502**，`/health` 正常 | 层 B 请求误走层 C `HTTP_PROXY` | 使用 `internal_client`；确认 `NO_PROXY` 含 loopback |
 | Go 代理连不上 Cursor / 超时 | 未配翻墙或配错 | 设 `PROXY_UPSTREAM_URL`（不是 `HTTPS_PROXY`） |
 | Go 代理启动后请求打回自己 | 对 Go 进程设置了 `HTTPS_PROXY=:8317` | 去掉；上游只用 `PROXY_UPSTREAM_URL` |
+| 助手回复「暂时不可用」，日志 `httpx.ProxyError: 403` | 壳层把 `PROXY_PUBLIC_URL`/`:8317` 当成了系统 `HTTPS_PROXY`，LLM 打到 MITM | 不要 `export HTTPS_PROXY=$PROXY_PUBLIC_URL`；或在项目 `.env` 写 `HTTPS_PROXY=` / `HTTP_PROXY=` 清空；`cursor-pulse.sh` 也会自动剥离 MITM 地址 |
 | Docker proxy 拉不到池 / authorize 失败 | `PULSE_BASE_URL=http://web:8080` 在独立网络无效 | 用 `PROXY_PULSE_BASE_URL=http://host.docker.internal:8080` |
 
 更多运维细节见 [proxy/README.md](../proxy/README.md)、[RUNBOOK.md](RUNBOOK.md)。

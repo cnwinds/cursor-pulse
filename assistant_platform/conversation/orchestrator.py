@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from assistant_platform.capabilities.executor import CapabilityExecutor
@@ -50,6 +51,64 @@ logger = logging.getLogger(__name__)
 _UNAVAILABLE = "助手暂时不可用，请稍后再试。"
 
 
+def _safe_end_turn(
+    db_session: Session,
+    session_row: ChatSessionRow,
+    repo: AssistantRepository,
+    *,
+    session_id: str,
+) -> None:
+    """End the turn without poisoning / losing already-committed reply work.
+
+    If the session is already in a failed transaction, rollback first. If
+    ``end_turn`` itself hits a transient lock, rollback only the teardown
+    transaction and retry once — never roll back a previously committed reply.
+    """
+    try:
+        if not db_session.is_active:
+            db_session.rollback()
+        end_turn(db_session, session_row)
+        db_session.add(session_row)
+        db_session.flush()
+        try_schedule_next_turn(db_session, session_row, repo)
+    except Exception:
+        logger.exception(
+            "end_turn failed; rolling back teardown and retrying session_id=%s",
+            session_id,
+        )
+        try:
+            db_session.rollback()
+            end_turn(db_session, session_row)
+            db_session.add(session_row)
+            db_session.flush()
+            try_schedule_next_turn(db_session, session_row, repo)
+        except Exception:
+            logger.exception("end_turn recovery failed session_id=%s", session_id)
+
+
+def _final_reply_for_trigger(
+    db_session: Session,
+    *,
+    session_id: str,
+    trigger_message_id: str,
+) -> ChatMessageRow | None:
+    """Return an existing final reply for this trigger, if already persisted."""
+    rows = db_session.scalars(
+        select(ChatMessageRow)
+        .where(
+            ChatMessageRow.session_id == session_id,
+            ChatMessageRow.role == "assistant",
+        )
+        .order_by(ChatMessageRow.created_at.desc())
+        .limit(40)
+    ).all()
+    for row in rows:
+        meta = row.meta_json or {}
+        if meta.get("kind") == "final" and meta.get("trigger_message_id") == trigger_message_id:
+            return row
+    return None
+
+
 def _persist_and_queue_reply(
     db_session: Session,
     repo: AssistantRepository,
@@ -58,13 +117,17 @@ def _persist_and_queue_reply(
     reply_endpoint: dict,
     text: str,
     kind: str,
+    trigger_message_id: str | None = None,
 ) -> ChatMessageRow:
+    meta: dict[str, Any] = {"kind": kind}
+    if trigger_message_id:
+        meta["trigger_message_id"] = trigger_message_id
     assistant_message = ChatMessageRow(
         session_id=session_row.id,
         role="assistant",
         text_redacted=text,
         secret_refs_json=[],
-        meta_json={"kind": kind},
+        meta_json=meta,
     )
     db_session.add(assistant_message)
     db_session.flush()
@@ -490,6 +553,22 @@ def process_session_job(
     timer = ReplyTurnTimer(session_id=session_id, trigger_message_id=message_id)
     timer.mark("session_process_start", incoming_event_id=incoming_event_id or "")
     try:
+        # Idempotent retry: reply may already be committed while job bookkeeping
+        # failed and requeued (must not generate a second user-visible final).
+        existing_final = _final_reply_for_trigger(
+            db_session, session_id=session_id, trigger_message_id=message_id
+        )
+        if existing_final is not None:
+            logger.info(
+                "skip duplicate session.process session_id=%s trigger_message_id=%s "
+                "existing_final=%s",
+                session_id,
+                message_id,
+                existing_final.id,
+            )
+            timer.mark("session_process_skipped_duplicate")
+            return
+
         def emit_interim(text: str) -> None:
             timer.mark("interim_emit", preview=(text or "")[:80])
             _persist_and_deliver_interim(
@@ -502,12 +581,16 @@ def process_session_job(
             )
 
         def emit_trace(event: dict) -> None:
-            persist_agent_trace_event(
-                db_session,
-                session_row=session_row,
-                event=event,
-                commit=True,
-            )
+            try:
+                persist_agent_trace_event(
+                    db_session,
+                    session_row=session_row,
+                    event=event,
+                    commit=True,
+                )
+            except Exception:
+                # Trace is best-effort; persist already rolled back the session.
+                logger.exception("emit agent trace failed; continuing turn")
 
         timer.mark("agent_run_start")
         reply_text = generate_reply_text(
@@ -531,13 +614,14 @@ def process_session_job(
             reply_endpoint=reply_endpoint,
             text=reply_text,
             kind="final",
+            trigger_message_id=message_id,
         )
+        # Commit before turn teardown so a lock failure in ``end_turn`` cannot
+        # rollback the user-visible final reply + reply.send job (silent no-reply).
+        db_session.commit()
         timer.mark("session_process_done")
     finally:
-        end_turn(db_session, session_row)
-        db_session.add(session_row)
-        db_session.flush()
-        try_schedule_next_turn(db_session, session_row, repo)
+        _safe_end_turn(db_session, session_row, repo, session_id=session_id)
 
 
 def process_session_close_job(
