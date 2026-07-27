@@ -89,6 +89,52 @@ def test_get_credential_status_unbound(cred_env):
     assert body["last_sync_status"] == "never"
 
 
+def test_list_accounts_embeds_credential_status_in_one_response(cred_env):
+    """Accounts list must carry credential summary so the UI need not N+1 GET /credentials."""
+    from datetime import datetime, timezone
+
+    from pulse.storage.models import AiAccountCredential
+
+    client = cred_env["client"]
+    config = cred_env["config"]
+    owner = cred_env["owner"]
+    account = cred_env["cursor_account"]
+    token = create_access_token(config, owner)
+    sf = cred_env["session_factory"]
+
+    session = sf()
+    from pulse.storage.models import AiAccount
+
+    account_row = session.get(AiAccount, account.id)
+    assert account_row is not None
+    session.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=account_row.vendor_id,
+            credential_type="api_key",
+            encrypted_value="unused",
+            key_hint="crsr_…abcd",
+            status="active",
+            sync_enabled=True,
+            bound_by_member_id=owner.id,
+            last_sync_status="success",
+            last_sync_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+    session.commit()
+    session.close()
+
+    res = client.get("/api/v2/accounts", headers=_headers(token))
+    assert res.status_code == 200
+    rows = res.json()
+    cursor_row = next(r for r in rows if r["id"] == account.id)
+    assert "credential" in cursor_row
+    assert cursor_row["credential"]["bound"] is True
+    assert cursor_row["credential"]["key_hint"] == "crsr_…abcd"
+    assert cursor_row["credential"]["last_sync_status"] == "success"
+    assert "encrypted_value" not in cursor_row["credential"]
+
+
 @patch("pulse.ingestion.sync.CursorApiClient")
 @patch("pulse.ingestion.credentials.CursorApiClient")
 def test_bind_credential_triggers_sync(mock_cred_client_cls, mock_sync_client_cls, cred_env):

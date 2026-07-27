@@ -53,6 +53,26 @@ def _credential_status_payload(cred) -> dict:
     }
 
 
+def unbound_credential_status() -> dict:
+    return {
+        "bound": False,
+        "key_hint": None,
+        "last_sync_at": None,
+        "last_sync_status": "never",
+    }
+
+
+def credential_status_summary(cred) -> dict:
+    """Public status dict for list/detail UIs (never includes encrypted_value)."""
+    if not cred or cred.status == "revoked":
+        return unbound_credential_status()
+    return _credential_status_payload(cred)
+
+
+def can_manage_credential(user: PortalUser, account) -> bool:
+    return _can_manage_credential(user, account)
+
+
 def register_credentials_routes(app, get_db, require_capability, team_repo_fn, config, require_user=None):
     if require_user is None:
         require_user = require_capability("accounts:read")
@@ -167,14 +187,7 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
         enc_key = _encryption_key(config)
         cred_service = CredentialService(session, enc_key)
         cred = cred_service.get_credential(account_id)
-        if not cred or cred.status == "revoked":
-            return {
-                "bound": False,
-                "key_hint": None,
-                "last_sync_at": None,
-                "last_sync_status": "never",
-            }
-        return _credential_status_payload(cred)
+        return credential_status_summary(cred)
 
     @app.post(
         "/api/v2/accounts/{account_id}/sync",

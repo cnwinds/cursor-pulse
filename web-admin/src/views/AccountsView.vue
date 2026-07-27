@@ -212,6 +212,14 @@ interface Member {
   id: string
   display_name: string
 }
+interface CredentialStatus {
+  bound: boolean
+  key_hint: string | null
+  last_sync_at: string | null
+  last_sync_status: string
+  status?: string
+  last_sync_error?: string | null
+}
 interface Account {
   id: string
   vendor_id: string
@@ -224,14 +232,8 @@ interface Account {
   shared_note: string | null
   usage_resets_on: string | null
   suggest_dedicated: boolean
-}
-interface CredentialStatus {
-  bound: boolean
-  key_hint: string | null
-  last_sync_at: string | null
-  last_sync_status: string
-  status?: string
-  last_sync_error?: string | null
+  /** Embedded by GET /api/v2/accounts (avoids N+1 /credentials). */
+  credential?: CredentialStatus | null
 }
 
 const loading = ref(false)
@@ -335,22 +337,28 @@ function canOpenEdit(row: Account) {
   return canWrite.value || (isCursorRow(row) && canManageCredential(row))
 }
 
-async function loadCredentialStatuses() {
-  const cursorAccounts = accounts.value.filter(isCursorRow)
-  const entries = await Promise.all(
-    cursorAccounts.map(async (account) => {
-      try {
-        const res = await client.get(`/api/v2/accounts/${account.id}/credentials`)
-        return [account.id, res.data as CredentialStatus] as const
-      } catch {
-        return [account.id, { bound: false, key_hint: null, last_sync_at: null, last_sync_status: 'never' }] as const
-      }
-    }),
-  )
-  credentialMap.value = Object.fromEntries(entries)
+function applyCredentialMapFromAccounts(rows: Account[]) {
+  const map: Record<string, CredentialStatus> = {}
+  for (const account of rows) {
+    if (!isCursorRow(account)) continue
+    map[account.id] = account.credential ?? {
+      bound: false,
+      key_hint: null,
+      last_sync_at: null,
+      last_sync_status: 'never',
+    }
+  }
+  credentialMap.value = map
 }
 
 async function loadEditCredential(accountId: string) {
+  // Prefer embedded list payload; fall back to single GET only if missing.
+  const embedded = accounts.value.find((a) => a.id === accountId)?.credential
+  if (embedded) {
+    editCredential.value = embedded
+    credentialMap.value[accountId] = embedded
+    return
+  }
   try {
     const res = await client.get(`/api/v2/accounts/${accountId}/credentials`)
     editCredential.value = res.data
@@ -441,7 +449,7 @@ async function loadAll() {
     vendors.value = vendorRes.data
     plans.value = planRes.data
     members.value = memberRes.data
-    await loadCredentialStatuses()
+    applyCredentialMapFromAccounts(accounts.value)
   } finally {
     loading.value = false
   }

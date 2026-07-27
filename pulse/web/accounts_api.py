@@ -4,6 +4,7 @@ from datetime import date
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
@@ -14,9 +15,15 @@ from pulse.ingestion.plan_infer import (
 )
 from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import CursorApiClient
-from pulse.storage.models import AiVendor
+from pulse.storage.models import AiAccountCredential, AiVendor
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.audit import log_admin_action
+from pulse.web.credentials_api import (
+    can_manage_credential,
+    credential_status_summary,
+    unbound_credential_status,
+)
+from pulse.web.deps import PortalUser
 
 _ACCOUNT_STATUS_VALUES = frozenset({"trial", "shared", "dedicated", "suspended"})
 
@@ -149,11 +156,49 @@ def register_accounts_v2_routes(
             for p in repo.list_plans(vendor_id)
         ]
 
-    @app.get("/api/v2/accounts", dependencies=[Depends(require_capability("accounts:read"))])
-    def list_accounts(status: str | None = None, session: Session = Depends(get_db)):
+    @app.get("/api/v2/accounts")
+    def list_accounts(
+        status: str | None = None,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:read")),
+    ):
+        """List accounts with credential summary embedded (avoids N+1 /credentials)."""
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
-        return [_account_payload(a) for a in repo.list_accounts(status=status)]
+        accounts = list(repo.list_accounts(status=status))
+        cursor_ids = [
+            a.id for a in accounts if a.vendor is not None and a.vendor.slug == "cursor"
+        ]
+        cred_by_account: dict[str, AiAccountCredential] = {}
+        if cursor_ids:
+            rows = session.scalars(
+                select(AiAccountCredential).where(
+                    AiAccountCredential.account_id.in_(cursor_ids)
+                )
+            ).all()
+            # Prefer active over revoked if duplicates exist historically.
+            for row in rows:
+                existing = cred_by_account.get(row.account_id)
+                if existing is None or (
+                    existing.status != "active" and row.status == "active"
+                ):
+                    cred_by_account[row.account_id] = row
+
+        payloads = []
+        for account in accounts:
+            payload = _account_payload(account)
+            if account.vendor is None or account.vendor.slug != "cursor":
+                payload["credential"] = None
+            elif can_manage_credential(user, account):
+                payload["credential"] = credential_status_summary(
+                    cred_by_account.get(account.id)
+                )
+            else:
+                # Same shape as unbound so UI badges stay stable without leaking
+                # peer credential hints to viewers who cannot manage the row.
+                payload["credential"] = unbound_credential_status()
+            payloads.append(payload)
+        return payloads
 
     @app.post("/api/v2/accounts", dependencies=[Depends(require_capability("accounts:write"))])
     def create_account(
