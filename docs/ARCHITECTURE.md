@@ -100,4 +100,4 @@ Assistant / Proxy 还需 `PULSE_BASE_URL` 指向 Pulse web（如 `http://127.0.0
 | `proxy/` | Go 模块（默认 Docker 镜像不含） |
 | `web-admin/` | Vue 管理后台 |
 | `docker/` | 正式 compose / Dockerfile |
-| `docs/` | 架构 / 运维 / API 笔记 |
+| `docs/` | 架构、运维、API 笔记（入口见根 README） |

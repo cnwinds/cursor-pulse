@@ -442,7 +442,7 @@ cursor-pulse 在用量同步（`CursorSyncService.sync_account`）时**可配置
 - 开启时：先 `GetHardLimit`，若未关闭则 `SetHardLimit(noUsageBasedAllowed=true)` 并钉钉通知（收件人可在 Web 配置 `on_demand_notify_member_ids` / `on_demand_notify_primary`）。
 - 关闭 `enforce_on_demand_disabled` 时不会调用 `SetHardLimit`；关闭失败不阻断用量入库。
 
-实现见 `pulse/ingestion/on_demand.py`、`pulse/ingestion/sync.py`；设计见 [superpowers/specs/2026-07-24-on-demand-enforce-settings-design.md](superpowers/specs/2026-07-24-on-demand-enforce-settings-design.md)。
+实现见 `pulse/ingestion/on_demand.py`、`pulse/ingestion/sync.py`。
 
 ---
 

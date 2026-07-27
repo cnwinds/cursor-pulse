@@ -51,4 +51,4 @@ Pulse web / channel
 | Go 代理启动后请求打回自己 | 对 Go 进程设置了 `HTTPS_PROXY=:8317` | 去掉；上游只用 `PROXY_UPSTREAM_URL` |
 | Docker proxy 拉不到池 / authorize 失败 | `PULSE_BASE_URL=http://web:8080` 在独立网络无效 | 用 `PROXY_PULSE_BASE_URL=http://host.docker.internal:8080` |
 
-更多运维细节见 [proxy/README.md](../proxy/README.md)、[docker/README.md](../docker/README.md)。
+更多运维细节见 [proxy/README.md](../proxy/README.md)、[RUNBOOK.md](RUNBOOK.md)。

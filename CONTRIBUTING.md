@@ -29,7 +29,7 @@ pulse init-db                          # 建表 + seed 厂家/套餐
 ./cursor-pulse.sh start web admin
 ```
 
-完整本地栈（channel + assistant + 可选 proxy）见根目录 `README.md` 与 `docker/README.md`。
+完整本地栈（channel + assistant + 可选 proxy）见根目录 `README.md` 与 `docs/RUNBOOK.md`。
 
 ## 测试（PR 门禁）
 
@@ -51,7 +51,7 @@ cd web-admin && npm ci && npm run build   # writes pulse/web/static/
 
 ## Docker
 
-请始终在 `docker/` 下操作（见 `docker/README.md`）。**不要**再使用仓库根目录的 `docker compose`——那些文件已移除。
+请始终在 `docker/` 下操作（见根 `README.md` 与 `docs/RUNBOOK.md`）。**不要**再使用仓库根目录的 `docker compose`。
 
 ```bash
 cd docker
