@@ -1,37 +1,27 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 from assistant_platform.config import AssistantConfig, AssistantLlmConfig, load_assistant_config
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base
 from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
 from pulse.web.settings_store import patch_team_setting
-from tests.conftest import make_team_repo
+from tests.conftest import make_team_repo, make_test_session_factory
 
 
 @pytest.fixture
 def settings_client(tmp_path, monkeypatch):
+    # File URL required: load_assistant_config / overrides reopen via DATABASE_URL.
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    db_path = tmp_path / "pulse.db"
-    db_url = f"sqlite:///{db_path.as_posix()}"
+    db_url = f"sqlite:///{(tmp_path / 'pulse.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     config.storage.database_url = db_url
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    sf = make_test_session_factory(db_url)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")

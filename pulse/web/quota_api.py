@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Literal
 
@@ -22,8 +23,10 @@ from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
     build_lender_candidates,
+    finalize_reassign_old_remote_revoke,
     issue_loan_key,
     loan_payload,
+    reassign_loan_source,
     request_self_service_loan,
     reveal_loan_cursor_key,
     reveal_loan_user_key,
@@ -34,13 +37,23 @@ from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import has_permission
 
+logger = logging.getLogger(__name__)
+
 
 class LoanKeyBody(BaseModel):
     borrower_member_id: str
     note: str | None = None
     auto_revoke_on_reset: bool = True
     key_name: str | None = None
-    delivery_mode: Literal["proxy_alias", "cursor_direct"] = "proxy_alias"
+    delivery_mode: Literal["proxy_alias"] = "proxy_alias"
+
+
+class ReassignLoanBody(BaseModel):
+    source_account_id: str
+
+
+class LoanPatchBody(BaseModel):
+    auto_revoke_on_reset: bool
 
 
 class SelfLoanBody(BaseModel):
@@ -294,6 +307,12 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 detail=result.get("loan_id") or "",
             )
             session.commit()
+            try:
+                from pulse.tool_center.key_loan_notify import notify_loan_issued
+
+                notify_loan_issued(session, config, result=result, skip_borrower=False)
+            except Exception:
+                logger.exception("key loan issued notify failed after request-self")
             return result
         except KeyLoanError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -347,6 +366,12 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 detail=f"{account_id}->{borrower.display_name}",
             )
             session.commit()
+            try:
+                from pulse.tool_center.key_loan_notify import notify_loan_issued
+
+                notify_loan_issued(session, config, result=result, skip_borrower=False)
+            except Exception:
+                logger.exception("key loan issued notify failed after loan-key")
             return result
         except KeyLoanError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -541,6 +566,105 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "key_hint": cred.key_hint if cred else None,
         }
 
+    @app.patch(
+        "/api/v2/loans/{loan_id}",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def patch_loan(
+        loan_id: str,
+        body: LoanPatchBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        """Update mutable loan flags. Does not change expires_on."""
+        team, _ = team_repo_fn(session)
+        loan = session.scalar(
+            select(KeyLoan)
+            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
+        )
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+        if loan.status != "active":
+            raise HTTPException(status_code=400, detail="仅进行中的借用可修改")
+
+        prev = bool(loan.auto_revoke_on_reset)
+        loan.auto_revoke_on_reset = bool(body.auto_revoke_on_reset)
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="quota.patch_loan",
+            capability="accounts:write",
+            detail=f"{loan_id}:auto_revoke_on_reset:{prev}->{loan.auto_revoke_on_reset}",
+        )
+        session.commit()
+        return loan_payload(loan, session)
+
+    @app.post(
+        "/api/v2/loans/{loan_id}/reassign-source",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def reassign_loan_source_account(
+        loan_id: str,
+        body: ReassignLoanBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        """更换出借账号，保持同一 pka_ 不变。"""
+        team, _ = team_repo_fn(session)
+        loan = session.scalar(
+            select(KeyLoan)
+            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
+        )
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+
+        enc_key = _encryption_key(config)
+        try:
+            result = reassign_loan_source(
+                session,
+                enc_key,
+                team_id=team.id,
+                loan_id=loan_id,
+                new_source_account_id=body.source_account_id,
+                bound_by_member_id=user.member.id,
+                loan_selection=config.tool_center.loan_selection,
+            )
+            # Commit loan→new credential before remote-revoking the old Cursor key,
+            # so a failed commit cannot leave pka_ pointing at a revoked remote key.
+            session.commit()
+            finalize_reassign_old_remote_revoke(session, enc_key, result)
+            log_admin_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="quota.reassign_loan_source",
+                capability="accounts:write",
+                detail=(
+                    f"{loan_id}:"
+                    f"{result.get('old_source_account_identifier') or ''}->"
+                    f"{result.get('source_account_identifier') or ''}:"
+                    f"old_remote_revoked:{bool(result.get('old_remote_revoked'))}"
+                ),
+            )
+            session.commit()
+            try:
+                from pulse.tool_center.key_loan_notify import notify_loan_reassigned
+
+                notify_loan_reassigned(session, config, result=result)
+            except Exception:
+                logger.exception("key loan reassign notify failed")
+            payload = loan_payload(loan, session)
+            payload.update(result)
+            return payload
+        except KeyLoanError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/v2/loans/{loan_id}/revoke")
     def revoke_loan(
         loan_id: str,
@@ -573,6 +697,18 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 detail=loan_id,
             )
             session.commit()
+            try:
+                from pulse.tool_center.key_loan_notify import notify_loan_reclaimed
+
+                notify_loan_reclaimed(
+                    session,
+                    config,
+                    loan=loan,
+                    borrowed_cents=borrowed_cents,
+                    reason="returned" if is_borrower else "revoked",
+                )
+            except Exception:
+                logger.exception("key loan reclaim notify failed after revoke")
             payload = loan_payload(loan, session)
             payload["borrowed_cents"] = borrowed_cents
             payload["borrowed_usd"] = round(borrowed_cents / 100.0, 2)

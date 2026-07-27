@@ -2,10 +2,6 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock, patch
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from pulse.channels.dingtalk.handler import DingTalkChannelHandler
 from pulse.channels.dingtalk.work_group import (
     activate_work_group,
@@ -15,8 +11,8 @@ from pulse.channels.dingtalk.work_group import (
 )
 from pulse.config import AppConfig, DingTalkConfig, AssistantMirrorConfig, TenantConfig
 from pulse.storage.db import init_db
-from pulse.storage.models import Base, TeamSetting
-from tests.conftest import make_team_repo
+from pulse.storage.models import TeamSetting
+from tests.conftest import make_team_repo, make_test_session_factory
 
 
 def test_is_work_group_activation():
@@ -27,16 +23,8 @@ def test_is_work_group_activation():
     assert is_work_group_activation("帮助") is False
 
 
-def test_activate_work_group_persists_team_settings(tmp_path):
-    db_path = tmp_path / "pulse.db"
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+def test_activate_work_group_persists_team_settings():
+    sf = make_test_session_factory()
     session = sf()
     team, repo = make_team_repo(session)
     member = repo.get_or_create_member("admin1", "Admin")
@@ -75,16 +63,8 @@ def test_activate_work_group_persists_team_settings(tmp_path):
     session.close()
 
 
-def test_rebind_requires_admin(tmp_path):
-    db_path = tmp_path / "pulse.db"
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+def test_rebind_requires_admin():
+    sf = make_test_session_factory()
     session = sf()
     team, repo = make_team_repo(session)
     member = repo.get_or_create_member("u1", "Bob")

@@ -1,8 +1,39 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 from unittest.mock import MagicMock
 
-from pulse.storage.models import Team
+from pulse.storage.db import make_engine
+from pulse.storage.migrate import migrate_schema
+from pulse.storage.models import Base, Team
+
+
+class SessionFactoryProxy:
+    """Swap the bound sessionmaker without rebuilding FastAPI routes."""
+
+    def __init__(self) -> None:
+        self._sf = None
+
+    def bind(self, sf) -> None:
+        self._sf = sf
+
+    def __call__(self, *args, **kwargs):
+        if self._sf is None:
+            raise RuntimeError("SessionFactoryProxy is not bound")
+        return self._sf(*args, **kwargs)
+
+
+def make_test_engine(database_url: str = "sqlite://") -> Engine:
+    """SQLite engine for tests (memory by default; file URLs get WAL+NORMAL)."""
+    return make_engine(database_url)
+
+
+def make_test_session_factory(database_url: str = "sqlite://"):
+    """create_all + migrate on a test engine; prefer over raw create_engine."""
+    engine = make_test_engine(database_url)
+    Base.metadata.create_all(engine)
+    migrate_schema(engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 def mock_cursor_key_exchange(mock_client: MagicMock, *, email: str | None = None) -> None:

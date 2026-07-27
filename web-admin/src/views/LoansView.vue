@@ -49,6 +49,22 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="到期自动归还" width="120" align="center">
+        <template #default="{ row }">
+          <el-switch
+            v-if="canWrite && row.status === 'active'"
+            :model-value="row.auto_revoke_on_reset"
+            :loading="autoRevokeSavingId === row.id"
+            @change="(val: boolean) => setAutoRevoke(row, val)"
+          />
+          <span v-else class="muted">{{ row.auto_revoke_on_reset ? '是' : '否' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="自动回收日" width="120">
+        <template #default="{ row }">
+          {{ row.loan_expires_on || '—' }}
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="180">
         <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
       </el-table-column>
@@ -74,7 +90,7 @@
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
+      <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }">
           <el-dropdown
             v-if="row.status === 'active'"
@@ -89,6 +105,14 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-button
+            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+            size="small"
+            plain
+            @click="openReassignDialog(row)"
+          >
+            换出借账号
+          </el-button>
           <el-button
             v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
             size="small"
@@ -152,19 +176,47 @@
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="交付模式" required>
-          <el-radio-group v-model="loanForm.delivery_mode">
-            <el-radio value="proxy_alias">代理别名 Key（pka_，推荐）</el-radio>
-            <el-radio value="cursor_direct">Cursor Key（cr*，直接下发）</el-radio>
-          </el-radio-group>
-        </el-form-item>
         <el-form-item label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
+        <p class="manual-hint">交付为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。</p>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="loanSubmitting" @click="submitLoan">确认分配</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="reassignDialogVisible" title="更换出借账号" width="520px">
+      <p class="manual-hint">
+        借用人：{{ reassignLoan?.borrower_name || '—' }} ·
+        当前账号：{{ reassignLoan?.source_account_identifier || '—' }}
+      </p>
+      <p class="manual-hint">
+        pka_ 别名保持不变，借用人无需改本地配置；将在新账号创建底层 Key，并撤销旧账号远端 Key。
+      </p>
+      <el-form label-width="100px">
+        <el-form-item label="新出借账号" required>
+          <el-select
+            v-model="reassignForm.source_account_id"
+            filterable
+            placeholder="选择新的出借账号"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="r in reassignOptions"
+              :key="r.account_id"
+              :label="lenderOptionLabel(r)"
+              :value="r.account_id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reassignDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reassignSubmitting" @click="submitReassign">
+          确认更换
+        </el-button>
       </template>
     </el-dialog>
 
@@ -364,9 +416,12 @@ function buildLoanSourceOptions(
 interface LoanRow {
   id: string
   borrower_name: string
+  source_account_id: string
   source_account_identifier: string
   primary_member_name: string | null
   delivery_mode: string | null
+  auto_revoke_on_reset: boolean
+  loan_expires_on: string | null
   status: string
   created_at: string
   revoked_at: string | null
@@ -391,8 +446,14 @@ const loanForm = ref({
   source_account_id: '',
   note: '',
   auto_revoke_on_reset: true,
-  delivery_mode: 'proxy_alias' as 'proxy_alias' | 'cursor_direct',
 })
+
+const reassignDialogVisible = ref(false)
+const reassignSubmitting = ref(false)
+const reassignLoan = ref<LoanRow | null>(null)
+const reassignForm = ref({ source_account_id: '' })
+const reassignOptions = ref<RecommendItem[]>([])
+const autoRevokeSavingId = ref<string | null>(null)
 
 const keyRevealVisible = ref(false)
 const revealedKey = ref<{
@@ -537,7 +598,7 @@ async function submitLoan() {
         borrower_member_id: loanForm.value.borrower_member_id,
         note: loanForm.value.note || null,
         auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
-        delivery_mode: loanForm.value.delivery_mode,
+        delivery_mode: 'proxy_alias',
       },
     )
     loanDialogVisible.value = false
@@ -549,6 +610,59 @@ async function submitLoan() {
     ElMessage.error(e.response?.data?.detail || '分配失败')
   } finally {
     loanSubmitting.value = false
+  }
+}
+
+async function openReassignDialog(row: LoanRow) {
+  reassignLoan.value = row
+  reassignForm.value.source_account_id = ''
+  await loadLoanDialogData()
+  reassignOptions.value = recommend.value.filter(
+    (r) => r.account_id !== row.source_account_id,
+  )
+  if (reassignOptions.value.length) {
+    reassignForm.value.source_account_id = reassignOptions.value[0].account_id
+  }
+  reassignDialogVisible.value = true
+}
+
+async function submitReassign() {
+  if (!reassignLoan.value || !reassignForm.value.source_account_id) {
+    ElMessage.warning('请选择新的出借账号')
+    return
+  }
+  reassignSubmitting.value = true
+  try {
+    await client.post(`/api/v2/loans/${reassignLoan.value.id}/reassign-source`, {
+      source_account_id: reassignForm.value.source_account_id,
+    })
+    ElMessage.success('已更换出借账号（pka_ 不变）')
+    reassignDialogVisible.value = false
+    await loadLoans()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '更换失败')
+  } finally {
+    reassignSubmitting.value = false
+  }
+}
+
+async function setAutoRevoke(row: LoanRow, enabled: boolean) {
+  if (row.auto_revoke_on_reset === enabled) return
+  autoRevokeSavingId.value = row.id
+  const previous = row.auto_revoke_on_reset
+  row.auto_revoke_on_reset = enabled
+  try {
+    const res = await client.patch(`/api/v2/loans/${row.id}`, {
+      auto_revoke_on_reset: enabled,
+    })
+    row.auto_revoke_on_reset = !!res.data.auto_revoke_on_reset
+    row.loan_expires_on = res.data.loan_expires_on ?? row.loan_expires_on
+    ElMessage.success(enabled ? '已开启到期自动归还' : '已关闭到期自动归还')
+  } catch (e: any) {
+    row.auto_revoke_on_reset = previous
+    ElMessage.error(e.response?.data?.detail || '修改失败')
+  } finally {
+    autoRevokeSavingId.value = null
   }
 }
 
@@ -765,5 +879,11 @@ onMounted(loadLoans)
 }
 .mb {
   margin-bottom: 12px;
+}
+.manual-hint {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

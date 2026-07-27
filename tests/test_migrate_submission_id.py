@@ -7,13 +7,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import map_usage_event
-from pulse.storage.db import init_db
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base, Member, UsageRecord
 from pulse.tool_center.repository import ToolCenterRepository
@@ -53,8 +52,10 @@ def _legacy_usage_records_sql() -> str:
 
 @pytest.fixture
 def legacy_engine(tmp_path):
+    from tests.conftest import make_test_engine
+
     db_path = tmp_path / "legacy.db"
-    engine = create_engine(f"sqlite:///{db_path}")
+    engine = make_test_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS usage_records"))

@@ -28,13 +28,13 @@ def read_team_setting_section(
         return {}
     url = database_url or pulse_database_url()
     try:
-        from sqlalchemy import create_engine, select
+        from sqlalchemy import select
         from sqlalchemy.orm import sessionmaker
 
+        from pulse.storage.db import make_engine
         from pulse.storage.models import Team, TeamSetting
 
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        engine = create_engine(url, connect_args=connect_args)
+        engine = make_engine(url)
         session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
         with session_factory() as session:
             team = session.scalar(select(Team).where(Team.slug == team_slug).limit(1))

@@ -49,6 +49,7 @@ type keyEntry struct {
 
 	mu        sync.Mutex
 	jwt       string
+	jwtAPIKey string // apiKey that minted jwt; re-exchange when apiKey changes
 	exp       time.Time
 	exhausted bool      // quota exhausted — kept across Pulse hot-updates
 	badUntil  time.Time // auth/exchange failure cooldown — cleared on hot-update / after TTL
@@ -79,6 +80,7 @@ func (e *keyEntry) invalidate() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.jwt = ""
+	e.jwtAPIKey = ""
 	e.exp = time.Time{}
 }
 
@@ -111,11 +113,12 @@ func exchangeCursorAPIKey(ctx context.Context, client *http.Client, exchangeBase
 }
 
 // ensureToken returns a cached JWT, minting a fresh one via the exchange
-// endpoint when missing or expiring within 4 minutes.
+// endpoint when missing, expiring within 4 minutes, or when apiKey changed
+// (e.g. loan reassign swapped the underlying Cursor key).
 func (e *keyEntry) ensureToken(ctx context.Context, client *http.Client, exchangeBase string) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.jwt != "" && time.Until(e.exp) > 4*time.Minute {
+	if e.jwt != "" && e.jwtAPIKey == e.apiKey && time.Until(e.exp) > 4*time.Minute {
 		return e.jwt, nil
 	}
 	tok, err := exchangeCursorAPIKey(ctx, client, exchangeBase, e.apiKey)
@@ -126,7 +129,7 @@ func (e *keyEntry) ensureToken(ctx context.Context, client *http.Client, exchang
 	if err != nil {
 		exp = time.Now().Add(30 * time.Minute)
 	}
-	e.jwt, e.exp = tok, exp
+	e.jwt, e.jwtAPIKey, e.exp = tok, e.apiKey, exp
 	return e.jwt, nil
 }
 

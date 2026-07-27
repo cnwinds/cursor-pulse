@@ -33,6 +33,8 @@ ACTION_LABELS: dict[str, str] = {
     "credential.sync": "同步用量",
     "quota.loan_key": "外借密钥",
     "quota.revoke_loan": "收回外借",
+    "quota.reassign_loan_source": "更换出借账号",
+    "quota.patch_loan": "修改借用设置",
     "quota.request_self_loan": "自助申请 Key",
     "usage.manual_submit": "手动提交用量（历史）",
     # Historical / reserved (AccessRequest API not shipped)
@@ -182,6 +184,30 @@ def format_audit_detail(action: str, detail: str | None, ctx: _AuditContext) -> 
         if "->" in detail:
             account_id, borrower = detail.split("->", 1)
             return f"将 {_account_label(ctx, account_id)} 的密钥借给 {borrower.strip()}"
+        return detail
+
+    if action == "quota.reassign_loan_source":
+        if ":" in detail and "->" in detail:
+            loan_part, rest = detail.split(":", 1)
+            route, _, revoke_tail = rest.partition(":old_remote_revoked:")
+            old_id, new_id = route.split("->", 1)
+            text = (
+                f"将 {_loan_label(ctx, loan_part)} 出借账号 "
+                f"从 {old_id.strip() or '—'} 换为 {new_id.strip() or '—'}"
+            )
+            if revoke_tail:
+                text += (
+                    "（旧远端 Key 已撤销）"
+                    if revoke_tail.strip().lower() in {"1", "true"}
+                    else "（旧远端 Key 未撤销）"
+                )
+            return text
+        return detail
+
+    if action == "quota.patch_loan":
+        if ":auto_revoke_on_reset:" in detail:
+            loan_part, rest = detail.split(":auto_revoke_on_reset:", 1)
+            return f"修改 {_loan_label(ctx, loan_part)} 重置日自动回收：{rest}"
         return detail
 
     if action == "quota.revoke_loan":

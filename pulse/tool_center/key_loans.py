@@ -224,17 +224,23 @@ class KeyLoanService:
         today: date | None = None,
         *,
         account_id: str | None = None,
+        notify_config=None,
     ) -> int:
+        """Expire due loans. When ``notify_config`` is set, callers must
+        ``commit`` first, then call :meth:`flush_expire_notifications`.
+        """
         today = today or date.today()
         expired = 0
+        pending: list[tuple[KeyLoan, int]] = []
         loans = self.list_active_loans()
         for loan in loans:
             if account_id and loan.source_account_id != account_id:
                 continue
             if not self.loan_should_auto_expire(loan, today=today):
                 continue
+            borrowed_cents = 0
             try:
-                self.revoke_loan(loan.id, revoke_remote=True)
+                loan, borrowed_cents = self.revoke_loan(loan.id, revoke_remote=True)
                 revoked_remote = True
             except Exception:
                 revoked_remote = False
@@ -243,13 +249,41 @@ class KeyLoanService:
                 )
             if not revoked_remote:
                 try:
-                    self.revoke_loan(loan.id, revoke_remote=False)
+                    loan, borrowed_cents = self.revoke_loan(loan.id, revoke_remote=False)
                 except Exception:
                     logger.error("loan %s 本地过期失败", loan.id, exc_info=True)
                     continue
             loan.status = "expired"
             expired += 1
+            if notify_config is not None:
+                pending.append((loan, borrowed_cents))
+        self._pending_expire_notifies = pending if notify_config is not None else []
+        self._expire_notify_config = notify_config
         return expired
+
+    def flush_expire_notifications(self) -> None:
+        """Send reclaim IM after the expire transaction has been committed."""
+        pending = getattr(self, "_pending_expire_notifies", None) or []
+        notify_config = getattr(self, "_expire_notify_config", None)
+        self._pending_expire_notifies = []
+        self._expire_notify_config = None
+        if not pending or notify_config is None:
+            return
+        from pulse.tool_center.key_loan_notify import notify_loan_reclaimed
+
+        for loan, borrowed_cents in pending:
+            try:
+                notify_loan_reclaimed(
+                    self.session,
+                    notify_config,
+                    loan=loan,
+                    borrowed_cents=borrowed_cents,
+                    reason="expired",
+                )
+            except Exception:
+                logger.exception(
+                    "key loan expire notify failed loan=%s", loan.id
+                )
 
     def loan_should_auto_expire(
         self, loan: KeyLoan, *, today: date | None = None
@@ -338,6 +372,21 @@ def _lock_member_for_self_loan(session: Session, member_id: str) -> None:
         else:
             session.execute(
                 update(Member).where(Member.id == member_id).values(id=Member.id)
+            )
+    except OperationalError as exc:
+        raise KeyLoanError("系统繁忙，请稍后重试") from exc
+
+
+def _lock_loan_for_update(session: Session, loan_id: str) -> None:
+    """串行化同一借用记录的并发换绑/修改（机制同 _lock_account_for_loan_issue）。"""
+    try:
+        if session.get_bind().dialect.name == "postgresql":
+            session.execute(
+                select(KeyLoan.id).where(KeyLoan.id == loan_id).with_for_update()
+            )
+        else:
+            session.execute(
+                update(KeyLoan).where(KeyLoan.id == loan_id).values(id=KeyLoan.id)
             )
     except OperationalError as exc:
         raise KeyLoanError("系统繁忙，请稍后重试") from exc
@@ -491,8 +540,8 @@ def issue_loan_key(
     loan_selection: LoanSelectionConfig | None = None,
 ) -> dict:
     mode = (delivery_mode or DELIVERY_PROXY_ALIAS).strip()
-    if mode not in VALID_DELIVERY_MODES:
-        raise KeyLoanError(f"不支持的交付模式：{delivery_mode}")
+    if mode != DELIVERY_PROXY_ALIAS:
+        raise KeyLoanError("仅支持代理别名 Key（proxy_alias）交付；Cursor Key 直发已停用")
 
     repo = ToolCenterRepository(session, team_id)
     account = repo.get_account(source_account_id)
@@ -559,21 +608,13 @@ def issue_loan_key(
         bound_by_member_id=bound_by_member_id,
     )
 
-    alias_key_hash = None
-    alias_key_hint = None
-    alias_encrypted_key = None
-    user_facing_key = loan_api_key
-    user_facing_hint = loan_cred.key_hint
-    if mode == DELIVERY_PROXY_ALIAS:
-        from pulse.ingestion.crypto import encrypt_secret
-        from pulse.proxy.keys import generate_alias_key
+    from pulse.ingestion.crypto import encrypt_secret
+    from pulse.proxy.keys import generate_alias_key
 
-        alias_plaintext, alias_key_hash, alias_key_hint = generate_alias_key()
-        if not (encryption_key or "").strip():
-            raise KeyLoanError("未配置凭证加密密钥，无法签发代理别名 Key")
-        alias_encrypted_key = encrypt_secret(alias_plaintext, encryption_key.strip())
-        user_facing_key = alias_plaintext
-        user_facing_hint = alias_key_hint
+    alias_plaintext, alias_key_hash, alias_key_hint = generate_alias_key()
+    if not (encryption_key or "").strip():
+        raise KeyLoanError("未配置凭证加密密钥，无法签发代理别名 Key")
+    alias_encrypted_key = encrypt_secret(alias_plaintext, encryption_key.strip())
 
     deadline = account_loan_deadline(account) if auto_revoke_on_reset else None
     loan = loan_svc.create_loan_record(
@@ -584,7 +625,7 @@ def issue_loan_key(
         auto_revoke_on_reset=auto_revoke_on_reset,
         expires_on=deadline,
         note=note,
-        delivery_mode=mode,
+        delivery_mode=DELIVERY_PROXY_ALIAS,
         alias_key_hash=alias_key_hash,
         alias_key_hint=alias_key_hint,
         alias_encrypted_key=alias_encrypted_key,
@@ -593,27 +634,201 @@ def issue_loan_key(
     if account.primary_member_id:
         primary = session.get(Member, account.primary_member_id)
         primary_member_name = primary.display_name if primary else None
-    if mode == DELIVERY_PROXY_ALIAS:
-        warning = (
-            "此为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。"
-            "可随时发送「我的借用」再次查看。借用消耗为账号用量差值近似，非精确按 Key 统计。"
-        )
-    else:
-        warning = (
-            "可随时发送「我的借用」再次查看 Key。"
-            "借用消耗为账号用量差值近似，非精确按 Key 统计。"
-        )
+    warning = (
+        "此为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。"
+        "可随时发送「我的借用」再次查看。借用消耗为账号用量差值近似，非精确按 Key 统计。"
+    )
     return {
         "loan_id": loan.id,
-        "api_key": user_facing_key,
-        "key_hint": user_facing_hint,
-        "delivery_mode": mode,
+        "api_key": alias_plaintext,
+        "key_hint": alias_key_hint,
+        "delivery_mode": DELIVERY_PROXY_ALIAS,
+        "borrower_member_id": borrower.id,
         "borrower_name": borrower.display_name,
         "source_account_identifier": account.account_identifier,
         "primary_member_name": primary_member_name,
         "loan_expires_on": deadline.isoformat() if deadline else None,
         "warning": warning,
     }
+
+
+def reassign_loan_source(
+    session: Session,
+    encryption_key: str,
+    *,
+    team_id: str,
+    loan_id: str,
+    new_source_account_id: str,
+    bound_by_member_id: str,
+    cursor_client: CursorApiClient | None = None,
+    loan_selection: LoanSelectionConfig | None = None,
+) -> dict:
+    """更换出借账号，保持同一 pka_ / loan id；新建远端 Key。
+
+    远端撤销旧 Key 延后到 DB commit 之后，由
+    :func:`finalize_reassign_old_remote_revoke` 执行，避免 commit 失败时
+    旧 Key 已在 Cursor 侧被吊销而本地仍指向旧 credential。
+    """
+    loan_svc = KeyLoanService(session, encryption_key, cursor_client=cursor_client)
+    _lock_loan_for_update(session, loan_id)
+    loan = loan_svc.get_loan(loan_id)
+    if not loan:
+        raise KeyLoanError("借用记录不存在")
+    if loan.status != "active":
+        raise KeyLoanError("仅进行中的借用可更换出借账号")
+    mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+    if mode != DELIVERY_PROXY_ALIAS:
+        raise KeyLoanError("仅代理别名 Key 支持更换出借账号")
+    if not loan.alias_key_hash or not loan.alias_encrypted_key:
+        raise KeyLoanError("别名 Key 缺失，无法安全换绑")
+    if loan.source_account_id == new_source_account_id:
+        raise KeyLoanError("新出借账号与当前相同")
+
+    repo = ToolCenterRepository(session, team_id)
+    old_account = repo.get_account(loan.source_account_id)
+    new_account = repo.get_account(new_source_account_id)
+    if not new_account or new_account.team_id != team_id:
+        raise KeyLoanError("新出借账号不存在")
+    if not new_account.vendor or new_account.vendor.slug != "cursor":
+        raise KeyLoanError("仅 Cursor 账号支持 Key 调配")
+
+    client = cursor_client or CursorApiClient()
+    cred_service = CredentialService(session, encryption_key, cursor_client=client)
+    primary = cred_service.get_primary_credential(new_source_account_id)
+    if not primary:
+        raise KeyLoanError("新出借账号未绑定主 API Key，请联系管理员")
+
+    snapshot = loan_svc.latest_snapshot(new_source_account_id)
+    if not snapshot:
+        raise KeyLoanError("新出借账号暂无额度快照，请联系管理员先同步")
+    if analyze_burn_rate(snapshot).status == "exhausted":
+        raise KeyLoanError("新出借账号套内额度已耗尽，请选择其他账号")
+
+    selection = loan_selection or LoanSelectionConfig()
+    _lock_account_for_loan_issue(session, new_source_account_id)
+    active_loan_count = (
+        session.scalar(
+            select(func.count(KeyLoan.id)).where(
+                KeyLoan.source_account_id == new_source_account_id,
+                KeyLoan.status == "active",
+            )
+        )
+        or 0
+    )
+    if active_loan_count >= selection.max_active_loans_per_account:
+        raise KeyLoanError("新出借账号借用名额已满，请选择其他账号")
+
+    borrower = session.get(Member, loan.borrower_member_id) if loan.borrower_member_id else None
+    borrower_name = (borrower.display_name if borrower else "loan").replace(" ", "-")
+    resolved_key_name = f"pulse-loan-{borrower_name}"
+
+    primary_api_key = cred_service.decrypt_api_key(primary)
+    token = client.get_access_token(primary_api_key)
+    created = client.create_user_api_key(token, resolved_key_name, api_key=primary_api_key)
+    loan_api_key = created.get("apiKey")
+    if not loan_api_key:
+        raise KeyLoanError("CreateUserApiKey 未返回 apiKey")
+
+    remote_id = _resolve_remote_key_id(
+        client, token, key_name=resolved_key_name, api_key=primary_api_key
+    )
+    new_cred = cred_service.create_loan_credential(
+        account_id=new_source_account_id,
+        api_key=loan_api_key,
+        display_name=resolved_key_name,
+        remote_key_id=remote_id,
+        assignee_member_id=loan.borrower_member_id,
+        bound_by_member_id=bound_by_member_id,
+    )
+
+    old_source_id = loan.source_account_id
+    old_cred_id = loan.credential_id
+    old_identifier = old_account.account_identifier if old_account else None
+
+    deadline = (
+        account_loan_deadline(new_account) if loan.auto_revoke_on_reset else None
+    )
+    loan.source_account_id = new_source_account_id
+    loan.credential_id = new_cred.id
+    loan.baseline_used_cents = snapshot.used_cents
+    loan.expires_on = deadline
+
+    pending_remote_revoke = None
+    old_cred = session.get(AiAccountCredential, old_cred_id)
+    if old_cred:
+        if old_cred.remote_key_id and old_cred.status == "active":
+            pending_remote_revoke = {
+                "old_source_account_id": old_source_id,
+                "old_cred_id": old_cred_id,
+                "remote_key_id": old_cred.remote_key_id,
+            }
+        old_cred.status = "revoked"
+        old_cred.sync_enabled = False
+        old_cred.encrypted_value = ""
+    session.flush()
+
+    return {
+        "loan_id": loan.id,
+        "delivery_mode": DELIVERY_PROXY_ALIAS,
+        "borrower_member_id": loan.borrower_member_id,
+        "borrower_name": borrower.display_name if borrower else None,
+        "old_source_account_id": old_source_id,
+        "old_source_account_identifier": old_identifier,
+        "source_account_id": new_account.id,
+        "source_account_identifier": new_account.account_identifier,
+        "loan_expires_on": deadline.isoformat() if deadline else None,
+        "alias_key_hint": loan.alias_key_hint,
+        "old_remote_revoked": False,
+        "key_hint": loan.alias_key_hint,
+        "_pending_old_remote_revoke": pending_remote_revoke,
+    }
+
+
+def finalize_reassign_old_remote_revoke(
+    session: Session,
+    encryption_key: str,
+    result: dict,
+    *,
+    cursor_client: CursorApiClient | None = None,
+) -> bool:
+    """Best-effort revoke of the previous Cursor key after DB commit.
+
+    Mutates ``result``: pops ``_pending_old_remote_revoke``, sets
+    ``old_remote_revoked``.
+    """
+    pending = result.pop("_pending_old_remote_revoke", None)
+    if not pending:
+        result["old_remote_revoked"] = False
+        return False
+
+    client = cursor_client or CursorApiClient()
+    cred_service = CredentialService(session, encryption_key, cursor_client=client)
+    try:
+        old_primary = cred_service.get_primary_credential(
+            pending["old_source_account_id"]
+        )
+        if not old_primary:
+            logger.warning(
+                "reassign loan %s: no primary on old source, skip remote revoke",
+                result.get("loan_id"),
+            )
+            result["old_remote_revoked"] = False
+            return False
+        old_api_key = cred_service.decrypt_api_key(old_primary)
+        old_token = client.get_access_token(old_api_key)
+        client.revoke_user_api_key(
+            old_token, pending["remote_key_id"], api_key=old_api_key
+        )
+        result["old_remote_revoked"] = True
+        return True
+    except Exception:
+        logger.warning(
+            "reassign loan %s: failed to revoke old remote key",
+            result.get("loan_id"),
+            exc_info=True,
+        )
+        result["old_remote_revoked"] = False
+        return False
 
 
 def request_self_service_loan(

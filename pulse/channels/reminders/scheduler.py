@@ -54,9 +54,10 @@ class SyncSchedulerService:
             from pulse.tool_center.key_loans import KeyLoanService
 
             svc = KeyLoanService(session, encryption_key)
-            expired = svc.expire_loans_on_reset()
+            expired = svc.expire_loans_on_reset(notify_config=self.config)
             if expired:
                 session.commit()
+                svc.flush_expire_notifications()
             return expired
         finally:
             session.close()

@@ -84,12 +84,14 @@ class CursorSyncService:
         cursor_client: CursorApiClient | None = None,
         on_demand_notify: OnDemandNotify | None = None,
         enforce_on_demand_disabled: bool = True,
+        app_config=None,
     ):
         self.session = session
         self.encryption_key = encryption_key
         self.cursor_client = cursor_client or CursorApiClient()
         self.on_demand_notify = on_demand_notify
         self.enforce_on_demand_disabled = enforce_on_demand_disabled
+        self.app_config = app_config
         self.credential_service = CredentialService(
             session, encryption_key, cursor_client=self.cursor_client
         )
@@ -99,13 +101,18 @@ class CursorSyncService:
         try:
             from pulse.tool_center.key_loans import KeyLoanService
 
-            expired = KeyLoanService(
+            svc = KeyLoanService(
                 self.session,
                 self.encryption_key,
                 cursor_client=self.cursor_client,
-            ).expire_loans_on_reset(account_id=account_id)
+            )
+            expired = svc.expire_loans_on_reset(
+                account_id=account_id,
+                notify_config=self.app_config,
+            )
             if expired:
                 self.session.commit()
+                svc.flush_expire_notifications()
                 logger.info(
                     "expired %s key loan(s) after cursor sync account=%s",
                     expired,

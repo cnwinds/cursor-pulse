@@ -17,11 +17,10 @@ from tests.conftest import make_team_repo
 
 
 @pytest.fixture
-def cursor_accounts_env(tmp_path):
+def cursor_accounts_env():
     from pulse.storage.db import init_db
 
-    db_url = f"sqlite:///{tmp_path / 'accounts.db'}"
-    session_factory = init_db(db_url)
+    session_factory = init_db("sqlite://")
     session = session_factory()
     team, repo = make_team_repo(session)
     member = repo.add_member("u1", "Alice")

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from sqlalchemy import text
-
 from pulse.storage.migrate import migrate_schema
-from pulse.storage.models import Base, ProxyKeyUsage
+from pulse.storage.models import ProxyKeyUsage
+from tests.conftest import make_test_engine
 
 
 def test_proxy_key_usage_allows_loan_id_without_proxy_key(tmp_path):
     url = f"sqlite:///{tmp_path / 't.db'}"
-    engine = create_engine(url)
+    engine = make_test_engine(url)
+    from pulse.storage.models import Base
+
     Base.metadata.create_all(engine)
     migrate_schema(engine)
     cols = {c["name"]: c for c in inspect(engine).get_columns("proxy_key_usages")}
@@ -36,7 +37,7 @@ def test_proxy_key_usage_allows_loan_id_without_proxy_key(tmp_path):
 def test_key_loans_alias_columns_and_unique_index_migrated(tmp_path):
     """存量表无别名字段时，migrate 应补齐列与唯一索引。"""
     url = f"sqlite:///{tmp_path / 'legacy.db'}"
-    engine = create_engine(url)
+    engine = make_test_engine(url)
     with engine.begin() as conn:
         conn.execute(
             text(

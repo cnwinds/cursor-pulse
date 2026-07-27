@@ -2,45 +2,42 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.identity.service import IdentityError, ensure_identity, merge_members, resolve_member
-from pulse.storage.migrate import migrate_schema
-from pulse.storage.models import AiAccount, AiPlan, AiVendor, Base, Member, MemberIdentity
+from pulse.storage.models import AiAccount, AiPlan, AiVendor, Member, MemberIdentity
 from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import SessionFactoryProxy, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def identity_client(tmp_path):
+@pytest.fixture(scope="module")
+def _identity_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test", admin_password="bootstrap-secret"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    db_path = tmp_path / "pulse.db"
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    config.storage.database_url = db_url
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    migrate_schema(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    config.storage.database_url = "sqlite://"
+    proxy = SessionFactoryProxy()
+    client = TestClient(create_app(config, proxy))
+    return client, config, proxy
+
+
+@pytest.fixture
+def identity_client(_identity_app):
+    client, config, proxy = _identity_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="A", password="owner-pass")
     repo.commit()
     s.close()
-    return TestClient(create_app(config, sf)), config, owner, team.id, sf
+    return client, config, owner, team.id, sf
 
 
 def test_migrate_backfills_identities(identity_client):

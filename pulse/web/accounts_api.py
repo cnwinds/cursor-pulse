@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from pulse.ingestion.plan_infer import (
 )
 from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import CursorApiClient
-from pulse.storage.models import AiAccountCredential, AiVendor
+from pulse.storage.models import AiAccountCredential, AiVendor, UsageDailyAggregate
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.audit import log_admin_action
 from pulse.web.credentials_api import (
@@ -506,6 +506,49 @@ def register_accounts_v2_routes(
                 "breakdown_by_model": r.breakdown_by_model,
             }
             for r in rows
+        ]
+
+    @app.get(
+        "/api/v2/accounts/{account_id}/usage/daily",
+        dependencies=[Depends(require_capability("accounts:read"))],
+    )
+    def list_account_daily_usage(
+        account_id: str,
+        start: date = Query(..., description="起始日期 YYYY-MM-DD"),
+        end: date = Query(..., description="结束日期 YYYY-MM-DD"),
+        session: Session = Depends(get_db),
+    ):
+        """Per-account daily model aggregates for quota-board detail dialog."""
+        if end < start:
+            raise HTTPException(status_code=400, detail="end 不能早于 start")
+        team, _ = team_repo_fn(session)
+        tool_repo = ToolCenterRepository(session, team.id)
+        account = tool_repo.get_account(account_id)
+        if not account or account.team_id != team.id:
+            raise HTTPException(status_code=404, detail="账号不存在")
+
+        rows = session.scalars(
+            select(UsageDailyAggregate)
+            .where(
+                UsageDailyAggregate.account_id == account_id,
+                UsageDailyAggregate.event_date >= start,
+                UsageDailyAggregate.event_date <= end,
+            )
+            .order_by(UsageDailyAggregate.event_date, UsageDailyAggregate.model)
+        ).all()
+        return [
+            {
+                "account_id": row.account_id,
+                "event_date": row.event_date.isoformat(),
+                "model": row.model,
+                "event_count": row.event_count,
+                "total_cost_usd": float(row.total_cost_usd),
+                "tokens_input": row.tokens_input,
+                "tokens_output": row.tokens_output,
+                "tokens_cache_read": row.tokens_cache_read,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
         ]
 
     @app.get(

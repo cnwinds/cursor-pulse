@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
@@ -45,7 +46,12 @@ def make_engine(database_url: str):
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_conn, _connection_record):
             cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
+            if not _is_memory_sqlite(database_url):
+                cursor.execute("PRAGMA journal_mode=WAL")
+                # NORMAL is safe with WAL; OFF under pytest avoids fsync storms
+                # when tests create many temporary on-disk DBs.
+                sync = "OFF" if "pytest" in sys.modules else "NORMAL"
+                cursor.execute(f"PRAGMA synchronous={sync}")
             cursor.execute("PRAGMA foreign_keys=ON")
             # Wait (ms) for a competing writer instead of failing instantly with
             # "database is locked". Archive stages commit between phases so the

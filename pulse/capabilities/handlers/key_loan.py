@@ -75,12 +75,12 @@ def handle_key_loan_request(
             "schema_version": 1,
             "capability_key": "key.loan.request",
             "loan_id": payload.get("loan_id"),
-            "lender_name": payload.get("lender_name"),
-            "source_identifier": payload.get("source_identifier"),
             "api_key": payload.get("api_key"),
             "delivery_mode": payload.get("delivery_mode"),
             "warning": payload.get("warning"),
             "loan_expires_on": payload.get("loan_expires_on"),
+            "setup_commands": payload.get("setup_commands") or {},
+            "proxy_url": payload.get("proxy_url"),
         },
     )
 

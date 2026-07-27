@@ -1,25 +1,14 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from pulse.channels.dingtalk.group_store import (
     load_persisted_group_binding,
     save_group_binding,
 )
-from pulse.storage.models import Base
-from tests.conftest import make_team_repo
+from tests.conftest import make_team_repo, make_test_session_factory
 
 
 def test_save_and_load_group_binding_from_team_settings(tmp_path):
-    db_path = tmp_path / "pulse.db"
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    # Re-open via URL requires a shared file DB (not :memory:).
+    db_url = f"sqlite:///{(tmp_path / 'pulse.db').as_posix()}"
+    sf = make_test_session_factory(db_url)
     session = sf()
     team, _repo = make_team_repo(session)
     session.commit()

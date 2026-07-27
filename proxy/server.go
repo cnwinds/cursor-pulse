@@ -167,9 +167,11 @@ func (l *oneConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 // passthroughToken returns a JWT for a loan-bound session (passthrough or alias),
 // caching by credential ID and re-exchanging the Cursor API key when needed.
-// For loan_alias, re-authorizes with Pulse so revoked loans cannot keep exchanging.
+// For loan_alias, re-authorizes with Pulse so revoked loans cannot keep exchanging
+// and reassignment picks up the new underlying Cursor key immediately.
 func (s *Server) passthroughToken(ctx context.Context, binding SessionBinding) (*keyEntry, string, error) {
 	apiKey := binding.PulseKey
+	credID := binding.CredentialID
 	if binding.Mode == "loan_alias" {
 		if s.pulse == nil || strings.TrimSpace(binding.PulseKey) == "" {
 			return nil, "", fmt.Errorf("loan_alias re-authorize unavailable")
@@ -185,19 +187,22 @@ func (s *Server) passthroughToken(ctx context.Context, binding SessionBinding) (
 		if apiKey == "" {
 			return nil, "", fmt.Errorf("loan_alias missing cursor_api_key")
 		}
+		if strings.TrimSpace(res.CredentialID) != "" {
+			credID = res.CredentialID
+		}
 	}
 
 	s.passthroughMu.Lock()
 	if s.passthrough == nil {
 		s.passthrough = map[string]*keyEntry{}
 	}
-	entry, ok := s.passthrough[binding.CredentialID]
+	entry, ok := s.passthrough[credID]
 	if !ok {
 		entry = &keyEntry{
-			credentialID: binding.CredentialID,
+			credentialID: credID,
 			apiKey:       apiKey,
 		}
-		s.passthrough[binding.CredentialID] = entry
+		s.passthrough[credID] = entry
 	} else if apiKey != "" {
 		entry.apiKey = apiKey
 	}

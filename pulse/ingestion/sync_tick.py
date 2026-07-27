@@ -108,6 +108,7 @@ def run_sync_tick(
         encryption_key,
         on_demand_notify=_make_on_demand_notify(session, config, notify_admins),
         enforce_on_demand_disabled=config.cursor_sync.enforce_on_demand_disabled,
+        app_config=config,
     )
     for cred in due[:batch_size]:
         try:

@@ -157,7 +157,27 @@ def test_loan_key_rejects_invalid_delivery_mode(quota_env):
     assert res.status_code == 422
 
 
-def test_loan_key_cursor_direct_mode(quota_env):
+def test_loan_key_rejects_cursor_direct_mode(quota_env):
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    account = quota_env["cursor_account"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    res = client.post(
+        f"/api/v2/accounts/{account.id}/loan-key",
+        headers=_headers(token),
+        json={
+            "borrower_member_id": borrower.id,
+            "auto_revoke_on_reset": True,
+            "delivery_mode": "cursor_direct",
+        },
+    )
+    assert res.status_code == 422
+
+
+def test_patch_loan_auto_revoke_on_reset(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]
     owner = quota_env["owner"]
@@ -184,20 +204,33 @@ def test_loan_key_cursor_direct_mode(quota_env):
         s.commit()
         s.close()
 
-        res = client.post(
+        issued = client.post(
             f"/api/v2/accounts/{account.id}/loan-key",
             headers=_headers(token),
-            json={
-                "borrower_member_id": borrower.id,
-                "auto_revoke_on_reset": True,
-                "delivery_mode": "cursor_direct",
-            },
+            json={"borrower_member_id": borrower.id, "auto_revoke_on_reset": True},
         )
+        assert issued.status_code == 200, issued.text
+        loan_id = issued.json()["loan_id"]
+        expires_before = issued.json().get("loan_expires_on")
 
-    assert res.status_code == 200
-    body = res.json()
-    assert body["api_key"].startswith("crsr_")
-    assert body["delivery_mode"] == "cursor_direct"
+        patched = client.patch(
+            f"/api/v2/loans/{loan_id}",
+            headers=_headers(token),
+            json={"auto_revoke_on_reset": False},
+        )
+        assert patched.status_code == 200, patched.text
+        body = patched.json()
+        assert body["auto_revoke_on_reset"] is False
+        assert body.get("loan_expires_on") == expires_before
+
+        patched_on = client.patch(
+            f"/api/v2/loans/{loan_id}",
+            headers=_headers(token),
+            json={"auto_revoke_on_reset": True},
+        )
+        assert patched_on.status_code == 200
+        assert patched_on.json()["auto_revoke_on_reset"] is True
+        assert patched_on.json().get("loan_expires_on") == expires_before
 
 
 def test_loan_key_rejects_borrower_without_cursor_key(quota_env):
@@ -465,3 +498,54 @@ def test_request_self_loan_and_mine_via_web(quota_env):
         )
         assert revoke.status_code == 200
         assert revoke.json()["status"] == "revoked"
+
+
+def test_account_usage_daily_returns_aggregates(quota_env):
+    """Quota board 「明细」依赖 GET /api/v2/accounts/{id}/usage/daily."""
+    from pulse.storage.models import UsageDailyAggregate
+
+    client = quota_env["client"]
+    account = quota_env["cursor_account"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+
+    s = quota_env["session_factory"]()
+    s.add(
+        UsageDailyAggregate(
+            account_id=account.id,
+            event_date=date(2026, 7, 15),
+            model="claude-4-sonnet",
+            event_count=2,
+            total_cost_usd=1.25,
+            tokens_input=100,
+            tokens_output=50,
+            tokens_cache_read=10,
+        )
+    )
+    s.commit()
+    s.close()
+
+    res = client.get(
+        f"/api/v2/accounts/{account.id}/usage/daily",
+        headers=_headers(token),
+        params={"start": "2026-07-01", "end": "2026-07-31"},
+    )
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["model"] == "claude-4-sonnet"
+    assert rows[0]["event_date"] == "2026-07-15"
+    assert rows[0]["event_count"] == 2
+    assert rows[0]["tokens_input"] == 100
+    assert float(rows[0]["total_cost_usd"]) == 1.25
+
+
+def test_account_usage_daily_rejects_inverted_range(quota_env):
+    client = quota_env["client"]
+    account = quota_env["cursor_account"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get(
+        f"/api/v2/accounts/{account.id}/usage/daily",
+        headers=_headers(token),
+        params={"start": "2026-07-31", "end": "2026-07-01"},
+    )
+    assert res.status_code == 400

@@ -88,6 +88,18 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				return
 			}
 			b.BoundAt = time.Now()
+			if res.CredentialID != "" {
+				b.CredentialID = res.CredentialID
+			}
+			if res.LoanID != "" {
+				b.LoanID = res.LoanID
+			}
+			if res.Mode != "" {
+				b.Mode = res.Mode
+			}
+			if strings.TrimSpace(res.CursorAPIKey) != "" {
+				b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
+			}
 			s.sessions.Bind(cliTok, b)
 		}
 		binding = b

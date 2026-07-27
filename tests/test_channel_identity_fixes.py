@@ -15,8 +15,8 @@ def test_identity_channel_for_config():
     assert identity_channel_for_config("feishu") == "feishu"
 
 
-def test_sync_portal_owners_uses_bot_channel(tmp_path):
-    session = init_db(f"sqlite:///{tmp_path / 'id.db'}")()
+def test_sync_portal_owners_uses_bot_channel():
+    session = init_db("sqlite://")()
     team, _repo = make_team_repo(session)
     n = sync_portal_owners_from_config(
         session, team.id, ["im-admin-1"], channel="dingtalk"
@@ -36,8 +36,8 @@ def test_sync_portal_owners_uses_bot_channel(tmp_path):
     session.close()
 
 
-def test_get_team_member_prefers_deterministic_channel(tmp_path):
-    session = init_db(f"sqlite:///{tmp_path / 'm.db'}")()
+def test_get_team_member_prefers_deterministic_channel():
+    session = init_db("sqlite://")()
     team, repo = make_team_repo(session)
     repo.get_or_create_member("same-id", "DT", channel="dingtalk")
     repo.get_or_create_member("same-id", "Web", channel="web")
@@ -48,8 +48,8 @@ def test_get_team_member_prefers_deterministic_channel(tmp_path):
     session.close()
 
 
-def test_feishu_dispatch_reuses_feishu_member(tmp_path):
-    session_factory = init_db(f"sqlite:///{tmp_path / 'f.db'}")
+def test_feishu_dispatch_reuses_feishu_member():
+    session_factory = init_db("sqlite://")
     session = session_factory()
     _team, repo = make_team_repo(session)
     existing = repo.get_or_create_member("ou_1", "Feishu User", channel="feishu")
@@ -79,8 +79,8 @@ def test_feishu_dispatch_reuses_feishu_member(tmp_path):
     session.close()
 
 
-def test_channel_member_respects_channel(tmp_path):
-    session = init_db(f"sqlite:///{tmp_path / 'c.db'}")()
+def test_channel_member_respects_channel():
+    session = init_db("sqlite://")()
     _team, repo = make_team_repo(session)
     m = channel_member(repo, "u1", "Alice", channel="feishu")
     assert m.channel == "feishu"
