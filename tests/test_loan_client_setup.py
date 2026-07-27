@@ -6,10 +6,6 @@ from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
@@ -19,98 +15,41 @@ from pulse.ingestion.crypto import encrypt_secret
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccountCredential,
-    Base,
     KeyLoan,
     ProxyKeyUsage,
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-
-
-def make_team_repo(session, slug: str = "test"):
-    from sqlalchemy import select
-
-    from pulse.storage.models import Team
-
-    team = session.scalar(select(Team).where(Team.slug == slug))
-    if team is None:
-        team = Team(slug=slug, name=slug.title())
-        session.add(team)
-        session.flush()
-    try:
-        from pulse.storage.repository import Repository
-
-        return team, Repository(session, team.id)
-    except ImportError:
-        return team, None
-
-
-def mock_cursor_key_exchange(mock_client, *, email: str | None = None) -> None:
-    import base64
-    import json
-    import time
-
-    from pulse.integrations.cursor_api import (
-        _normalize_account_email,
-        resolve_account_email_from_exchange,
-    )
-
-    payload: dict = {"exp": int(time.time()) + 3600}
-    if email:
-        payload["email"] = email
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    token = f"hdr.{encoded}.sig"
-    exchange = {
-        "accessToken": token,
-        "refreshToken": "ref",
-    }
-    mock_client.exchange_user_api_key_response.return_value = exchange
-
-    def _resolve(_api_key, exchange=None):
-        data = exchange or mock_client.exchange_user_api_key_response.return_value
-        resolved = resolve_account_email_from_exchange(data)
-        if resolved:
-            return resolved
-        access_token = data.get("accessToken")
-        if not isinstance(access_token, str) or not access_token:
-            return None
-        get_me = getattr(mock_client, "get_me", None)
-        if get_me is None:
-            return None
-        try:
-            me = get_me(access_token, api_key=_api_key)
-        except Exception:
-            return None
-        me_email = me.get("email") if isinstance(me, dict) else None
-        if isinstance(me_email, str) and "@" in me_email:
-            return _normalize_account_email(me_email)
-        return None
-
-    mock_client.resolve_api_key_account_email.side_effect = _resolve
-
+from tests.conftest import (
+    make_module_web_client,
+    make_team_repo,
+    make_test_session_factory,
+    mock_cursor_key_exchange,
+)
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 LOAN_PLAINTEXT = "crsr_loan_client_setup_key_plaintext"
 
 
-@pytest.fixture
-def loan_client_env():
+@pytest.fixture(scope="module")
+def _loan_client_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
         credentials=CredentialConfig(encryption_key=TEST_KEY),
         proxy=ProxyConfig(public_url="http://proxy.example.com:8317"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def loan_client_env(_loan_client_app):
+    client, config, proxy = _loan_client_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(
@@ -140,7 +79,6 @@ def loan_client_env():
     repo.commit()
     s.close()
 
-    client = TestClient(create_app(config, sf))
     return {
         "client": client,
         "config": config,

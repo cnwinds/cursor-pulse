@@ -14,10 +14,23 @@ from pulse.storage.models import Member, ProxyEvent, ProxyKey, ProxyKeyUsage, Ke
 logger = logging.getLogger(__name__)
 
 WINDOW_5H = timedelta(hours=5)
+WINDOW_7D = timedelta(days=7)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def usd_to_cents(usd: int | None) -> int | None:
+    if usd is None:
+        return None
+    return int(usd) * 100
+
+
+def cents_to_usd(cents: int | None) -> int | None:
+    if cents is None:
+        return None
+    return int(cents) // 100
 
 
 def find_key_by_plaintext(session: Session, plaintext: str) -> ProxyKey | None:
@@ -31,15 +44,15 @@ def create_key(
     *,
     name: str,
     member_id: str,
-    mode: str,
-    token_limit: int | None = None,
-    cost_limit_cents: int | None = None,
-    window_5h_token_limit: int | None = None,
+    window_5h_cost_limit_cents: int | None = None,
+    window_7d_cost_limit_cents: int | None = None,
     expires_at: datetime | None = None,
     encryption_key: str = "",
+    mode: str = "quota",  # ignored; empty windows = unlimited
 ) -> tuple[ProxyKey, str]:
     from pulse.ingestion.crypto import encrypt_secret
 
+    _ = mode
     plaintext, key_hash, hint = generate_proxy_key()
     encrypted = None
     if encryption_key.strip():
@@ -50,10 +63,9 @@ def create_key(
         encrypted_key=encrypted,
         name=name,
         member_id=member_id,
-        mode=mode,
-        token_limit=token_limit,
-        cost_limit_cents=cost_limit_cents,
-        window_5h_token_limit=window_5h_token_limit,
+        mode="quota",
+        window_5h_cost_limit_cents=window_5h_cost_limit_cents,
+        window_7d_cost_limit_cents=window_7d_cost_limit_cents,
         expires_at=expires_at,
     )
     session.add(key)
@@ -88,7 +100,28 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
         "agent -k"
     )
 
+def window_usage_cost(
+    session: Session,
+    proxy_key_id: str,
+    *,
+    window: timedelta,
+    now: datetime | None = None,
+) -> int:
+    now = now or _utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    since = now - window
+    value = session.execute(
+        select(func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0)).where(
+            ProxyKeyUsage.proxy_key_id == proxy_key_id,
+            ProxyKeyUsage.ts >= since,
+        )
+    ).scalar_one()
+    return int(value)
+
+
 def window_usage_tokens(session: Session, proxy_key_id: str, *, now: datetime | None = None) -> int:
+    """Legacy helper: 5h token sum (kept for callers; limits no longer use tokens)."""
     now = now or _utcnow()
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -238,10 +271,14 @@ def _authorize_proxy_key(
         return {"status": "invalid", **base, "reason": "expired"}
     if key.status == "suspended":
         return {"status": "suspended", **base, "reason": key.suspended_reason or "suspended"}
-    if key.mode == "quota" and key.window_5h_token_limit is not None:
-        used = window_usage_tokens(session, key.id, now=now)
-        if used >= key.window_5h_token_limit:
+    if key.window_5h_cost_limit_cents is not None:
+        used_5h = window_usage_cost(session, key.id, window=WINDOW_5H, now=now)
+        if used_5h >= key.window_5h_cost_limit_cents:
             return {"status": "window_limited", **base, "reason": "window_5h_exceeded"}
+    if key.window_7d_cost_limit_cents is not None:
+        used_7d = window_usage_cost(session, key.id, window=WINDOW_7D, now=now)
+        if used_7d >= key.window_7d_cost_limit_cents:
+            return {"status": "window_limited", **base, "reason": "window_7d_exceeded"}
     return {"status": "ok", **base, "reason": None}
 
 
@@ -426,6 +463,8 @@ def estimate_cost_cents(
 ) -> int:
     """本地价表估算（美分）。始终先 canonical，避免 raw inclusive input 双计。"""
     canonical = canonical_turn_ended_tokens(tokens)
+    pricing = table or get_cursor_pricing_table()
+    total = total_tokens_from_canonical(canonical)
     est = estimate_token_cost(
         model=model or "",
         max_mode=False,
@@ -433,11 +472,42 @@ def estimate_cost_cents(
         tokens_input_cache_write=canonical["cache_write"],
         tokens_cache_read=canonical["cache_read"],
         tokens_output=canonical["output"] + canonical["reasoning"],
-        table=table or get_cursor_pricing_table(),
+        table=pricing,
     )
-    if est is None:
+    if est is not None:
+        cents = int(round(est.cost_usd * 100))
+        if cents > 0 or total <= 0:
+            return cents
+        # Sub-cent priced usage still counts toward window limits.
+        return 1
+    return _conservative_cost_cents_from_tokens(canonical, pricing)
+
+
+def _conservative_cost_cents_from_tokens(
+    tokens: dict,
+    table: PricingTable,
+) -> int:
+    """Fallback when no pricing rule matches — bill all tokens at fallback input rate."""
+    total = total_tokens_from_canonical(tokens)
+    if total <= 0:
         return 0
-    return int(round(est.cost_usd * 100))
+    rule = table.fallback
+    if rule is not None:
+        est = estimate_token_cost(
+            model=rule.pattern,
+            max_mode=False,
+            tokens_input_no_cache=total,
+            tokens_input_cache_write=0,
+            tokens_cache_read=0,
+            tokens_output=0,
+            table=table,
+            pricing_rule_label="fallback-conservative",
+            confidence=0.5,
+        )
+        if est is not None and est.cost_usd > 0:
+            return max(1, int(round(est.cost_usd * 100)))
+    # Sonnet-class $3/M input when table has no fallback.
+    return max(1, int(round(total / 1_000_000 * 3.0 * 100)))
 
 
 def reprice_proxy_usages(
@@ -622,16 +692,8 @@ def record_usages(
 
 
 def evaluate_key(session: Session, key: ProxyKey) -> bool:
-    """额度评估，返回是否发生了新的停用。"""
-    if key.mode != "quota" or key.status != "active":
-        return False
-    total_tokens, total_cost = total_usage(session, key.id)
-    if key.token_limit is not None and total_tokens >= key.token_limit:
-        suspend_key(session, key, "token_limit_exceeded")
-        return True
-    if key.cost_limit_cents is not None and total_cost >= key.cost_limit_cents:
-        suspend_key(session, key, "cost_limit_exceeded")
-        return True
+    """额度评估。窗口超限走 authorize soft-reject，不再 suspend。"""
+    del session, key
     return False
 
 
@@ -648,11 +710,6 @@ def suspend_key(session: Session, key: ProxyKey, reason: str) -> None:
 
 def resume_key(session: Session, key: ProxyKey) -> bool:
     if key.status != "suspended":
-        return False
-    total_tokens, total_cost = total_usage(session, key.id)
-    if key.token_limit is not None and total_tokens >= key.token_limit:
-        return False
-    if key.cost_limit_cents is not None and total_cost >= key.cost_limit_cents:
         return False
     key.status = "active"
     key.suspended_reason = None
@@ -686,22 +743,26 @@ def record_event(
 def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None) -> dict:
     now = now or _utcnow()
     total_tokens, total_cost = total_usage(session, key.id)
+    used_5h = window_usage_cost(session, key.id, window=WINDOW_5H, now=now)
+    used_7d = window_usage_cost(session, key.id, window=WINDOW_7D, now=now)
     return {
         "id": key.id,
         "key_hint": key.key_hint,
         "name": key.name,
         "member_id": key.member_id,
         "mode": key.mode,
-        "token_limit": key.token_limit,
-        "cost_limit_cents": key.cost_limit_cents,
-        "window_5h_token_limit": key.window_5h_token_limit,
+        "window_5h_cost_limit_cents": key.window_5h_cost_limit_cents,
+        "window_7d_cost_limit_cents": key.window_7d_cost_limit_cents,
+        "window_5h_cost_usd": cents_to_usd(key.window_5h_cost_limit_cents),
+        "window_7d_cost_usd": cents_to_usd(key.window_7d_cost_limit_cents),
         "status": key.status,
         "suspended_reason": key.suspended_reason,
         "expires_at": key.expires_at.isoformat() if key.expires_at else None,
         "created_at": key.created_at.isoformat() if key.created_at else None,
         "total_tokens": total_tokens,
         "total_cost_cents": total_cost,
-        "window_5h_tokens": window_usage_tokens(session, key.id, now=now),
+        "window_5h_cost_cents": used_5h,
+        "window_7d_cost_cents": used_7d,
     }
 
 

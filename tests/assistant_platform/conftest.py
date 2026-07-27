@@ -1,4 +1,4 @@
-"""Assistant Platform test defaults: never call remote embedding APIs."""
+"""Assistant Platform test defaults: no remote embed/LLM, no live team_settings."""
 
 from __future__ import annotations
 
@@ -22,6 +22,20 @@ def _force_hashing_embedder(monkeypatch):
     monkeypatch.setattr(
         "assistant_platform.skills.vector_sync.build_archive_embedder",
         _hashing,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_live_team_settings(monkeypatch):
+    """Prevent data/pulse.db team_settings from enabling remote LLM distill.
+
+    Without this, resolve_effective_chat_memory() reads the developer machine's
+    pulse.db and turns multi-second HTTP distill on for ordinary unit tests.
+    """
+
+    monkeypatch.setattr(
+        "pulse.team_settings_loader.read_team_setting_section",
+        lambda **_kwargs: {},
     )
 
 

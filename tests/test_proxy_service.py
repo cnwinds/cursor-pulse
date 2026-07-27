@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -32,12 +32,38 @@ def _add_key(session, plaintext: str, **kwargs) -> ProxyKey:
         key_hint=plaintext[:11],
         name=kwargs.pop("name", "k"),
         member_id=kwargs.pop("member_id", "m1"),
-        mode=kwargs.pop("mode", "unlimited"),
+        mode=kwargs.pop("mode", "quota"),
         **kwargs,
     )
     session.add(key)
     session.flush()
     return key
+
+
+def test_estimate_cost_cents_conservative_when_unpriced():
+    from pulse.pricing.types import PricingTable
+
+    empty_table = PricingTable(
+        vendor_slug="test",
+        version="v0",
+        effective_from=date(2026, 1, 1),
+        rules=(),
+        fallback=None,
+    )
+    cents = service.estimate_cost_cents(
+        "unknown-model-xyz",
+        {"input": 1_000_000, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0},
+        table=empty_table,
+    )
+    assert cents == 300  # $3/M fallback
+
+
+def test_estimate_cost_cents_minimum_one_cent_for_subcent_usage():
+    cents = service.estimate_cost_cents(
+        "claude-sonnet-4",
+        {"input": 10, "output": 0, "cache_read": 0, "cache_write": 0, "reasoning": 0},
+    )
+    assert cents == 1
 
 
 def test_authorize_unknown_key(session):
@@ -49,12 +75,12 @@ def test_authorize_unknown_key(session):
 
 def test_authorize_ok_unlimited(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext)
+    key = _add_key(session, plaintext, mode="quota")
     result = service.authorize_status(session, plaintext, now=NOW)
     assert result == {
         "status": "ok",
         "proxy_key_id": key.id,
-        "mode": "unlimited",
+        "mode": "quota",
         "reason": None,
         "credential_id": None,
         "loan_id": None,
@@ -73,43 +99,72 @@ def test_authorize_revoked_and_expired(session):
 
 def test_authorize_suspended(session):
     plaintext, _, _ = generate_proxy_key()
-    _add_key(session, plaintext, status="suspended", suspended_reason="token_limit_exceeded")
+    _add_key(session, plaintext, status="suspended", suspended_reason="manual")
     result = service.authorize_status(session, plaintext, now=NOW)
     assert result["status"] == "suspended"
-    assert result["reason"] == "token_limit_exceeded"
+    assert result["reason"] == "manual"
 
 
-def test_authorize_window_limited(session):
+def test_authorize_window_5h_cost_limited(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", window_5h_token_limit=100)
+    key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=1000)
     session.add(
-        ProxyKeyUsage(proxy_key_id=key.id, total_tokens=60, ts=NOW - timedelta(hours=1))
+        ProxyKeyUsage(
+            proxy_key_id=key.id, total_tokens=1, cost_cents=600, ts=NOW - timedelta(hours=1)
+        )
     )
     session.add(
-        ProxyKeyUsage(proxy_key_id=key.id, total_tokens=50, ts=NOW - timedelta(hours=2))
+        ProxyKeyUsage(
+            proxy_key_id=key.id, total_tokens=1, cost_cents=500, ts=NOW - timedelta(hours=2)
+        )
     )
     session.flush()
     result = service.authorize_status(session, plaintext, now=NOW)
     assert result["status"] == "window_limited"
+    assert result["reason"] == "window_5h_exceeded"
     assert result["proxy_key_id"] == key.id
 
 
-def test_window_ignores_old_usage(session):
+def test_authorize_window_7d_cost_limited(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", window_5h_token_limit=100)
+    key = _add_key(session, plaintext, mode="quota", window_7d_cost_limit_cents=2000)
     session.add(
-        ProxyKeyUsage(proxy_key_id=key.id, total_tokens=500, ts=NOW - timedelta(hours=6))
+        ProxyKeyUsage(
+            proxy_key_id=key.id,
+            total_tokens=1,
+            cost_cents=2000,
+            ts=NOW - timedelta(days=2),
+        )
     )
     session.flush()
-    assert service.window_usage_tokens(session, key.id, now=NOW) == 0
+    result = service.authorize_status(session, plaintext, now=NOW)
+    assert result["status"] == "window_limited"
+    assert result["reason"] == "window_7d_exceeded"
+
+
+def test_window_cost_ignores_old_usage(session):
+    plaintext, _, _ = generate_proxy_key()
+    key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=100)
+    session.add(
+        ProxyKeyUsage(
+            proxy_key_id=key.id,
+            total_tokens=1,
+            cost_cents=500,
+            ts=NOW - timedelta(hours=6),
+        )
+    )
+    session.flush()
+    assert service.window_usage_cost(session, key.id, window=service.WINDOW_5H, now=NOW) == 0
     assert service.authorize_status(session, plaintext, now=NOW)["status"] == "ok"
 
 
-def test_window_limit_boundary_exact(session):
+def test_window_5h_cost_boundary_exact(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", window_5h_token_limit=100)
+    key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=100)
     session.add(
-        ProxyKeyUsage(proxy_key_id=key.id, total_tokens=100, ts=NOW - timedelta(hours=1))
+        ProxyKeyUsage(
+            proxy_key_id=key.id, total_tokens=1, cost_cents=100, ts=NOW - timedelta(hours=1)
+        )
     )
     session.flush()
     assert service.authorize_status(session, plaintext, now=NOW)["status"] == "window_limited"
@@ -117,12 +172,14 @@ def test_window_limit_boundary_exact(session):
 
 def test_window_includes_exact_5h_boundary(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", window_5h_token_limit=1000)
+    key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=10000)
     session.add(
-        ProxyKeyUsage(proxy_key_id=key.id, total_tokens=10, ts=NOW - timedelta(hours=5))
+        ProxyKeyUsage(
+            proxy_key_id=key.id, total_tokens=1, cost_cents=10, ts=NOW - timedelta(hours=5)
+        )
     )
     session.flush()
-    assert service.window_usage_tokens(session, key.id, now=NOW) == 10
+    assert service.window_usage_cost(session, key.id, window=service.WINDOW_5H, now=NOW) == 10
 
 
 def _usage_item(key: ProxyKey, tokens: dict, model: str = "claude-sonnet-4") -> dict:
@@ -289,34 +346,21 @@ def test_record_usage_unknown_key_skipped(session):
     assert result == {"recorded": 0, "suspended": []}
 
 
-def test_token_limit_suspends(session):
+def test_window_overage_does_not_suspend(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", token_limit=100)
-    result = service.record_usages(
-        session, [_usage_item(key, {"input": 150})], now=NOW
-    )
-    assert result["suspended"] == [key.id]
-    session.refresh(key)
-    assert key.status == "suspended"
-    assert key.suspended_reason == "token_limit_exceeded"
-    event = session.query(ProxyEvent).filter_by(event_type="suspended").one()
-    assert event.proxy_key_id == key.id
-
-
-def test_cost_limit_suspends(session):
-    plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", cost_limit_cents=1)
+    key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=1)
     result = service.record_usages(
         session, [_usage_item(key, {"input": 1_000_000})], now=NOW
     )
-    assert result["suspended"] == [key.id]
+    assert result["suspended"] == []
     session.refresh(key)
-    assert key.suspended_reason == "cost_limit_exceeded"
+    assert key.status == "active"
+    assert service.authorize_status(session, plaintext, now=NOW)["status"] == "window_limited"
 
 
-def test_unlimited_mode_never_suspends(session):
+def test_empty_windows_never_suspend(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="unlimited", token_limit=1)
+    key = _add_key(session, plaintext, mode="quota")
     result = service.record_usages(
         session, [_usage_item(key, {"input": 10_000_000})], now=NOW
     )
@@ -325,13 +369,9 @@ def test_unlimited_mode_never_suspends(session):
     assert key.status == "active"
 
 
-def test_resume_after_raising_limit(session):
+def test_resume_suspended_key(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", token_limit=100)
-    service.record_usages(session, [_usage_item(key, {"input": 150})], now=NOW)
-    session.refresh(key)
-    assert service.resume_key(session, key) is False  # 仍超限
-    key.token_limit = 1000
+    key = _add_key(session, plaintext, mode="quota", status="suspended", suspended_reason="manual")
     assert service.resume_key(session, key) is True
     assert key.status == "active"
     assert key.suspended_reason is None
@@ -350,8 +390,13 @@ def test_record_event(session):
 
 def test_key_summary_fields_and_totals(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", token_limit=10000,
-                   window_5h_token_limit=500)
+    key = _add_key(
+        session,
+        plaintext,
+        mode="quota",
+        window_5h_cost_limit_cents=1000,
+        window_7d_cost_limit_cents=5000,
+    )
     service.record_usages(
         session,
         [_usage_item(key, {"input": 2000, "output": 1000})],
@@ -362,11 +407,12 @@ def test_key_summary_fields_and_totals(session):
     assert summary["key_hint"] == key.key_hint
     assert summary["name"] == key.name
     assert summary["mode"] == "quota"
-    assert summary["token_limit"] == 10000
-    assert summary["window_5h_token_limit"] == 500
+    assert summary["window_5h_cost_usd"] == 10
+    assert summary["window_7d_cost_usd"] == 50
     assert summary["status"] == "active"
     assert summary["total_tokens"] == 3000
-    assert summary["window_5h_tokens"] == 3000
+    assert summary["window_5h_cost_cents"] == summary["total_cost_cents"]
+    assert summary["window_7d_cost_cents"] == summary["total_cost_cents"]
     assert summary["total_cost_cents"] > 0
     assert summary["expires_at"] is None
     assert summary["created_at"] is not None
@@ -374,9 +420,9 @@ def test_key_summary_fields_and_totals(session):
 
 def test_suspend_is_idempotent(session):
     plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", token_limit=100)
-    service.record_usages(session, [_usage_item(key, {"input": 150})], now=NOW)
-    service.record_usages(session, [_usage_item(key, {"input": 200})], now=NOW)
+    key = _add_key(session, plaintext, mode="quota")
+    service.suspend_key(session, key, "manual")
+    service.suspend_key(session, key, "manual")
     session.refresh(key)
     assert key.status == "suspended"
     assert session.query(ProxyEvent).filter_by(event_type="suspended").count() == 1

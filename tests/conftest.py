@@ -3,6 +3,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from unittest.mock import MagicMock
 
+from pulse.config import AppConfig
 from pulse.storage.db import make_engine
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base, Team
@@ -34,6 +35,20 @@ def make_test_session_factory(database_url: str = "sqlite://"):
     Base.metadata.create_all(engine)
     migrate_schema(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+def make_module_web_client(config: AppConfig):
+    """Build one TestClient per module; rebind DB via returned proxy per test."""
+    from fastapi.testclient import TestClient
+
+    from pulse.web.app import create_app
+
+    proxy = SessionFactoryProxy()
+    # create_app backfills credential key_hash when encryption_key is set.
+    if (config.credentials.encryption_key or "").strip():
+        proxy.bind(make_test_session_factory())
+    client = TestClient(create_app(config, proxy))
+    return client, proxy
 
 
 def mock_cursor_key_exchange(mock_client: MagicMock, *, email: str | None = None) -> None:

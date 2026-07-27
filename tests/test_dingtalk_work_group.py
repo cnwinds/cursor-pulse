@@ -1,13 +1,10 @@
 import asyncio
-import pytest
 from unittest.mock import MagicMock, patch
 
 from pulse.channels.dingtalk.handler import DingTalkChannelHandler
 from pulse.channels.dingtalk.work_group import (
     activate_work_group,
-    build_work_group_welcome_message,
     is_work_group_activation,
-    persist_work_group_binding,
 )
 from pulse.config import AppConfig, DingTalkConfig, AssistantMirrorConfig, TenantConfig
 from pulse.storage.db import init_db

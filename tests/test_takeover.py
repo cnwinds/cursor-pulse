@@ -3,10 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
@@ -17,12 +13,10 @@ from pulse.config import (
     TenantConfig,
     WebConfig,
 )
-from pulse.storage.models import Base
 from pulse.storage.db import init_db
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
 def _handler_config() -> AppConfig:
@@ -99,8 +93,8 @@ async def test_guide_image_command_still_local(bot_env):
     assert "u1" in handler._pending_guide_upload
 
 
-@pytest.fixture
-def web_env():
+@pytest.fixture(scope="module")
+def _takeover_web_app():
     config = AppConfig(
         web=WebConfig(jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
@@ -110,19 +104,20 @@ def web_env():
             service_token="tok",
         ),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def web_env(_takeover_web_app):
+    client, config, proxy = _takeover_web_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     session = sf()
     team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     repo.commit()
     session.close()
-    client = TestClient(create_app(config, sf))
     return {"client": client, "config": config, "owner": owner, "team": team}
 
 

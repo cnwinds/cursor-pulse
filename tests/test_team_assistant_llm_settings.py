@@ -1,33 +1,39 @@
 import pytest
-from fastapi.testclient import TestClient
 
 pytest.importorskip("fastapi")
 from assistant_platform.config import AssistantConfig, AssistantLlmConfig, load_assistant_config
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
 from pulse.web.settings_store import patch_team_setting
-from tests.conftest import make_team_repo, make_test_session_factory
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def settings_client(tmp_path, monkeypatch):
-    # File URL required: load_assistant_config / overrides reopen via DATABASE_URL.
+@pytest.fixture(scope="module")
+def _assistant_llm_settings_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def settings_client(_assistant_llm_settings_app, tmp_path, monkeypatch):
+    # File URL required: load_assistant_config / overrides reopen via DATABASE_URL.
+    client, config, proxy = _assistant_llm_settings_app
     db_url = f"sqlite:///{(tmp_path / 'pulse.db').as_posix()}"
     monkeypatch.setenv("DATABASE_URL", db_url)
     config.storage.database_url = db_url
     sf = make_test_session_factory(db_url)
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
     repo.commit()
     s.close()
-    return TestClient(create_app(config, sf)), config, owner, team.id, sf
+    return client, config, owner, team.id, sf
 
 
 def test_settings_includes_assistant_llm(settings_client):

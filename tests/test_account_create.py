@@ -7,40 +7,37 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
-from pulse.storage.models import AiVendor, Base
+from pulse.storage.models import AiVendor
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo, mock_cursor_key_exchange
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory, mock_cursor_key_exchange
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
 
-@pytest.fixture
-def create_env():
+@pytest.fixture(scope="module")
+def _account_create_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
         credentials=CredentialConfig(encryption_key=TEST_KEY),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def create_env(_account_create_app):
+    client, config, proxy = _account_create_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
@@ -54,7 +51,6 @@ def create_env():
     repo.commit()
     s.close()
 
-    client = TestClient(create_app(config, sf))
     return {
         "client": client,
         "config": config,

@@ -5,10 +5,6 @@ import os
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
@@ -20,31 +16,33 @@ from pulse.storage.models import (
     AiAccountCredential,
     AiPlan,
     AiVendor,
-    Base,
     Member,
     ProxyKey,
 )
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
 
-@pytest.fixture
-def env():
+@pytest.fixture(scope="module")
+def _proxy_admin_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
         credentials=CredentialConfig(encryption_key=TEST_KEY),
         proxy=ProxyConfig(public_url="http://proxy.example.com:8317"),
     )
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def env(_proxy_admin_app):
+    client, config, proxy = _proxy_admin_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(
@@ -77,7 +75,7 @@ def env():
     s.commit()
     s.close()
     return {
-        "client": TestClient(create_app(config, sf)),
+        "client": client,
         "config": config,
         "owner": owner,
         "cred_id": cred.id,
@@ -91,17 +89,18 @@ def _admin(env) -> dict:
 
 
 def _create_key(env, **extra):
-    body = {"member_id": env["owner"].id, "mode": "unlimited", **extra}
+    body = {"member_id": env["owner"].id, **extra}
     return env["client"].post("/api/v2/proxy-keys", json=body, headers=_admin(env))
 
 
 def test_create_and_list_proxy_key(env):
-    resp = _create_key(env, mode="quota", token_limit=1000000)
+    resp = _create_key(env, window_5h_cost_usd=10)
     assert resp.status_code == 200
     body = resp.json()
     assert body["plaintext_key"].startswith("pk_")
     assert body["mode"] == "quota"
     assert body["name"] == "Admin"
+    assert body["window_5h_cost_usd"] == 10
     assert body["recoverable"] is True
     assert body["proxy_url"] == "http://proxy.example.com:8317"
 
@@ -116,22 +115,26 @@ def test_create_and_list_proxy_key(env):
     assert "key_hash" not in keys[0]
 
 
-def test_create_quota_key_requires_no_limits_is_allowed(env):
-    resp = _create_key(env, mode="quota")
+def test_create_key_empty_windows_allowed(env):
+    resp = _create_key(env)
     assert resp.status_code == 200
+    assert resp.json()["window_5h_cost_usd"] is None
+    assert resp.json()["window_7d_cost_usd"] is None
 
 
 def test_update_revoke_resume_flow(env):
     client = env["client"]
-    key_id = _create_key(env, mode="quota", token_limit=10).json()["id"]
+    key_id = _create_key(env, window_5h_cost_usd=10).json()["id"]
 
     resp = client.patch(
-        f"/api/v2/proxy-keys/{key_id}", json={"token_limit": 20, "name": "k2"},
+        f"/api/v2/proxy-keys/{key_id}",
+        json={"window_5h_cost_usd": 20, "name": "k2"},
         headers=_admin(env),
     )
     assert resp.status_code == 200
     assert resp.json()["name"] == "k2"
-    assert resp.json()["token_limit"] == 20
+    assert resp.json()["window_5h_cost_usd"] == 20
+    assert resp.json()["window_5h_cost_limit_cents"] == 2000
 
     resp = client.post(f"/api/v2/proxy-keys/{key_id}/revoke", headers=_admin(env))
     assert resp.json()["status"] == "revoked"
@@ -587,19 +590,20 @@ def test_revoke_writes_audit_event_and_blocks_patch(env):
     s.close()
 
 
-def test_negative_limit_rejected(env):
-    resp = env["client"].post(
-        "/api/v2/proxy-keys",
-        json={"member_id": env["owner"].id, "mode": "quota", "token_limit": -5},
-        headers=_admin(env),
-    )
-    assert resp.status_code == 422
+def test_zero_and_negative_usd_rejected(env):
+    for value in (0, -5):
+        resp = env["client"].post(
+            "/api/v2/proxy-keys",
+            json={"member_id": env["owner"].id, "window_5h_cost_usd": value},
+            headers=_admin(env),
+        )
+        assert resp.status_code == 422
 
 
 def test_create_requires_member_id(env):
     resp = env["client"].post(
         "/api/v2/proxy-keys",
-        json={"mode": "unlimited"},
+        json={},
         headers=_admin(env),
     )
     assert resp.status_code == 422

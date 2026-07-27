@@ -4,26 +4,20 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, AssistantMirrorConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 ASSISTANT_TOKEN = "assistant-test-token"
 ASSISTANT_BASE = "http://assistant.test"
 
 
-@pytest.fixture
-def api_env():
+@pytest.fixture(scope="module")
+def _capabilities_app():
     config = AppConfig(
         web=WebConfig(jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
@@ -33,13 +27,15 @@ def api_env():
             timeout_seconds=5.0,
         ),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def api_env(_capabilities_app):
+    client, config, proxy = _capabilities_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     session = sf()
     team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
@@ -49,7 +45,6 @@ def api_env():
     repo.commit()
     session.close()
 
-    client = TestClient(create_app(config, sf))
     return {
         "client": client,
         "config": config,
@@ -76,12 +71,17 @@ def test_catalog_requires_read_permission(api_env):
 
 
 def test_catalog_returns_503_when_mirror_unconfigured(api_env):
-    api_env["config"].assistant_mirror.base_url = ""
-    api_env["config"].assistant_mirror.service_token = ""
-    token = create_access_token(api_env["config"], api_env["owner"])
-    res = api_env["client"].get("/api/v2/assistant/capabilities/catalog", headers=_headers(token))
-    assert res.status_code == 503
-    assert "Assistant" in res.json()["detail"]
+    mirror = api_env["config"].assistant_mirror
+    prev = (mirror.base_url, mirror.service_token)
+    mirror.base_url = ""
+    mirror.service_token = ""
+    try:
+        token = create_access_token(api_env["config"], api_env["owner"])
+        res = api_env["client"].get("/api/v2/assistant/capabilities/catalog", headers=_headers(token))
+        assert res.status_code == 503
+        assert "Assistant" in res.json()["detail"]
+    finally:
+        mirror.base_url, mirror.service_token = prev
 
 
 @patch("pulse.web.assistant_capabilities_api.internal_client")

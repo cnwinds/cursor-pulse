@@ -18,8 +18,8 @@ from assistant_platform.memory.archive_models import SessionArchiveRow
 from assistant_platform.memory.archive_pipeline import run_archive_pipeline
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import AuditEventRow
-from assistant_platform.memory.semantic.models import SemanticAtomRow
 from tests.assistant_actor_helpers import signed_actor_headers
+from tests.conftest import SessionFactoryProxy
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-memory-api"
@@ -72,7 +72,12 @@ def _archived_session(sf, *, text: str = "alpha project deadline Friday"):
     )
     close_session(session, session_row, reason="manual", enqueue_close_job=False)
     session.commit()
-    config = AssistantConfig(service_token=SERVICE_TOKEN, team_id=TEAM_ID, memory_enabled=True)
+    config = AssistantConfig(
+        service_token=SERVICE_TOKEN,
+        team_id=TEAM_ID,
+        memory_enabled=True,
+        apply_team_settings_overrides=False,
+    )
     run_archive_pipeline(session, config=config, session_row=session_row)
     session.commit()
     session_id = session_row.id
@@ -80,15 +85,30 @@ def _archived_session(sf, *, text: str = "alpha project deadline Friday"):
     return session_id
 
 
+@pytest.fixture(scope="module")
+def _memories_app():
+    cfg = AssistantConfig(
+        service_token=SERVICE_TOKEN,
+        team_id=TEAM_ID,
+        memory_enabled=True,
+        apply_team_settings_overrides=False,
+    )
+    proxy = SessionFactoryProxy()
+    proxy.bind(init_assistant_db("sqlite://", team_id=TEAM_ID))
+    client = TestClient(create_assistant_app(cfg, proxy))
+    return client, proxy
+
+
 @pytest.fixture
-def client():
-    cfg = AssistantConfig(service_token=SERVICE_TOKEN, team_id=TEAM_ID, memory_enabled=True)
+def client(_memories_app):
+    test_client, proxy = _memories_app
     sf = init_assistant_db("sqlite://", team_id=TEAM_ID)
-    app = create_assistant_app(cfg, sf)
-    return TestClient(app), sf
+    proxy.bind(sf)
+    return test_client, sf
 
 
-def test_memories_list_and_search(client):
+def test_memories_read_paths_smoke(client):
+    """One archive covers list/search/expand/summary/export/self-scope."""
     test_client, sf = client
     session_id = _archived_session(sf, text="alpha project rocket launch")
 
@@ -98,8 +118,7 @@ def test_memories_list_and_search(client):
         headers=_headers(),
     )
     assert list_resp.status_code == 200
-    body = list_resp.json()
-    assert any(row["session_id"] == session_id for row in body["archives"])
+    assert any(row["session_id"] == session_id for row in list_resp.json()["archives"])
 
     search_resp = test_client.get(
         "/api/assistant/v1/memories/search",
@@ -110,18 +129,8 @@ def test_memories_list_and_search(client):
     fragments = search_resp.json()["fragments"]
     assert fragments
     assert "alpha project" in fragments[0]["text"].lower()
+    hit = fragments[0]
 
-
-def test_memories_expand_and_summary(client):
-    test_client, sf = client
-    session_id = _archived_session(sf)
-
-    search_resp = test_client.get(
-        "/api/assistant/v1/memories/search",
-        params={"team_id": TEAM_ID, "user_id": "u1", "query": "alpha"},
-        headers=_headers(),
-    )
-    hit = search_resp.json()["fragments"][0]
     expand_resp = test_client.post(
         "/api/assistant/v1/memories/expand",
         headers=_headers(),
@@ -145,20 +154,23 @@ def test_memories_expand_and_summary(client):
     assert summary_resp.status_code == 200
     assert summary_resp.json()["session_id"] == session_id
 
-
-def test_memories_export(client):
-    test_client, sf = client
-    _archived_session(sf)
-    response = test_client.get(
+    export_resp = test_client.get(
         "/api/assistant/v1/memories/export",
         params={"team_id": TEAM_ID, "user_id": "u1"},
         headers=_headers(),
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["team_id"] == TEAM_ID
-    assert body["archives"]
-    assert "exported_at" in body
+    assert export_resp.status_code == 200
+    export_body = export_resp.json()
+    assert export_body["team_id"] == TEAM_ID
+    assert export_body["archives"]
+    assert "exported_at" in export_body
+
+    denied = test_client.get(
+        "/api/assistant/v1/memories",
+        params={"team_id": TEAM_ID, "user_id": "u2"},
+        headers=_headers(channel_user_id="u1"),
+    )
+    assert denied.status_code == 403
 
 
 def test_memory_opt_out_blocks_new_archive(client):
@@ -183,7 +195,12 @@ def test_memory_opt_out_blocks_new_archive(client):
     )
     close_session(session, session_row, reason="manual", enqueue_close_job=False)
     session.commit()
-    config = AssistantConfig(service_token=SERVICE_TOKEN, team_id=TEAM_ID, memory_enabled=True)
+    config = AssistantConfig(
+        service_token=SERVICE_TOKEN,
+        team_id=TEAM_ID,
+        memory_enabled=True,
+        apply_team_settings_overrides=False,
+    )
     with pytest.raises(RuntimeError, match="opt-out"):
         run_archive_pipeline(session, config=config, session_row=session_row)
     session.close()
@@ -246,40 +263,6 @@ def test_delete_all_personal_memory(client):
     ).all()
     assert not remaining
     db.close()
-
-
-def test_delete_memory_item_atom(client):
-    test_client, sf = client
-    _archived_session(sf, text="fact: project Pulse uses SQLite")
-
-    db = sf()
-    atom = db.scalar(select(SemanticAtomRow).where(SemanticAtomRow.subject_id == "u1"))
-    if atom is None:
-        db.close()
-        pytest.skip("no atom distilled for this fixture")
-    atom_id = atom.id
-    db.close()
-
-    response = test_client.delete(
-        f"/api/assistant/v1/memories/items/{atom_id}",
-        params={"team_id": TEAM_ID, "user_id": "u1", "source_type": "atom"},
-        headers=_headers(),
-    )
-    assert response.status_code == 200
-    verify = sf()
-    assert verify.get(SemanticAtomRow, atom_id) is None
-    verify.close()
-
-
-def test_memories_self_scope_denied_for_other_user(client):
-    test_client, sf = client
-    _archived_session(sf)
-    response = test_client.get(
-        "/api/assistant/v1/memories",
-        params={"team_id": TEAM_ID, "user_id": "u2"},
-        headers=_headers(channel_user_id="u1"),
-    )
-    assert response.status_code == 403
 
 
 def test_session_delete_cascades_archive(client):

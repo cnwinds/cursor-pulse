@@ -3,26 +3,20 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, AssistantMirrorConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 ASSISTANT_TOKEN = "assistant-test-token"
 ASSISTANT_BASE = "http://assistant.test"
 
 
-@pytest.fixture
-def api_env():
+@pytest.fixture(scope="module")
+def _skills_app():
     config = AppConfig(
         web=WebConfig(jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
@@ -32,16 +26,16 @@ def api_env():
             timeout_seconds=5.0,
         ),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
-    session = session_factory()
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def api_env(_skills_app):
+    client, config, proxy = _skills_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    session = sf()
     _, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
         repo, channel_user_id="admin", display_name="Admin", password="x"
@@ -52,7 +46,7 @@ def api_env():
     repo.commit()
     session.close()
     return {
-        "client": TestClient(create_app(config, session_factory)),
+        "client": client,
         "config": config,
         "owner": owner,
         "auditor": auditor,

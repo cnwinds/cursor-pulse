@@ -1,38 +1,34 @@
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def dash_client():
+@pytest.fixture(scope="module")
+def _dash_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def dash_client(_dash_app):
+    client, config, proxy = _dash_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     _team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
     repo.add_member("u1", "Bob")
     repo.commit()
     s.close()
-    return TestClient(create_app(config, sf)), config, owner
+    return client, config, owner
 
 
 def test_dashboard_overview(dash_client):

@@ -86,6 +86,61 @@ def test_migrate_backfills_account_proxy_from_credentials():
     assert enabled in (1, True)
 
 
+def test_migrate_reactivates_legacy_limit_suspended_keys():
+    engine = _engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE proxy_keys ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "key_hash VARCHAR(64), "
+                "key_hint VARCHAR(16), "
+                "name VARCHAR(128), "
+                "member_id VARCHAR(36), "
+                "mode VARCHAR(16), "
+                "token_limit BIGINT, "
+                "cost_limit_cents INTEGER, "
+                "window_5h_token_limit BIGINT, "
+                "status VARCHAR(16), "
+                "suspended_reason VARCHAR(256)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO proxy_keys (id, key_hash, key_hint, name, member_id, mode, "
+                "token_limit, status, suspended_reason) "
+                "VALUES ('k1', 'h', 'hint', 'user', 'm1', 'quota', 100, "
+                "'suspended', 'token_limit_exceeded')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO proxy_keys (id, key_hash, key_hint, name, member_id, mode, "
+                "status, suspended_reason) "
+                "VALUES ('k2', 'h2', 'hint2', 'user2', 'm2', 'quota', "
+                "'suspended', 'manual')"
+            )
+        )
+    migrate_schema(engine)
+    with engine.connect() as conn:
+        row1 = conn.execute(
+            text(
+                "SELECT status, suspended_reason, token_limit, mode "
+                "FROM proxy_keys WHERE id='k1'"
+            )
+        ).one()
+        row2 = conn.execute(
+            text("SELECT status, suspended_reason FROM proxy_keys WHERE id='k2'")
+        ).one()
+    assert row1[0] == "active"
+    assert row1[1] is None
+    assert row1[2] is None
+    assert row1[3] == "quota"
+    assert row2[0] == "suspended"
+    assert row2[1] == "manual"
+
+
 def test_proxy_models_persist():
     engine = _engine()
     Base.metadata.create_all(engine)
@@ -97,7 +152,7 @@ def test_proxy_models_persist():
         name="test",
         member_id="m1",
         mode="quota",
-        token_limit=1000,
+        window_5h_cost_limit_cents=1000,
     )
     s.add(key)
     s.flush()

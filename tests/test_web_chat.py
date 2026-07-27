@@ -3,21 +3,15 @@ from unittest.mock import patch
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from pulse.config import AppConfig, AssistantMirrorConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def chat_client():
+@pytest.fixture(scope="module")
+def _chat_app():
     config = AppConfig(
         web=WebConfig(admin_token="secret-token", jwt_secret="jwt-test-secret"),
         tenant=TenantConfig(slug="test", name="Test"),
@@ -27,24 +21,23 @@ def chat_client():
             service_token="tok",
         ),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
-    session = session_factory()
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def chat_client(_chat_app):
+    client, config, proxy = _chat_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    session = sf()
     _team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
         repo, channel_user_id="admin1", display_name="Admin", password="pass1234"
     )
     repo.commit()
     session.close()
-    app = create_app(config, session_factory)
-    yield TestClient(app), config, owner
+    yield client, config, owner
 
 
 def test_chat_api(chat_client):

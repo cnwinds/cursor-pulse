@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>代理 Key</h2>
-        <p class="desc">入池账号供代理轮换；使用代理须在「脉冲 Key」单独创建 pk_…。畅享不限量记账，限额支持 token/费用/5h 窗口</p>
+        <p class="desc">入池账号供代理轮换；使用代理须在「脉冲 Key」单独创建 pk_…。额度仅支持 5 小时 / 7 天费用窗口，留空不限</p>
       </div>
       <div class="header-actions">
         <el-button v-if="canWrite" type="primary" @click="openCreate">新建 Key</el-button>
@@ -14,22 +14,17 @@
       <el-tab-pane label="脉冲 Key" name="keys">
         <el-table :data="keys" style="width: 100%">
           <el-table-column prop="name" label="使用人" min-width="120" />
-          <el-table-column label="模式" width="90">
+          <el-table-column label="用量 / 额度" min-width="220">
             <template #default="{ row }">
-              <el-tag :type="row.mode === 'unlimited' ? 'success' : 'warning'">
-                {{ row.mode === 'unlimited' ? '畅享' : '限额' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="用量 / 额度" min-width="200">
-            <template #default="{ row }">
-              <div v-if="row.mode === 'quota'">
-                <div v-if="row.token_limit != null">token: {{ formatTokensM(row.total_tokens) }} / {{ formatTokensM(row.token_limit) }}</div>
-                <div v-if="row.cost_limit_cents != null">费用: ${{ (row.total_cost_cents / 100).toFixed(2) }} / ${{ (row.cost_limit_cents / 100).toFixed(2) }}</div>
-                <div v-if="row.window_5h_token_limit != null">5h窗口: {{ formatTokensM(row.window_5h_tokens) }} / {{ formatTokensM(row.window_5h_token_limit) }}</div>
-                <div v-if="row.token_limit == null && row.cost_limit_cents == null && row.window_5h_token_limit == null">未配置额度</div>
+              <div v-if="row.window_5h_cost_usd != null || row.window_7d_cost_usd != null">
+                <div v-if="row.window_5h_cost_usd != null">
+                  5h: ${{ formatUsd(row.window_5h_cost_cents) }} / ${{ row.window_5h_cost_usd }}
+                </div>
+                <div v-if="row.window_7d_cost_usd != null">
+                  7d: ${{ formatUsd(row.window_7d_cost_cents) }} / ${{ row.window_7d_cost_usd }}
+                </div>
               </div>
-              <span v-else>{{ formatTokensM(row.total_tokens) }}</span>
+              <span v-else>不限 · 累计 ${{ formatUsd(row.total_cost_cents) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="110">
@@ -134,23 +129,28 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="模式" required>
-          <el-radio-group v-model="createForm.mode">
-            <el-radio value="unlimited">畅享（不限量）</el-radio>
-            <el-radio value="quota">限额</el-radio>
-          </el-radio-group>
+        <el-form-item label="5小时上限 ($)">
+          <el-input-number
+            v-model="createForm.window_5h_cost_usd"
+            :min="1"
+            :step="1"
+            :precision="0"
+            :value-on-clear="null"
+            controls-position="right"
+            placeholder="留空不限"
+          />
         </el-form-item>
-        <template v-if="createForm.mode === 'quota'">
-          <el-form-item label="token 总额度">
-            <el-input-number v-model="createForm.token_limit" :min="0" :step="1000000" placeholder="留空不限" />
-          </el-form-item>
-          <el-form-item label="费用额度(cents)">
-            <el-input-number v-model="createForm.cost_limit_cents" :min="0" :step="100" />
-          </el-form-item>
-          <el-form-item label="5h 窗口 token">
-            <el-input-number v-model="createForm.window_5h_token_limit" :min="0" :step="100000" />
-          </el-form-item>
-        </template>
+        <el-form-item label="7天上限 ($)">
+          <el-input-number
+            v-model="createForm.window_7d_cost_usd"
+            :min="1"
+            :step="1"
+            :precision="0"
+            :value-on-clear="null"
+            controls-position="right"
+            placeholder="留空不限"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -179,14 +179,27 @@
         <el-form-item label="使用人">
           <el-input v-model="editForm.name" />
         </el-form-item>
-        <el-form-item label="token 总额度">
-          <el-input-number v-model="editForm.token_limit" :min="0" :step="1000000" />
+        <el-form-item label="5小时上限 ($)">
+          <el-input-number
+            v-model="editForm.window_5h_cost_usd"
+            :min="1"
+            :step="1"
+            :precision="0"
+            :value-on-clear="null"
+            controls-position="right"
+            placeholder="留空不限"
+          />
         </el-form-item>
-        <el-form-item label="费用额度(cents)">
-          <el-input-number v-model="editForm.cost_limit_cents" :min="0" :step="100" />
-        </el-form-item>
-        <el-form-item label="5h 窗口 token">
-          <el-input-number v-model="editForm.window_5h_token_limit" :min="0" :step="100000" />
+        <el-form-item label="7天上限 ($)">
+          <el-input-number
+            v-model="editForm.window_7d_cost_usd"
+            :min="1"
+            :step="1"
+            :precision="0"
+            :value-on-clear="null"
+            controls-position="right"
+            placeholder="留空不限"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -265,14 +278,14 @@ interface ProxyKeyRow {
   member_id: string
   member_name: string | null
   mode: string
-  token_limit: number | null
-  cost_limit_cents: number | null
-  window_5h_token_limit: number | null
+  window_5h_cost_usd: number | null
+  window_7d_cost_usd: number | null
+  window_5h_cost_cents: number
+  window_7d_cost_cents: number
   status: string
   suspended_reason: string | null
   total_tokens: number
   total_cost_cents: number
-  window_5h_tokens: number
   recoverable?: boolean
 }
 
@@ -357,18 +370,19 @@ const usagesKeyName = ref('')
 
 const createForm = reactive({
   member_id: '',
-  mode: 'unlimited',
-  token_limit: null as number | null,
-  cost_limit_cents: null as number | null,
-  window_5h_token_limit: null as number | null,
+  window_5h_cost_usd: null as number | null,
+  window_7d_cost_usd: null as number | null,
 })
 const editForm = reactive({
   id: '',
   name: '',
-  token_limit: null as number | null,
-  cost_limit_cents: null as number | null,
-  window_5h_token_limit: null as number | null,
+  window_5h_cost_usd: null as number | null,
+  window_7d_cost_usd: null as number | null,
 })
+
+function formatUsd(cents: number | null | undefined) {
+  return ((cents ?? 0) / 100).toFixed(0)
+}
 
 function statusType(status: string) {
   if (status === 'active') return 'success'
@@ -442,10 +456,8 @@ async function loadMembers() {
 
 async function openCreate() {
   createForm.member_id = ''
-  createForm.mode = 'unlimited'
-  createForm.token_limit = null
-  createForm.cost_limit_cents = null
-  createForm.window_5h_token_limit = null
+  createForm.window_5h_cost_usd = null
+  createForm.window_7d_cost_usd = null
   if (!members.value.length) await loadMembers()
   createVisible.value = true
 }
@@ -459,10 +471,8 @@ async function submitCreate() {
   try {
     const res = await client.post('/api/v2/proxy-keys', {
       member_id: createForm.member_id,
-      mode: createForm.mode,
-      token_limit: createForm.mode === 'quota' ? createForm.token_limit : null,
-      cost_limit_cents: createForm.mode === 'quota' ? createForm.cost_limit_cents : null,
-      window_5h_token_limit: createForm.mode === 'quota' ? createForm.window_5h_token_limit : null,
+      window_5h_cost_usd: createForm.window_5h_cost_usd,
+      window_7d_cost_usd: createForm.window_7d_cost_usd,
     })
     createdKey.value = res.data.plaintext_key
     createdProxyUrl.value = res.data.proxy_url || 'http://127.0.0.1:8317'
@@ -513,9 +523,8 @@ async function copyCommand(row: ProxyKeyRow, shell: ShellKind) {
 function openEdit(row: ProxyKeyRow) {
   editForm.id = row.id
   editForm.name = row.name
-  editForm.token_limit = row.token_limit
-  editForm.cost_limit_cents = row.cost_limit_cents
-  editForm.window_5h_token_limit = row.window_5h_token_limit
+  editForm.window_5h_cost_usd = row.window_5h_cost_usd
+  editForm.window_7d_cost_usd = row.window_7d_cost_usd
   editVisible.value = true
 }
 
@@ -528,9 +537,8 @@ async function submitEdit() {
   try {
     await client.patch(`/api/v2/proxy-keys/${editForm.id}`, {
       name: editForm.name.trim(),
-      token_limit: editForm.token_limit,
-      cost_limit_cents: editForm.cost_limit_cents,
-      window_5h_token_limit: editForm.window_5h_token_limit,
+      window_5h_cost_usd: editForm.window_5h_cost_usd,
+      window_7d_cost_usd: editForm.window_7d_cost_usd,
     })
     editVisible.value = false
     ElMessage.success('已保存')
@@ -562,7 +570,7 @@ async function resume(row: ProxyKeyRow) {
     await client.post(`/api/v2/proxy-keys/${row.id}/resume`)
     ElMessage.success('已恢复')
   } catch {
-    ElMessage.error('恢复失败：额度仍超限，请先调高额度')
+    ElMessage.error('恢复失败')
   }
   await load()
 }

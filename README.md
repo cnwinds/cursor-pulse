@@ -97,7 +97,7 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<与 ADMIN_
 - 管理 UI（Vite）：`http://127.0.0.1:5173`（脚本会起 `admin`；也可 `cd web-admin && npm install && npm run dev`）
 - 登录：`admin` + `ADMIN_PASSWORD`
 
-用量同步与借 Key 过期需要 `pulse channel`。开发时另开终端：`pulse channel`，或用完整启动：`./cursor-pulse.sh start`（见脚本帮助）。测试：`pytest --tb=short -q`。
+用量同步与借 Key 过期需要 `pulse channel`。开发时另开终端：`pulse channel`，或用完整启动：`./cursor-pulse.sh start`（见脚本帮助）。测试：`pytest --tb=short -q`（更快：`pytest -n auto --tb=short -q`）。
 
 可选 IM：`pip install -e ".[dingtalk]"` 或 `".[feishu]"`，并将 `BOT_PLATFORM` 设为对应值。门户会按凭证动态露出扫码登录（`/api/auth/providers`）。
 

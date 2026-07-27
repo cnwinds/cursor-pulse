@@ -6,9 +6,6 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 pytest.importorskip("fastapi")
 
@@ -22,13 +19,12 @@ from pulse.storage.models import (
     AiAccountCredential,
     AiPlan,
     AiVendor,
-    Base,
     KeyLoan,
     ProxyKeyUsage,
 )
 from pulse.web.app import create_app
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
@@ -57,19 +53,23 @@ def _healthy_snap(
     )
 
 
-@pytest.fixture
-def env():
+@pytest.fixture(scope="module")
+def _internal_proxy_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
         credentials=CredentialConfig(encryption_key=TEST_KEY),
         internal=InternalApiConfig(service_token="internal-token"),
     )
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def env(_internal_proxy_app):
+    client, config, proxy = _internal_proxy_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
@@ -111,7 +111,8 @@ def env():
     s.commit()
     s.close()
     return {
-        "client": TestClient(create_app(config, sf)),
+        "client": client,
+        "config": config,
         "sf": sf,
         "cred_id": cred.id,
         "account_id": account.id,
@@ -386,10 +387,12 @@ def test_record_usage_missing_both_ids_skipped(env):
     s.close()
 
 
-def test_usage_records_and_suspends(env):
+def test_usage_records_without_suspend(env):
     client, sf = env["client"], env["sf"]
     s = sf()
-    key, _ = proxy_service.create_key(s, name="k", member_id="m1", mode="quota", token_limit=100)
+    key, _ = proxy_service.create_key(
+        s, name="k", member_id="m1", window_5h_cost_limit_cents=100
+    )
     s.commit()
     s.close()
     resp = client.post(
@@ -410,7 +413,8 @@ def test_usage_records_and_suspends(env):
     assert resp.status_code == 200
     body = resp.json()
     assert body["recorded"] == 1
-    assert body["suspended"] == [key.id]
+    # Window overage soft-rejects on authorize; usage recording no longer suspends.
+    assert body["suspended"] == []
     s = sf()
     assert s.query(ProxyKeyUsage).count() == 1
     s.close()

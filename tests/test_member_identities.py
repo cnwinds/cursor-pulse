@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
@@ -9,10 +8,9 @@ pytest.importorskip("fastapi")
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.identity.service import IdentityError, ensure_identity, merge_members, resolve_member
 from pulse.storage.models import AiAccount, AiPlan, AiVendor, Member, MemberIdentity
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import SessionFactoryProxy, make_team_repo, make_test_session_factory
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
 @pytest.fixture(scope="module")
@@ -22,8 +20,7 @@ def _identity_app():
         tenant=TenantConfig(slug="test", name="Test"),
     )
     config.storage.database_url = "sqlite://"
-    proxy = SessionFactoryProxy()
-    client = TestClient(create_app(config, proxy))
+    client, proxy = make_module_web_client(config)
     return client, config, proxy
 
 

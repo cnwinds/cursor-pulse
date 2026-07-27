@@ -1,11 +1,8 @@
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base, Member
-from pulse.web.app import create_app
+from pulse.storage.models import Member
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.permissions import can_access_portal
 from pulse.web.portal import (
@@ -17,28 +14,27 @@ from pulse.web.portal import (
     reconcile_oauth_member,
     reject_portal_user,
 )
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
 
 
-@pytest.fixture
-def portal_env():
+@pytest.fixture(scope="module")
+def _portal_app():
     config = AppConfig(
         web=WebConfig(admin_token="secret-token", jwt_secret="jwt-test-secret"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
-    session = session_factory()
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def portal_env(_portal_app):
+    client, config, proxy = _portal_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    session = sf()
     team, repo = make_team_repo(session)
     owner = bootstrap_portal_owner(
         repo,
@@ -48,9 +44,7 @@ def portal_env():
     )
     repo.commit()
     session.close()
-    app = create_app(config, session_factory)
-    client = TestClient(app)
-    return client, config, owner, session_factory, team.id
+    return client, config, owner, sf, team.id
 
 
 def _auth(token: str) -> dict:

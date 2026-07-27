@@ -22,20 +22,19 @@ from pulse.web.permissions import has_permission
 
 
 class CreateProxyKeyBody(BaseModel):
-    mode: str = Field(pattern="^(unlimited|quota)$")
     member_id: str = Field(min_length=1)
     name: str | None = Field(default=None, max_length=128)
-    token_limit: int | None = Field(default=None, ge=0)
-    cost_limit_cents: int | None = Field(default=None, ge=0)
-    window_5h_token_limit: int | None = Field(default=None, ge=0)
+    window_5h_cost_usd: int | None = Field(default=None, ge=1)
+    window_7d_cost_usd: int | None = Field(default=None, ge=1)
     expires_at: datetime | None = None
+    # Accepted but ignored (compat): always quota; empty windows = unlimited.
+    mode: str | None = None
 
 
 class UpdateProxyKeyBody(BaseModel):
     name: str | None = None
-    token_limit: int | None = Field(default=None, ge=0)
-    cost_limit_cents: int | None = Field(default=None, ge=0)
-    window_5h_token_limit: int | None = Field(default=None, ge=0)
+    window_5h_cost_usd: int | None = Field(default=None, ge=1)
+    window_7d_cost_usd: int | None = Field(default=None, ge=1)
     expires_at: datetime | None = None
 
 
@@ -100,10 +99,8 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
             session,
             name=name,
             member_id=member.id,
-            mode=body.mode,
-            token_limit=body.token_limit,
-            cost_limit_cents=body.cost_limit_cents,
-            window_5h_token_limit=body.window_5h_token_limit,
+            window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
+            window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
             expires_at=body.expires_at,
             encryption_key=enc,
         )
@@ -152,10 +149,20 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         key = _get_key(session, key_id)
         if key.status == "revoked":
             raise HTTPException(status_code=409, detail="已吊销的 key 不可编辑")
-        for field, value in body.model_dump(exclude_unset=True).items():
-            if field == "name" and value is None:
-                continue
-            setattr(key, field, value)
+        data = body.model_dump(exclude_unset=True)
+        if "name" in data:
+            if data["name"] is not None:
+                key.name = data["name"]
+        if "window_5h_cost_usd" in data:
+            key.window_5h_cost_limit_cents = proxy_service.usd_to_cents(
+                data["window_5h_cost_usd"]
+            )
+        if "window_7d_cost_usd" in data:
+            key.window_7d_cost_limit_cents = proxy_service.usd_to_cents(
+                data["window_7d_cost_usd"]
+            )
+        if "expires_at" in data:
+            key.expires_at = data["expires_at"]
         key.updated_at = proxy_service._utcnow()
         session.commit()
         return proxy_service.key_summary(session, key)
@@ -179,7 +186,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
     def resume_proxy_key(key_id: str, session: Session = Depends(get_db)):
         key = _get_key(session, key_id)
         if not proxy_service.resume_key(session, key):
-            raise HTTPException(status_code=409, detail="额度仍超限或该 key 非 suspended 状态")
+            raise HTTPException(status_code=409, detail="该 key 非 suspended 状态，无法恢复")
         session.commit()
         return proxy_service.key_summary(session, key)
 

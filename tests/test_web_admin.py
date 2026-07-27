@@ -1,21 +1,16 @@
 import pytest
-from sqlalchemy import create_engine
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import Base, Member
-from pulse.web.app import create_app
+from pulse.storage.models import Member
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def client():
+@pytest.fixture(scope="module")
+def _admin_app():
     config = AppConfig(
         web=WebConfig(
             admin_token="secret-token",
@@ -24,16 +19,16 @@ def client():
         ),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
-    session = session_factory()
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def client(_admin_app):
+    test_client, config, proxy = _admin_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    session = sf()
     _team, repo = make_team_repo(session)
     repo.add_member("u1", "Alice")
     owner = bootstrap_portal_owner(
@@ -44,8 +39,7 @@ def client():
     )
     repo.commit()
     session.close()
-    app = create_app(config, session_factory)
-    yield TestClient(app), config, owner, session_factory
+    yield test_client, config, owner, sf
 
 
 def _auth_headers(token: str) -> dict:
@@ -87,16 +81,10 @@ def _password_login_client(admin_password: str):
         ),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
-    session = session_factory()
+    client, proxy = make_module_web_client(config)
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    session = sf()
     _team, repo = make_team_repo(session)
     repo.add_member("u1", "Alice")
     bootstrap_portal_owner(
@@ -107,7 +95,7 @@ def _password_login_client(admin_password: str):
     )
     repo.commit()
     session.close()
-    return TestClient(create_app(config, session_factory)), config
+    return client, config
 
 
 def test_password_login_accepts_hashed_admin_password():

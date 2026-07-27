@@ -70,7 +70,7 @@ def test_build_recall_bundle_degrades_on_recall_timeout():
     )
 
     def slow_fts(*args, **kwargs):
-        time.sleep(0.2)
+        time.sleep(0.08)
         return []
 
     config = AssistantChatMemoryConfig(

@@ -34,7 +34,11 @@ _PROXY_USAGE_COLUMNS: dict[str, str] = {
     "request_id": "VARCHAR(64)",
     "loan_id": "VARCHAR(36)",
 }
-_PROXY_KEY_COLUMNS: dict[str, str] = {"encrypted_key": "TEXT"}
+_PROXY_KEY_COLUMNS: dict[str, str] = {
+    "encrypted_key": "TEXT",
+    "window_5h_cost_limit_cents": "INTEGER",
+    "window_7d_cost_limit_cents": "INTEGER",
+}
 _PROXY_EVENT_COLUMNS: dict[str, str] = {"loan_id": "VARCHAR(36)"}
 
 _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
@@ -624,6 +628,51 @@ def migrate_schema(engine: Engine) -> None:
                         text(f"ALTER TABLE proxy_keys ADD COLUMN {col_name} {col_type}")
                     )
                 logger.info("Added %s column to proxy_keys", col_name)
+        # Clear legacy lifetime/token limits once; empty windows = unlimited.
+        legacy_limit_cols = sorted(
+            {"token_limit", "cost_limit_cents", "window_5h_token_limit"} & columns
+        )
+        with engine.begin() as conn:
+            need_clear = False
+            if legacy_limit_cols:
+                cond = " OR ".join(f"{c} IS NOT NULL" for c in legacy_limit_cols)
+                need_clear = bool(
+                    conn.execute(
+                        text(f"SELECT 1 FROM proxy_keys WHERE {cond} LIMIT 1")
+                    ).first()
+                )
+            if not need_clear and "mode" in columns:
+                need_clear = bool(
+                    conn.execute(
+                        text(
+                            "SELECT 1 FROM proxy_keys WHERE mode IS NULL OR mode != 'quota' LIMIT 1"
+                        )
+                    ).first()
+                )
+            if need_clear:
+                sets = ["mode = 'quota'"] if "mode" in columns else []
+                sets.extend(f"{c} = NULL" for c in legacy_limit_cols)
+                conn.execute(text(f"UPDATE proxy_keys SET {', '.join(sets)}"))
+                logger.info(
+                    "Cleared legacy proxy_keys limits (%s)",
+                    ", ".join(legacy_limit_cols) or "mode only",
+                )
+            # Reactivate keys suspended only for removed lifetime/token limits.
+            if "status" in columns and "suspended_reason" in columns:
+                legacy_suspend = (
+                    "status = 'suspended' AND suspended_reason IN "
+                    "('token_limit_exceeded', 'cost_limit_exceeded')"
+                )
+                if conn.execute(
+                    text(f"SELECT 1 FROM proxy_keys WHERE {legacy_suspend} LIMIT 1")
+                ).first():
+                    conn.execute(
+                        text(
+                            "UPDATE proxy_keys SET status = 'active', suspended_reason = NULL "
+                            f"WHERE {legacy_suspend}"
+                        )
+                    )
+                    logger.info("Reactivated proxy_keys suspended for legacy limit reasons")
 
     if "proxy_events" in tables:
         columns = {col["name"] for col in inspector.get_columns("proxy_events")}

@@ -1,36 +1,34 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import AiAccountMember, Base, Member
+from pulse.storage.models import AiAccountMember, Member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.web.app import create_app
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import ingest_cursor_fixture, make_team_repo
+from tests.conftest import ingest_cursor_fixture, make_module_web_client, make_team_repo, make_test_session_factory
 
 
-@pytest.fixture
-def status_env():
+@pytest.fixture(scope="module")
+def _status_app():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="test", name="Test"),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def status_env(_status_app):
+    client, config, proxy = _status_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
     owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
@@ -55,7 +53,6 @@ def status_env():
     )
     repo.commit()
     s.close()
-    client = TestClient(create_app(config, sf))
     return {
         "client": client,
         "config": config,

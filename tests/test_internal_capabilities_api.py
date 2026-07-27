@@ -3,37 +3,35 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import func, select
 
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig
-from pulse.storage.models import AccountQuotaSnapshot, Base, CapabilityInvocationRow
+from pulse.storage.models import AccountQuotaSnapshot, CapabilityInvocationRow
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.web.app import create_app
-from tests.conftest import make_team_repo
+from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 INTERNAL_TOKEN = "pulse-internal-test-token"
 
 
-@pytest.fixture
-def api_env():
+@pytest.fixture(scope="module")
+def _internal_capabilities_app():
     config = AppConfig(
         tenant=TenantConfig(slug="test", name="Test"),
         credentials=CredentialConfig(encryption_key=""),
         internal=InternalApiConfig(service_token=INTERNAL_TOKEN),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    client, proxy = make_module_web_client(config)
+    return client, config, proxy
+
+
+@pytest.fixture
+def api_env(_internal_capabilities_app):
+    client, config, proxy = _internal_capabilities_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
     session = sf()
     team, repo = make_team_repo(session)
     actor = repo.add_member("actor-user", "Actor")
@@ -62,7 +60,6 @@ def api_env():
     repo.commit()
     session.close()
 
-    client = TestClient(create_app(config, sf))
     return {
         "client": client,
         "config": config,
@@ -108,14 +105,8 @@ def test_internal_api_rejects_when_token_unconfigured():
         tenant=TenantConfig(slug="test", name="Test"),
         internal=InternalApiConfig(service_token=""),
     )
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    sf = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    client = TestClient(create_app(config, sf))
+    client, proxy = make_module_web_client(config)
+    proxy.bind(make_test_session_factory())
 
     response = client.get(
         "/api/internal/v1/capabilities/manifest",

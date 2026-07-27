@@ -578,10 +578,9 @@ class ProxyKey(Base):
     encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str] = mapped_column(String(128))
     member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
-    mode: Mapped[str] = mapped_column(String(16))  # unlimited | quota
-    token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    window_5h_token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mode: Mapped[str] = mapped_column(String(16), default="quota")  # always quota; empty windows = unlimited
+    window_5h_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    window_7d_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")  # active|suspended|revoked
     suspended_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
