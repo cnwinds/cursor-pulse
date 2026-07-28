@@ -14,9 +14,23 @@
 
 登录 → 建台账绑 Key → 看板出数据 → 借 Key（约 20 秒，界面为产品示意，以你部署的实例为准）：
 
+<!-- TODO：把 promotion/video/cursor-pulse-demo-web.mp4 拖进 GitHub 网页编辑器
+     （README 或任意 issue/评论框），然后将下方 VIDEO_URL_TODO 替换为生成的
+     https://github.com/user-attachments/assets/... 链接。文件由 GitHub CDN
+     托管，不会增加 git 仓库体积。与 README.md 共用同一个视频链接即可。 -->
 <p align="center">
-  <img src="docs/assets/readme/demo.gif" alt="Cursor Pulse 演示：登录、台账、看板、借 Key" width="960" />
+  <a href="VIDEO_URL_TODO">
+    <img src="docs/assets/readme/cursor-pulse-social-preview.png" alt="Cursor Pulse 演示视频 — 点击观看" width="960" />
+  </a><br />
+  <sub>▶ 观看完整演示（约 30 秒）</sub>
 </p>
+
+<details>
+  <summary>无法播放视频？查看 GIF 版本</summary>
+  <p align="center">
+    <img src="docs/assets/readme/demo.gif" alt="Cursor Pulse 演示：登录、台账、看板、借 Key" width="960" />
+  </p>
+</details>
 
 <table>
   <tr>

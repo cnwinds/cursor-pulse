@@ -14,9 +14,23 @@
 
 Sign in → register an account & bind a key → dashboard fills in → lend a key (~20s; UI previews below — your deployed instance may differ slightly):
 
+<!-- TODO: drag promotion/video/cursor-pulse-demo-web.mp4 into the GitHub web editor
+     (README or any issue/comment box), then replace VIDEO_URL_TODO below with the
+     generated https://github.com/user-attachments/assets/... link. The file is
+     hosted by GitHub's CDN, so it adds zero weight to the git repo. -->
 <p align="center">
-  <img src="docs/assets/readme/demo.gif" alt="Cursor Pulse demo: login, accounts, quota board, key loan" width="960" />
+  <a href="VIDEO_URL_TODO">
+    <img src="docs/assets/readme/cursor-pulse-social-preview.png" alt="Cursor Pulse demo video — click to watch" width="960" />
+  </a><br />
+  <sub>▶ Watch the full demo (~30s)</sub>
 </p>
+
+<details>
+  <summary>No video? GIF version</summary>
+  <p align="center">
+    <img src="docs/assets/readme/demo.gif" alt="Cursor Pulse demo: login, accounts, quota board, key loan" width="960" />
+  </p>
+</details>
 
 <table>
   <tr>
