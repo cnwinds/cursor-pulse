@@ -22,15 +22,10 @@
 
 登录 → 建台账绑 Key → 看板出数据 → 借 Key（约 20 秒，界面为产品示意，以你部署的实例为准）：
 
-<!-- 演示视频托管在 GitHub CDN（user-attachments），不占用 git 仓库体积。
-     源文件见 promotion/video/（1080p 母版与 720p 网页版）。与 README.md
-     共用同一个视频链接。 -->
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/38951573-7f9c-4771-88c7-51716933ba0a">
-    <img src="docs/assets/readme/cursor-pulse-social-preview.png" alt="Cursor Pulse 演示视频 — 点击观看" width="960" />
-  </a><br />
-  <sub>▶ 观看完整演示（约 1 分钟）</sub>
-</p>
+<!-- 内嵌演示：裸写的 user-attachments 链接会被 GitHub 渲染成原生播放器
+     （居中大播放按钮，原地播放）。视频托管在 GitHub CDN，不占仓库体积。
+     源文件见 promotion/video/（1080p 母版与 720p 网页版）。 -->
+https://github.com/user-attachments/assets/38951573-7f9c-4771-88c7-51716933ba0a
 
 <details>
   <summary>无法播放视频？查看 GIF 版本</summary>
