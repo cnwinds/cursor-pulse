@@ -25,7 +25,7 @@
 <!-- 内嵌演示：裸写的 user-attachments 链接会被 GitHub 渲染成原生播放器
      （居中大播放按钮，原地播放）。视频托管在 GitHub CDN，不占仓库体积。
      源文件见 promotion/video/（1080p 母版与 720p 网页版）。 -->
-https://github.com/user-attachments/assets/2edd5340-5bfc-4b2b-8d2e-c5e742309bb9
+https://github.com/user-attachments/assets/ada6055b-d865-4716-a4fe-4be1f5999e61
 
 <details>
   <summary>无法播放视频？查看 GIF 版本</summary>

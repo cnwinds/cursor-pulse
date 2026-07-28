@@ -26,7 +26,7 @@ Sign in → register an account & bind a key → dashboard fills in → lend a k
      player (big centered play button, plays in place). Hosted on GitHub's
      CDN, not in the git repo. Source: promotion/video/ (1080p master,
      720p web version). -->
-https://github.com/user-attachments/assets/2edd5340-5bfc-4b2b-8d2e-c5e742309bb9
+https://github.com/user-attachments/assets/4c70dbc3-ee81-4e36-bee9-9845ba6321d4
 
 <details>
   <summary>No video? GIF version</summary>
