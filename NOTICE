@@ -1,0 +1,93 @@
+# NOTICE — Additional Terms and Disclaimer / 附加条款与免责声明
+
+Cursor Pulse is licensed under the MIT License (see [LICENSE](LICENSE)).
+This notice clarifies the nature of the project and the responsibilities of
+anyone who uses, modifies, deploys, or operates the Software.
+
+本项目以 MIT 许可证发布（见 [LICENSE](LICENSE)）。本声明用于阐明项目性质，
+以及任何使用、修改、部署或运营本软件的主体所应承担的责任。
+
+---
+
+## 1. Independent, unofficial project / 独立的非官方项目
+
+Cursor Pulse is an independent open-source project. It is **not** affiliated
+with, endorsed by, sponsored by, or approved by Cursor or Anysphere, Inc.
+"Cursor" and related trademarks belong to their respective owners.
+
+Cursor Pulse 是独立的开源项目，与 Cursor / Anysphere, Inc. **无任何**隶属、
+背书、赞助或官方认可关系。"Cursor" 及相关商标归其各自权利人所有。
+
+## 2. Nature of the integration / 集成的灰色地带性质
+
+The Software relies on **undocumented, unofficial Cursor APIs**, and its use
+may conflict with Cursor's Terms of Service. Cursor may change, restrict, or
+block these APIs at any time, which may break the Software. You use these
+integrations entirely at your own risk.
+
+本软件依赖 **Cursor 未公开的非官方接口**，其使用可能与 Cursor 的服务条款
+相冲突。Cursor 可随时变更、限制或封禁相关接口，导致本软件失效。
+你须完全自行承担使用上述集成的风险。
+
+## 3. Prohibited uses / 禁止用途
+
+The MIT License grants broad rights to the Software itself, but it does not —
+and cannot — grant any right to violate third-party terms or applicable law.
+The author releases this Software solely for legitimate, internal
+self-hosting by teams metering their **own** Cursor usage. The author
+expressly **prohibits and does not authorize** using the Software, in
+original or modified form, to:
+
+MIT 许可证授予的是对本软件本身的广泛权利，它不会、也不可能授予任何违反
+第三方条款或适用法律的权利。作者发布本软件，仅供团队对**自有** Cursor
+用量进行合法的内部自托管计量。作者明确**禁止且不授权**将本软件
+（原版或修改版）用于：
+
+- resell, rent, share, or broker Cursor accounts, subscriptions, API keys,
+  or quota in violation of Cursor's Terms of Service;
+  违反 Cursor 服务条款，转售、出租、共享或倒卖 Cursor 账号、订阅、
+  API 密钥或额度；
+- operate any paid or commercial account-sharing, account-pooling, or
+  quota-reselling service;
+  运营任何收费或商业性质的账号共享、账号池或额度转售服务；
+- circumvent Cursor's licensing, billing, or technical restrictions;
+  绕过 Cursor 的授权、计费或技术限制；
+- engage in any activity that violates applicable laws or regulations.
+  从事任何违反适用法律法规的活动。
+
+## 4. No authorization of third-party operations / 不授权任何第三方运营
+
+The author does not operate, participate in, authorize, or endorse **any**
+service built upon this Software. Any deployment, modification, or commercial
+operation of the Software by a third party is conducted solely at that
+party's own initiative and risk. The operator bears **all** legal
+responsibilities arising from such operations. The author shall **not** bear
+any joint, secondary, or vicarious liability（连带责任）for the acts of any
+operator or downstream user.
+
+作者不运营、不参与、不授权、不认可**任何**基于本软件的服务。任何第三方
+对本软件的部署、修改或商业化运营，均系该主体的自主行为，风险自担；
+由此产生的**全部**法律责任由运营者自行承担。对于任何运营者或下游
+使用者的行为，作者**不承担**任何连带责任、补充责任或替代责任。
+
+## 5. No warranty, no liability / 无担保、无责任
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND (see
+[LICENSE](LICENSE)). In no event shall the author be liable for any claim,
+damages, or other liability arising from the use or misuse of the Software —
+including, without limitation, account suspension or termination by Cursor,
+or any operator's violation of Cursor's Terms of Service or applicable law.
+
+本软件按"现状"提供，不提供任何形式的担保（见 [LICENSE](LICENSE)）。
+对于因使用或滥用本软件引起的任何索赔、损害或其他责任——包括但不限于
+Cursor 封禁或终止账号、任何运营者违反 Cursor 服务条款或适用法律——
+作者概不负责。
+
+---
+
+*If any provision of this notice conflicts with the MIT License, the MIT
+License governs the copyright grant, and this notice governs the author's
+intent, authorization scope, and allocation of operational responsibility.*
+
+*如本声明与 MIT 许可证存在冲突，著作权授权范围以 MIT 许可证为准；
+本声明用于明确作者的意图、授权边界与运营责任的分配。*

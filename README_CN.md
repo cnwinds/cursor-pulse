@@ -16,7 +16,7 @@
 
 自托管的 **Cursor 用量计量与额度控制面**：账号台账、API Key 同步、借 Key、额度看板与可选 MITM Proxy。核心能力只需 Web + 数据库；**钉钉 / 飞书等 IM 为可选插件**（不承载用量采集）。
 
-> **许可证：** [MIT](LICENSE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md) · **English：** [README.md](README.md)
+> **许可证：** [MIT](LICENSE) · **声明：** [NOTICE](NOTICE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md) · **English：** [README.md](README.md)
 
 ## 快速预览
 
@@ -219,6 +219,8 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<与 ADMIN_
 ## 风险说明
 
 代理与 Cursor 非官方 API 均有合规与失效风险；生产使用前请自行评估。详见 [SECURITY.md](SECURITY.md) 与 [proxy/README.md](proxy/README.md)。
+
+本项目的发布目的是让团队对**自有** Cursor 用量进行合法的内部计量。严禁利用本项目（原版或修改版）转售 Cursor 账号、订阅、API 密钥或额度，或运营任何收费性质的账号共享服务；任何部署与运营行为的法律责任由运营者自行承担，作者不承担连带责任。详见 [NOTICE](NOTICE)。
 
 ---
 

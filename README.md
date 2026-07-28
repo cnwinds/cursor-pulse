@@ -16,7 +16,7 @@
 
 **Self-hosted Cursor usage metering and quota control plane** — account registry, API key sync, key lending, quota dashboards, and an optional MITM proxy. The core stack is Web + database only; **DingTalk / Feishu and other IM channels are optional plugins** (they do not collect usage themselves).
 
-> **License:** [MIT](LICENSE) · **Security:** [SECURITY.md](SECURITY.md) · **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) · **中文：** [README_CN.md](README_CN.md)
+> **License:** [MIT](LICENSE) · **Notice:** [NOTICE](NOTICE) · **Security:** [SECURITY.md](SECURITY.md) · **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) · **中文：** [README_CN.md](README_CN.md)
 
 ## Quick preview
 
@@ -208,6 +208,8 @@ After the stack is up, bind one Cursor key and confirm data appears.
 ## Risks
 
 The MITM proxy and unofficial Cursor APIs carry compliance and breakage risk. Evaluate before production use — [SECURITY.md](SECURITY.md), [proxy/README.md](proxy/README.md).
+
+Cursor Pulse is released for legitimate, internal metering of your **own** team's Cursor usage. Reselling Cursor accounts, subscriptions, API keys, or quota — or operating any paid account-sharing service built on this project — is expressly prohibited, and operators bear all legal responsibility for their own deployments. See [NOTICE](NOTICE).
 
 ---
 
