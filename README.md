@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/assets/brand/logo-horizontal.svg" alt="Cursor Pulse" width="380" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/logo-horizontal-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/logo-horizontal.svg" />
+    <img src="docs/assets/brand/logo-horizontal.svg" alt="Cursor Pulse" width="380" />
+  </picture>
 </p>
 
 # Cursor Pulse
