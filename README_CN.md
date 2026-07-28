@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/brand/logo-horizontal.svg" alt="Cursor Pulse" width="380" />
+</p>
+
 # Cursor Pulse
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,7 +22,7 @@
      源文件见 promotion/video/（1080p 母版与 720p 网页版）。与 README.md
      共用同一个视频链接。 -->
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/41be53ed-dfcb-46a0-94e4-8d35803abb54">
+  <a href="https://github.com/user-attachments/assets/38951573-7f9c-4771-88c7-51716933ba0a">
     <img src="docs/assets/readme/cursor-pulse-social-preview.png" alt="Cursor Pulse 演示视频 — 点击观看" width="960" />
   </a><br />
   <sub>▶ 观看完整演示（约 1 分钟）</sub>

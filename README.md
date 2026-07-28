@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/brand/logo-horizontal.svg" alt="Cursor Pulse" width="380" />
+</p>
+
 # Cursor Pulse
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,7 +22,7 @@ Sign in → register an account & bind a key → dashboard fills in → lend a k
      repo, to keep clone size small. Source: promotion/video/ (1080p master,
      720p web version). -->
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/41be53ed-dfcb-46a0-94e4-8d35803abb54">
+  <a href="https://github.com/user-attachments/assets/38951573-7f9c-4771-88c7-51716933ba0a">
     <img src="docs/assets/readme/cursor-pulse-social-preview.png" alt="Cursor Pulse demo video — click to watch" width="960" />
   </a><br />
   <sub>▶ Watch the full demo (~1 min)</sub>
