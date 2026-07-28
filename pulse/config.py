@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -174,6 +174,32 @@ class LoanSelectionConfig(BaseModel):
     weight_surplus: float = Field(default=0.25, ge=0)
     weight_load: float = Field(default=0.15, ge=0)
     weight_freshness: float = Field(default=0.10, ge=0)
+    # 代理池专用：快到期优先 + 保留主使用人余量（headroom）
+    proxy_deadline_power: float = Field(default=1.45, ge=1.0)
+    proxy_weight_urgency: float = Field(default=0.50, ge=0)
+    proxy_weight_headroom: float = Field(default=0.35, ge=0)
+    proxy_weight_surplus: float = Field(default=0.0, ge=0)
+    proxy_weight_freshness: float = Field(default=0.15, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_weight_sums(self) -> "LoanSelectionConfig":
+        loan_total = (
+            self.weight_urgency
+            + self.weight_surplus
+            + self.weight_load
+            + self.weight_freshness
+        )
+        if loan_total <= 0:
+            raise ValueError("loan selection weights must sum to a positive value")
+        proxy_total = (
+            self.proxy_weight_urgency
+            + self.proxy_weight_headroom
+            + self.proxy_weight_surplus
+            + self.proxy_weight_freshness
+        )
+        if proxy_total <= 0:
+            raise ValueError("proxy pool weights must sum to a positive value")
+        return self
 
 
 class ToolCenterConfig(BaseModel):

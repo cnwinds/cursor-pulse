@@ -798,6 +798,16 @@ def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
     if not rows:
         return [], {}, {}, {}
 
+    # 每账号仅保留最早绑定的一个 primary（防御性；入池前应在 API 层禁止多 primary）
+    seen_accounts: set[str] = set()
+    unique_rows = []
+    for cred in rows:
+        if cred.account_id in seen_accounts:
+            continue
+        seen_accounts.add(cred.account_id)
+        unique_rows.append(cred)
+    rows = unique_rows
+
     account_ids = list({c.account_id for c in rows})
     accounts = {
         a.id: a

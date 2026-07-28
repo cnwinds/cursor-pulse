@@ -7,6 +7,7 @@ from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.burn_rate import (
     LenderCandidate,
     analyze_burn_rate,
+    digestion_urgency,
     explain_lender_selection,
     projected_surplus_cents,
     quota_progress,
@@ -428,8 +429,16 @@ def test_zero_min_coverage_with_deadline_today_uses_hour_floor():
         [_candidate(snap, account_id="a1")], today=TODAY, now=now, loan_selection=selection
     )
     assert len(ranked) == 1
-    # urgency 除数下限为 1 小时（1/24 天）：urgency = surplus × 24
-    assert ranked[0]["urgency_cents_per_day"] == round(ranked[0]["surplus_cents"] * 24, 2)
+    surplus = ranked[0]["surplus_cents"]
+    assert ranked[0]["urgency_cents_per_day"] == round(
+        digestion_urgency(
+            surplus,
+            ranked[0]["hours_to_deadline"],
+            deadline_power=1.0,
+            hourly_power=False,
+        ),
+        2,
+    )
 
 
 def test_load_factor_scales_with_configured_cap():
@@ -548,6 +557,98 @@ def test_explain_pool_mode_ignores_loan_cap():
     assert board["ranked"][0]["score"] == board["ranked"][1]["score"]
     by_id = {r["account_id"]: r for r in board["ranked"]}
     assert by_id["busy"]["active_loans"] == 5
+
+
+def test_proxy_pool_prefers_soon_expiry_over_large_far_surplus():
+    """代理池：余量更少但快作废的账号应优先于远期大额余量。"""
+    soon = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 12),
+        account_id="soon",
+        used_cents=100,
+        remaining_cents=2000,
+    )
+    far = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 4),
+        account_id="far",
+        limit_cents=20000,
+        used_cents=2000,
+        remaining_cents=18000,
+    )
+    ranked = recommend_lenders(
+        [_candidate(far, account_id="far"), _candidate(soon, account_id="soon")],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in ranked] == ["soon", "far"]
+    assert ranked[0]["hours_to_deadline"] < ranked[1]["hours_to_deadline"]
+
+
+def test_proxy_pool_urgency_uses_hourly_deadline_power():
+    surplus = 1000.0
+    near = digestion_urgency(surplus, 24.0, deadline_power=1.45, hourly_power=True)
+    far = digestion_urgency(surplus, 120.0, deadline_power=1.45, hourly_power=True)
+    assert near > far
+
+
+def test_proxy_pool_prefers_high_headroom_at_similar_deadline():
+    """同期作废时，剩余额度更高的账号优先，避免代理打光主使用人余量。"""
+    cycle_end = date(2026, 7, 12)
+    roomy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=cycle_end,
+        account_id="roomy",
+        used_cents=1400,
+        remaining_cents=5600,
+        total_pct=20.0,
+    )
+    tight = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=cycle_end,
+        account_id="tight",
+        used_cents=5040,
+        remaining_cents=1960,
+        total_pct=72.0,
+    )
+    ranked = recommend_lenders(
+        [_candidate(tight, account_id="tight"), _candidate(roomy, account_id="roomy")],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in ranked] == ["roomy", "tight"]
+
+
+def test_proxy_pool_defers_low_headroom_even_when_sooner():
+    """快到期但余量告急时，让位于余量更充裕的远期账号。"""
+    soon_tight = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 11),
+        account_id="soon-tight",
+        used_cents=6650,
+        remaining_cents=350,
+        total_pct=95.0,
+    )
+    far_roomy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 30),
+        account_id="far-roomy",
+        used_cents=1400,
+        remaining_cents=5600,
+        total_pct=20.0,
+    )
+    ranked = recommend_lenders(
+        [
+            _candidate(soon_tight, account_id="soon-tight"),
+            _candidate(far_roomy, account_id="far-roomy"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert ranked[0]["account_id"] == "far-roomy"
 
 
 def test_snapshot_freshness_decays_and_floors():

@@ -45,3 +45,15 @@ def test_loan_selection_rejects_invalid_values():
         AppConfig.model_validate(
             {"tool_center": {"loan_selection": {"weight_urgency": -0.1}}}
         )
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "tool_center": {
+                    "loan_selection": {
+                        "proxy_weight_urgency": 0.0,
+                        "proxy_weight_headroom": 0.0,
+                        "proxy_weight_freshness": 0.0,
+                    }
+                }
+            }
+        )

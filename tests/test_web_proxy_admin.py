@@ -152,6 +152,9 @@ def test_pool_accounts_toggle(env):
     assert rows[0]["account_identifier"] == "acct-1"
     assert rows[0]["plan_name"] == "Pro"
     assert rows[0]["active_credential_count"] == 1
+    assert rows[0]["pool_ready"] is True
+    assert rows[0]["pool_ready_reason"] is None
+    assert rows[0]["pool_effective"] is False
     assert rows[0]["proxy_enabled"] is False
 
     resp = client.post(
@@ -162,8 +165,28 @@ def test_pool_accounts_toggle(env):
     assert resp.status_code == 200
     assert resp.json()["proxy_enabled"] is True
 
+    resp = client.get("/api/v2/proxy-pool/accounts", headers=_admin(env))
+    assert resp.json()[0]["pool_effective"] is True
+
     resp = client.get("/api/v2/proxy-pool/credentials", headers=_admin(env))
     assert resp.json()[0]["proxy_enabled"] is True
+
+
+def test_pool_accounts_reject_enable_without_primary(env):
+    client = env["client"]
+    s = env["sf"]()
+    cred = s.get(AiAccountCredential, env["cred_id"])
+    cred.status = "revoked"
+    s.commit()
+    s.close()
+
+    resp = client.post(
+        f"/api/v2/proxy-pool/accounts/{env['account_id']}",
+        json={"proxy_enabled": True},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "无可用主 Key"
 
 
 def test_pool_accounts_count_excludes_loan_keys(env):
@@ -186,7 +209,58 @@ def test_pool_accounts_count_excludes_loan_keys(env):
 
     resp = env["client"].get("/api/v2/proxy-pool/accounts", headers=_admin(env))
     assert resp.status_code == 200
-    assert resp.json()[0]["active_credential_count"] == 1
+    row = resp.json()[0]
+    assert row["pool_ready"] is True
+    assert row["pool_ready_reason"] is None
+
+
+def test_pool_accounts_warn_multiple_primary_keys(env):
+    s = env["sf"]()
+    account = s.get(AiAccount, env["account_id"])
+    s.add(
+        AiAccountCredential(
+            account_id=env["account_id"],
+            vendor_id=account.vendor_id,
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-2", TEST_KEY),
+            key_hint="cur...y-2",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=env["owner"].id,
+        )
+    )
+    s.commit()
+    s.close()
+
+    resp = env["client"].get("/api/v2/proxy-pool/accounts", headers=_admin(env))
+    row = resp.json()[0]
+    assert row["pool_ready"] is False
+    assert row["active_credential_count"] == 2
+    assert "多个主 Key" in (row["pool_ready_reason"] or "")
+
+    resp = env["client"].post(
+        f"/api/v2/proxy-pool/accounts/{env['account_id']}",
+        json={"proxy_enabled": True},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 400
+
+
+def test_pool_accounts_stale_enabled_when_not_ready(env):
+    client = env["client"]
+    s = env["sf"]()
+    account = s.get(AiAccount, env["account_id"])
+    account.proxy_enabled = True
+    cred = s.get(AiAccountCredential, env["cred_id"])
+    cred.status = "revoked"
+    s.commit()
+    s.close()
+
+    resp = client.get("/api/v2/proxy-pool/accounts", headers=_admin(env))
+    row = resp.json()[0]
+    assert row["proxy_enabled"] is True
+    assert row["pool_ready"] is False
+    assert row["pool_effective"] is False
 
 
 def test_pool_ranking_board(env):

@@ -60,18 +60,30 @@
       </el-tab-pane>
 
       <el-tab-pane label="代理池" name="pool">
-        <p class="pool-hint">一行一 Cursor 台账账号；开启后仅其主 Key（primary）进入代理轮换池，借用 Key 不入池</p>
+        <p class="pool-hint">开启入池后，该账号的主 Key 参与代理轮换；额度与排序见「打分表」</p>
         <el-table :data="pool" style="width: 100%">
-          <el-table-column prop="account_identifier" label="账号" min-width="160" />
-          <el-table-column prop="plan_name" label="计划" width="120" />
-          <el-table-column prop="primary_member_name" label="主责" width="120" />
-          <el-table-column prop="active_credential_count" label="主 Key" width="90" />
-          <el-table-column prop="status" label="状态" width="100" />
+          <el-table-column label="账号" min-width="200">
+            <template #default="{ row }">
+              <div>{{ row.account_identifier }}</div>
+              <div v-if="row.primary_member_name" class="account-sub">{{ row.primary_member_name }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="就绪" width="160">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="poolReadyTooltip(row)"
+                :content="poolReadyTooltip(row)!"
+              >
+                <el-tag :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
+              </el-tooltip>
+              <el-tag v-else :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="入池" width="100">
             <template #default="{ row }">
               <el-switch
                 :model-value="row.proxy_enabled"
-                :disabled="!canWrite"
+                :disabled="!canWrite || (!row.proxy_enabled && !row.pool_ready)"
                 @change="(val: boolean) => toggleAccount(row, val)"
               />
             </template>
@@ -81,7 +93,7 @@
 
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
-          <p class="pool-hint">与代理池下发给 Go 的选号顺序同源；在借人数仅展示、不参与过滤与打分。下方为已入池但被硬过滤排除的账号</p>
+          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），同时优先选用剩余额度高的账号（headroom），避免主使用人额度被打光</p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>
         <h4 class="usage-section-title">入选排序</h4>
@@ -93,6 +105,7 @@
           <el-table-column prop="score" label="score" width="90" />
           <el-table-column prop="surplus_cents" label="surplus" width="100" />
           <el-table-column prop="urgency_cents_per_day" label="urgency/日" width="110" />
+          <el-table-column prop="remaining_headroom_pct" label="headroom %" width="110" />
           <el-table-column prop="deadline" label="deadline" width="120" />
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column prop="active_loans" label="在借" width="70" />
@@ -292,11 +305,11 @@ interface ProxyKeyRow {
 interface PoolAccount {
   id: string
   account_identifier: string
-  plan_name: string | null
-  status: string
   primary_member_name: string | null
-  active_credential_count: number
   proxy_enabled: boolean
+  pool_ready: boolean
+  pool_ready_reason: string | null
+  pool_effective: boolean
 }
 
 interface RankingRow {
@@ -305,6 +318,7 @@ interface RankingRow {
   score?: number
   surplus_cents?: number
   urgency_cents_per_day?: number
+  remaining_headroom_pct?: number
   deadline?: string | null
   hours_to_deadline?: number | null
   active_loans?: number
@@ -413,6 +427,27 @@ function exclusionReasonLabel(reason: string | undefined) {
       coverage_too_short: '距作废过短',
     }[reason || ''] ?? (reason || '—')
   )
+}
+
+function poolReadyLabel(row: PoolAccount) {
+  if (row.proxy_enabled && !row.pool_ready) return '已入池·未就绪'
+  if (!row.pool_ready) return '未就绪'
+  return '就绪'
+}
+
+function poolReadyTooltip(row: PoolAccount) {
+  if (row.proxy_enabled && !row.pool_ready) {
+    return row.pool_ready_reason
+      ? `开关仍开启，但不会进入轮换：${row.pool_ready_reason}`
+      : '开关仍开启，但不会进入轮换'
+  }
+  return row.pool_ready_reason
+}
+
+function poolReadyType(row: PoolAccount) {
+  if (row.proxy_enabled && !row.pool_ready) return 'warning'
+  if (!row.pool_ready) return 'danger'
+  return 'success'
 }
 
 function canCopyCommand(row: ProxyKeyRow) {
@@ -617,8 +652,9 @@ async function toggleAccount(row: PoolAccount, val: boolean) {
   try {
     await client.post(`/api/v2/proxy-pool/accounts/${row.id}`, { proxy_enabled: val })
     row.proxy_enabled = val
-  } catch {
-    ElMessage.error('操作失败')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '操作失败')
   }
 }
 
@@ -644,6 +680,11 @@ onMounted(load)
   color: var(--el-text-color-secondary);
   font-size: 13px;
   margin: 0 0 12px;
+}
+.account-sub {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-top: 2px;
 }
 .ranking-toolbar {
   display: flex;

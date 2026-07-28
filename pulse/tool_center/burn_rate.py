@@ -181,6 +181,55 @@ def _min_max(values: list[float]) -> list[float]:
     return [(v - lo) / (hi - lo) for v in values]
 
 
+def digestion_urgency(
+    surplus: float,
+    hours: float,
+    *,
+    deadline_power: float,
+    hourly_power: bool,
+) -> float:
+    """待消化压力：余量 / 剩余时间^power。power>1 时更优先快到期账号。"""
+    if hourly_power:
+        hour_floor = 1.0
+        return surplus / max(hours**deadline_power, hour_floor**deadline_power)
+    days = max(hours / 24.0, 1 / 24)
+    day_floor = 1 / 24
+    return surplus / max(days**deadline_power, day_floor**deadline_power)
+
+
+@dataclass(frozen=True)
+class _ScoringProfile:
+    weight_urgency: float
+    weight_surplus: float
+    weight_load: float
+    weight_freshness: float
+    weight_headroom: float
+    deadline_power: float
+    hourly_power: bool
+
+
+def _scoring_profile(cfg: LoanSelectionConfig, *, enforce_loan_cap: bool) -> _ScoringProfile:
+    if enforce_loan_cap:
+        return _ScoringProfile(
+            weight_urgency=cfg.weight_urgency,
+            weight_surplus=cfg.weight_surplus,
+            weight_load=cfg.weight_load,
+            weight_freshness=cfg.weight_freshness,
+            weight_headroom=0.0,
+            deadline_power=1.0,
+            hourly_power=False,
+        )
+    return _ScoringProfile(
+        weight_urgency=cfg.proxy_weight_urgency,
+        weight_surplus=cfg.proxy_weight_surplus,
+        weight_load=0.0,
+        weight_freshness=cfg.proxy_weight_freshness,
+        weight_headroom=cfg.proxy_weight_headroom,
+        deadline_power=cfg.proxy_deadline_power,
+        hourly_power=True,
+    )
+
+
 def _hard_filter_reason(
     cand: LenderCandidate,
     cfg: LoanSelectionConfig,
@@ -256,6 +305,8 @@ def _rank_passing_candidates(
     """
     rows: list[dict] = []
     excluded: list[dict] = []
+    profile = _scoring_profile(cfg, enforce_loan_cap=enforce_loan_cap)
+
     for cand in candidates:
         reason = _hard_filter_reason(
             cand, cfg, today, now, enforce_loan_cap=enforce_loan_cap
@@ -298,7 +349,13 @@ def _rank_passing_candidates(
                 "days": days,
                 "hours": hours,
                 "surplus": surplus,
-                "urgency": surplus / max(hours / 24.0, 1 / 24),
+                "headroom": analysis.remaining_headroom_pct,
+                "urgency": digestion_urgency(
+                    surplus,
+                    hours,
+                    deadline_power=profile.deadline_power,
+                    hourly_power=profile.hourly_power,
+                ),
                 "load_factor": load_factor,
                 "freshness": snapshot_freshness(
                     snapshot, cfg.freshness_full_penalty_hours, now
@@ -311,18 +368,21 @@ def _rank_passing_candidates(
 
     u_norm = _min_max([row["urgency"] for row in rows])
     s_norm = _min_max([row["surplus"] for row in rows])
-    ranked: list[tuple[float, dict]] = []
+    h_norm = _min_max([row["headroom"] for row in rows])
+    ranked: list[tuple[float, float, dict]] = []
     for idx, row in enumerate(rows):
         score = (
-            cfg.weight_urgency * u_norm[idx]
-            + cfg.weight_surplus * s_norm[idx]
-            + cfg.weight_load * row["load_factor"]
-            + cfg.weight_freshness * row["freshness"]
+            profile.weight_urgency * u_norm[idx]
+            + profile.weight_surplus * s_norm[idx]
+            + profile.weight_load * row["load_factor"]
+            + profile.weight_headroom * h_norm[idx]
+            + profile.weight_freshness * row["freshness"]
         )
         cand: LenderCandidate = row["candidate"]
         ranked.append(
             (
                 score,
+                row["hours"],
                 _score_payload(
                     cand,
                     analysis=row["analysis"],
@@ -336,8 +396,8 @@ def _rank_passing_candidates(
                 ),
             )
         )
-    ranked.sort(key=lambda x: (-x[0], x[1]["account_id"]))
-    return [item for _, item in ranked], excluded
+    ranked.sort(key=lambda x: (-x[0], x[1], x[2]["account_id"]))
+    return [item for _, _, item in ranked], excluded
 
 
 def recommend_lenders(
@@ -348,12 +408,13 @@ def recommend_lenders(
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
 ) -> list[dict]:
-    """硬过滤后按 urgency（单位时间待消化额度）主导的加权分排序。
+    """硬过滤后按待消化压力排序。
 
-    硬过滤：exhausted / 号主自身将耗尽 / 在借达上限（可关）/ 距作废 ≤ min_coverage_hours
-    （默认 1 小时；大于 1 小时即可借）。urgency 按小时精度计权，时间越短权重越大。
-    U（urgency）、S（surplus）池内 min-max 归一；L（在借人数）、F（快照新鲜度）
-    本身即 [0,1] 绝对值直接入分。打平按 account_id 字典序保证确定性。
+    借用路径：urgency ≈ 余量/剩余天数；U/S 池内归一化后加权。
+    代理池路径（enforce_loan_cap=False）：
+    - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化）
+    - headroom = remaining_headroom_pct 归一化（优先选用余量高的账号走代理，把余量紧张的留给主使用人）
+    同分按 hours_to_deadline 升序、account_id 字典序打平。
     """
     cfg = loan_selection or LoanSelectionConfig()
     now = now or datetime.now(timezone.utc)

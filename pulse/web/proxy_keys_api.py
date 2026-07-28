@@ -43,6 +43,41 @@ class ToggleProxyEnabledBody(BaseModel):
     proxy_enabled: bool
 
 
+def _active_primary_counts(
+    creds: list[AiAccountCredential], account_ids: list[str]
+) -> dict[str, int]:
+    counts = {aid: 0 for aid in account_ids}
+    for cred in creds:
+        if cred.status == "active" and cred.key_role == "primary":
+            counts[cred.account_id] = counts.get(cred.account_id, 0) + 1
+    return counts
+
+
+def _pool_account_readiness(active_count: int) -> tuple[bool, str | None]:
+    if active_count == 0:
+        return False, "无可用主 Key"
+    if active_count > 1:
+        return False, "存在多个主 Key，请只保留一个"
+    return True, None
+
+
+def _require_pool_ready(session: Session, account_id: str) -> None:
+    from sqlalchemy import func
+
+    count = session.scalar(
+        select(func.count())
+        .select_from(AiAccountCredential)
+        .where(
+            AiAccountCredential.account_id == account_id,
+            AiAccountCredential.status == "active",
+            AiAccountCredential.key_role == "primary",
+        )
+    )
+    ready, reason = _pool_account_readiness(int(count or 0))
+    if not ready:
+        raise HTTPException(status_code=400, detail=reason or "无法入池")
+
+
 # 兼容旧客户端
 ToggleCredentialBody = ToggleProxyEnabledBody
 
@@ -353,22 +388,30 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
             .scalars()
             .all()
         )
-        active_counts: dict[str, int] = {aid: 0 for aid in account_ids}
-        for c in creds:
-            if c.status == "active" and c.key_role == "primary":
-                active_counts[c.account_id] = active_counts.get(c.account_id, 0) + 1
-        return [
-            {
-                "id": a.id,
-                "account_identifier": a.account_identifier,
-                "plan_name": plans.get(a.plan_id),
-                "status": a.status,
-                "primary_member_name": members.get(a.primary_member_id) if a.primary_member_id else None,
-                "active_credential_count": active_counts.get(a.id, 0),
-                "proxy_enabled": bool(a.proxy_enabled),
-            }
-            for a in accounts
-        ]
+        active_counts = _active_primary_counts(creds, account_ids)
+        out = []
+        for a in accounts:
+            active_count = active_counts.get(a.id, 0)
+            ready, ready_reason = _pool_account_readiness(active_count)
+            proxy_enabled = bool(a.proxy_enabled)
+            out.append(
+                {
+                    "id": a.id,
+                    "account_identifier": a.account_identifier,
+                    "primary_member_name": members.get(a.primary_member_id)
+                    if a.primary_member_id
+                    else None,
+                    "proxy_enabled": proxy_enabled,
+                    "pool_ready": ready,
+                    "pool_ready_reason": ready_reason,
+                    "pool_effective": proxy_enabled and ready,
+                    # deprecated: 保留兼容旧客户端
+                    "plan_name": plans.get(a.plan_id),
+                    "status": a.status,
+                    "active_credential_count": active_count,
+                }
+            )
+        return out
 
     @app.get(
         "/api/v2/proxy-pool/ranking",
@@ -394,6 +437,8 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         vendor = session.get(AiVendor, account.vendor_id)
         if vendor is None or vendor.slug != "cursor":
             raise HTTPException(status_code=404, detail="account 不存在")
+        if body.proxy_enabled:
+            _require_pool_ready(session, account.id)
         account.proxy_enabled = body.proxy_enabled
         account.updated_at = proxy_service._utcnow()
         proxy_service.record_event(
@@ -461,6 +506,8 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         account = session.get(AiAccount, cred.account_id)
         if account is None or account.deleted_at is not None:
             raise HTTPException(status_code=404, detail="credential 不存在")
+        if body.proxy_enabled:
+            _require_pool_ready(session, account.id)
         account.proxy_enabled = body.proxy_enabled
         account.updated_at = proxy_service._utcnow()
         # 同步写凭证列，便于旧数据观察；池过滤已不读此列
