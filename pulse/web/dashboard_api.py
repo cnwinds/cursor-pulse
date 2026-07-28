@@ -54,13 +54,6 @@ def build_schedule_plan(config: AppConfig, session: Session, team_id: str) -> di
             "process": "pulse channel",
             "enabled": bool(cursor_sync.get("enabled", True)),
         },
-        {
-            "id": "expire_key_loans",
-            "name": "Key 借用到期回收",
-            "cron": "每天 03:00",
-            "process": "pulse channel",
-            "enabled": True,
-        },
     ]
 
     return {

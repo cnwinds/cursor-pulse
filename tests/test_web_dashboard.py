@@ -55,7 +55,7 @@ def test_system_schedule(dash_client):
     body = res.json()
     job_ids = {job["id"] for job in body["jobs"]}
     assert "cursor_sync_tick" in job_ids
-    assert "expire_key_loans" in job_ids
+    assert "expire_key_loans" not in job_ids
     assert "collection_start" not in job_ids
     assert "monthly_report" not in job_ids
 

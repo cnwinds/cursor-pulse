@@ -234,11 +234,6 @@ function syncRowSummary(): string {
   return parts.join(' · ')
 }
 
-function jobCron(id: string): string {
-  const job = schedule.value?.jobs?.find((row: any) => row.id === id)
-  return job?.cron ?? '—'
-}
-
 function collectionBasicsSummary(): string {
   return String(forms.collection.timezone || schedule.value?.timezone || '—')
 }
@@ -260,13 +255,6 @@ const collectionRows = computed<SettingRow[]>(() => {
       summary: syncRowSummary(),
       process: 'pulse channel',
       editable: true,
-    },
-    {
-      id: 'expire_key_loans',
-      name: 'Key借用到期回收',
-      summary: jobCron('expire_key_loans'),
-      process: 'pulse channel',
-      editable: false,
     },
   )
   return rows
