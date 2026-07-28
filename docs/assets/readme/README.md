@@ -1,6 +1,6 @@
 # README assets
 
-Marketing visuals for the root README and README_EN.
+Marketing visuals for the root README (English) and README_CN (中文).
 
 | File | Purpose |
 |------|---------|
