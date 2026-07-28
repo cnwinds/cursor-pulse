@@ -22,6 +22,7 @@ pulse/web/static/
 
 .worktrees/
 .superpowers/
+docs/superpowers/
 
 # Secrets / TLS material (MITM CA, etc.)
 *.pem

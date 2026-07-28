@@ -2,20 +2,21 @@ package main
 
 import (
 	"encoding/binary"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
-func readDebugUsageBin(t *testing.T, name string) []byte {
-	t.Helper()
-	// Tests run with cwd = proxy/; dumps live under repo .dev/
-	path := filepath.Join("..", ".dev", "proxy-debug-usage", name)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+// buildModelTapEnvelope wraps proto string fields in a Connect envelope, mirroring
+// real agent Run payloads used for model extraction (see PROXY_DEBUG_USAGE dumps).
+func buildModelTapEnvelope(cands []string) []byte {
+	var payload []byte
+	for i, s := range cands {
+		payload = append(payload, msgField(i+1, []byte(s))...)
 	}
-	return b
+	frame := make([]byte, 5+len(payload))
+	frame[0] = 0
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+	return frame
 }
 
 
@@ -171,14 +172,41 @@ func TestPickSelectedModelFromRealDumpOrderOpus(t *testing.T) {
 }
 
 func TestFindModelNameFromRealDumpBinComposer(t *testing.T) {
-	body := readDebugUsageBin(t, "20260722-092843-0001.bin")
+	// String order captured from a real debug dump (0001); body built inline for CI.
+	cands := []string{
+		"f6319b8d-1e6a-4cd3-a105-7c90d0b81b97",
+		"composer-2.5",
+		"fast",
+		"true",
+		"default",
+		"gpt-5.3-codex-low",
+		"gpt-5.2",
+	}
+	body := buildModelTapEnvelope(cands)
 	if got := findModelName(body); got != "composer-2.5-fast" {
 		t.Fatalf("got %q want composer-2.5-fast", got)
 	}
 }
 
 func TestFindModelNameFromRealDumpBinOpus(t *testing.T) {
-	body := readDebugUsageBin(t, "20260722-093126-0002.bin")
+	// String order captured from a real debug dump (0002); body built inline for CI.
+	cands := []string{
+		"f6319b8d-1e6a-4cd3-a105-7c90d0b81b97",
+		"claude-opus-4-8",
+		"thinking",
+		"true",
+		"context",
+		"300k",
+		"effort",
+		"high",
+		"fast",
+		"false",
+		"default",
+		"grok-4.5",
+		"composer-2.5",
+		"gpt-5.6-sol",
+	}
+	body := buildModelTapEnvelope(cands)
 	if got := findModelName(body); got != "claude-opus-4-8" {
 		t.Fatalf("got %q want claude-opus-4-8", got)
 	}
