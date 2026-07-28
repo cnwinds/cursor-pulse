@@ -3,7 +3,7 @@
     <el-card class="login-card" shadow="hover">
       <template #header>
         <div class="card-header">
-          <span class="logo">脉</span>
+          <img class="logo" src="/logo.svg" alt="Cursor Pulse" />
           <div>
             <h2>小脉管理后台</h2>
             <p>Cursor Pulse · 团队用量协调</p>
@@ -218,12 +218,6 @@ onMounted(loadProviders)
   width: 48px;
   height: 48px;
   border-radius: 14px;
-  background: linear-gradient(135deg, #38bdf8, #6366f1);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 1.25rem;
 }
 .login-tabs {
   display: grid;

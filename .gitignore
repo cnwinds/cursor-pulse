@@ -38,3 +38,4 @@ proxy/*.exe
 proxy/*.exe~
 *.exe
 *.exe~
+promotion/
