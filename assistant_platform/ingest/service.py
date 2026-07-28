@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 
 from sqlalchemy.orm import Session
 
@@ -99,7 +100,7 @@ class EventIngestService:
                 session_row.id,
                 message_row.id,
                 event.channel_message_id,
-                datetime.now(timezone.utc).isoformat(),
+                serialize_datetime(datetime.now(timezone.utc)),
             )
             self.repo.add_audit(
                 assistant_id=event.assistant_id,

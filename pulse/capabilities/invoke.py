@@ -32,6 +32,7 @@ from pulse.capabilities.handlers.web_fetch import handle_web_fetch
 from pulse.capabilities.handlers.web_search import handle_web_search
 from pulse.capabilities.manifest import get_manifest
 from pulse.capabilities.routing_metrics import record_invoke, record_missing_handler
+from pulse.util.timezone_ctx import activate_display_timezone_for_config
 
 Handler = Callable[..., CapabilityInvokeResult]
 
@@ -81,4 +82,5 @@ def invoke_capability(
             user_message="能力尚未实现",
         )
     record_invoke(request.capability_key, handler_kind="dedicated")
-    return handler(session, request=request, config=config, op=op)
+    with activate_display_timezone_for_config(config):
+        return handler(session, request=request, config=config, op=op)

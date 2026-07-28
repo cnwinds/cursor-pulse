@@ -17,6 +17,7 @@ from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AiAccountCredential, AiVendor, UsageDailyAggregate
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.credentials_api import (
     can_manage_credential,
@@ -546,7 +547,7 @@ def register_accounts_v2_routes(
                 "tokens_input": row.tokens_input,
                 "tokens_output": row.tokens_output,
                 "tokens_cache_read": row.tokens_cache_read,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                "updated_at": serialize_datetime(row.updated_at),
             }
             for row in rows
         ]

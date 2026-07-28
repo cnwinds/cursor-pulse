@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -175,7 +176,7 @@ class CapabilityExecutor:
             capability_version=capability_version,
             arguments=provider_args,
             confirmed_by=actor_member_id if confirmed else None,
-            requested_at=_utcnow().isoformat(),
+            requested_at=serialize_datetime(_utcnow()),
         )
 
         try:

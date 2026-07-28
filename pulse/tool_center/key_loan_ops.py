@@ -10,6 +10,7 @@ from pulse.proxy.service import loan_proxy_usage_summary
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
 from pulse.tool_center.burn_rate import analyze_burn_rate
+from pulse.util.datetime_fmt import format_china_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def read_self_loan(repo: Repository, config, member: Member) -> str:
         return "你当前没有进行中的 Key 借用。"
     blocks: list[str] = []
     for idx, loan in enumerate(items, start=1):
-        created = str(loan.get("created_at") or "")[:19].replace("T", " ")
+        created = format_china_datetime(loan.get("created_at")) or "—"
         header = "📎 当前借用：" if len(items) == 1 else f"📎 当前借用 {idx}/{len(items)}："
         lines = [
             header,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class ReplyTurnTimer:
     def __init__(self, *, session_id: str, trigger_message_id: str) -> None:
         self.session_id = session_id
         self.trigger_message_id = trigger_message_id
-        self.started_at = datetime.now(timezone.utc).isoformat()
+        self.started_at = serialize_datetime(datetime.now(timezone.utc))
         self._t0 = time.monotonic()
 
     def mark(self, stage: str, **fields: object) -> None:

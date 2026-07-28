@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -100,8 +101,8 @@ def _set_stage_status(
             "status": status.value,
             "attempt_count": attempt_count,
             "last_error": last_error,
-            "started_at": started_at.isoformat() if started_at else entry.get("started_at"),
-            "finished_at": finished_at.isoformat() if finished_at else entry.get("finished_at"),
+            "started_at": serialize_datetime(started_at) if started_at else entry.get("started_at"),
+            "finished_at": serialize_datetime(finished_at) if finished_at else entry.get("finished_at"),
             "details": details or entry.get("details") or {},
         }
     )

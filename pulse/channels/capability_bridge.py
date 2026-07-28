@@ -10,6 +10,8 @@ from assistant_platform.contracts.provider import CapabilityInvokeRequest, Capab
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client
+from pulse.settings.team_store import effective_config
+from pulse.util.timezone_ctx import activate_display_timezone_for_config
 
 logger = logging.getLogger(__name__)
 
@@ -110,15 +112,17 @@ def invoke_capability_local(
     confirmed: bool = True,
     capability_version: str = "1",
 ) -> str:
-    request = CapabilityInvokeRequest(
-        invocation_id=str(uuid.uuid4()),
-        idempotency_key=str(uuid.uuid4()),
-        team_id=team_id,
-        actor_member_id=member_id,
-        capability_key=capability_key,
-        capability_version=capability_version,
-        arguments=arguments,
-        confirmed_by=member_id if confirmed else None,
-    )
-    result = invoke_capability(session, request=request, config=config)
-    return format_capability_reply(result)
+    runtime_config = effective_config(config, session, team_id)
+    with activate_display_timezone_for_config(runtime_config):
+        request = CapabilityInvokeRequest(
+            invocation_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
+            team_id=team_id,
+            actor_member_id=member_id,
+            capability_key=capability_key,
+            capability_version=capability_version,
+            arguments=arguments,
+            confirmed_by=member_id if confirmed else None,
+        )
+        result = invoke_capability(session, request=request, config=runtime_config)
+        return format_capability_reply(result)

@@ -18,6 +18,7 @@ from pulse.capabilities.handlers.common import (
 from pulse.channels.commands import handle_unbind_cursor_command
 from pulse.periods import current_period
 from pulse.storage.models import UsageIngestion
+from pulse.util.datetime_fmt import format_china_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def handle_submission_self_read(
     if not sub:
         return _success(f"{period} 暂无提交记录。", capability_key="submission.self.read")
     return _success(
-        f"{period} 已于 {sub.ingested_at.isoformat()} 提交（{sub.channel}）。",
+        f"{period} 已于 {format_china_datetime(sub.ingested_at)} 提交（{sub.channel}）。",
         capability_key="submission.self.read",
     )
 

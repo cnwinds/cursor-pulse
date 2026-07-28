@@ -25,6 +25,7 @@ from pulse.tool_center.burn_rate import (
 )
 from pulse.proxy.service import loan_proxy_totals
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import tool_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -945,8 +946,8 @@ def loan_payload(loan: KeyLoan, session: Session) -> dict:
         "note": loan.note,
         "delivery_mode": delivery_mode,
         "key_hint": key_hint,
-        "created_at": loan.created_at.isoformat(),
-        "revoked_at": loan.revoked_at.isoformat() if loan.revoked_at else None,
+        "created_at": tool_datetime(loan.created_at),
+        "revoked_at": tool_datetime(loan.revoked_at),
     }
 
 

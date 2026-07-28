@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pulse.util.timezone_ctx import DEFAULT_DISPLAY_TIMEZONE
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,9 @@ from assistant_platform.api.skills_admin import register_skills_admin_routes
 from assistant_platform.config import AssistantConfig
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.ingest.service import EventIngestService
+from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
+from pulse.util.timezone_ctx import set_default_display_timezone
+from pulse.util.datetime_fmt import serialize_datetime
 
 
 class IncomingEventBody(BaseModel):
@@ -39,7 +43,34 @@ class IncomingEventBody(BaseModel):
 
 
 def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[Session]) -> FastAPI:
+    from pulse.team_settings_loader import read_team_setting_section
+    from pulse.util.timezone_ctx import configure_display_timezone_resolver
+
+    collection = read_team_setting_section(
+        team_slug=config.team_slug,
+        section="collection",
+    )
+    tz = str(collection.get("timezone") or "").strip() or DEFAULT_DISPLAY_TIMEZONE
+    set_default_display_timezone(tz)
+
+    pulse_config = None
+    pulse_session_factory = None
+    try:
+        from pulse.config import load_config
+        from pulse.storage.db import init_db
+
+        pulse_config = load_config()
+        pulse_session_factory = init_db(pulse_config.storage.database_url)
+        configure_display_timezone_resolver(pulse_config, pulse_session_factory)
+    except Exception:
+        pass
+
     app = FastAPI(title="Assistant Platform", version="0.1.0")
+    app.add_middleware(
+        DisplayTimezoneMiddleware,
+        config=pulse_config,
+        session_factory=pulse_session_factory,
+    )
 
     def get_db():
         session = session_factory()
@@ -53,7 +84,11 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "assistant_platform", "time": datetime.now(timezone.utc).isoformat()}
+        return {
+            "status": "ok",
+            "service": "assistant_platform",
+            "time": serialize_datetime(datetime.now(timezone.utc)),
+        }
 
     @app.post("/api/assistant/v1/events/messages", dependencies=[Depends(require_service_token)])
     def ingest_message(body: IncomingEventBody, session: Session = Depends(get_db)):

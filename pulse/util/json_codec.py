@@ -5,9 +5,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from pulse.util.datetime_fmt import serialize_datetime
+
 
 def json_default(value: Any) -> Any:
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, datetime):
+        # Naive values are treated as already-local wall time (legacy dumps).
+        if value.tzinfo is None:
+            return value.isoformat()
+        return serialize_datetime(value)
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)

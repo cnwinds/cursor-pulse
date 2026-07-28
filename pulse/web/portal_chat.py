@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.storage.models import PortalChatDelivery
+from pulse.util.datetime_fmt import serialize_datetime
 
 
 def store_portal_chat_delivery(
@@ -57,5 +58,5 @@ def delivery_to_json(row: PortalChatDelivery) -> dict:
         "kind": row.kind,
         "session_id": row.assistant_session_id,
         "message_id": row.assistant_message_id,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": serialize_datetime(row.created_at),
     }

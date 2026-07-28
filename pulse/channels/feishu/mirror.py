@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
@@ -101,7 +102,7 @@ def _feishu_mirror_payload(
         "text_redacted": event.text_redacted,
         "secret_refs": event.secret_refs,
         "attachments": event.attachments,
-        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+        "occurred_at": serialize_datetime(event.occurred_at) if event.occurred_at else None,
         "raw_metadata_redacted": event.raw_metadata_redacted,
     }
     return mirror, url, headers, payload

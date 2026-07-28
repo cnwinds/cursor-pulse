@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import has_permission
@@ -46,8 +47,8 @@ def _credential_status_payload(cred) -> dict:
         "key_hint": cred.key_hint,
         "status": cred.status,
         "sync_enabled": cred.sync_enabled,
-        "bound_at": cred.bound_at.isoformat() if cred.bound_at else None,
-        "last_sync_at": cred.last_sync_at.isoformat() if cred.last_sync_at else None,
+        "bound_at": serialize_datetime(cred.bound_at),
+        "last_sync_at": serialize_datetime(cred.last_sync_at),
         "last_sync_status": cred.last_sync_status,
         "last_sync_error": cred.last_sync_error,
     }
@@ -236,7 +237,7 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
                 "ingestion_id": result.ingestion_id,
                 "event_count": result.event_count,
                 "status": result.status,
-                "last_sync_at": cred.last_sync_at.isoformat() if cred.last_sync_at else None,
+                "last_sync_at": serialize_datetime(cred.last_sync_at),
                 "last_sync_status": cred.last_sync_status,
             }
         except Exception as exc:

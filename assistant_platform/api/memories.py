@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Annotated, Any, Callable
 
 from fastapi import Depends, HTTPException, Query
@@ -129,9 +130,9 @@ def _archive_summary_json(row: SessionArchiveRow) -> dict[str, Any]:
         "index_status": row.index_status,
         "message_total": row.message_total,
         "chunk_total": row.chunk_total,
-        "occurred_from": row.occurred_from.isoformat() if row.occurred_from else None,
-        "occurred_to": row.occurred_to.isoformat() if row.occurred_to else None,
-        "archived_at": row.archived_at.isoformat() if row.archived_at else None,
+        "occurred_from": serialize_datetime(row.occurred_from) if row.occurred_from else None,
+        "occurred_to": serialize_datetime(row.occurred_to) if row.occurred_to else None,
+        "archived_at": serialize_datetime(row.archived_at) if row.archived_at else None,
     }
 
 
@@ -364,7 +365,7 @@ def register_memory_routes(
             else None
         )
         return {
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": serialize_datetime(datetime.now(timezone.utc)),
             "team_id": team_id,
             "user_id": user_id,
             "archives": [_archive_summary_json(row) for row in archives],
@@ -399,7 +400,7 @@ def register_memory_routes(
             "user_id": user_id,
             "team_id": team_id,
             "opted_out": row is not None,
-            "opted_out_at": row.opted_out_at.isoformat() if row else None,
+            "opted_out_at": serialize_datetime(row.opted_out_at) if row else None,
         }
 
     @app.post(
@@ -427,7 +428,7 @@ def register_memory_routes(
             "user_id": body.user_id,
             "team_id": body.team_id,
             "opted_out": True,
-            "opted_out_at": row.opted_out_at.isoformat(),
+            "opted_out_at": serialize_datetime(row.opted_out_at),
         }
 
     @app.delete(

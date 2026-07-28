@@ -25,7 +25,11 @@ from pulse.tool_center.billing_cycle import (
     period_first_day,
 )
 from pulse.tool_center.burn_rate import analyze_burn_rate
-from pulse.util.datetime_fmt import format_china_datetime_iso, format_data_updated_line
+from pulse.util.datetime_fmt import (
+    format_china_date,
+    format_china_datetime_iso,
+    format_data_updated_line,
+)
 
 _PERIOD_RE = re.compile(r"(20\d{2})-(0[1-9]|1[0-2])")
 
@@ -292,18 +296,18 @@ def _format_model_table(
     return lines
 
 
+def _loan_start_title_suffix(created: Any) -> str:
+    china_date = format_china_date(created)
+    if not china_date:
+        return ""
+    _, month, day = china_date.split("-")
+    return f"（{int(month)}/{int(day)} 起）"
+
+
 def _format_loan_section(acc: dict[str, Any]) -> list[str]:
     loan = acc.get("loan") if isinstance(acc.get("loan"), dict) else {}
     created = acc.get("loan_created_at") or loan.get("loan_created_at")
-    title = "**借用 Key**"
-    if isinstance(created, datetime):
-        title += f"（{created.month}/{created.day} 起）"
-    elif isinstance(created, str) and created.strip():
-        try:
-            dt = datetime.fromisoformat(created.strip().replace("Z", "+00:00"))
-            title += f"（{dt.month}/{dt.day} 起）"
-        except ValueError:
-            pass
+    title = "**借用 Key**" + _loan_start_title_suffix(created)
     lines = [title]
 
     usage_source = acc.get("usage_source") or loan.get("usage_source") or "quota_approx"
@@ -328,9 +332,7 @@ def _format_loan_section(acc: dict[str, Any]) -> list[str]:
             or acc.get("data_updated_at")
             or loan.get("proxy_data_updated_at")
         )
-        if isinstance(updated, datetime):
-            lines.append(format_data_updated_line(updated.isoformat()))
-        elif isinstance(updated, str) and updated:
+        if updated:
             lines.append(format_data_updated_line(updated))
         lines.append("")
         lines.extend(_format_model_table(acc.get("models") or [], estimated_cost=True))
@@ -352,9 +354,7 @@ def _format_loan_section(acc: dict[str, Any]) -> list[str]:
     else:
         lines.append("- 还能用：暂无快照")
     captured = acc.get("quota_captured_at") or acc.get("data_updated_at")
-    if isinstance(captured, datetime):
-        lines.append(format_data_updated_line(captured.isoformat()))
-    elif isinstance(captured, str) and captured:
+    if captured:
         lines.append(format_data_updated_line(captured))
     lines.append("")
     return lines

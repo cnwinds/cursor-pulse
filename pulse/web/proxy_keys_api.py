@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.proxy import service as proxy_service
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.storage.models import (
     AiAccount,
     AiAccountCredential,
@@ -305,7 +306,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
                     "tokens_reasoning": u.tokens_reasoning,
                     "total_tokens": u.total_tokens,
                     "cost_cents": u.cost_cents,
-                    "ts": u.ts.isoformat() if u.ts else None,
+                    "ts": serialize_datetime(u.ts),
                 }
             )
         return {"by_account": by_account, "by_model": by_model, "items": items}

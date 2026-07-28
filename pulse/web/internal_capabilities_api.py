@@ -19,6 +19,7 @@ from pulse.capabilities.invocation_store import (
 from pulse.capabilities.manifest import list_operations
 from pulse.capabilities.routing_metrics import snapshot as routing_metrics_snapshot
 from pulse.config import AppConfig
+from pulse.util.timezone_ctx import activate_display_timezone_for_config
 from pulse.web.settings_store import effective_config
 
 
@@ -45,12 +46,20 @@ class CapabilityInvokeResponseBody(BaseModel):
     completed_at: str | None = None
 
 
-def _to_response(result: CapabilityInvokeResult) -> CapabilityInvokeResponseBody:
+def _to_response(
+    result: CapabilityInvokeResult,
+    *,
+    display_config: AppConfig | None = None,
+) -> CapabilityInvokeResponseBody:
     from pulse.channels.capability_bridge import format_capability_reply
 
     data = asdict(result)
     if not (data.get("user_message") or "").strip():
-        data["user_message"] = format_capability_reply(result)
+        if display_config is not None:
+            with activate_display_timezone_for_config(display_config):
+                data["user_message"] = format_capability_reply(result)
+        else:
+            data["user_message"] = format_capability_reply(result)
     # result may be None on some failed paths
     if data.get("result") is None:
         data["result"] = {}
@@ -137,9 +146,12 @@ def register_internal_capabilities_routes(app, get_db, config: AppConfig) -> Non
                     status_code=500,
                     detail="Idempotency conflict but no stored invocation found",
                 )
-            return _to_response(result_from_dict(existing.result_json))
+            return _to_response(
+                result_from_dict(existing.result_json),
+                display_config=runtime_config,
+            )
         session.commit()
-        return _to_response(result)
+        return _to_response(result, display_config=runtime_config)
 
     @app.get(
         "/api/internal/v1/capabilities/invocations/{invocation_id}",

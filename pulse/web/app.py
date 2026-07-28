@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pulse.util.datetime_fmt import serialize_datetime
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -43,6 +44,11 @@ from pulse.web.proxy_keys_api import register_proxy_keys_routes
 from pulse.web.quota_api import register_quota_routes
 from pulse.web.settings_api import register_settings_routes
 from pulse.web.usage_analytics_api import register_usage_analytics_routes
+from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
+from pulse.util.timezone_ctx import (
+    configure_display_timezone_resolver,
+    set_default_display_timezone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +67,15 @@ def create_app(
         pulse_internal_token=config.internal.service_token,
     )
     assert_jwt_secret_configured(config)
+    set_default_display_timezone(config.collection.timezone)
+    configure_display_timezone_resolver(config, session_factory)
     app = FastAPI(title="Cursor Pulse Admin", version="0.2.0")
+
+    app.add_middleware(
+        DisplayTimezoneMiddleware,
+        config=config,
+        session_factory=session_factory,
+    )
 
     if config.web.cors_origins:
         app.add_middleware(
@@ -102,7 +116,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+        return {"status": "ok", "time": serialize_datetime(datetime.now(timezone.utc))}
 
     admin_spa_dir = resolve_admin_static_dir()
     if require_admin_spa and admin_spa_dir is None:
@@ -129,7 +143,7 @@ def create_app(
                 "question": row.question,
                 "query_plan": row.query_plan,
                 "answer": row.answer,
-                "created_at": row.created_at.isoformat(),
+                "created_at": serialize_datetime(row.created_at),
             }
             for row in rows
         ]

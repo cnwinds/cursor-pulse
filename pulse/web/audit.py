@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.storage.models import (
     AccessRequest,
     AdminAuditLog,
@@ -440,7 +441,7 @@ def list_admin_audit_logs(
             "capability": row.capability,
             "capability_label": CAPABILITY_LABELS.get(row.capability or "", row.capability),
             "detail": format_audit_detail(row.action, row.detail, ctx),
-            "created_at": row.created_at.isoformat(),
+            "created_at": serialize_datetime(row.created_at),
         }
         for row in rows
     ]

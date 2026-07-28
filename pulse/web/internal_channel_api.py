@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException
@@ -142,7 +143,7 @@ def deliver_channel_reply(
         assistant_message_id,
         kind,
         channel,
-        datetime.now(timezone.utc).isoformat(),
+        serialize_datetime(datetime.now(timezone.utc)),
     )
     deliver_t0 = time.monotonic()
 

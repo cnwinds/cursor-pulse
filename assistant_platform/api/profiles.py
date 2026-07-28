@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Annotated, Any, Callable
 
 from fastapi import Depends, HTTPException, Query
@@ -29,8 +30,8 @@ def _signal_json(row: ProfileSignalRow) -> dict[str, Any]:
         "content": row.content,
         "confidence": row.confidence,
         "source_session_ids": row.source_session_ids_json,
-        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "expires_at": serialize_datetime(row.expires_at) if row.expires_at else None,
+        "created_at": serialize_datetime(row.created_at) if row.created_at else None,
     }
 
 
@@ -126,6 +127,6 @@ def register_profile_routes(
             "id": correction.id,
             "signal_id": correction.signal_id,
             "correction_text": correction.correction_text,
-            "created_at": correction.created_at.isoformat() if correction.created_at else None,
+            "created_at": serialize_datetime(correction.created_at) if correction.created_at else None,
             "effective_profile": guidance.model_dump(mode="json"),
         }

@@ -114,7 +114,7 @@ def test_tavily_search_normalizes_results():
     assert hit.snippet == "Hello world snippet"
     assert hit.published_at == "2026-07-01"
     assert hit.rank == 1
-    assert hit.retrieved_at.endswith("Z")
+    assert hit.retrieved_at.endswith("+08:00")
 
     posted = mock_client.post.call_args
     assert posted.args[0] == "https://api.tavily.com/search"

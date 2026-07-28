@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -20,7 +21,7 @@ def _utcnow() -> datetime:
 
 
 def _utcnow_iso() -> str:
-    return _utcnow().isoformat()
+    return serialize_datetime(_utcnow())
 
 
 def _state(session_row: ChatSessionRow) -> dict[str, Any]:
@@ -111,7 +112,7 @@ def end_turn(db_session: Session, session_row: ChatSessionRow) -> list[dict[str,
         {
             "message_id": row.id,
             "text": row.text_redacted or "",
-            "received_at": row.created_at.isoformat() if row.created_at else "",
+            "received_at": serialize_datetime(row.created_at) if row.created_at else "",
         }
         for row in pending
     ]
@@ -213,7 +214,7 @@ class TurnInbox:
             InboxEntry(
                 message_id=row.id,
                 text=row.text_redacted or "",
-                received_at=row.created_at.isoformat() if row.created_at else "",
+                received_at=serialize_datetime(row.created_at) if row.created_at else "",
             )
             for row in rows
         ]

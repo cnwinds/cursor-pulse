@@ -16,6 +16,7 @@ from pulse.storage.models import (
     UsageSummary,
 )
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import tool_datetime
 from pulse.web.permissions import has_permission
 
 SOURCE_TYPE_LABELS: dict[str, str] = {
@@ -165,8 +166,8 @@ def _ingestion_payload(
         "status": ingestion.status,
         "source_type": ingestion.source_type,
         "input_type": _source_type_to_input_type(ingestion.source_type),
-        "ingested_at": ingestion.ingested_at.isoformat(),
-        "submitted_at": ingestion.ingested_at.isoformat(),
+        "ingested_at": tool_datetime(ingestion.ingested_at),
+        "submitted_at": tool_datetime(ingestion.ingested_at),
         "submitted_by_member_id": ingestion.member_id,
         "submitted_by_name": member_names.get(ingestion.member_id or ""),
         "data_date_min": date_min.isoformat() if date_min else None,
@@ -186,8 +187,8 @@ def _credential_payload(credential: AiAccountCredential | None) -> dict[str, Any
     return {
         "status": credential.status,
         "key_hint": credential.key_hint,
-        "bound_at": credential.bound_at.isoformat() if credential.bound_at else None,
-        "last_sync_at": credential.last_sync_at.isoformat() if credential.last_sync_at else None,
+        "bound_at": tool_datetime(credential.bound_at),
+        "last_sync_at": tool_datetime(credential.last_sync_at),
         "last_sync_status": credential.last_sync_status,
         "last_sync_error": credential.last_sync_error,
         "sync_enabled": credential.sync_enabled,

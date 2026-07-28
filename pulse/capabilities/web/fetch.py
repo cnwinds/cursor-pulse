@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -17,6 +16,7 @@ from pulse.capabilities.web.ssrf import (
 )
 from pulse.capabilities.web.types import WebFetchResult
 from pulse.http_clients import outbound_client
+from pulse.util.datetime_fmt import china_now_iso
 
 _ALLOWED_CONTENT_TYPES = (
     "text/html",
@@ -31,10 +31,6 @@ _ALLOWED_CONTENT_TYPES = (
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _content_type_allowed(content_type: str) -> bool:
@@ -153,7 +149,7 @@ def safe_fetch(
 
                     body = _read_body_with_limit(response, max_bytes=max_bytes)
                     title, text, truncated = _extract_text(body, content_type)
-                    retrieved_at = _utcnow_iso()
+                    retrieved_at = china_now_iso()
                     return WebFetchResult(
                         url=url.strip(),
                         final_url=str(response.url),

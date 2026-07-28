@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pulse.util.datetime_fmt import serialize_datetime
+
 from typing import Annotated, Callable
 
 from fastapi import Depends, HTTPException
@@ -54,5 +56,5 @@ def register_evaluation_routes(
             "release_id": run_row.release_id,
             "status": run_row.status,
             "result": run_row.result_json,
-            "created_at": run_row.created_at.isoformat() if run_row.created_at else None,
+            "created_at": serialize_datetime(run_row.created_at) if run_row.created_at else None,
         }

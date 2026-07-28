@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from pathlib import Path
 
 import httpx
@@ -70,7 +71,7 @@ def _write_deadletter(kind: str, payload: dict, error: Exception) -> None:
         _DEADLETTER_PATH.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "kind": kind,
-            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "failed_at": serialize_datetime(datetime.now(timezone.utc)),
             "error": repr(error),
             "payload": payload,
         }
@@ -166,7 +167,7 @@ def _dingtalk_mirror_payload(
         "text_redacted": event.text_redacted,
         "secret_refs": event.secret_refs,
         "attachments": event.attachments,
-        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+        "occurred_at": serialize_datetime(event.occurred_at) if event.occurred_at else None,
         "raw_metadata_redacted": event.raw_metadata_redacted,
     }
     return mirror, url, headers, payload
@@ -321,7 +322,7 @@ def mirror_web_message(
         "text_redacted": event.text_redacted,
         "secret_refs": event.secret_refs,
         "attachments": event.attachments,
-        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+        "occurred_at": serialize_datetime(event.occurred_at) if event.occurred_at else None,
         "raw_metadata_redacted": event.raw_metadata_redacted,
     }
     try:

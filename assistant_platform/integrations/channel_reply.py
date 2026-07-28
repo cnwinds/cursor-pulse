@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Any
 
 from assistant_platform.config import AssistantConfig
@@ -27,7 +28,7 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         session_id,
         message_id,
         kind,
-        datetime.now(timezone.utc).isoformat(),
+        serialize_datetime(datetime.now(timezone.utc)),
     )
     http_t0 = time.monotonic()
     try:

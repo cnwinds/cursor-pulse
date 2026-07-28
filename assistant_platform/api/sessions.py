@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pulse.util.datetime_fmt import serialize_datetime
 from typing import Annotated, Any, Callable
 
 from fastapi import Depends, HTTPException, Query
@@ -110,9 +111,9 @@ def _session_json(
         "user_id": row.user_id,
         "status": row.status,
         "prompt_release_id": row.prompt_release_id,
-        "opened_at": row.opened_at.isoformat() if row.opened_at else None,
-        "last_activity_at": row.last_activity_at.isoformat() if row.last_activity_at else None,
-        "closed_at": row.closed_at.isoformat() if row.closed_at else None,
+        "opened_at": serialize_datetime(row.opened_at) if row.opened_at else None,
+        "last_activity_at": serialize_datetime(row.last_activity_at) if row.last_activity_at else None,
+        "closed_at": serialize_datetime(row.closed_at) if row.closed_at else None,
         "close_reason": row.close_reason,
     }
     if include_first_user_text:
@@ -128,7 +129,7 @@ def _message_json(row: ChatMessageRow) -> dict[str, Any]:
         "text_redacted": row.text_redacted,
         "incoming_event_id": row.incoming_event_id,
         "meta_json": row.meta_json,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": serialize_datetime(row.created_at) if row.created_at else None,
     }
 
 
@@ -274,7 +275,7 @@ def register_session_routes(
             .order_by(ChatMessageRow.created_at.asc())
         ).all()
         return {
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": serialize_datetime(datetime.now(timezone.utc)),
             "session": _session_json(row),
             "messages": [_message_json(message) for message in messages],
         }

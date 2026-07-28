@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from pulse.pricing.cursor_tables import builtin_cursor_pricing_table, pricing_table_to_dict
 from pulse.pricing.types import PricingRule, PricingTable, TokenRates
 from pulse.storage.models import TeamSetting
+from pulse.util.datetime_fmt import serialize_datetime
 
 CURSOR_PRICING_SECTION = "cursor_pricing"
 _MATCH_TYPES = frozenset({"exact", "glob", "contains"})
@@ -174,7 +175,7 @@ def pricing_api_payload(
     table, source, row = load_team_cursor_pricing(session, team_id)
     payload = pricing_table_to_dict(table)
     payload["source"] = source
-    payload["updated_at"] = row.updated_at.isoformat() if row and row.updated_at else None
+    payload["updated_at"] = serialize_datetime(row.updated_at) if row and row.updated_at else None
     updated_by = None
     if row and row.updated_by_member_id:
         names = member_names or {}

@@ -10,6 +10,7 @@ from pulse.pricing.cursor_tables import get_cursor_pricing_table
 from pulse.pricing.types import PricingTable, estimate_token_cost
 from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.storage.models import Member, ProxyEvent, ProxyKey, ProxyKeyUsage, KeyLoan, AiAccount
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -757,8 +758,8 @@ def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None)
         "window_7d_cost_usd": cents_to_usd(key.window_7d_cost_limit_cents),
         "status": key.status,
         "suspended_reason": key.suspended_reason,
-        "expires_at": key.expires_at.isoformat() if key.expires_at else None,
-        "created_at": key.created_at.isoformat() if key.created_at else None,
+        "expires_at": serialize_datetime(key.expires_at),
+        "created_at": serialize_datetime(key.created_at),
         "total_tokens": total_tokens,
         "total_cost_cents": total_cost,
         "window_5h_cost_cents": used_5h,

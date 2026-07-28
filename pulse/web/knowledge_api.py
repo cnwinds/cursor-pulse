@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from pulse.periods import current_period
 from pulse.tool_center.knowledge import KnowledgeService
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 
 
@@ -34,7 +35,7 @@ def _entry_payload(entry) -> dict:
         "source_channel": entry.source_channel,
         "status": entry.status,
         "pinned": entry.pinned,
-        "created_at": entry.created_at.isoformat(),
+        "created_at": serialize_datetime(entry.created_at),
     }
 
 

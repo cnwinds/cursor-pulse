@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -9,10 +8,7 @@ import httpx
 from pulse.capabilities.web.provider import SearchProviderError
 from pulse.capabilities.web.types import WebSearchHit, WebSearchResponse
 from pulse.http_clients import outbound_client
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+from pulse.util.datetime_fmt import china_now_iso
 
 
 def _domain_of(url: str) -> str:
@@ -46,7 +42,7 @@ class TavilySearchProvider:
 
         limit = max_results if max_results is not None else self._default_max_results
         limit = max(1, min(int(limit), 10))
-        retrieved_at = _utcnow_iso()
+        retrieved_at = china_now_iso()
         payload = {
             "api_key": self._api_key,
             "query": q,

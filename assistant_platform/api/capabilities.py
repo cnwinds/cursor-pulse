@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pulse.util.datetime_fmt import serialize_datetime
+
 from dataclasses import asdict
 from typing import Any, Callable
 
@@ -177,7 +179,7 @@ def register_capability_routes(
                     "key": pack.key,
                     "display_name": pack.display_name,
                     "capability_keys": [item.capability_key for item in items],
-                    "created_at": pack.created_at.isoformat(),
+                    "created_at": serialize_datetime(pack.created_at),
                 }
             )
         return result
@@ -204,7 +206,7 @@ def register_capability_routes(
                 "scope_id": row.scope_id,
                 "pack_id": row.pack_id,
                 "capability_key": row.capability_key,
-                "created_at": row.created_at.isoformat(),
+                "created_at": serialize_datetime(row.created_at),
             }
             for row in rows
         ]

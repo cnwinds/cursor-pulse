@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.storage.models import Member
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import (
@@ -44,10 +45,8 @@ def _portal_user_row(
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "portal_permissions": member.portal_permissions,
-        "last_portal_login_at": (
-            member.last_portal_login_at.isoformat() if member.last_portal_login_at else None
-        ),
-        "created_at": member.created_at.isoformat(),
+        "last_portal_login_at": serialize_datetime(member.last_portal_login_at),
+        "created_at": serialize_datetime(member.created_at),
     }
 
 

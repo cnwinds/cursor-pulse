@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from pulse.config import AppConfig
 from pulse.storage.models import Member
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.permissions import resolve_permissions
 
@@ -17,9 +18,7 @@ def member_payload(member: Member) -> dict:
         "portal_status": member.portal_status,
         "portal_role": member.portal_role,
         "permissions": sorted(resolve_permissions(member)),
-        "last_portal_login_at": (
-            member.last_portal_login_at.isoformat() if member.last_portal_login_at else None
-        ),
+        "last_portal_login_at": serialize_datetime(member.last_portal_login_at),
     }
 
 

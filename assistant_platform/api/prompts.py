@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pulse.util.datetime_fmt import serialize_datetime
+
 from typing import Annotated, Any, Callable
 
 from fastapi import Depends, HTTPException
@@ -85,7 +87,7 @@ def _release_json(row: PromptReleaseRow) -> dict[str, Any]:
         "name": row.name,
         "status": row.status,
         "fragment_ids": list(row.fragment_ids_json or []),
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": serialize_datetime(row.created_at) if row.created_at else None,
     }
 
 
@@ -95,7 +97,7 @@ def _cluster_json(row: FailureClusterRow) -> dict[str, Any]:
         "tag": row.tag,
         "session_ids": list(row.session_ids_json or []),
         "size": row.size,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": serialize_datetime(row.created_at) if row.created_at else None,
     }
 
 
@@ -105,7 +107,7 @@ def _proposal_json(row: PromptChangeProposalRow) -> dict[str, Any]:
         "cluster_id": row.cluster_id,
         "diff_text": row.diff_text,
         "status": row.status,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": serialize_datetime(row.created_at) if row.created_at else None,
     }
 
 

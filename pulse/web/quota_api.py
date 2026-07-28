@@ -32,7 +32,7 @@ from pulse.tool_center.key_loans import (
     reveal_loan_user_key,
 )
 from pulse.tool_center.repository import ToolCenterRepository
-from pulse.util.datetime_fmt import format_china_date
+from pulse.util.datetime_fmt import format_china_date, serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import has_permission
@@ -148,7 +148,7 @@ def _board_item(
         "total_pct": snapshot.total_pct,
         "auto_pct": snapshot.auto_pct,
         "api_pct": snapshot.api_pct,
-        "captured_at": snapshot.captured_at.isoformat(),
+        "captured_at": serialize_datetime(snapshot.captured_at),
     }
 
 
@@ -425,7 +425,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 "tokens_reasoning": u.tokens_reasoning,
                 "total_tokens": u.total_tokens,
                 "cost_cents": u.cost_cents,
-                "ts": u.ts.isoformat() if u.ts else None,
+                "ts": serialize_datetime(u.ts),
             }
             items_all.append(item)
 

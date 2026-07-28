@@ -84,4 +84,8 @@ def patch_team_setting(
         row.updated_at = now
         row.updated_by_member_id = member_id
     session.flush()
+    if section == "collection":
+        from pulse.util.timezone_ctx import invalidate_display_timezone_cache
+
+        invalidate_display_timezone_cache()
     return row.data
