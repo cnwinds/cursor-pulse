@@ -198,30 +198,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, BarChart, PieChart } from 'echarts/charts'
-import {
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  DataZoomComponent,
-} from 'echarts/components'
 import VChart from 'vue-echarts'
+import '@/utils/echarts'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import { formatSpend, formatTokens } from '@/utils/usage'
-
-use([
-  CanvasRenderer,
-  LineChart,
-  BarChart,
-  PieChart,
-  GridComponent,
-  TooltipComponent,
-  LegendComponent,
-  DataZoomComponent,
-])
 
 type Dimension = 'account' | 'model' | 'family' | 'pool'
 type RangePreset = 'this_month' | 'last_month' | 'last_7' | 'last_30' | 'custom'

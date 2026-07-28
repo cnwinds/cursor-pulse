@@ -210,10 +210,10 @@ def create_app(
         portal_logs = list_admin_audit_logs(session, team.id, limit=limit)
         return {"admin_actions": portal_logs}
 
-    @app.get("/api/dashboard/overview", dependencies=[Depends(require_capability("settings:read"))])
+    @app.get("/api/dashboard/overview")
     def dashboard_overview(
         session: Session = Depends(get_db),
-        user=Depends(require_capability("settings:read")),
+        user: PortalUser = Depends(_require_user),
     ):
         team, repo = _team_repo(session)
         return build_dashboard_overview(

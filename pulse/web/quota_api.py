@@ -156,6 +156,42 @@ def _status_rank(status: str) -> int:
     return {"exhausted": 0, "warning": 1, "healthy": 2, "unknown": 3}.get(status, 4)
 
 
+def build_quota_board_items(session: Session, team_id: str) -> list[dict]:
+    repo = ToolCenterRepository(session, team_id)
+    today = date.today()
+    snapshots = _latest_snapshots_by_account(session, team_id)
+    accounts = [
+        account
+        for account in repo.list_active_accounts()
+        if account.vendor and account.vendor.slug == "cursor"
+    ]
+    member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
+    member_names: dict[str, str] = {}
+    if member_ids:
+        members = session.scalars(
+            select(Member).where(Member.id.in_(member_ids))
+        ).all()
+        member_names = {m.id: m.display_name for m in members}
+    items = []
+    for account in accounts:
+        snapshot = snapshots.get(account.id)
+        items.append(_board_item(account, snapshot, today, member_names=member_names))
+    items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
+    return items
+
+
+def count_active_loans(session: Session, team_id: str) -> int:
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(KeyLoan)
+            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+            .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
+        )
+        or 0
+    )
+
+
 def register_quota_routes(app, get_db, require_capability, team_repo_fn, config):
     @app.get(
         "/api/v2/quota-board",
@@ -163,27 +199,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     )
     def quota_board(session: Session = Depends(get_db)):
         team, _ = team_repo_fn(session)
-        repo = ToolCenterRepository(session, team.id)
-        today = date.today()
-        snapshots = _latest_snapshots_by_account(session, team.id)
-        accounts = [
-            account
-            for account in repo.list_active_accounts()
-            if account.vendor and account.vendor.slug == "cursor"
-        ]
-        member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
-        member_names: dict[str, str] = {}
-        if member_ids:
-            members = session.scalars(
-                select(Member).where(Member.id.in_(member_ids))
-            ).all()
-            member_names = {m.id: m.display_name for m in members}
-        items = []
-        for account in accounts:
-            snapshot = snapshots.get(account.id)
-            items.append(_board_item(account, snapshot, today, member_names=member_names))
-        items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
-        return items
+        return build_quota_board_items(session, team.id)
 
     @app.get(
         "/api/v2/quota-board/recommend",
@@ -221,12 +237,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             base = base.where(KeyLoan.status == status)
 
         total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
-        active_count = session.scalar(
-            select(func.count())
-            .select_from(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(AiAccount.team_id == team.id, KeyLoan.status == "active")
-        ) or 0
+        active_count = count_active_loans(session, team.id)
         loans = session.scalars(
             base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
         ).all()

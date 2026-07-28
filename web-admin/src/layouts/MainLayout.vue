@@ -2,7 +2,7 @@
   <el-container class="layout">
     <el-aside width="220px" class="aside">
       <div class="brand">
-        <span class="logo">脉</span>
+        <img class="logo" src="/logo.svg" alt="Cursor Pulse" />
         <div>
           <div class="title">小脉</div>
           <div class="subtitle">Cursor Pulse</div>
@@ -17,7 +17,7 @@
           <template #title>
             <span>Pulse</span>
           </template>
-          <el-menu-item v-if="auth.hasPermission('settings:read')" index="/">
+          <el-menu-item index="/">
             <el-icon><Odometer /></el-icon>
             <span>概览</span>
           </el-menu-item>
@@ -155,10 +155,6 @@ function onLogout() {
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #38bdf8, #6366f1);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
 }
 .title {
   font-weight: 600;

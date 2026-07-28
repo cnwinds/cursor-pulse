@@ -1,242 +1,475 @@
 <template>
-  <div v-loading="loading">
-    <el-card v-if="pendingActions?.total_count" shadow="never" class="pending-card">
-      <template #header>
-        <div class="pending-header">
-          <span>待处理</span>
-          <el-badge :value="pendingActions.total_count" type="warning" />
-        </div>
+  <div v-loading="loading" class="dashboard">
+    <el-alert v-if="loadError" type="error" :closable="false" class="load-error">
+      <template #title>
+        概览数据加载失败
+        <el-button size="small" class="retry-btn" @click="reload">重试</el-button>
       </template>
+    </el-alert>
 
-      <div v-if="pendingActions.portal_users.length" class="pending-section">
-        <div class="section-title">后台用户审批</div>
-        <div class="portal-pending-list">
-          <div v-for="user in pendingActions.portal_users" :key="user.id" class="portal-pending-item">
-            <div>
-              <div class="portal-name">{{ user.display_name }}</div>
-              <div class="portal-meta">{{ channelMeta(user.channel, user.channel_user_id) }}</div>
-            </div>
-            <router-link to="/users" class="view-all">去审批 →</router-link>
+    <template v-if="data">
+      <div class="page-toolbar">
+        <el-button
+          size="small"
+          :icon="Refresh"
+          circle
+          :loading="refreshing"
+          title="刷新"
+          @click="reload"
+        />
+      </div>
+
+      <!-- ① 需要关注 -->
+      <el-card v-if="attentionItems.length" shadow="never" class="block">
+        <template #header>
+          <div class="card-header">
+            <span>需要关注</span>
+            <el-badge :value="attentionItems.length" type="warning" />
+          </div>
+        </template>
+        <div class="attention-list">
+          <div v-for="item in attentionItems" :key="item.key" class="attention-item">
+            <el-icon :color="item.level === 'danger' ? '#f56c6c' : '#e6a23c'">
+              <WarningFilled />
+            </el-icon>
+            <span class="attention-text">{{ item.text }}</span>
+            <router-link :to="item.to" class="attention-link">去处理 →</router-link>
           </div>
         </div>
-      </div>
-    </el-card>
+      </el-card>
 
-    <el-row :gutter="16" class="stats" :class="{ 'stats-with-pending': pendingActions?.total_count }">
-      <el-col :span="6" v-for="card in statCards" :key="card.label">
-        <el-card shadow="never">
-          <div class="stat-label">{{ card.label }}</div>
-          <div class="stat-value">{{ card.value }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
+      <!-- ② KPI 卡片 -->
+      <el-row v-if="statCards.length" :gutter="16">
+        <el-col v-for="card in statCards" :key="card.label" :xs="12" :sm="8" :md="6">
+          <StatCard :label="card.label" :value="card.value" :sub="card.sub" />
+        </el-col>
+      </el-row>
 
-    <el-row :gutter="16" class="mt">
-      <el-col :span="24">
-        <el-card shadow="never" header="账号同步进度">
-          <template v-if="ingestion?.active_count">
-            <div class="sync-progress-track">
-              <div class="sync-progress-fill" :style="{ width: `${syncPct}%` }" />
-              <span class="sync-progress-label">{{ syncPct }}%</span>
+      <!-- ③ 用量趋势 -->
+      <el-card v-if="usage" shadow="never" class="block" header="近 14 天用量趋势">
+        <v-chart v-if="hasTrend" class="trend-chart" :option="trendOption" autoresize />
+        <el-empty v-else description="近 14 天暂无用量数据" :image-size="60" />
+      </el-card>
+
+      <!-- ④ 额度风险 / 最近动态 -->
+      <el-row v-if="quotaRiskTop.length || activityItems.length" :gutter="16">
+        <el-col v-if="quotaRiskTop.length" :xs="24" :md="12">
+          <el-card shadow="never" class="block">
+            <template #header>
+              <div class="card-header">
+                <span>额度风险 Top 5</span>
+                <router-link to="/quota-board" class="more-link">看板 →</router-link>
+              </div>
+            </template>
+            <div v-for="row in quotaRiskTop" :key="row.account_id" class="risk-item">
+              <div class="risk-head">
+                <span class="risk-name">{{ row.account_identifier }}</span>
+                <el-tag :type="row.status === 'exhausted' ? 'danger' : 'warning'" size="small">
+                  {{ row.status === 'exhausted' ? '已耗尽' : '预警' }}
+                </el-tag>
+              </div>
+              <el-progress
+                :percentage="riskPct(row)"
+                :status="row.status === 'exhausted' ? 'exception' : 'warning'"
+              />
+              <div class="risk-meta">
+                <template v-if="row.primary_member_name">负责人 {{ row.primary_member_name }} · </template>
+                <span v-if="row.projected_exhaustion_date">预计 {{ row.projected_exhaustion_date }} 耗尽</span>
+                <span v-else-if="row.days_until_reset != null">{{ row.days_until_reset }} 天后重置</span>
+              </div>
             </div>
-            <p class="hint">
-              账期 {{ data?.period }} · 已同步 {{ ingestion.submitted_count }} / {{ ingestion.active_count }}
-            </p>
-            <div class="summary-chips">
-              <el-tag type="success" size="small">已同步 {{ ingestion.submitted_count }}</el-tag>
-              <el-tag type="warning" size="small">待同步 {{ ingestion.unsubmitted_count }}</el-tag>
-            </div>
-          </template>
-          <el-empty v-else description="暂无活跃账号" />
-        </el-card>
-      </el-col>
-    </el-row>
+          </el-card>
+        </el-col>
 
-    <el-row :gutter="16" class="mt">
-      <el-col :span="24">
-        <el-card shadow="never" header="运行概览">
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="账期">{{ data?.period ?? '—' }}</el-descriptions-item>
-            <el-descriptions-item label="团队">{{ data?.summary?.team_slug ?? '—' }}</el-descriptions-item>
-            <el-descriptions-item label="工作群">
-              {{ imGroupConfigured ? '已配置' : '未配置' }}
-            </el-descriptions-item>
-            <el-descriptions-item
-              v-if="ingestion?.missing_primary_count"
-              label="待绑定负责人"
-            >
-              {{ ingestion.missing_primary_count }} 个账号
-            </el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-    </el-row>
+        <el-col v-if="activityItems.length" :xs="24" :md="12">
+          <el-card shadow="never" class="block">
+            <template #header>
+              <div class="card-header">
+                <span>最近动态</span>
+                <router-link to="/audit" class="more-link">审计 →</router-link>
+              </div>
+            </template>
+            <div v-for="row in activityItems" :key="row.id" class="activity-item">
+              <div class="activity-title">
+                <span class="activity-operator">{{ row.operator_name }}</span>
+                <span>{{ row.action_label }}</span>
+                <span v-if="row.detail" class="activity-detail">{{ row.detail }}</span>
+              </div>
+              <div class="activity-time">{{ formatChinaTime(row.created_at) }}</div>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <el-empty v-if="!hasAnyContent" description="暂无概览数据：你的账号暂无可查看的数据区块" />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { Refresh, WarningFilled } from '@element-plus/icons-vue'
+import VChart from 'vue-echarts'
+import '@/utils/echarts'
 import client from '@/api/client'
-import { channelMeta } from '@/utils/channel'
+import StatCard from '@/components/StatCard.vue'
+import { formatChinaTime } from '@/utils/time'
+import { formatCompactTokens, formatSpend, formatTokensM } from '@/utils/usage'
 
-interface PendingActions {
-  portal_users: {
-    id: string
-    display_name: string
-    channel_user_id: string
-    channel?: string
-  }[]
-  total_count: number
+interface QuotaRiskItem {
+  account_id: string
+  account_identifier: string
+  primary_member_name?: string | null
+  status: string
+  quota_progress?: number | null
+  projected_exhaustion_date?: string | null
+  days_until_reset?: number | null
+}
+
+interface QuotaSection {
+  exhausted_count: number
+  warning_count: number
+  healthy_count: number
+  unknown_count: number
+  risk_top: QuotaRiskItem[]
+}
+
+interface TrendDay {
+  date: string
+  tokens_total: number
+  cost_usd: number
+}
+
+interface UsageSection {
+  period: string
+  start: string
+  end: string
+  tokens_total: number
+  cost_usd: number
+  event_count: number
+  series_by_day: TrendDay[]
+}
+
+interface LoansSection {
+  active_count: number
+}
+
+interface SyncSection {
+  total_accounts: number
+  submitted_count: number
+  synced: number
+  sync_failed: number
+  sync_stale: number
+  no_credential: number
+  missing_primary: number
+  unsubmitted: number
+}
+
+interface ProxySection {
+  active_key_count: number
+  total_tokens: number
+  total_cost_usd: number
+}
+
+interface IntegrationsSection {
+  bot_platform: string
+  im_group_configured: boolean
+  issues: { key: string; label: string }[]
+}
+
+interface ActivityItem {
+  id: number
+  operator_name: string
+  action_label: string
+  detail?: string | null
+  created_at: string
+}
+
+interface OverviewSections {
+  quota?: QuotaSection | null
+  usage?: UsageSection | null
+  loans?: LoansSection | null
+  sync?: SyncSection | null
+  proxy?: ProxySection | null
+  integrations?: IntegrationsSection | null
+  recent_activity?: { items: ActivityItem[] } | null
+}
+
+interface OverviewData {
+  period: string
+  pending_actions?: { total_count: number } | null
+  sections?: OverviewSections
+}
+
+interface AttentionItem {
+  key: string
+  text: string
+  to: string
+  level: 'danger' | 'warning'
 }
 
 const loading = ref(false)
-const data = ref<any>(null)
+const refreshing = ref(false)
+const loadError = ref(false)
+const data = ref<OverviewData | null>(null)
 
-const pendingActions = computed<PendingActions | null>(() => data.value?.pending_actions ?? null)
+const sections = computed<OverviewSections>(() => data.value?.sections ?? {})
+const quota = computed(() => sections.value.quota ?? null)
+const usage = computed(() => sections.value.usage ?? null)
+const loans = computed(() => sections.value.loans ?? null)
+const sync = computed(() => sections.value.sync ?? null)
+const proxy = computed(() => sections.value.proxy ?? null)
+const integrations = computed(() => sections.value.integrations ?? null)
+const activity = computed(() => sections.value.recent_activity ?? null)
 
-const ingestion = computed(() => data.value?.ingestion ?? data.value?.submission ?? null)
-
-const syncPct = computed(() => {
-  const s = ingestion.value
-  if (!s?.active_count) return 0
-  return Math.round((s.submitted_count / s.active_count) * 100)
-})
-
-const imGroupConfigured = computed(() => {
-  const summary = data.value?.summary
-  if (!summary) return false
-  if (summary.im_group_configured != null) return Boolean(summary.im_group_configured)
-  return Boolean(summary.group_configured)
+const attentionItems = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = []
+  const q = quota.value
+  if (q) {
+    if (q.exhausted_count > 0) {
+      items.push({ key: 'quota-exhausted', text: `${q.exhausted_count} 个账号额度已耗尽`, to: '/quota-board', level: 'danger' })
+    }
+    if (q.warning_count > 0) {
+      items.push({ key: 'quota-warning', text: `${q.warning_count} 个账号额度预警`, to: '/quota-board', level: 'warning' })
+    }
+  }
+  const s = sync.value
+  if (s) {
+    if (s.sync_failed > 0) {
+      items.push({ key: 'sync-failed', text: `${s.sync_failed} 个账号同步失败`, to: '/accounts', level: 'danger' })
+    }
+    if (s.no_credential > 0) {
+      items.push({ key: 'no-credential', text: `${s.no_credential} 个账号未配置凭证`, to: '/accounts', level: 'warning' })
+    }
+    if (s.missing_primary > 0) {
+      items.push({ key: 'missing-primary', text: `${s.missing_primary} 个账号待绑定负责人`, to: '/accounts', level: 'warning' })
+    }
+    if (s.unsubmitted > 0) {
+      items.push({ key: 'unsubmitted', text: `${s.unsubmitted} 个账号本账期待同步`, to: '/accounts', level: 'warning' })
+    }
+  }
+  const pending = data.value?.pending_actions
+  if (pending && pending.total_count > 0) {
+    items.push({ key: 'pending-users', text: `${pending.total_count} 个后台用户待审批`, to: '/users', level: 'warning' })
+  }
+  for (const issue of integrations.value?.issues ?? []) {
+    items.push({ key: `integration-${issue.key}`, text: issue.label, to: '/settings', level: 'warning' })
+  }
+  return items
 })
 
 const statCards = computed(() => {
-  const s = ingestion.value
-  return [
-    { label: '活跃账号', value: formatCount(s?.active_count) },
-    { label: '本账期已同步', value: formatCount(s?.submitted_count) },
-    { label: '同步率', value: s?.active_count != null ? `${syncPct.value}%` : '—' },
-    { label: '待同步', value: formatCount(s?.unsubmitted_count) },
-  ]
+  const cards: { label: string; value: string; sub?: string }[] = []
+  const s = sync.value
+  if (s) {
+    const pct = s.total_accounts ? Math.round((s.submitted_count / s.total_accounts) * 100) : 0
+    cards.push({
+      label: '活跃账号',
+      value: String(s.total_accounts),
+      sub: `已同步 ${s.submitted_count}/${s.total_accounts} · ${pct}%`,
+    })
+  }
+  const u = usage.value
+  if (u) {
+    cards.push({ label: '本账期花费', value: formatSpend(u.cost_usd), sub: `账期 ${u.period}` })
+    cards.push({
+      label: '本账期 Tokens',
+      value: formatTokensM(u.tokens_total),
+      sub: `${u.event_count} 次事件`,
+    })
+  }
+  if (loans.value) {
+    cards.push({ label: '当前借出', value: String(loans.value.active_count), sub: '进行中的 Key 借用' })
+  }
+  const p = proxy.value
+  if (p) {
+    cards.push({
+      label: '活跃代理 Key',
+      value: String(p.active_key_count),
+      sub: `累计 ${formatSpend(p.total_cost_usd)}`,
+    })
+  }
+  const q = quota.value
+  if (q) {
+    cards.push({
+      label: '额度告急',
+      value: String(q.exhausted_count + q.warning_count),
+      sub: `耗尽 ${q.exhausted_count} · 预警 ${q.warning_count}`,
+    })
+  }
+  return cards
 })
 
-function formatCount(value: unknown) {
-  return value == null ? '—' : String(value)
+const trendDays = computed<TrendDay[]>(() => usage.value?.series_by_day ?? [])
+const hasTrend = computed(() => trendDays.value.some((d) => d.tokens_total > 0 || d.cost_usd > 0))
+
+const trendOption = computed(() => ({
+  tooltip: { trigger: 'axis' },
+  legend: { data: ['Tokens', '花费'] },
+  grid: { left: 12, right: 12, top: 32, bottom: 8, containLabel: true },
+  xAxis: { type: 'category', data: trendDays.value.map((d) => d.date.slice(5)) },
+  yAxis: [
+    {
+      type: 'value',
+      name: 'Tokens',
+      axisLabel: { formatter: (v: number) => formatCompactTokens(v) || '0' },
+    },
+    {
+      type: 'value',
+      name: '花费 $',
+      axisLabel: { formatter: (v: number) => `$${v}` },
+    },
+  ],
+  series: [
+    {
+      name: 'Tokens',
+      type: 'bar',
+      data: trendDays.value.map((d) => d.tokens_total),
+      itemStyle: { color: '#3b82f6' },
+    },
+    {
+      name: '花费',
+      type: 'line',
+      yAxisIndex: 1,
+      smooth: true,
+      data: trendDays.value.map((d) => d.cost_usd),
+      itemStyle: { color: '#10b981' },
+    },
+  ],
+}))
+
+const quotaRiskTop = computed<QuotaRiskItem[]>(() => quota.value?.risk_top ?? [])
+const activityItems = computed<ActivityItem[]>(() => activity.value?.items ?? [])
+
+const hasAnyContent = computed(
+  () =>
+    attentionItems.value.length > 0 ||
+    statCards.value.length > 0 ||
+    Boolean(usage.value) ||
+    Boolean(quota.value) ||
+    Boolean(activity.value),
+)
+
+function riskPct(row: QuotaRiskItem) {
+  return Math.min(100, Math.round((row.quota_progress ?? 0) * 100))
 }
 
-async function reloadOverview() {
-  const res = await client.get('/api/dashboard/overview')
-  data.value = res.data
+async function reload() {
+  refreshing.value = true
+  loadError.value = false
+  try {
+    const res = await client.get('/api/dashboard/overview')
+    data.value = res.data
+  } catch {
+    loadError.value = true
+  } finally {
+    refreshing.value = false
+  }
 }
 
 onMounted(async () => {
   loading.value = true
-  try {
-    await reloadOverview()
-  } finally {
-    loading.value = false
-  }
+  await reload()
+  loading.value = false
 })
 </script>
 
 <style scoped>
-.pending-card {
+.block {
   margin-bottom: 16px;
 }
-.pending-header {
+.page-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.card-header {
   display: flex;
   align-items: center;
   gap: 8px;
   font-weight: 600;
 }
-.pending-section + .pending-section {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid #ebeef5;
-}
-.section-title {
+.more-link {
+  margin-left: auto;
   font-size: 13px;
-  font-weight: 600;
-  color: #475569;
-  margin-bottom: 10px;
-}
-.view-all {
-  display: inline-block;
-  margin-top: 10px;
-  font-size: 13px;
+  font-weight: 400;
   color: var(--el-color-primary);
   text-decoration: none;
 }
-.portal-pending-list {
+.attention-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.portal-pending-item {
+.attention-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border-radius: 8px;
-}
-.portal-name {
-  font-weight: 500;
-}
-.portal-meta {
-  font-size: 12px;
-  color: #64748b;
-  margin-top: 2px;
-}
-.stats-with-pending {
-  margin-top: 0;
-}
-.stat-label {
-  color: #64748b;
+  gap: 8px;
   font-size: 13px;
 }
-.stat-value {
-  font-size: 28px;
-  font-weight: 600;
-  margin-top: 8px;
+.attention-text {
+  color: #334155;
 }
-.mt {
-  margin-top: 16px;
+.attention-link {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  white-space: nowrap;
 }
-.hint {
-  margin: 10px 0 6px;
+.trend-chart {
+  height: 280px;
+}
+.risk-item + .risk-item {
+  margin-top: 14px;
+}
+.risk-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.risk-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.risk-meta {
   font-size: 12px;
   color: #64748b;
+  margin-top: 4px;
 }
-.summary-chips {
+.activity-item {
   display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.activity-item:last-child {
+  border-bottom: none;
+}
+.activity-title {
+  font-size: 13px;
+  color: #334155;
+  display: flex;
+  gap: 6px;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
 }
-.sync-progress-track {
-  position: relative;
-  height: 16px;
-  background: #e5e9f2;
-  border-radius: 8px;
-  overflow: hidden;
-}
-.sync-progress-fill {
-  height: 100%;
-  background: var(--el-color-primary);
-  border-radius: 8px;
-  transition: width 0.3s ease;
-}
-.sync-progress-label {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
+.activity-operator {
   font-weight: 600;
-  line-height: 1;
-  color: #fff;
-  text-shadow: 0 0 2px rgba(15, 23, 42, 0.45);
-  pointer-events: none;
+}
+.activity-detail {
+  color: #64748b;
+}
+.activity-time {
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.load-error {
+  margin-bottom: 16px;
+}
+.retry-btn {
+  margin-left: 8px;
 }
 </style>

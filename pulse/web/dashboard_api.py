@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
@@ -9,6 +14,8 @@ from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.permissions import has_permission
 from pulse.web.portal import list_pending_portal_users
 from pulse.web.settings_store import effective_config_dict, settings_for_api
+
+logger = logging.getLogger(__name__)
 
 
 def _format_interval_minutes(minutes: int) -> str:
@@ -170,6 +177,175 @@ def build_pending_actions(session: Session, team_id: str, actor: Member) -> dict
     }
 
 
+def _safe_section(section_name: str, fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        logger.exception("dashboard section %s build failed", section_name)
+        return None
+
+
+def _quota_section(session: Session, team_id: str) -> dict:
+    from pulse.web.quota_api import build_quota_board_items
+
+    items = build_quota_board_items(session, team_id)
+    key_by_status = {
+        "exhausted": "exhausted_count",
+        "warning": "warning_count",
+        "healthy": "healthy_count",
+        "unknown": "unknown_count",
+    }
+    counts = {
+        "exhausted_count": 0,
+        "warning_count": 0,
+        "healthy_count": 0,
+        "unknown_count": 0,
+    }
+    for item in items:
+        counts[key_by_status.get(item["status"], "unknown_count")] += 1
+    risk_top = [
+        {
+            "account_id": item["account_id"],
+            "account_identifier": item["account_identifier"],
+            "primary_member_name": item.get("primary_member_name"),
+            "status": item["status"],
+            "quota_progress": item.get("quota_progress"),
+            "projected_exhaustion_date": item.get("projected_exhaustion_date"),
+            "days_until_reset": item.get("days_until_reset"),
+        }
+        for item in items
+        if item["status"] in ("exhausted", "warning")
+    ][:5]
+    return {**counts, "risk_top": risk_top}
+
+
+def _usage_section(
+    config: AppConfig,
+    session: Session,
+    team_id: str,
+    period: str,
+    timezone_name: str,
+) -> dict:
+    from pulse.tool_center.ingestion_status import period_date_range
+    from pulse.tool_center.usage_analytics import build_usage_analytics_overview
+
+    period_start, period_end = period_date_range(period)
+    # period 按团队时区计算，end 也必须取团队时区的当天，
+    # 否则月初边界（团队已进入新月、服务器仍在上月末）会使 end < period_start 触发降级
+    end = min(datetime.now(ZoneInfo(timezone_name)).date(), period_end)
+    overview = build_usage_analytics_overview(
+        session,
+        team_id,
+        start=period_start,
+        end=end,
+        timezone=timezone_name,
+        top_n=5,
+    )
+    kpi = overview["kpi"]
+    return {
+        "period": period,
+        "start": overview["start"],
+        "end": overview["end"],
+        "tokens_total": kpi["tokens_total"],
+        "cost_usd": kpi["cost_usd"],
+        "event_count": kpi["event_count"],
+        "series_by_day": overview["series_by_day"][-14:],
+    }
+
+
+def _loans_section(session: Session, team_id: str) -> dict:
+    from pulse.web.quota_api import count_active_loans
+
+    return {"active_count": count_active_loans(session, team_id)}
+
+
+def _sync_section(session: Session, team_id: str, period: str, actor: Member) -> dict:
+    # 复用全量 ingestion payload 只取 summary：内部逐账号构建状态行（每账号有查询），
+    # 明细全部丢弃。当前账号规模可接受；若成为瓶颈，应给 ingestion_status 加 summary-only 轻量入口。
+    from pulse.tool_center.ingestion_status import build_ingestion_status_payload
+
+    payload = build_ingestion_status_payload(session, team_id, period, actor)
+    s = payload["summary"]
+    return {
+        "total_accounts": s["total_accounts"],
+        "submitted_count": s["submitted_count"],
+        "synced": s.get("synced", 0),
+        "sync_failed": s.get("sync_failed", 0),
+        "sync_stale": s.get("sync_stale", 0),
+        "no_credential": s.get("no_credential", 0),
+        "missing_primary": s.get("missing_primary", 0),
+        "unsubmitted": s.get("unsubmitted", 0),
+    }
+
+
+def _proxy_section(session: Session) -> dict:
+    from pulse.proxy import service as proxy_service
+    from pulse.storage.models import ProxyKey
+
+    keys = session.scalars(select(ProxyKey).where(ProxyKey.status == "active")).all()
+    total_tokens = 0
+    total_cents = 0
+    for key in keys:
+        tokens, cents = proxy_service.total_usage(session, key.id)
+        total_tokens += tokens
+        total_cents += cents
+    return {
+        "active_key_count": len(keys),
+        "total_tokens": total_tokens,
+        "total_cost_usd": round(total_cents / 100.0, 2),
+    }
+
+
+def _integrations_section(config: AppConfig, session: Session, team_id: str) -> dict:
+    full = build_integrations_status(config, session, team_id)
+    issues = []
+    if not full["im_group_configured"]:
+        issues.append({"key": "im_group", "label": "IM 工作群未配置"})
+    return {
+        "bot_platform": full["bot_platform"],
+        "im_group_configured": full["im_group_configured"],
+        "issues": issues,
+    }
+
+
+def _activity_section(session: Session, team_id: str) -> dict:
+    from pulse.web.audit import list_admin_audit_logs
+
+    return {"items": list_admin_audit_logs(session, team_id, limit=10)}
+
+
+def build_dashboard_sections(
+    config: AppConfig,
+    session: Session,
+    team_id: str,
+    *,
+    period: str,
+    timezone_name: str,
+    actor: Member,
+) -> dict:
+    sections: dict[str, dict | None] = {}
+    if has_permission(actor, "accounts:read"):
+        sections["quota"] = _safe_section("quota", _quota_section, session, team_id)
+        sections["usage"] = _safe_section(
+            "usage", _usage_section, config, session, team_id, period, timezone_name
+        )
+        sections["loans"] = _safe_section("loans", _loans_section, session, team_id)
+        sections["sync"] = _safe_section(
+            "sync", _sync_section, session, team_id, period, actor
+        )
+    if has_permission(actor, "proxy:read"):
+        sections["proxy"] = _safe_section("proxy", _proxy_section, session)
+    if has_permission(actor, "settings:read"):
+        sections["integrations"] = _safe_section(
+            "integrations", _integrations_section, config, session, team_id
+        )
+    if has_permission(actor, "audit:read"):
+        sections["recent_activity"] = _safe_section(
+            "recent_activity", _activity_section, session, team_id
+        )
+    return sections
+
+
 def build_dashboard_overview(
     config: AppConfig,
     session: Session,
@@ -182,60 +358,77 @@ def build_dashboard_overview(
     effective_raw = effective_config_dict(config, session, team_id)
     period = _period_for_effective(config, effective_raw)
 
-    tool_repo = ToolCenterRepository(session, team_id)
-    active_accounts = tool_repo.list_active_accounts()
-    submitted_account_ids = tool_repo.get_submitted_account_ids(period)
-    missing_primary = tool_repo.accounts_missing_primary()
-
-    submitted_count = len(submitted_account_ids)
-    active_count = len(active_accounts)
-    unsubmitted_count = max(0, active_count - submitted_count)
-
-    sync_stats = {
-        "synced": submitted_count,
-        "pending": 0,
-        "missing": unsubmitted_count,
-    }
-
-    from pulse.web.channel_status import resolve_im_group_status
-
-    merged_for_im = {
-        "bot": {"name": (effective.get("bot") or {}).get("name") or config.bot.name},
-        "dingtalk": {
-            "group_open_conversation_id": (effective.get("dingtalk") or {}).get(
-                "group_open_conversation_id"
-            )
-            or config.dingtalk.group_open_conversation_id,
-        },
-        "feishu": {
-            "group_chat_id": (effective.get("feishu") or {}).get("group_chat_id")
-            or config.feishu.group_chat_id,
-        },
-    }
-    im_status = resolve_im_group_status(merged_for_im)
-
-    return {
+    payload: dict = {
         "period": period,
-        "summary": {
+        "pending_actions": build_pending_actions(session, team_id, actor) if actor else None,
+        "sections": (
+            build_dashboard_sections(
+                config,
+                session,
+                team_id,
+                period=period,
+                timezone_name=effective["collection"]["timezone"],
+                actor=actor,
+            )
+            if actor
+            else {}
+        ),
+    }
+
+    # 旧版顶层字段按数据本身的权限门裁剪，与 sections 保持一致：
+    # summary 属 settings:read，账号同步计数属 accounts:read。
+    if actor and has_permission(actor, "settings:read"):
+        from pulse.web.channel_status import resolve_im_group_status
+
+        merged_for_im = {
+            "bot": {"name": (effective.get("bot") or {}).get("name") or config.bot.name},
+            "dingtalk": {
+                "group_open_conversation_id": (effective.get("dingtalk") or {}).get(
+                    "group_open_conversation_id"
+                )
+                or config.dingtalk.group_open_conversation_id,
+            },
+            "feishu": {
+                "group_chat_id": (effective.get("feishu") or {}).get("group_chat_id")
+                or config.feishu.group_chat_id,
+            },
+        }
+        im_status = resolve_im_group_status(merged_for_im)
+        payload["summary"] = {
             "current_period": period,
             "team_slug": config.tenant.slug,
             "timezone": effective["collection"]["timezone"],
             "bot_platform": im_status["bot_platform"],
             "im_group_configured": im_status["im_group_configured"],
             "group_configured": im_status["im_group_configured"],
-        },
-        "ingestion": {
+        }
+
+    if actor and has_permission(actor, "accounts:read"):
+        tool_repo = ToolCenterRepository(session, team_id)
+        active_accounts = tool_repo.list_active_accounts()
+        submitted_account_ids = tool_repo.get_submitted_account_ids(period)
+        missing_primary = tool_repo.accounts_missing_primary()
+
+        submitted_count = len(submitted_account_ids)
+        active_count = len(active_accounts)
+        unsubmitted_count = max(0, active_count - submitted_count)
+
+        payload["ingestion"] = {
             "active_count": active_count,
             "submitted_count": submitted_count,
             "unsubmitted_count": unsubmitted_count,
             "pending_review_count": 0,
             "missing_primary_count": len(missing_primary),
-        },
-        "submission": {
+        }
+        payload["submission"] = {
             "active_count": active_count,
             "submitted_count": submitted_count,
             "unsubmitted_count": unsubmitted_count,
-        },
-        "sync_stats": sync_stats,
-        "pending_actions": build_pending_actions(session, team_id, actor) if actor else None,
-    }
+        }
+        payload["sync_stats"] = {
+            "synced": submitted_count,
+            "pending": 0,
+            "missing": unsubmitted_count,
+        }
+
+    return payload

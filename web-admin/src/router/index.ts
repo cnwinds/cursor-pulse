@@ -30,7 +30,7 @@ const router = createRouter({
           path: '',
           name: 'dashboard',
           component: () => import('@/views/DashboardView.vue'),
-          meta: { permission: 'settings:read', title: '概览' },
+          meta: { title: '概览' },
         },
         {
           path: 'accounts',
