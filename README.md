@@ -1,8 +1,65 @@
 # Cursor Pulse
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](docker/)
+[![GitHub release](https://img.shields.io/github/v/release/cnwinds/cursor-pulse)](https://github.com/cnwinds/cursor-pulse/releases)
+[![GitHub stars](https://img.shields.io/github/stars/cnwinds/cursor-pulse?style=social&label=Star)](https://github.com/cnwinds/cursor-pulse/stargazers)
+
 自托管的 **Cursor 用量计量与额度控制面**：账号台账、API Key 同步、借 Key、额度看板与可选 MITM Proxy。核心能力只需 Web + 数据库；**钉钉 / 飞书等 IM 为可选插件**（不承载用量采集）。
 
-> **许可证：** [MIT](LICENSE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)
+> **许可证：** [MIT](LICENSE) · **安全：** [SECURITY.md](SECURITY.md) · **贡献：** [CONTRIBUTING.md](CONTRIBUTING.md) · **English：** [README_EN.md](README_EN.md)
+
+## 快速预览
+
+登录 → 建台账绑 Key → 看板出数据 → 借 Key（约 20 秒，界面为产品示意，以你部署的实例为准）：
+
+<p align="center">
+  <img src="docs/assets/readme/demo.gif" alt="Cursor Pulse 演示：登录、台账、看板、借 Key" width="960" />
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="docs/assets/readme/quota-board.png">
+        <img src="docs/assets/readme/quota-board.png" alt="额度看板" width="100%" />
+      </a><br />
+      <sub><b>额度看板</b> — 与 Cursor Plan &amp; Usage 对齐</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="docs/assets/readme/accounts-bind-key.png">
+        <img src="docs/assets/readme/accounts-bind-key.png" alt="账号台账与 Key 绑定" width="100%" />
+      </a><br />
+      <sub><b>账号台账</b> — 绑定 Cursor User API Key</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="docs/assets/readme/key-loan.png">
+        <img src="docs/assets/readme/key-loan.png" alt="借 Key" width="100%" />
+      </a><br />
+      <sub><b>借 Key</b> — 成员自助或管理员代分配</sub>
+    </td>
+  </tr>
+</table>
+
+## 它适合谁 / 不适合谁
+
+### 适合
+
+- **小团队 / 工作室** 有多把 Cursor 账号，需要统一看额度、谁在用、还剩多少
+- **愿意自托管** 的团队：数据落在自己的服务器 / Docker，而不是第三方 SaaS
+- **有借 Key 需求**：临时把账号额度借给同事或外包，到期自动回收
+- **可选代理场景**：需要 MITM Proxy 做透明轮换与用量归因（接受 CA 与合规风险）
+- **已有运维习惯**：会配 `.env`、备份 SQLite/Postgres、按需接钉钉 / 飞书
+
+### 不适合
+
+- **只想个人用 Cursor、单账号** — 直接用 Cursor 官方后台即可，不必上控制面
+- **不愿维护服务器** — 需要 Docker 或 Python 进程长期运行与同步任务
+- **强合规禁止 MITM** 的环境 — Proxy 需终端信任自签 CA，请先看 [proxy/README.md](proxy/README.md)
+- **依赖 Cursor 未公开 API 做关键业务** — 同步接口可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
+- **需要完整 Cursor 账号生命周期替代** — 本产品是计量与借还，不是 Cursor 账号批发商
+
+诚实讲清边界，比过度承诺更能减少踩坑。
 
 ## 组成
 
@@ -31,7 +88,7 @@
 需要：Docker + Compose plugin、一台 Linux 主机（或本机 Docker）。
 
 ```bash
-git clone <repo-url> cursor-pulse
+git clone https://github.com/cnwinds/cursor-pulse.git
 cd cursor-pulse/docker
 chmod +x scripts/*.sh
 ./scripts/setup.sh          # 生成 .env / config.yaml，并写入随机密钥与 ADMIN_PASSWORD
@@ -131,6 +188,7 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<与 ADMIN_
 
 | 文档 | 内容 |
 |------|------|
+| [README_EN.md](README_EN.md) | English README |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | 运维：Docker 细节、备份、IM、升级、故障 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程与 API 面 |
 | [docs/bot-commands.md](docs/bot-commands.md) | 可选 IM 机器人命令 |
@@ -143,3 +201,15 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<与 ADMIN_
 ## 风险说明
 
 代理与 Cursor 非官方 API 均有合规与失效风险；生产使用前请自行评估。详见 [SECURITY.md](SECURITY.md) 与 [proxy/README.md](proxy/README.md)。
+
+---
+
+## Star History
+
+<a href="https://star-history.com/#cnwinds/cursor-pulse&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cnwinds/cursor-pulse&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=cnwinds/cursor-pulse&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=cnwinds/cursor-pulse&type=Date" width="600" />
+  </picture>
+</a>
