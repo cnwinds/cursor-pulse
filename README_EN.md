@@ -181,6 +181,8 @@ After the stack is up, bind one Cursor key and confirm data appears.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Processes and API surfaces |
 | [docs/bot-commands.md](docs/bot-commands.md) | Optional IM bot commands |
 | [docs/PROXY_LAYERS.md](docs/PROXY_LAYERS.md) | Three different “proxy” concepts |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [ROADMAP.md](ROADMAP.md) | Public roadmap |
 | [docs/cursor-usage-api.md](docs/cursor-usage-api.md) | Unofficial Cursor API notes |
 | [proxy/README.md](proxy/README.md) | MITM proxy (CA / compliance) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing and test gates |

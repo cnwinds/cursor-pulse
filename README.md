@@ -193,6 +193,8 @@ pulse admin bootstrap --user-id admin --name "管理员" --password '<与 ADMIN_
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程与 API 面 |
 | [docs/bot-commands.md](docs/bot-commands.md) | 可选 IM 机器人命令 |
 | [docs/PROXY_LAYERS.md](docs/PROXY_LAYERS.md) | 三类「代理」勿混淆 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |
+| [ROADMAP.md](ROADMAP.md) | 公开路线图 |
 | [docs/cursor-usage-api.md](docs/cursor-usage-api.md) | Cursor 非官方 API 笔记（可能失效） |
 | [proxy/README.md](proxy/README.md) | MITM 代理（CA / 合规风险） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献与测试门禁 |
