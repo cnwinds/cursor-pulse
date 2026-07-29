@@ -4,9 +4,26 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-29
+
 ### 新增
 
-- **概览页重设计**：聚合「需要关注」异常待办（额度告急 / 同步异常 / 待审批 / 集成未配置）、核心 KPI、近 14 天用量趋势、额度风险 Top 5 与最近动态；`/api/dashboard/overview` 扩展为按登录用户权限裁剪的聚合接口，概览页对所有登录用户开放
+- **管理后台概览重设计**：聚合「需要关注」待办、核心 KPI、近 14 天用量趋势、额度风险 Top 5 与最近动态；按登录用户权限裁剪
+- **MITM Proxy 限额流检测**：识别 gzip 压缩的 Connect end-stream 与 `InteractionUpdate.post_request_prompt` 限额信号；新增 `PROXY_DEBUG_STREAM` 响应帧诊断
+- **品牌与文档**：英文为主 README（`README_CN.md` 保留中文版）、内嵌演示视频、SVG Logo、社交预览图、`NOTICE` 免责声明
+
+### 变更
+
+- **Proxy 限额轮换策略**：限额/配额错误原样返回 CLI，代理侧标记账号 exhausted 并 advance pool；用户重发消息即走下一账号（移除同请求内透明重试，避免 CLI reconnecting/无输出）
+
+### 修复
+
+- Proxy `go test` CI：model-tap 测试内联 fixture，session/TTL 测试与 quota 轮换解耦
+- 管理后台深色模式下 Logo 可读性（`prefers-color-scheme`）
+
+### 杂项
+
+- 停止跟踪内部 `docs/superpowers/`；移除冗余 GitLab CI
 
 ## [0.1.0] - 2026-07-28
 
@@ -38,5 +55,6 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cnwinds/cursor-pulse/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 [project]
 name = "cursor-pulse"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-hosted Cursor usage metering and quota control plane (IM channels optional)"
 readme = "README.md"
 license = { text = "MIT" }
