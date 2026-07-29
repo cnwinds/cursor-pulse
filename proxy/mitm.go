@@ -25,8 +25,8 @@ var hopHeaders = map[string]bool{
 
 // handleMITM processes a single decrypted request destined for a Cursor
 // backend: it rewrites the Authorization header with the pool's current
-// token, watches the response for quota/auth failures, and transparently
-// replays the request with the next key when the current account is done.
+// token, watches the response for quota/auth failures, marks exhausted keys,
+// and advances the pool so the next client request uses a fresh account.
 func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority string) {
 	defer req.Body.Close()
 
@@ -106,18 +106,14 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	}
 
 	loanBound := binding.Mode == "loan_passthrough" || binding.Mode == "loan_alias"
-	maxAttempts := s.pool.size()
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
+	transportAttempts := 3
 	if loanBound {
-		maxAttempts = 1
+		transportAttempts = 1
 	}
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		last := attempt == maxAttempts-1
-
-		var entry *keyEntry
+	var entry *keyEntry
+	var resp *http.Response
+	for attempt := 0; attempt < transportAttempts; attempt++ {
 		var token string
 		var err error
 		if loanBound {
@@ -156,146 +152,121 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			outReq.Header.Set("Authorization", "Bearer "+token)
 		}
 
-		resp, err := s.transport.RoundTrip(outReq)
+		resp, err = s.transport.RoundTrip(outReq)
 		if err != nil {
-			log.Printf("[mitm] %s %s attempt %d (key %s): transport error: %v",
+			log.Printf("[mitm] %s %s transport attempt %d (key %s): %v",
 				req.Method, req.URL.Path, attempt+1, entry.masked(), err)
-			if last {
+			if attempt == transportAttempts-1 {
 				http.Error(w, "cursor-quota-proxy: upstream unreachable: "+err.Error(), http.StatusBadGateway)
 				return
 			}
-			continue // same key retried on next attempt (not marked bad)
+			continue
 		}
+		break
+	}
+	if resp == nil {
+		http.Error(w, "cursor-quota-proxy: upstream unreachable", http.StatusBadGateway)
+		return
+	}
 
-		// --- non-200: whole-body classification ---
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-			resp.Body.Close()
-			kind := classifyHTTPError(resp.StatusCode, body)
-			if shouldRotateOnFailure(req.URL.Path, kind) && !last {
-				if loanBound {
-					s.reportPassthroughFailure(entry, kind, binding)
-				} else {
-					s.mark(entry, kind, binding)
-				}
-				log.Printf("[mitm] %s %s attempt %d (key %s): HTTP %d classified %s - rotating",
-					req.Method, req.URL.Path, attempt+1, entry.masked(), resp.StatusCode, kind)
-				continue
-			}
-			if loanBound && shouldRotateOnFailure(req.URL.Path, kind) && kind == failAuth {
+	// --- non-200: whole-body classification ---
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		kind := classifyHTTPError(resp.StatusCode, body)
+		if shouldMarkOnFailure(req.URL.Path, kind) {
+			if loanBound {
 				s.reportPassthroughFailure(entry, kind, binding)
+			} else {
+				s.mark(entry, kind, binding)
 			}
-			if kind == failAuth && isNonFatalAuthPath(req.URL.Path) {
-				log.Printf("[mitm] %s %s attempt %d (key %s): HTTP %d auth ignored (non-fatal path)",
-					req.Method, req.URL.Path, attempt+1, entry.masked(), resp.StatusCode)
-			}
-			copyHeaders(w.Header(), resp.Header)
-			w.WriteHeader(resp.StatusCode)
-			w.Write(body)
-			return
+			log.Printf("[mitm] %s %s (key %s): HTTP %d classified %s - pool advanced for next request",
+				req.Method, req.URL.Path, entry.masked(), resp.StatusCode, kind)
 		}
+		if kind == failAuth && isNonFatalAuthPath(req.URL.Path) {
+			log.Printf("[mitm] %s %s (key %s): HTTP %d auth ignored (non-fatal path)",
+				req.Method, req.URL.Path, entry.masked(), resp.StatusCode)
+		}
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+		return
+	}
 
-		// --- 200 with Connect streaming body: inspect first envelope ---
-		respCT := resp.Header.Get("Content-Type")
-		if strings.HasPrefix(respCT, "application/connect") {
-			flags, payload, err := readEnvelope(resp.Body)
-			if err != nil {
-				// Stream died before any envelope: retry if we can.
-				resp.Body.Close()
-				log.Printf("[mitm] %s %s attempt %d (key %s): stream ended before first envelope: %v",
-					req.Method, req.URL.Path, attempt+1, entry.masked(), err)
-				if last {
-					copyHeaders(w.Header(), resp.Header)
-					w.WriteHeader(http.StatusOK)
-					return
-				}
-				continue
-			}
-			if flags&endStreamFlag != 0 {
-				kind := classifyEndStream(payload)
-				resp.Body.Close()
-				if shouldRotateOnFailure(req.URL.Path, kind) && !last {
-					if loanBound {
-						s.reportPassthroughFailure(entry, kind, binding)
-					} else {
-						s.mark(entry, kind, binding)
-					}
-					log.Printf("[mitm] %s %s attempt %d (key %s): end-stream error classified %s - rotating",
-						req.Method, req.URL.Path, attempt+1, entry.masked(), kind)
-					continue
-				}
-				if loanBound && shouldRotateOnFailure(req.URL.Path, kind) && kind == failAuth {
-					s.reportPassthroughFailure(entry, kind, binding)
-				}
-				if kind == failAuth && isNonFatalAuthPath(req.URL.Path) {
-					log.Printf("[mitm] %s %s attempt %d (key %s): end-stream auth ignored (non-fatal path)",
-						req.Method, req.URL.Path, attempt+1, entry.masked())
-				}
-				// Terminal response (clean end or non-rotatable error): forward whole.
-				copyHeaders(w.Header(), resp.Header)
-				w.WriteHeader(http.StatusOK)
-				writeEnvelope(w, flags, payload)
-				return
-			}
-			// First envelope is data - the run is live. Flush and switch to
-			// full passthrough; mid-stream failures fall through to the CLI.
+	// --- 200 with Connect streaming body ---
+	respCT := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(respCT, "application/connect") {
+		flags, payload, err := readEnvelope(resp.Body)
+		if err != nil {
+			resp.Body.Close()
+			log.Printf("[mitm] %s %s (key %s): stream ended before first envelope: %v",
+				req.Method, req.URL.Path, entry.masked(), err)
 			copyHeaders(w.Header(), resp.Header)
 			w.WriteHeader(http.StatusOK)
-			onTok := func(tc TokenCounts) {
-				if s.pulse == nil {
+			return
+		}
+		onTok := func(tc TokenCounts) {
+			if s.pulse == nil {
+				return
+			}
+			var body []byte
+			if reqBodySnap != nil {
+				body = reqBodySnap()
+			}
+			if loanBound {
+				if binding.LoanID == "" {
 					return
 				}
-				var body []byte
-				if reqBodySnap != nil {
-					body = reqBodySnap()
-				}
-				if loanBound {
-					if binding.LoanID == "" {
-						return
-					}
-					model := logUsageModelTap(req.URL.Path, "", binding.CredentialID, tc, body)
-					s.pulse.EnqueueUsage(UsageItem{
-						LoanID:       binding.LoanID,
-						CredentialID: binding.CredentialID,
-						Model:        model,
-						Tokens:       tc,
-					})
-					return
-				}
-				if binding.ProxyKeyID == "" {
-					return
-				}
-				model := logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body)
+				model := logUsageModelTap(req.URL.Path, "", binding.CredentialID, tc, body)
 				s.pulse.EnqueueUsage(UsageItem{
-					ProxyKeyID:   binding.ProxyKeyID,
-					CredentialID: entry.credentialID,
+					LoanID:       binding.LoanID,
+					CredentialID: binding.CredentialID,
 					Model:        model,
 					Tokens:       tc,
 				})
-			}
-			// First data envelope is written outside the tap; scan it too.
-			if tok := findTurnEnded(payload); tok != nil {
-				onTok(*tok)
-			}
-			if err := writeEnvelope(w, flags, payload); err != nil {
-				resp.Body.Close()
 				return
 			}
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+			if binding.ProxyKeyID == "" {
+				return
 			}
-			io.Copy(&usageTapWriter{w: flushWriter{w: w}, onTokens: onTok}, resp.Body)
-			resp.Body.Close()
-			return
+			model := logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body)
+			s.pulse.EnqueueUsage(UsageItem{
+				ProxyKeyID:   binding.ProxyKeyID,
+				CredentialID: entry.credentialID,
+				Model:        model,
+				Tokens:       tc,
+			})
 		}
-
-		// --- 200 unary: plain passthrough ---
+		onFailure := func(kind failKind) {
+			if loanBound {
+				s.reportPassthroughFailure(entry, kind, binding)
+			} else {
+				s.mark(entry, kind, binding)
+			}
+			log.Printf("[mitm] %s %s (key %s): stream classified %s - pool advanced for next request",
+				req.Method, req.URL.Path, entry.masked(), kind)
+		}
+		proxyKeyID := binding.ProxyKeyID
+		credID := entry.credentialID
+		if loanBound {
+			proxyKeyID = ""
+			credID = binding.CredentialID
+		}
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(http.StatusOK)
-		io.Copy(w, resp.Body)
+		if err := passthroughConnectStream(w, resp.Body, flags, payload, onTok, onFailure, req.URL.Path, proxyKeyID, credID); err != nil {
+			log.Printf("[mitm] %s %s (key %s): stream relay error: %v",
+				req.Method, req.URL.Path, entry.masked(), err)
+		}
 		resp.Body.Close()
 		return
 	}
+
+	// --- 200 unary: plain passthrough ---
+	copyHeaders(w.Header(), resp.Header)
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp.Body)
+	resp.Body.Close()
 }
 
 func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
@@ -474,18 +445,4 @@ func copyHeaders(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
-}
-
-// flushWriter flushes after every write so streaming frames reach the CLI
-// with minimal latency.
-type flushWriter struct {
-	w io.Writer
-}
-
-func (fw flushWriter) Write(p []byte) (int, error) {
-	n, err := fw.w.Write(p)
-	if f, ok := fw.w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return n, err
 }

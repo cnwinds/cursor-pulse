@@ -36,7 +36,7 @@ func TestSessionBindSetsBoundAt(t *testing.T) {
 }
 
 func TestSessionWithinTTLSkipsReauthorize(t *testing.T) {
-	fu := newFakeUpstream(t)
+	fu := newFakeUpstreamSession(t)
 	var authCalls atomic.Int32
 	pulse := newCountingFakePulse(t, &authCalls, map[string]string{"pk_ok": "ok"})
 	proxyAddr, caPEM, sessions := newPulseTestProxyWithTTL(t, fu, pulse.URL, 2*time.Minute)
@@ -86,7 +86,7 @@ func TestSessionWithinTTLSkipsReauthorize(t *testing.T) {
 }
 
 func TestSessionReauthAfterTTLSuspended(t *testing.T) {
-	fu := newFakeUpstream(t)
+	fu := newFakeUpstreamSession(t)
 	var authCalls atomic.Int32
 	pulse := newCountingFakePulse(t, &authCalls, map[string]string{"pk_ok": "suspended"})
 	proxyAddr, caPEM, sessions := newPulseTestProxyWithTTL(t, fu, pulse.URL, 50*time.Millisecond)
@@ -123,7 +123,7 @@ func TestSessionReauthAfterTTLSuspended(t *testing.T) {
 }
 
 func TestSessionReauthAfterTTLOkRefreshesBoundAt(t *testing.T) {
-	fu := newFakeUpstream(t)
+	fu := newFakeUpstreamSession(t)
 	var authCalls atomic.Int32
 	pulse := newCountingFakePulse(t, &authCalls, map[string]string{"pk_ok": "ok"})
 	proxyAddr, caPEM, sessions := newPulseTestProxyWithTTL(t, fu, pulse.URL, 50*time.Millisecond)

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -9,7 +11,10 @@ import (
 )
 
 // Connect streaming envelope: 1 byte flags + 4 byte big-endian length.
-const endStreamFlag = 0x02
+const (
+	endStreamFlag = 0x02
+	compressFlag  = 0x01
+)
 
 func readEnvelope(r io.Reader) (flags byte, payload []byte, err error) {
 	var hdr [5]byte
@@ -35,6 +40,25 @@ func writeEnvelope(w io.Writer, flags byte, payload []byte) error {
 	return err
 }
 
+// connectPayloadForInspect returns the logical payload bytes for quota/auth
+// classification. Connect may gzip-compress frames (flag 0x01); callers still
+// forward the original on-wire bytes to the client.
+func connectPayloadForInspect(flags byte, payload []byte) []byte {
+	if flags&compressFlag == 0 || len(payload) == 0 {
+		return payload
+	}
+	r, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return payload
+	}
+	defer r.Close()
+	out, err := io.ReadAll(io.LimitReader(r, 8<<20))
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
 type connectErrorJSON struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -52,8 +76,8 @@ type failKind int
 
 const (
 	failNone    failKind = iota // not an account problem — forward as-is
-	failAccount                 // quota / rate-limit / blocked — rotate key and replay
-	failAuth                    // token rejected — rotate key and replay
+	failAccount                 // quota / rate-limit / blocked — mark key, advance pool
+	failAuth                    // token rejected — mark key bad, advance pool
 )
 
 func (k failKind) String() string {
@@ -73,9 +97,9 @@ func isNonFatalAuthPath(path string) bool {
 	return strings.Contains(path, "FastRepo") || strings.Contains(path, "RepositoryService")
 }
 
-// shouldRotateOnFailure decides whether a classified upstream failure should
-// mark/rotate the current pool credential.
-func shouldRotateOnFailure(path string, kind failKind) bool {
+// shouldMarkOnFailure decides whether a classified upstream failure should
+// mark the current pool credential and advance to the next key.
+func shouldMarkOnFailure(path string, kind failKind) bool {
 	if kind == failNone {
 		return false
 	}

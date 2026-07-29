@@ -91,6 +91,39 @@ func newFakeUpstream(t *testing.T) *fakeUpstream {
 	return fu
 }
 
+// newFakeUpstreamSession is like newFakeUpstream but unary endpoints always
+// succeed so session/TTL tests are not coupled to quota rotation behavior.
+func newFakeUpstreamSession(t *testing.T) *fakeUpstream {
+	t.Helper()
+	fu := &fakeUpstream{}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key != "keyA" && key != "keyB" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  "tok" + key[len(key)-1:],
+			"refreshToken": "r",
+		})
+	})
+
+	mux.HandleFunc("/aiserver.v1.TestService/Unary", func(w http.ResponseWriter, r *http.Request) {
+		fu.unaryCalls.Add(1)
+		w.Header().Set("Content-Type", "application/proto")
+		w.Write([]byte{0x01, 0x02, 0x03})
+	})
+
+	srv := httptest.NewUnstartedServer(mux)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	fu.Server = srv
+	t.Cleanup(srv.Close)
+	return fu
+}
+
 // newTestProxy starts the proxy against the fake upstream and returns its
 // address plus the PEM of its CA for the test client to trust.
 func newTestProxy(t *testing.T, fu *fakeUpstream) (addr string, caPEM []byte) {
@@ -166,31 +199,151 @@ func TestEndToEndRotationStreaming(t *testing.T) {
 	client := connectClient(t, proxyAddr, caPEM)
 
 	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
-	body := []byte{0x00, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB} // one data envelope
-	resp, err := client.Post(
-		"https://"+upstreamAddr+"/agent.v1.AgentService/Run",
-		"application/connect+proto",
-		bytes.NewReader(body),
-	)
+	body := []byte{0x00, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB}
+	url := "https://" + upstreamAddr + "/agent.v1.AgentService/Run"
+
+	resp1, err := client.Post(url, "application/connect+proto", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", resp.StatusCode)
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp1.StatusCode)
 	}
-	// First envelope must be the success data frame (0xdeadbeef), proving the
-	// quota error from key A was swallowed and the request replayed with key B.
-	flags, payload, err := readEnvelope(resp.Body)
+	flags, _, err := readEnvelope(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&endStreamFlag == 0 {
+		t.Fatalf("first request should return quota end-stream, flags=%d", flags)
+	}
+	if got := fu.runCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 upstream Run call on quota request, got %d", got)
+	}
+
+	resp2, err := client.Post(url, "application/connect+proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp2.StatusCode)
+	}
+	flags, payload, err := readEnvelope(resp2.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if flags != 0x00 || !bytes.Equal(payload, []byte{0xde, 0xad, 0xbe, 0xef}) {
-		t.Fatalf("unexpected first envelope flags=%d payload=%x", flags, payload)
+		t.Fatalf("unexpected second response flags=%d payload=%x", flags, payload)
 	}
 	if got := fu.runCalls.Load(); got != 2 {
-		t.Fatalf("expected 2 upstream Run calls (A then B), got %d", got)
+		t.Fatalf("expected 2 upstream Run calls (A quota then B), got %d", got)
 	}
+}
+
+func TestEndToEndRotationDelayedQuota(t *testing.T) {
+	fu := newFakeUpstreamDelayedQuota(t)
+	proxyAddr, caPEM := newTestProxy(t, fu)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
+	url := "https://" + upstreamAddr + "/agent.v1.AgentService/Run"
+	body := []byte{0x00, 0x00, 0x00, 0x00, 0x02, 0xAA}
+
+	resp1, err := client.Post(url, "application/connect+proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp1.StatusCode)
+	}
+	flags, payload, err := readEnvelope(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags != 0x00 || len(payload) == 0 {
+		t.Fatalf("expected heartbeat first frame flags=%d", flags)
+	}
+	flags, _, err = readEnvelope(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&endStreamFlag == 0 {
+		t.Fatalf("expected quota end-stream on first request, flags=%d", flags)
+	}
+	if got := fu.runCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 upstream Run call, got %d", got)
+	}
+
+	resp2, err := client.Post(url, "application/connect+proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	flags, payload, err = readEnvelope(resp2.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags != 0x00 || !bytes.Equal(payload, []byte{0xde, 0xad, 0xbe, 0xef}) {
+		t.Fatalf("unexpected second response flags=%d payload=%x", flags, payload)
+	}
+	if got := fu.runCalls.Load(); got != 2 {
+		t.Fatalf("expected 2 upstream Run calls (A heartbeat+quota then B), got %d", got)
+	}
+}
+
+func newFakeUpstreamDelayedQuota(t *testing.T) *fakeUpstream {
+	t.Helper()
+	fu := &fakeUpstream{}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key != "keyA" && key != "keyB" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  "tok" + key[len(key)-1:],
+			"refreshToken": "r",
+		})
+	})
+
+	heartbeat := msgField(1, msgField(13, []byte{}))
+
+	mux.HandleFunc("/agent.v1.AgentService/Run", func(w http.ResponseWriter, r *http.Request) {
+		fu.runCalls.Add(1)
+		w.Header().Set("Content-Type", "application/connect+proto")
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if tok == "tokA" {
+			_ = writeEnvelope(w, 0x00, heartbeat)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			raw := []byte{0x08, 0x0A}
+			payload := fmt.Sprintf(`{"error":{"code":"resource_exhausted","message":"out of quota","details":[{"type":"aiserver.v1.ErrorDetails","value":%q}]},"metadata":{}}`,
+				base64.StdEncoding.EncodeToString(raw))
+			_ = writeEnvelope(w, endStreamFlag, []byte(payload))
+			return
+		}
+		if tok != "tokB" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = writeEnvelope(w, 0x00, []byte{0xde, 0xad, 0xbe, 0xef})
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		_ = writeEnvelope(w, endStreamFlag, []byte(`{"metadata":{}}`))
+	})
+
+	srv := httptest.NewUnstartedServer(mux)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	fu.Server = srv
+	t.Cleanup(srv.Close)
+	return fu
 }
 
 func TestEndToEndRotationUnary429(t *testing.T) {
@@ -199,19 +352,30 @@ func TestEndToEndRotationUnary429(t *testing.T) {
 	client := connectClient(t, proxyAddr, caPEM)
 
 	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
-	resp, err := client.Post(
-		"https://"+upstreamAddr+"/aiserver.v1.TestService/Unary",
-		"application/proto",
-		bytes.NewReader([]byte{0x0A}),
-	)
+	url := "https://" + upstreamAddr + "/aiserver.v1.TestService/Unary"
+	body := []byte{0x0A}
+
+	resp1, err := client.Post(url, "application/proto", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", resp.StatusCode)
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("first status %d want 429", resp1.StatusCode)
 	}
-	b, _ := io.ReadAll(resp.Body)
+	if got := fu.unaryCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 upstream unary call, got %d", got)
+	}
+
+	resp2, err := client.Post(url, "application/proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second status %d", resp2.StatusCode)
+	}
+	b, _ := io.ReadAll(resp2.Body)
 	if !bytes.Equal(b, []byte{0x01, 0x02, 0x03}) {
 		t.Fatalf("unexpected body %x", b)
 	}

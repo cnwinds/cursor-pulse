@@ -104,19 +104,19 @@ func TestIsNonFatalAuthPath(t *testing.T) {
 	}
 }
 
-func TestShouldRotateOnFailure(t *testing.T) {
+func TestShouldMarkOnFailure(t *testing.T) {
 	path := "/aiserver.v1.RepositoryService/FastRepoInitHandshakeV2"
-	if shouldRotateOnFailure(path, failAuth) {
-		t.Fatal("FastRepo 401 must not rotate")
+	if shouldMarkOnFailure(path, failAuth) {
+		t.Fatal("FastRepo 401 must not mark")
 	}
-	if !shouldRotateOnFailure("/aiserver.v1.AgentService/Run", failAuth) {
-		t.Fatal("Agent Run 401 must rotate")
+	if !shouldMarkOnFailure("/aiserver.v1.AgentService/Run", failAuth) {
+		t.Fatal("Agent Run 401 must mark")
 	}
-	if !shouldRotateOnFailure(path, failAccount) {
-		t.Fatal("FastRepo quota failure must still rotate")
+	if !shouldMarkOnFailure(path, failAccount) {
+		t.Fatal("FastRepo quota failure must still mark")
 	}
-	if shouldRotateOnFailure(path, failNone) {
-		t.Fatal("failNone must not rotate")
+	if shouldMarkOnFailure(path, failNone) {
+		t.Fatal("failNone must not mark")
 	}
 }
 
