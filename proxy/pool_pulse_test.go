@@ -60,19 +60,20 @@ func TestMarkBadCooldownExpires(t *testing.T) {
 	}
 }
 
-func TestPoolReplaceFromPulseResetsCursor(t *testing.T) {
+func TestPoolReplaceFromPulsePreservesCursor(t *testing.T) {
 	p := NewPoolFromCredentials([]PoolCredential{
 		{CredentialID: "a", APIKey: "keyA"},
 		{CredentialID: "b", APIKey: "keyB"},
 		{CredentialID: "c", APIKey: "keyC"},
 	})
-	p.cur = 2
+	p.cur = 1
 	p.ReplaceFromPulse([]PoolCredential{
 		{CredentialID: "b", APIKey: "keyB"},
 		{CredentialID: "a", APIKey: "keyA"},
+		{CredentialID: "c", APIKey: "keyC"},
 	})
-	if p.cur != 0 {
-		t.Fatalf("cur after replace: got %d want 0", p.cur)
+	if p.cur != 1 {
+		t.Fatalf("cur after replace: got %d want 1 (preserved)", p.cur)
 	}
 	if p.keys[0].credentialID != "b" {
 		t.Fatalf("order[0]=%s want b (Pulse recommend order)", p.keys[0].credentialID)

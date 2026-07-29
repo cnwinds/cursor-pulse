@@ -20,9 +20,86 @@ func buildModelTapEnvelope(cands []string) []byte {
 }
 
 
+func buildRequestedModel(modelID string, maxMode, fast bool) []byte {
+	var m []byte
+	m = append(m, strField(1, modelID)...)
+	if maxMode {
+		m = append(m, varintField(2, 1)...)
+	}
+	if fast {
+		param := strField(1, "fast")
+		param = append(param, strField(2, "true")...)
+		m = append(m, msgField(3, param)...)
+	}
+	return m
+}
+
+func buildAgentRunEnvelope(requestedModel []byte) []byte {
+	run := msgField(runFieldRequestedModel, requestedModel)
+	return buildModelTapEnvelopeFromPayload(run)
+}
+
+func TestFindModelFromRequestedModelSolMax(t *testing.T) {
+	req := buildRequestedModel("gpt-5.6-sol", true, false)
+	body := buildAgentRunEnvelope(req)
+	got := findModelName(body)
+	if got != "gpt-5.6-sol-max" {
+		t.Fatalf("got %q want gpt-5.6-sol-max", got)
+	}
+}
+
+func TestFindModelFromRequestedModelComposerFast(t *testing.T) {
+	req := buildRequestedModel("composer-2.5", false, true)
+	body := buildAgentRunEnvelope(req)
+	got := findModelName(body)
+	if got != "composer-2.5-fast" {
+		t.Fatalf("got %q want composer-2.5-fast", got)
+	}
+}
+
+func TestFindModelRequestedModelIgnoresCatalogStrings(t *testing.T) {
+	req := buildRequestedModel("gpt-5.6-sol", true, false)
+	catalog := strField(1, "composer-2.5")
+	catalog = append(catalog, strField(2, "fast")...)
+	catalog = append(catalog, strField(3, "true")...)
+	run := msgField(runFieldRequestedModel, req)
+	run = append(run, msgField(4, msgField(1, catalog))...)
+	body := buildModelTapEnvelopeFromPayload(run)
+	got := findModelName(body)
+	if got != "gpt-5.6-sol-max" {
+		t.Fatalf("got %q want gpt-5.6-sol-max", got)
+	}
+}
+
+func TestIterConnectPayloadsThreeFrames(t *testing.T) {
+	env1 := buildAgentRunEnvelope(buildRequestedModel("composer-2.5", false, true))
+	env2 := buildModelTapEnvelopeFromPayload(msgField(1, []byte("follow-up")))
+	env3 := buildAgentRunEnvelope(buildRequestedModel("gpt-5.6-sol", true, false))
+	body := append(append(env1, env2...), env3...)
+	payloads := iterConnectPayloads(body)
+	if len(payloads) != 3 {
+		t.Fatalf("got %d payloads", len(payloads))
+	}
+	if got := modelFromAgentRunPayload(payloads[2]); got != "gpt-5.6-sol-max" {
+		t.Fatalf("payload[2] model=%q", got)
+	}
+}
+
+func TestFindModelLastEnvelopeRequestedModelWins(t *testing.T) {
+	env1 := buildAgentRunEnvelope(buildRequestedModel("composer-2.5", false, true))
+	env2 := buildModelTapEnvelopeFromPayload(msgField(1, []byte("follow-up")))
+	env3 := buildAgentRunEnvelope(buildRequestedModel("gpt-5.6-sol", true, false))
+	body := append(env1, env2...)
+	body = append(body, env3...)
+	got := findModelName(body)
+	if got != "gpt-5.6-sol-max" {
+		t.Fatalf("got %q want gpt-5.6-sol-max", got)
+	}
+}
+
 func TestFindModelNameFromProto(t *testing.T) {
-	inner := msgField(1, []byte("claude-4-sonnet"))
-	payload := msgField(3, inner)
+	details := msgField(1, []byte("claude-4-sonnet"))
+	payload := msgField(runFieldModelDetails, details)
 	got := findModelName(payload)
 	if got != "claude-4-sonnet" {
 		t.Fatalf("got %q", got)
@@ -186,6 +263,46 @@ func TestFindModelNameFromRealDumpBinComposer(t *testing.T) {
 	if got := findModelName(body); got != "composer-2.5-fast" {
 		t.Fatalf("got %q want composer-2.5-fast", got)
 	}
+}
+
+func TestPickSelectedModelSolMaxSuffix(t *testing.T) {
+	cands := []string{
+		"uuid",
+		"gpt-5.6-sol",
+		"max",
+		"true",
+		"fast",
+		"false",
+		"default",
+		"composer-2.5",
+	}
+	got := pickSelectedModel(cands)
+	if got != "gpt-5.6-sol-max" {
+		t.Fatalf("got %q want gpt-5.6-sol-max", got)
+	}
+}
+
+func TestPickSelectedModelIgnoresCatalogAfterDefault(t *testing.T) {
+	cands := []string{
+		"uuid",
+		"gpt-5.6-sol",
+		"max",
+		"true",
+		"default",
+		"composer-2.5-fast",
+	}
+	got := pickSelectedModel(cands)
+	if got != "gpt-5.6-sol-max" {
+		t.Fatalf("got %q want gpt-5.6-sol-max", got)
+	}
+}
+
+func buildModelTapEnvelopeFromPayload(payload []byte) []byte {
+	frame := make([]byte, 5+len(payload))
+	frame[0] = 0
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+	return frame
 }
 
 func TestFindModelNameFromRealDumpBinOpus(t *testing.T) {

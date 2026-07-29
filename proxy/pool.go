@@ -174,10 +174,11 @@ func (p *Pool) SetUpstreamProxy(upstream *url.URL) {
 // ReplaceFromPulse merges Pulse pool credentials into the live pool.
 // Same credential_id keeps quota exhaustion + cached JWT; auth-bad cooldown is
 // cleared so keys can be retried after Pulse reconnects. Removed ids are dropped;
-// new ids are appended. Cursor position is reset.
+// new ids are appended. Cursor position is preserved when possible.
 func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	prevCur := p.cur
 	byID := map[string]*keyEntry{}
 	for _, e := range p.keys {
 		byID[e.credentialID] = e
@@ -196,7 +197,13 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 		next = append(next, &keyEntry{credentialID: c.CredentialID, apiKey: c.APIKey})
 	}
 	p.keys = next
-	p.cur = 0
+	if len(p.keys) == 0 {
+		p.cur = 0
+	} else if prevCur >= len(p.keys) {
+		p.cur = 0
+	} else {
+		p.cur = prevCur
+	}
 	log.Printf("[pool] hot-updated: %d credential(s)", len(p.keys))
 }
 
@@ -270,6 +277,56 @@ func (p *Pool) tokenSkipping(ctx context.Context, skipCredIDs map[string]bool) (
 	return nil, "", errAllExhausted
 }
 
+// tokenForCredential returns a JWT for a specific pool credential.
+func (p *Pool) tokenForCredential(ctx context.Context, credentialID string) (*keyEntry, string, error) {
+	if credentialID == "" {
+		return nil, "", errAllExhausted
+	}
+	p.mu.Lock()
+	var entry *keyEntry
+	for _, e := range p.keys {
+		if e.credentialID == credentialID {
+			entry = e
+			break
+		}
+	}
+	p.mu.Unlock()
+	if entry == nil || entry.unavailable() {
+		return nil, "", errAllExhausted
+	}
+	exchCtx, cancel := context.WithTimeout(context.Background(), exchangeTimeout)
+	defer cancel()
+	tok, err := entry.ensureToken(exchCtx, p.client, p.exchangeBase)
+	if err != nil {
+		return entry, "", err
+	}
+	return entry, tok, nil
+}
+
+// nextAvailableAfter returns the next usable credential after credentialID in pool order.
+func (p *Pool) nextAvailableAfter(credentialID string) *keyEntry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := len(p.keys)
+	if n == 0 {
+		return nil
+	}
+	start := 0
+	for i, e := range p.keys {
+		if e.credentialID == credentialID {
+			start = (i + 1) % n
+			break
+		}
+	}
+	for i := 0; i < n; i++ {
+		e := p.keys[(start+i)%n]
+		if !e.unavailable() {
+			return e
+		}
+	}
+	return nil
+}
+
 func (p *Pool) current() *keyEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -284,14 +341,15 @@ func (p *Pool) current() *keyEntry {
 	return nil
 }
 
-// markExhausted marks e as quota-exhausted and advances the cursor.
+// markExhausted marks e as quota-exhausted and advances the cursor once.
 func (p *Pool) markExhausted(e *keyEntry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !e.exhausted {
-		e.exhausted = true
-		log.Printf("[pool] key %s marked exhausted (quota)", e.masked())
+	if e.exhausted {
+		return
 	}
+	e.exhausted = true
+	log.Printf("[pool] key %s marked exhausted (quota)", e.masked())
 	p.advanceLocked()
 }
 

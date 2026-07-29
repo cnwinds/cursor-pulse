@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -67,8 +68,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// Pulse sessions gate: business requests must present a previously bound JWT.
 	// sessions == nil skips the check (local -keys / baseline tests).
 	var binding SessionBinding
+	var cliTok string
 	if s.sessions != nil && !skipAuth {
-		cliTok := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		cliTok = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		cliTok = strings.TrimPrefix(cliTok, "bearer ")
 		b, ok := s.sessions.Lookup(cliTok)
 		if !ok {
@@ -118,6 +120,8 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		var err error
 		if loanBound {
 			entry, token, err = s.passthroughToken(req.Context(), binding)
+		} else if s.sessions != nil {
+			entry, token, err = s.poolTokenForBinding(req.Context(), cliTok, &binding)
 		} else {
 			entry, token, err = s.pool.token(req.Context())
 		}
@@ -178,7 +182,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			if loanBound {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
-				s.mark(entry, kind, binding)
+				s.mark(entry, kind, binding, "")
 			}
 			log.Printf("[mitm] %s %s (key %s): HTTP %d classified %s - pool advanced for next request",
 				req.Method, req.URL.Path, entry.masked(), resp.StatusCode, kind)
@@ -241,7 +245,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			if loanBound {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
-				s.mark(entry, kind, binding)
+				s.mark(entry, kind, binding, cliTok)
 			}
 			log.Printf("[mitm] %s %s (key %s): stream classified %s - pool advanced for next request",
 				req.Method, req.URL.Path, entry.masked(), kind)
@@ -392,7 +396,11 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "cursor-pulse-proxy: unable to mint unique session token", http.StatusServiceUnavailable)
 			return
 		}
-		s.sessions.Bind(token, SessionBinding{ProxyKeyID: res.ProxyKeyID, PulseKey: pulseKey})
+		s.sessions.Bind(token, SessionBinding{
+			ProxyKeyID:         res.ProxyKeyID,
+			PulseKey:           pulseKey,
+			StickyCredentialID: entry.credentialID,
+		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -400,6 +408,59 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
+}
+
+func (s *Server) poolTokenForBinding(ctx context.Context, cliTok string, binding *SessionBinding) (*keyEntry, string, error) {
+	if binding.StickyCredentialID != "" {
+		entry, tok, err := s.pool.tokenForCredential(ctx, binding.StickyCredentialID)
+		if err == nil {
+			return entry, tok, nil
+		}
+		// Transient exchange errors must not rotate sticky (align with tokenSkipping).
+		if entry != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
+			return entry, "", err
+		}
+		if entry != nil && isPermanentExchangeErr(err) {
+			log.Printf("[pool] sticky credential %s exchange failed: %v - marking bad", binding.StickyCredentialID, err)
+			s.pool.markBad(entry)
+		}
+		next := s.pool.nextAvailableAfter(binding.StickyCredentialID)
+		if next == nil {
+			return nil, "", errAllExhausted
+		}
+		binding.StickyCredentialID = next.credentialID
+		if cliTok != "" {
+			s.sessions.Bind(cliTok, *binding)
+		}
+		log.Printf("[pool] session sticky rotated to credential %s", next.credentialID)
+		return s.pool.tokenForCredential(ctx, next.credentialID)
+	}
+	entry, tok, err := s.pool.token(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	binding.StickyCredentialID = entry.credentialID
+	if cliTok != "" {
+		s.sessions.Bind(cliTok, *binding)
+	}
+	return entry, tok, nil
+}
+
+func (s *Server) rotateSessionSticky(cliTok string, binding *SessionBinding, exhaustedCredID string) {
+	if s.sessions == nil || cliTok == "" {
+		return
+	}
+	next := s.pool.nextAvailableAfter(exhaustedCredID)
+	if next == nil {
+		log.Printf("[pool] session sticky: no credential available after %s", exhaustedCredID)
+		return
+	}
+	if next.credentialID == binding.StickyCredentialID {
+		return
+	}
+	binding.StickyCredentialID = next.credentialID
+	s.sessions.Bind(cliTok, *binding)
+	log.Printf("[pool] session sticky advanced to credential %s for next request", next.credentialID)
 }
 
 func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
@@ -416,11 +477,14 @@ func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, bindin
 	}
 }
 
-func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding) {
+func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cliTok string) {
 	if kind == failAuth {
 		s.pool.markBad(entry)
 	} else {
 		s.pool.markExhausted(entry)
+		if kind == failAccount {
+			s.rotateSessionSticky(cliTok, &binding, entry.credentialID)
+		}
 	}
 	if s.pulse != nil {
 		s.pulse.ReportEvent(EventItem{

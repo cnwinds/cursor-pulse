@@ -133,8 +133,10 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 - 某凭证因 **配额/限流** 被 `markExhausted` 后，`exhausted` 标志 **sticky**：Pulse 热更新凭证池时 **保留**（避免短暂恢复后立刻再烧额度）。
 - **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
-- 进程启动后按 **`PROXY_EXHAUSTED_RESET`**（默认 **30m**）周期性调用 `pool.reset()`，清掉所有 `exhausted` 与 `badUntil`，便于额度窗口刷新后重试。
-- 日志：`[pool] exhaustion flags reset`。
+- Pulse 模式下每个 **CLI session JWT** 在 exchange 时绑定一个池内凭证（`StickyCredentialID`），同一会话内所有 `Run`（含 subagent）复用该号，直至额度用尽后按池顺序切到下一个可用号。
+- 热更新 **保留** `cur` 指针，不会每 60s 把池子打回 index 0。
+- 进程默认 **不** 周期性 reset exhausted（`PROXY_EXHAUSTED_RESET` 未设置或为 `0`/`off`）。需要时可设为如 `30m`，会清掉所有 `exhausted` 与 `badUntil` 并将 `cur` 置 0。
+- 日志：`[pool] exhaustion flags reset`（仅当启用了 reset 时）。
 
 ## 开发
 
