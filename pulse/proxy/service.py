@@ -904,13 +904,18 @@ def list_pool_credentials(
     enc_key = (encryption_key or "").strip()
     out: list[dict] = []
     for aid in ranked_ids:
+        snap = latest_snaps.get(aid)
         for cred in by_account.get(aid, []):
             try:
                 api_key = decrypt_secret(cred.encrypted_value, enc_key)
             except Exception:
                 logger.warning("proxy pool: skip credential %s (decrypt failed)", cred.id)
                 continue
-            out.append({"credential_id": cred.id, "api_key": api_key})
+            item: dict = {"credential_id": cred.id, "api_key": api_key}
+            if snap is not None:
+                item["auto_pct"] = snap.auto_pct
+                item["api_pct"] = snap.api_pct
+            out.append(item)
     return out
 
 

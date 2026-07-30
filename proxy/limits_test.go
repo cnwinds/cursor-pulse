@@ -38,13 +38,13 @@ func TestPoolResetClearsExhausted(t *testing.T) {
 		{CredentialID: "c1", APIKey: "k1"},
 		{CredentialID: "c2", APIKey: "k2"},
 	})
-	p.keys[0].exhausted = true
+	p.keys[0].setFullyQuotaExhausted()
 	p.keys[1].badUntil = time.Now().Add(time.Hour)
 	p.cur = 1
 	p.reset()
 	for _, e := range p.keys {
-		if e.exhausted {
-			t.Fatalf("exhausted not cleared for %s", e.credentialID)
+		if e.quotaFullyExhausted() {
+			t.Fatalf("quota exhaustion not cleared for %s", e.credentialID)
 		}
 		if !e.badUntil.IsZero() {
 			t.Fatalf("badUntil not cleared for %s", e.credentialID)

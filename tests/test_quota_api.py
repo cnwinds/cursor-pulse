@@ -90,6 +90,10 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert any(item["has_snapshot"] for item in data)
     matched = next(item for item in data if item["account_id"] == quota_env["cursor_account"].id)
     assert matched["primary_member_name"] == quota_env["borrower"].display_name
+    assert matched["remaining_cents"] == 5000
+    assert matched["display_remaining_cents"] == 5005  # 7000 * (100 - 28.5) / 100
+    assert matched["limit_cents"] == 7000
+    assert matched["used_cents"] == 2000
 
 
 def test_loan_key_returns_plaintext_once(quota_env):

@@ -462,7 +462,7 @@ func TestLoanPassthroughMITMAuthFailReportsLoan(t *testing.T) {
 	if ev.ProxyKeyID != "" {
 		t.Fatalf("proxy_key_id=%q want empty", ev.ProxyKeyID)
 	}
-	if pool.keys[0].exhausted {
+	if pool.keys[0].quotaFullyExhausted() {
 		t.Fatal("pool key should not be marked on loan passthrough auth fail")
 	}
 }

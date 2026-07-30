@@ -93,6 +93,27 @@ export function apiQuotaUsd(summary?: UsageSummary) {
   return summary?.cursor_pools?.api?.quota_usd ?? summary?.quota_denominator_snapshot ?? null
 }
 
+/** 本周期高级模型 API 池剩余（与用量明细同源：quota - spend） */
+export function apiPoolRemainingUsd(summary?: UsageSummary): number | null {
+  const quota = apiQuotaUsd(summary)
+  if (quota == null || quota <= 0) return null
+  return Math.max(0, quota - premiumApiSpend(summary))
+}
+
+export function hasApiPoolSummary(summary?: UsageSummary): boolean {
+  return summary?.cursor_pools?.api != null && apiQuotaUsd(summary) != null
+}
+
+/** 本周期 API 池占用 %（与用量明细同源） */
+export function apiPoolUsagePct(summary?: UsageSummary): number | null {
+  const ratio = summary?.cursor_pools?.api?.usage_ratio
+  if (ratio != null) return Math.min(Math.round(ratio), 100)
+  const quota = apiQuotaUsd(summary)
+  if (quota == null || quota <= 0) return null
+  const spent = premiumApiSpend(summary)
+  return Math.min(Math.round((spent / quota) * 100), 100)
+}
+
 export function poolModelBreakdown(
   summary: UsageSummary | undefined,
   pool: 'auto_composer' | 'api' | 'third_party',

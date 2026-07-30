@@ -84,13 +84,17 @@
                 <div class="progress-label">
                   <span>
                     API
-                    <span v-if="item.api_limit_usd" class="api-inline-note muted">
-                      · 套餐含至少 ${{ item.api_limit_usd.toFixed(0) }}
+                    <span
+                      class="api-inline-note"
+                      :class="apiNoteStatus(item)"
+                      :title="apiRemainingTitle(item)"
+                    >
+                      · {{ apiRemainingText(item) }}
                     </span>
                   </span>
-                  <span>{{ cursorPct(item.api_pct) }}</span>
+                  <span>{{ apiPctLabel(item) }}</span>
                 </div>
-                <el-progress :percentage="cursorPctNum(item.api_pct)" :show-text="false" />
+                <el-progress :percentage="apiPctNum(item)" :show-text="false" />
               </div>
             </div>
 
@@ -253,12 +257,15 @@ import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import {
+  apiPoolRemainingUsd,
+  apiPoolUsagePct,
   autoComposerSpend,
   apiQuotaUsd,
   billingCycleDateRange,
   formatCompactTokens,
   formatSpend,
   formatTokens,
+  hasApiPoolSummary,
   poolHasTokens,
   poolModelBreakdown,
   poolTotalTokens,
@@ -287,6 +294,10 @@ interface BoardItem {
   auto_pct: number | null
   api_pct: number | null
   remaining_headroom_pct: number | null
+  limit_cents: number | null
+  used_cents: number | null
+  remaining_cents: number | null
+  display_remaining_cents: number | null
   api_limit_usd: number | null
   projected_exhaustion_date: string | null
   exhausts_before_reset: boolean | null
@@ -370,6 +381,52 @@ function shortDate(value: string | null | undefined) {
   if (!value) return '—'
   const m = value.match(/(\d{4})-(\d{2})-(\d{2})/)
   return m ? `${m[2]}-${m[3]}` : value
+}
+
+function formatUsdCents(cents: number | null | undefined) {
+  if (cents == null) return '—'
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+function accountSummary(item: BoardItem): UsageSummary | undefined {
+  return summaryMap.value[item.account_id]
+}
+
+function apiRemainingText(item: BoardItem): string {
+  const summary = accountSummary(item)
+  if (hasApiPoolSummary(summary)) {
+    const remaining = apiPoolRemainingUsd(summary)
+    const quota = apiQuotaUsd(summary)
+    return `剩余 ${formatSpend(remaining)} / ${formatSpend(quota)}`
+  }
+  return `剩余 ${formatUsdCents(item.display_remaining_cents)} / ${formatUsdCents(item.limit_cents)}`
+}
+
+function apiRemainingTitle(item: BoardItem): string {
+  if (hasApiPoolSummary(accountSummary(item))) {
+    return '本周期高级模型 API 池：按同步用量事件汇总（与下方用量明细一致）'
+  }
+  return '按 Cursor totalPercentUsed 推算；同步用量事件后可显示明细汇总'
+}
+
+function apiPctLabel(item: BoardItem): string {
+  const local = apiPoolUsagePct(accountSummary(item))
+  if (local != null) return `${local}%`
+  return cursorPct(item.api_pct)
+}
+
+function apiPctNum(item: BoardItem): number {
+  const local = apiPoolUsagePct(accountSummary(item))
+  if (local != null) return local
+  return cursorPctNum(item.api_pct)
+}
+
+function apiNoteStatus(item: BoardItem): Record<string, boolean> {
+  const local = apiPoolUsagePct(accountSummary(item))
+  if (local != null) {
+    return { danger: local >= 100, warning: local >= 80 && local < 100 }
+  }
+  return { danger: item.status === 'exhausted', warning: item.status === 'warning' }
 }
 
 function cursorPct(v: number | null) {
@@ -569,6 +626,13 @@ onMounted(loadAll)
   font-weight: 400;
   font-size: 12px;
   margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.api-inline-note.warning {
+  color: var(--el-color-warning);
+}
+.api-inline-note.danger {
+  color: var(--el-color-danger);
 }
 .empty-snapshot {
   padding: 24px 0;

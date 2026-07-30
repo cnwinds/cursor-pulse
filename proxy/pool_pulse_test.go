@@ -10,7 +10,7 @@ func TestPoolReplaceFromPulseKeepsExhaustion(t *testing.T) {
 		{CredentialID: "c1", APIKey: "k1"},
 		{CredentialID: "c2", APIKey: "k2"},
 	})
-	p.keys[0].exhausted = true
+	p.keys[0].setFullyQuotaExhausted()
 	p.keys[0].jwt = "oldjwt"
 	p.ReplaceFromPulse([]PoolCredential{
 		{CredentialID: "c1", APIKey: "k1-new"},
@@ -19,7 +19,7 @@ func TestPoolReplaceFromPulseKeepsExhaustion(t *testing.T) {
 	if len(p.keys) != 2 {
 		t.Fatalf("len=%d", len(p.keys))
 	}
-	if p.keys[0].credentialID != "c1" || !p.keys[0].exhausted || p.keys[0].jwt != "oldjwt" || p.keys[0].apiKey != "k1-new" {
+	if p.keys[0].credentialID != "c1" || !p.keys[0].quotaFullyExhausted() || p.keys[0].jwt != "oldjwt" || p.keys[0].apiKey != "k1-new" {
 		t.Fatalf("c1 not preserved: %+v", *p.keys[0])
 	}
 	if p.keys[1].credentialID != "c3" {

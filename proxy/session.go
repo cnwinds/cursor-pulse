@@ -12,7 +12,8 @@ type SessionBinding struct {
 	LoanID       string
 	CredentialID string
 	// StickyCredentialID is the pool credential bound to this CLI session JWT.
-	// All AgentService/Run requests reuse it until quota exhaustion rotates it.
+	// Run requests prefer this credential for the model's quota pool (auto vs api)
+	// until that pool is exhausted, then rotate within the pool order.
 	StickyCredentialID string
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.

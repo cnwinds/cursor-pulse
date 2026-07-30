@@ -47,6 +47,19 @@ def api_limit_usd(snapshot: AccountQuotaSnapshot) -> float | None:
     return None
 
 
+def display_remaining_cents(snapshot: AccountQuotaSnapshot) -> int | None:
+    """与 Cursor Dashboard 百分比对齐的 Included 剩余估算（美分）。
+
+    planUsage.remaining（limit - includedSpend）常与 totalPercentUsed 不一致；
+    有百分比时优先按 total_pct 从 limit 推算，与 burn_rate 的 headroom 逻辑一致。
+    """
+    if snapshot.limit_cents <= 0:
+        return snapshot.remaining_cents or None
+    if snapshot.total_pct is not None:
+        return round(snapshot.limit_cents * max(0.0, 100.0 - snapshot.total_pct) / 100.0)
+    return snapshot.remaining_cents or None
+
+
 def projected_exhaustion_date(
     snapshot: AccountQuotaSnapshot, today: date | None = None
 ) -> date | None:

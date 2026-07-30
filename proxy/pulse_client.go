@@ -23,8 +23,10 @@ type AuthResult struct {
 }
 
 type PoolCredential struct {
-	CredentialID string `json:"credential_id"`
-	APIKey       string `json:"api_key"`
+	CredentialID string   `json:"credential_id"`
+	APIKey       string   `json:"api_key"`
+	AutoPct      *float64 `json:"auto_pct"`
+	ApiPct       *float64 `json:"api_pct"`
 }
 
 type TokenCounts struct {

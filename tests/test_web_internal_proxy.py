@@ -314,7 +314,11 @@ def test_pool_returns_only_enabled_credentials(env):
     resp = env["client"].get("/api/internal/v1/proxy/pool", headers=_h())
     assert resp.status_code == 200
     creds = resp.json()["credentials"]
-    assert creds == [{"credential_id": env["cred_id"], "api_key": "cursor-key-1"}]
+    assert len(creds) == 1
+    assert creds[0]["credential_id"] == env["cred_id"]
+    assert creds[0]["api_key"] == "cursor-key-1"
+    assert creds[0]["auto_pct"] == 10.0
+    assert creds[0]["api_pct"] == 5.0
 
 
 def test_pool_excludes_loan_credentials(env):
@@ -487,7 +491,11 @@ def test_pool_excludes_disabled_account_and_undecryptable(env):
     s.close()
     resp = client.get("/api/internal/v1/proxy/pool", headers=_h())
     creds = resp.json()["credentials"]
-    assert creds == [{"credential_id": env["cred_id"], "api_key": "cursor-key-1"}]
+    assert len(creds) == 1
+    assert creds[0]["credential_id"] == env["cred_id"]
+    assert creds[0]["api_key"] == "cursor-key-1"
+    assert creds[0]["auto_pct"] == 10.0
+    assert creds[0]["api_pct"] == 5.0
 
 
 def test_internal_token_header_and_503(env):

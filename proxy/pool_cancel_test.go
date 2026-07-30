@@ -43,8 +43,8 @@ func TestTokenCanceledParentDoesNotMarkBad(t *testing.T) {
 		t.Fatalf("canceled parent must not hit upstream; hits=%d", hits.Load())
 	}
 	for _, e := range pool.keys {
-		if e.exhausted {
-			t.Fatalf("key %s marked exhausted after canceled parent", e.masked())
+		if e.quotaFullyExhausted() {
+			t.Fatalf("key %s marked quota exhausted after canceled parent", e.masked())
 		}
 	}
 }
@@ -84,7 +84,7 @@ func TestTokenDetachedExchangeIgnoresLiveParentCancelMidFlight(t *testing.T) {
 		t.Fatal("timeout")
 	}
 	for _, e := range pool.keys {
-		if e.exhausted {
+		if e.quotaFullyExhausted() {
 			t.Fatalf("key %s should not be marked bad", e.masked())
 		}
 	}
@@ -122,7 +122,7 @@ func TestTokenAuthFailureMarksBadButNetworkDoesNot(t *testing.T) {
 	if !pool.keys[0].unavailable() {
 		t.Fatal("badKey should be marked bad after 401")
 	}
-	if pool.keys[0].exhausted {
+	if pool.keys[0].quotaFullyExhausted() {
 		t.Fatal("badKey auth failure must use cooldown, not quota exhausted")
 	}
 	if pool.keys[1].unavailable() {

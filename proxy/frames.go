@@ -3,7 +3,10 @@ package main
 import (
 	"io"
 	"sync"
+	"time"
 )
+
+const streamModelWaitTimeout = 5 * time.Second
 
 // frameSource tees a streaming request body: every chunk read from the client
 // is retained so a failed upstream attempt can be replayed from the beginning,
@@ -57,6 +60,26 @@ func (fs *frameSource) snapshot() []byte {
 		out = append(out, c...)
 	}
 	return out
+}
+
+// waitForRunnableModel blocks until findModelName(snapshot) succeeds, the body
+// is fully read, or the deadline passes. Used before pool token selection on
+// Connect streams so quota pool is derived from the Run request body.
+func (fs *frameSource) waitForRunnableModel(deadline time.Time) {
+	ticker := time.NewTicker(2 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if findModelName(fs.snapshot()) != "" {
+			return
+		}
+		fs.mu.Lock()
+		closed := fs.closed
+		fs.mu.Unlock()
+		if closed || time.Now().After(deadline) {
+			return
+		}
+		<-ticker.C
+	}
 }
 
 // reader returns a new reader over everything buffered so far plus any future

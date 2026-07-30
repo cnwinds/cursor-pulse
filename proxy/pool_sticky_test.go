@@ -11,14 +11,34 @@ import (
 	"testing"
 )
 
+func TestMarkApiQuotaExhaustedKeepsAutoPool(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1"},
+		{CredentialID: "c2", APIKey: "k2"},
+	})
+	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
+	if p.keys[0].apiQuotaExhausted != true || p.keys[0].autoQuotaExhausted {
+		t.Fatalf("expected api-only exhaustion")
+	}
+	if p.cur != 0 {
+		t.Fatalf("cursor should not advance until both pools exhausted, cur=%d", p.cur)
+	}
+	if !p.keys[0].hasQuotaForPool(quotaPoolAuto) {
+		t.Fatal("auto pool should still be available on c1")
+	}
+	if p.keys[0].hasQuotaForPool(quotaPoolAPI) {
+		t.Fatal("api pool should be blocked on c1")
+	}
+}
+
 func TestMarkExhaustedAdvancesOnce(t *testing.T) {
 	p := NewPoolFromCredentials([]PoolCredential{
 		{CredentialID: "c1", APIKey: "k1"},
 		{CredentialID: "c2", APIKey: "k2"},
 	})
 	p.markExhausted(p.keys[0])
-	if !p.keys[0].exhausted || p.cur != 1 {
-		t.Fatalf("after first mark: exhausted=%v cur=%d", p.keys[0].exhausted, p.cur)
+	if !p.keys[0].quotaFullyExhausted() || p.cur != 1 {
+		t.Fatalf("after first mark: fully=%v cur=%d", p.keys[0].quotaFullyExhausted(), p.cur)
 	}
 	p.markExhausted(p.keys[0])
 	if p.cur != 1 {
@@ -32,12 +52,12 @@ func TestNextAvailableAfter(t *testing.T) {
 		{CredentialID: "c2", APIKey: "k2"},
 		{CredentialID: "c3", APIKey: "k3"},
 	})
-	p.keys[0].exhausted = true
+	p.keys[0].setFullyQuotaExhausted()
 	next := p.nextAvailableAfter("c1")
 	if next == nil || next.credentialID != "c2" {
 		t.Fatalf("next after c1: got %v", next)
 	}
-	p.keys[1].exhausted = true
+	p.keys[1].setFullyQuotaExhausted()
 	next = p.nextAvailableAfter("c1")
 	if next == nil || next.credentialID != "c3" {
 		t.Fatalf("next after c1 with c2 exhausted: got %v", next)
@@ -54,7 +74,7 @@ func TestPoolTokenForBindingSticky(t *testing.T) {
 	srv := NewServer(p, nil, nil, sessions)
 
 	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok"}
-	entry, tok, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding)
+	entry, tok, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolUnknown)
 	if err != nil || tok == "" || entry == nil {
 		t.Fatalf("assign: %v", err)
 	}
@@ -63,7 +83,7 @@ func TestPoolTokenForBindingSticky(t *testing.T) {
 	}
 	sessions.Bind("jwt1", binding)
 
-	entry2, tok2, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding)
+	entry2, tok2, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolUnknown)
 	if err != nil || tok2 == "" {
 		t.Fatalf("reuse sticky: %v", err)
 	}
@@ -111,7 +131,7 @@ func TestPoolTokenForBindingTransientExchangeKeepsSticky(t *testing.T) {
 	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
 	sessions.Bind("jwt1", binding)
 
-	_, _, err := srvProxy.poolTokenForBinding(context.Background(), "jwt1", &binding)
+	_, _, err := srvProxy.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolUnknown)
 	if err == nil {
 		t.Fatal("expected transient exchange error")
 	}
@@ -121,7 +141,7 @@ func TestPoolTokenForBindingTransientExchangeKeepsSticky(t *testing.T) {
 	}
 
 	failExchange.Store(false)
-	entry, tok, err := srvProxy.poolTokenForBinding(context.Background(), "jwt1", &binding)
+	entry, tok, err := srvProxy.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolUnknown)
 	if err != nil || tok == "" || entry.credentialID != "c1" {
 		t.Fatalf("retry after transient: err=%v cred=%s", err, entry.credentialID)
 	}
@@ -135,14 +155,14 @@ func TestPoolTokenForBindingExhaustedRotatesSticky(t *testing.T) {
 	})
 	p.exchangeBase = fu.URL
 	p.client = fu.Client()
-	p.keys[0].exhausted = true
+	p.keys[0].setFullyQuotaExhausted()
 
 	sessions := NewSessionMap()
 	srv := NewServer(p, nil, nil, sessions)
 	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
 	sessions.Bind("jwt1", binding)
 
-	entry, tok, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding)
+	entry, tok, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolUnknown)
 	if err != nil || tok == "" || entry.credentialID != "c2" {
 		t.Fatalf("want c2: err=%v entry=%v", err, entry)
 	}
@@ -150,4 +170,41 @@ func TestPoolTokenForBindingExhaustedRotatesSticky(t *testing.T) {
 	if !ok || b.StickyCredentialID != "c2" {
 		t.Fatalf("sticky=%q want c2", b.StickyCredentialID)
 	}
+}
+
+func TestPoolTokenForBindingApiSnapshotRotatesSticky(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	apiFull := 100.0
+	apiOK := 20.0
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA", AutoPct: ptrFloat(10), ApiPct: &apiFull},
+		{CredentialID: "c2", APIKey: "keyB", AutoPct: ptrFloat(30), ApiPct: &apiOK},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+
+	sessions := NewSessionMap()
+	srv := NewServer(p, nil, nil, sessions)
+	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	sessions.Bind("jwt1", binding)
+
+	entry, tok, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || tok == "" || entry.credentialID != "c2" {
+		t.Fatalf("api pool want c2: err=%v entry=%v", err, entry)
+	}
+	b, ok := sessions.Lookup("jwt1")
+	if !ok || b.StickyCredentialID != "c2" {
+		t.Fatalf("sticky=%q want c2", b.StickyCredentialID)
+	}
+
+	// Auto pool still prefers c2 sticky (was rotated) if c2 has auto quota.
+	binding = b
+	entry2, _, err := srv.poolTokenForBinding(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || entry2.credentialID != "c2" {
+		t.Fatalf("auto pool should keep sticky c2: err=%v cred=%s", err, entry2.credentialID)
+	}
+}
+
+func ptrFloat(v float64) *float64 {
+	return &v
 }

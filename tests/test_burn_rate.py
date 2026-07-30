@@ -8,6 +8,7 @@ from pulse.tool_center.burn_rate import (
     LenderCandidate,
     analyze_burn_rate,
     digestion_urgency,
+    display_remaining_cents,
     explain_lender_selection,
     projected_surplus_cents,
     quota_progress,
@@ -76,6 +77,17 @@ def test_healthy_burn_rate_uses_cursor_total_pct():
     assert analysis.status == "healthy"
     assert quota_progress(snap) == 0.24
     assert analysis.remaining_headroom_pct == 76.0
+    assert display_remaining_cents(snap) == 5320  # 7000 * 76%
+
+
+def test_display_remaining_cents_prefers_total_pct_over_raw_remaining():
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        remaining_cents=0,
+        total_pct=34.0,
+    )
+    assert display_remaining_cents(snap) == 4620  # 7000 * 66%
 
 
 def test_exhausted_when_total_pct_reaches_100():
