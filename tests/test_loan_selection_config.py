@@ -16,6 +16,11 @@ def test_loan_selection_defaults():
     assert sel.weight_surplus == 0.25
     assert sel.weight_load == 0.15
     assert sel.weight_freshness == 0.10
+    assert sel.proxy_deadline_power == 1.75
+    assert sel.proxy_weight_urgency == 0.52
+    assert sel.proxy_weight_headroom == 0.28
+    assert sel.proxy_weight_surplus == 0.17
+    assert sel.proxy_weight_freshness == 0.03
 
 
 def test_loan_selection_yaml_override():
@@ -52,6 +57,7 @@ def test_loan_selection_rejects_invalid_values():
                     "loan_selection": {
                         "proxy_weight_urgency": 0.0,
                         "proxy_weight_headroom": 0.0,
+                        "proxy_weight_surplus": 0.0,
                         "proxy_weight_freshness": 0.0,
                     }
                 }

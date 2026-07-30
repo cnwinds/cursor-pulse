@@ -600,8 +600,8 @@ def test_proxy_pool_prefers_soon_expiry_over_large_far_surplus():
 
 def test_proxy_pool_urgency_uses_hourly_deadline_power():
     surplus = 1000.0
-    near = digestion_urgency(surplus, 24.0, deadline_power=1.45, hourly_power=True)
-    far = digestion_urgency(surplus, 120.0, deadline_power=1.45, hourly_power=True)
+    near = digestion_urgency(surplus, 24.0, deadline_power=1.75, hourly_power=True)
+    far = digestion_urgency(surplus, 120.0, deadline_power=1.75, hourly_power=True)
     assert near > far
 
 

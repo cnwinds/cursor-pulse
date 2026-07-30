@@ -409,7 +409,15 @@ def _rank_passing_candidates(
                 ),
             )
         )
-    ranked.sort(key=lambda x: (-x[0], x[1], x[2]["account_id"]))
+    ranked.sort(
+        key=lambda x: (
+            -x[0],
+            x[1],
+            -x[2]["surplus_cents"],
+            -x[2]["remaining_headroom_pct"],
+            x[2]["account_id"],
+        )
+    )
     return [item for _, _, item in ranked], excluded
 
 
@@ -425,9 +433,10 @@ def recommend_lenders(
 
     借用路径：urgency ≈ 余量/剩余天数；U/S 池内归一化后加权。
     代理池路径（enforce_loan_cap=False）：
-    - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化）
-    - headroom = remaining_headroom_pct 归一化（优先选用余量高的账号走代理，把余量紧张的留给主使用人）
-    同分按 hours_to_deadline 升序、account_id 字典序打平。
+    - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化，减少周期末浪费）
+    - surplus = projected_surplus_cents 归一化（剩余额度多的账号优先）
+    - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
+    同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
     """
     cfg = loan_selection or LoanSelectionConfig()
     now = now or datetime.now(timezone.utc)

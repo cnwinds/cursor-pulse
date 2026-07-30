@@ -46,7 +46,7 @@
           </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('proxy:read')" index="/proxy-keys">
             <el-icon><Key /></el-icon>
-            <span>代理 Key</span>
+            <span>共享池代理</span>
           </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('knowledge:read')" index="/tool-tips">
             <el-icon><Reading /></el-icon>

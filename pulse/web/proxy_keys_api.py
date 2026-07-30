@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.proxy import service as proxy_service
-from pulse.util.datetime_fmt import serialize_datetime
+from pulse.util.datetime_fmt import format_china_date, serialize_datetime
 from pulse.storage.models import (
     AiAccount,
     AiAccountCredential,
@@ -85,7 +85,7 @@ ToggleCredentialBody = ToggleProxyEnabledBody
 def _get_key(session: Session, key_id: str) -> ProxyKey:
     key = session.get(ProxyKey, key_id)
     if key is None:
-        raise HTTPException(status_code=404, detail="proxy key 不存在")
+        raise HTTPException(status_code=404, detail="接入密钥不存在")
     return key
 
 
@@ -302,7 +302,29 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         )
 
         by_model_map: dict[str, dict] = {}
+        by_day_map: dict[str, dict] = {}
+        items_all: list[dict] = []
         for u in all_rows:
+            account_id = cred_to_account.get(u.credential_id) if u.credential_id else None
+            acct = accounts.get(account_id) if account_id else None
+            item = {
+                "id": u.id,
+                "credential_id": u.credential_id,
+                "account_id": account_id,
+                "account_identifier": acct.account_identifier if acct else None,
+                "primary_member_name": _primary_name(acct),
+                "model": u.model,
+                "tokens_input": u.tokens_input,
+                "tokens_output": u.tokens_output,
+                "tokens_cache_read": u.tokens_cache_read,
+                "tokens_cache_write": u.tokens_cache_write,
+                "tokens_reasoning": u.tokens_reasoning,
+                "total_tokens": u.total_tokens,
+                "cost_cents": u.cost_cents,
+                "ts": serialize_datetime(u.ts),
+            }
+            items_all.append(item)
+
             label = (u.model or "").strip() or "（未知）"
             bucket = by_model_map.get(label)
             if bucket is None:
@@ -316,35 +338,39 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
             bucket["request_count"] += 1
             bucket["total_tokens"] += int(u.total_tokens or 0)
             bucket["cost_cents"] += int(u.cost_cents or 0)
+
+            day = format_china_date(u.ts) or "未知"
+            day_bucket = by_day_map.get(day)
+            if day_bucket is None:
+                day_bucket = {
+                    "day": day,
+                    "request_count": 0,
+                    "total_tokens": 0,
+                    "cost_cents": 0,
+                    "items": [],
+                }
+                by_day_map[day] = day_bucket
+            day_bucket["request_count"] += 1
+            day_bucket["total_tokens"] += int(u.total_tokens or 0)
+            day_bucket["cost_cents"] += int(u.cost_cents or 0)
+            day_bucket["items"].append(item)
+
         by_model = sorted(
             by_model_map.values(),
             key=lambda r: r["cost_cents"],
             reverse=True,
         )
-
-        items = []
-        for u in all_rows[:limit]:
-            account_id = cred_to_account.get(u.credential_id) if u.credential_id else None
-            acct = accounts.get(account_id) if account_id else None
-            items.append(
-                {
-                    "id": u.id,
-                    "credential_id": u.credential_id,
-                    "account_id": account_id,
-                    "account_identifier": acct.account_identifier if acct else None,
-                    "primary_member_name": _primary_name(acct),
-                    "model": u.model,
-                    "tokens_input": u.tokens_input,
-                    "tokens_output": u.tokens_output,
-                    "tokens_cache_read": u.tokens_cache_read,
-                    "tokens_cache_write": u.tokens_cache_write,
-                    "tokens_reasoning": u.tokens_reasoning,
-                    "total_tokens": u.total_tokens,
-                    "cost_cents": u.cost_cents,
-                    "ts": serialize_datetime(u.ts),
-                }
-            )
-        return {"by_account": by_account, "by_model": by_model, "items": items}
+        by_day = sorted(
+            by_day_map.values(),
+            key=lambda r: (0 if r["day"] == "未知" else 1, r["day"]),
+            reverse=True,
+        )
+        return {
+            "by_account": by_account,
+            "by_model": by_model,
+            "by_day": by_day,
+            "items": items_all[:limit],
+        }
 
     @app.get(
         "/api/v2/proxy-pool/accounts",

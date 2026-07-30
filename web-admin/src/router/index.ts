@@ -72,7 +72,7 @@ const router = createRouter({
           path: 'proxy-keys',
           name: 'proxy-keys',
           component: () => import('@/views/ProxyKeysView.vue'),
-          meta: { permission: 'proxy:read', title: '代理 Key' },
+          meta: { permission: 'proxy:read', title: '共享池代理' },
         },
         {
           path: 'audit',

@@ -174,12 +174,12 @@ class LoanSelectionConfig(BaseModel):
     weight_surplus: float = Field(default=0.25, ge=0)
     weight_load: float = Field(default=0.15, ge=0)
     weight_freshness: float = Field(default=0.10, ge=0)
-    # 代理池专用：快到期优先 + 保留主使用人余量（headroom）
-    proxy_deadline_power: float = Field(default=1.45, ge=1.0)
-    proxy_weight_urgency: float = Field(default=0.50, ge=0)
-    proxy_weight_headroom: float = Field(default=0.35, ge=0)
-    proxy_weight_surplus: float = Field(default=0.0, ge=0)
-    proxy_weight_freshness: float = Field(default=0.15, ge=0)
+    # 代理池：快到期优先消化 + 剩余额度优先 + 保留主使用人 headroom
+    proxy_deadline_power: float = Field(default=1.75, ge=1.0)
+    proxy_weight_urgency: float = Field(default=0.52, ge=0)
+    proxy_weight_headroom: float = Field(default=0.28, ge=0)
+    proxy_weight_surplus: float = Field(default=0.17, ge=0)
+    proxy_weight_freshness: float = Field(default=0.03, ge=0)
 
     @model_validator(mode="after")
     def _validate_weight_sums(self) -> "LoanSelectionConfig":

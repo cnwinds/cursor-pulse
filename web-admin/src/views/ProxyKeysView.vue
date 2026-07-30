@@ -2,16 +2,16 @@
   <div class="proxy-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>代理 Key</h2>
-        <p class="desc">入池账号供代理轮换；使用代理须在「脉冲 Key」单独创建 pk_…。额度仅支持 5 小时 / 7 天费用窗口，留空不限</p>
+        <h2>共享池代理</h2>
+        <p class="desc">多账号入池、按额度与到期智能轮换。成员须先创建接入密钥（pk_…）并经 HTTPS 代理使用 Cursor Agent；可按 5 小时 / 7 天费用窗口限额，留空不限</p>
       </div>
       <div class="header-actions">
-        <el-button v-if="canWrite" type="primary" @click="openCreate">新建 Key</el-button>
+        <el-button v-if="canWrite" type="primary" @click="openCreate">新建接入密钥</el-button>
       </div>
     </header>
 
     <el-tabs v-model="tab">
-      <el-tab-pane label="脉冲 Key" name="keys">
+      <el-tab-pane label="接入密钥" name="keys">
         <el-table :data="keys" style="width: 100%">
           <el-table-column prop="name" label="使用人" min-width="120" />
           <el-table-column label="用量 / 额度" min-width="220">
@@ -59,8 +59,8 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="代理池" name="pool">
-        <p class="pool-hint">开启入池后，该账号的主 Key 参与代理轮换；额度与排序见「打分表」</p>
+      <el-tab-pane label="账号池" name="pool">
+        <p class="pool-hint">开启入池后，该账号主 Key 参与共享池轮换；额度与排序见「打分表」</p>
         <el-table :data="pool" style="width: 100%">
           <el-table-column label="账号" min-width="200">
             <template #default="{ row }">
@@ -93,7 +93,7 @@
 
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
-          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），同时优先选用剩余额度高的账号（headroom），避免主使用人额度被打光</p>
+          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom），避免周期末浪费与主使用人额度被打光</p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>
         <h4 class="usage-section-title">入选排序</h4>
@@ -102,14 +102,14 @@
             <template #default="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
           <el-table-column prop="account_identifier" label="账号" min-width="160" />
-          <el-table-column prop="score" label="score" width="90" />
-          <el-table-column prop="surplus_cents" label="surplus" width="100" />
-          <el-table-column prop="urgency_cents_per_day" label="urgency/日" width="110" />
-          <el-table-column prop="remaining_headroom_pct" label="headroom %" width="110" />
-          <el-table-column prop="deadline" label="deadline" width="120" />
+          <el-table-column prop="score" label="综合分" width="90" />
+          <el-table-column prop="surplus_cents" label="预计余量" width="100" />
+          <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="110" />
+          <el-table-column prop="remaining_headroom_pct" label="剩余占比 %" width="110" />
+          <el-table-column prop="deadline" label="作废日" width="120" />
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column prop="active_loans" label="在借" width="70" />
-          <el-table-column prop="snapshot_freshness" label="新鲜度" width="90" />
+          <el-table-column prop="snapshot_freshness" label="快照新鲜度" width="100" />
         </el-table>
         <h4 class="usage-section-title">已排除</h4>
         <el-table v-loading="rankingLoading" :data="ranking.excluded" style="width: 100%">
@@ -119,13 +119,13 @@
           </el-table-column>
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="status" label="额度状态" width="110" />
-          <el-table-column prop="deadline" label="deadline" width="120" />
+          <el-table-column prop="deadline" label="作废日" width="120" />
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
         </el-table>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="createVisible" title="新建脉冲 Key" width="480px">
+    <el-dialog v-model="createVisible" title="新建接入密钥" width="480px">
       <el-form label-width="120px">
         <el-form-item label="选择使用人" required>
           <el-select
@@ -171,11 +171,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="createdVisible" title="Key 创建成功" width="560px" :close-on-click-modal="false">
+    <el-dialog v-model="createdVisible" title="接入密钥已创建" width="560px" :close-on-click-modal="false">
       <el-alert type="success" :closable="false" title="已加密保存，管理员与使用人可随时复制启动命令" />
       <el-input v-model="createdKey" readonly style="margin-top: 12px">
         <template #append>
-          <el-button @click="copyCreated">复制 Key</el-button>
+          <el-button @click="copyCreated">复制密钥</el-button>
         </template>
       </el-input>
       <div class="created-actions">
@@ -222,48 +222,100 @@
     </el-dialog>
 
     <el-drawer v-model="usagesVisible" :title="`用量明细 - ${usagesKeyName}`" size="720px">
+      <div v-loading="usagesLoading" class="usage-drawer-body">
       <p class="usage-estimate-note">以下费用为本地价表估算，非 Cursor 官方账单。</p>
-      <h4 class="usage-section-title">按台账账号汇总</h4>
-      <el-table :data="usageByAccount" style="width: 100%; margin-bottom: 20px">
-        <el-table-column label="账号" min-width="200">
-          <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
+      <div class="usage-summary" v-if="usageLoaded">
+        <div>
+          请求 {{ usageOverview.request_count }} 次 · tokens
+          {{ formatTokensM(usageOverview.total_tokens) }}
+        </div>
+        <div>
+          费用估算（非账单）：${{ (usageOverview.cost_cents / 100).toFixed(2) }}
+          <span v-if="usageByAccount.length" class="usage-summary-sub">
+            · 涉及 {{ usageByAccount.length }} 个台账账号
+          </span>
+        </div>
+      </div>
+      <el-collapse v-model="usageCollapseActive" class="usage-collapse">
+        <el-collapse-item name="account">
+          <template #title>
+            <span class="collapse-title">按台账账号汇总</span>
+            <span class="collapse-meta muted">{{ usageByAccount.length }} 个账号</span>
+          </template>
+          <el-table :data="usageByAccount" class="usage-fill-table">
+            <el-table-column label="账号" min-width="200">
+              <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
+            </el-table-column>
+            <el-table-column prop="plan_name" label="计划" width="100" />
+            <el-table-column prop="request_count" label="请求数" width="90" align="right" />
+            <el-table-column label="tokens" width="100" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="100" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+        <el-collapse-item name="model">
+          <template #title>
+            <span class="collapse-title">按模型汇总</span>
+            <span class="collapse-meta muted">{{ usageByModel.length }} 个模型</span>
+          </template>
+          <el-table :data="usageByModel" class="usage-fill-table">
+            <el-table-column prop="model" label="模型" min-width="140" />
+            <el-table-column prop="request_count" label="请求数" width="90" align="right" />
+            <el-table-column label="tokens" width="100" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="100" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
+      <h4 class="usage-section-title usage-section-title--daily">明细（按天 · 本地估算）</h4>
+      <p class="usage-hint">点击整行展开 / 收起当天明细</p>
+      <el-table
+        :data="usageByDay"
+        class="usage-fill-table day-usage-table"
+        row-key="day"
+        :expand-row-keys="expandedDayKeys"
+        @expand-change="onDayExpandChange"
+        @row-click="onDayRowClick"
+      >
+        <el-table-column type="expand" width="48">
+          <template #default="{ row }">
+            <div class="day-detail-wrap">
+              <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
+                <el-table-column label="时间" min-width="170">
+                  <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
+                </el-table-column>
+                <el-table-column label="账号" min-width="160">
+                  <template #default="{ row: item }">{{ formatAccountWithPrimary(item) }}</template>
+                </el-table-column>
+                <el-table-column prop="model" label="模型" min-width="120" />
+                <el-table-column label="tokens" width="100" align="right">
+                  <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
+                </el-table-column>
+                <el-table-column label="费用" width="100" align="right">
+                  <template #default="{ row: item }">
+                    ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </template>
         </el-table-column>
-        <el-table-column prop="plan_name" label="计划" width="100" />
-        <el-table-column prop="request_count" label="请求数" width="90" />
-        <el-table-column label="tokens" width="100">
+        <el-table-column prop="day" label="日期" min-width="160" />
+        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+        <el-table-column label="tokens" width="100" align="right">
           <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
         </el-table-column>
-        <el-table-column label="费用" width="100">
+        <el-table-column label="费用" width="100" align="right">
           <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
-      <h4 class="usage-section-title">按模型汇总</h4>
-      <el-table :data="usageByModel" style="width: 100%; margin-bottom: 20px">
-        <el-table-column prop="model" label="模型" min-width="140" />
-        <el-table-column prop="request_count" label="请求数" width="90" />
-        <el-table-column label="tokens" width="100">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-        <el-table-column label="费用" width="100">
-          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
-        </el-table-column>
-      </el-table>
-      <h4 class="usage-section-title">明细（最近）</h4>
-      <el-table :data="usages" style="width: 100%">
-        <el-table-column label="时间" width="170">
-          <template #default="{ row }">{{ formatChinaTime(row.ts) }}</template>
-        </el-table-column>
-        <el-table-column label="账号" min-width="180">
-          <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
-        </el-table-column>
-        <el-table-column prop="model" label="模型" min-width="120" />
-        <el-table-column label="tokens" width="100">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-        <el-table-column label="费用" width="100">
-          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
-        </el-table-column>
-      </el-table>
+      </div>
     </el-drawer>
   </div>
 </template>
@@ -352,6 +404,14 @@ interface UsageByAccountRow {
   cost_cents: number
 }
 
+interface UsageByDayRow {
+  day: string
+  request_count: number
+  total_tokens: number
+  cost_cents: number
+  items: UsageRow[]
+}
+
 interface UsageByModelRow {
   model: string
   request_count: number
@@ -373,6 +433,25 @@ const members = ref<MemberOption[]>([])
 const usages = ref<UsageRow[]>([])
 const usageByAccount = ref<UsageByAccountRow[]>([])
 const usageByModel = ref<UsageByModelRow[]>([])
+const usageByDay = ref<UsageByDayRow[]>([])
+const expandedDayKeys = ref<string[]>([])
+const usageCollapseActive = ref<string[]>([])
+
+const usageOverview = computed(() => {
+  const fromDays = usageByDay.value
+  if (fromDays.length > 0) {
+    return {
+      request_count: fromDays.reduce((s, d) => s + d.request_count, 0),
+      total_tokens: fromDays.reduce((s, d) => s + d.total_tokens, 0),
+      cost_cents: fromDays.reduce((s, d) => s + d.cost_cents, 0),
+    }
+  }
+  return {
+    request_count: usageByAccount.value.reduce((s, r) => s + r.request_count, 0),
+    total_tokens: usageByAccount.value.reduce((s, r) => s + r.total_tokens, 0),
+    cost_cents: usageByAccount.value.reduce((s, r) => s + r.cost_cents, 0),
+  }
+})
 
 const createVisible = ref(false)
 const createdVisible = ref(false)
@@ -380,6 +459,8 @@ const createdKey = ref('')
 const createdProxyUrl = ref('http://127.0.0.1:8317')
 const editVisible = ref(false)
 const usagesVisible = ref(false)
+const usagesLoading = ref(false)
+const usageLoaded = ref(false)
 const usagesKeyName = ref('')
 
 const createForm = reactive({
@@ -615,15 +696,43 @@ async function openUsages(row: ProxyKeyRow) {
   usages.value = []
   usageByAccount.value = []
   usageByModel.value = []
+  usageByDay.value = []
+  expandedDayKeys.value = []
+  usageCollapseActive.value = []
+  usageLoaded.value = false
   usagesVisible.value = true
+  usagesLoading.value = true
   try {
     const res = await client.get(`/api/v2/proxy-keys/${row.id}/usages`)
     usageByAccount.value = res.data.by_account || []
     usageByModel.value = res.data.by_model || []
+    usageByDay.value = res.data.by_day || []
     usages.value = res.data.items || []
+    usageLoaded.value = true
   } catch {
     ElMessage.error('用量加载失败')
+  } finally {
+    usagesLoading.value = false
   }
+}
+
+function toggleDayExpand(row: UsageByDayRow) {
+  const key = row.day
+  if (expandedDayKeys.value.includes(key)) {
+    expandedDayKeys.value = expandedDayKeys.value.filter((k) => k !== key)
+  } else {
+    expandedDayKeys.value = [...expandedDayKeys.value, key]
+  }
+}
+
+function onDayExpandChange(row: UsageByDayRow, expandedRows: UsageByDayRow[]) {
+  expandedDayKeys.value = expandedRows.map((r) => r.day)
+}
+
+function onDayRowClick(row: UsageByDayRow, _column: unknown, event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.el-table__expand-icon')) return
+  toggleDayExpand(row)
 }
 
 async function loadRanking() {
@@ -708,9 +817,74 @@ onMounted(load)
   font-size: 14px;
   font-weight: 600;
 }
+.usage-section-title--daily {
+  margin-top: 4px;
+}
+.usage-drawer-body {
+  min-height: 120px;
+}
 .usage-estimate-note {
   margin: 0 0 12px;
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+.usage-summary {
+  margin-bottom: 16px;
+  line-height: 1.7;
+  color: var(--el-text-color-regular);
+  font-size: 14px;
+}
+.usage-summary-sub {
+  font-size: 13px;
+}
+.usage-collapse {
+  margin-bottom: 16px;
+  border: none;
+}
+.usage-collapse :deep(.el-collapse-item__header) {
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.usage-collapse :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+.collapse-title {
+  margin-right: 8px;
+}
+.collapse-meta {
+  font-size: 12px;
+  font-weight: normal;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+}
+.usage-section-title + .usage-fill-table + .usage-section-title {
+  margin-top: 20px;
+}
+.usage-hint {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.usage-fill-table {
+  width: 100%;
+}
+.day-usage-table :deep(.el-table__body tr) {
+  cursor: pointer;
+}
+.day-usage-table :deep(.el-table__expanded-cell) {
+  padding: 0;
+}
+.day-detail-wrap {
+  padding: 8px 12px 12px;
+  background: var(--el-fill-color-lighter);
+}
+.day-detail-table {
+  width: 100%;
+  --el-table-bg-color: transparent;
+}
+.day-detail-table :deep(.el-table__body tr) {
+  cursor: default;
 }
 </style>

@@ -284,7 +284,7 @@ const statCards = computed(() => {
   const p = proxy.value
   if (p) {
     cards.push({
-      label: '活跃代理 Key',
+      label: '活跃接入密钥',
       value: String(p.active_key_count),
       sub: `累计 ${formatSpend(p.total_cost_usd)}`,
     })

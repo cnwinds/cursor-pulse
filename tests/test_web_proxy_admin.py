@@ -431,7 +431,7 @@ def test_usages_endpoint(env):
     resp = env["client"].get(f"/api/v2/proxy-keys/{key_id}/usages", headers=_admin(env))
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"by_account": [], "by_model": [], "items": []}
+    assert body == {"by_account": [], "by_model": [], "by_day": [], "items": []}
 
 
 def test_usages_grouped_by_account(env):
@@ -489,6 +489,44 @@ def test_usages_grouped_by_account(env):
         {"model": "claude-b", "request_count": 1, "total_tokens": 50, "cost_cents": 5},
         {"model": "unknown", "request_count": 1, "total_tokens": 7, "cost_cents": 1},
     ]
+
+
+def test_usages_by_day_groups_china_calendar(env):
+    from datetime import datetime, timezone
+
+    from pulse.storage.models import ProxyKeyUsage
+
+    key_id = _create_key(env).json()["id"]
+    s = env["sf"]()
+    for ts, tokens, cost in [
+        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=timezone.utc), 100, 10),
+        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=timezone.utc), 200, 20),
+        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=timezone.utc), 50, 5),
+    ]:
+        s.add(
+            ProxyKeyUsage(
+                proxy_key_id=key_id,
+                credential_id=env["cred_id"],
+                model="gpt-5",
+                total_tokens=tokens,
+                cost_cents=cost,
+                ts=ts,
+            )
+        )
+    s.commit()
+    s.close()
+
+    resp = env["client"].get(f"/api/v2/proxy-keys/{key_id}/usages", headers=_admin(env))
+    assert resp.status_code == 200
+    by_day = resp.json()["by_day"]
+    assert [d["day"] for d in by_day] == ["2026-07-24", "2026-07-23"]
+    assert by_day[0]["request_count"] == 2
+    assert by_day[0]["total_tokens"] == 300
+    assert by_day[0]["cost_cents"] == 30
+    assert len(by_day[0]["items"]) == 2
+    assert by_day[1]["request_count"] == 1
+    assert by_day[1]["total_tokens"] == 50
+    assert by_day[1]["cost_cents"] == 5
 
 
 def test_usages_by_model_aggregates_all_rows(env):
