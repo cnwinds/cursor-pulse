@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-07-29
+## [0.2.0] - 2026-07-30
 
 ### 新增
 
@@ -15,6 +15,8 @@
 ### 变更
 
 - **Proxy 限额轮换策略**：限额/配额错误原样返回 CLI，代理侧标记账号 exhausted 并 advance pool；用户重发消息即走下一账号（移除同请求内透明重试，避免 CLI reconnecting/无输出）
+- **Proxy 会话与模型路由**：修复 session sticky rotation 与 Run 请求模型提取；支持按模型感知的配额池路由与 stream body wait
+- **路线图**：后续条目改为「待定」，不构成排期承诺
 
 ### 修复
 
