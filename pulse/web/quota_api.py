@@ -14,6 +14,7 @@ from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
     AiAccountCredential,
+    AiPlan,
     KeyLoan,
     Member,
     ProxyKeyUsage,
@@ -430,12 +431,49 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         )
         proxy_tokens, proxy_cost = proxy_service.loan_proxy_totals(session, loan_id)
 
+        cred_ids = {u.credential_id for u in rows if u.credential_id}
+        cred_to_account: dict[str, str] = {}
+        if cred_ids:
+            for cred in session.execute(
+                select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))
+            ).scalars():
+                cred_to_account[cred.id] = cred.account_id
+        account_ids = set(cred_to_account.values())
+        accounts: dict[str, AiAccount] = {}
+        plans: dict[str, str] = {}
+        members: dict[str, str] = {}
+        if account_ids:
+            for acct in session.execute(
+                select(AiAccount).where(AiAccount.id.in_(account_ids))
+            ).scalars():
+                accounts[acct.id] = acct
+            plan_ids = {a.plan_id for a in accounts.values()}
+            if plan_ids:
+                for plan in session.execute(select(AiPlan).where(AiPlan.id.in_(plan_ids))).scalars():
+                    plans[plan.id] = plan.plan_name
+            member_ids = {a.primary_member_id for a in accounts.values() if a.primary_member_id}
+            if member_ids:
+                for m in session.execute(select(Member).where(Member.id.in_(member_ids))).scalars():
+                    members[m.id] = m.display_name
+
+        def _primary_name(acct: AiAccount | None) -> str | None:
+            if not acct or not acct.primary_member_id:
+                return None
+            return members.get(acct.primary_member_id)
+
+        by_account_map: dict[str, dict] = {}
         by_model_map: dict[str, dict] = {}
         by_day_map: dict[str, dict] = {}
         items_all: list[dict] = []
         for u in rows:
+            account_id = cred_to_account.get(u.credential_id) if u.credential_id else None
+            acct = accounts.get(account_id) if account_id else None
             item = {
                 "id": u.id,
+                "credential_id": u.credential_id,
+                "account_id": account_id,
+                "account_identifier": acct.account_identifier if acct else None,
+                "primary_member_name": _primary_name(acct),
                 "model": u.model,
                 "tokens_input": u.tokens_input,
                 "tokens_output": u.tokens_output,
@@ -447,6 +485,22 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 "ts": serialize_datetime(u.ts),
             }
             items_all.append(item)
+
+            bucket_key = account_id or "__unknown__"
+            if bucket_key not in by_account_map:
+                by_account_map[bucket_key] = {
+                    "account_id": account_id,
+                    "account_identifier": acct.account_identifier if acct else "未知账号",
+                    "primary_member_name": _primary_name(acct),
+                    "plan_name": plans.get(acct.plan_id) if acct else None,
+                    "request_count": 0,
+                    "total_tokens": 0,
+                    "cost_cents": 0,
+                }
+            account_bucket = by_account_map[bucket_key]
+            account_bucket["request_count"] += 1
+            account_bucket["total_tokens"] += int(u.total_tokens or 0)
+            account_bucket["cost_cents"] += int(u.cost_cents or 0)
 
             label = (u.model or "").strip() or "（未知）"
             bucket = by_model_map.get(label)
@@ -478,6 +532,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             day_bucket["cost_cents"] += int(u.cost_cents or 0)
             day_bucket["items"].append(item)
 
+        by_account = sorted(
+            by_account_map.values(),
+            key=lambda r: r["total_tokens"],
+            reverse=True,
+        )
         by_model = sorted(
             by_model_map.values(),
             key=lambda r: r["cost_cents"],
@@ -496,6 +555,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 "proxy_total_tokens": proxy_tokens,
                 "request_count": len(rows),
             },
+            "by_account": by_account,
             "by_model": by_model,
             "by_day": by_day,
             "items": items_all[:limit],

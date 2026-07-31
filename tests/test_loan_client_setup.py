@@ -14,6 +14,7 @@ from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.storage.models import (
     AccountQuotaSnapshot,
+    AiAccount,
     AiAccountCredential,
     KeyLoan,
     ProxyKeyUsage,
@@ -171,17 +172,20 @@ def test_loan_usages_detail(loan_client_env):
     token = create_access_token(env["config"], env["owner"])
 
     s = env["session_factory"]()
+    loan = s.get(KeyLoan, loan_id)
+    assert loan is not None
     s.add(
         ProxyKeyUsage(
             proxy_key_id=None,
             loan_id=loan_id,
-            credential_id="cred-1",
+            credential_id=loan.credential_id,
             model="gpt-5",
             total_tokens=100,
             cost_cents=42,
         )
     )
     s.commit()
+    account_identifier = env["cursor_account"].account_identifier
     s.close()
 
     res = env["client"].get(f"/api/v2/loans/{loan_id}/usages", headers=_headers(token))
@@ -192,6 +196,15 @@ def test_loan_usages_detail(loan_client_env):
     assert body["summary"]["request_count"] == 1
     assert len(body["items"]) == 1
     assert body["items"][0]["model"] == "gpt-5"
+    assert body["items"][0]["account_identifier"] == account_identifier
+    assert body["items"][0]["primary_member_name"] == "Borrower"
+    assert len(body["by_account"]) == 1
+    assert body["by_account"][0]["account_id"] == env["cursor_account"].id
+    assert body["by_account"][0]["account_identifier"] == account_identifier
+    assert body["by_account"][0]["primary_member_name"] == "Borrower"
+    assert body["by_account"][0]["request_count"] == 1
+    assert body["by_account"][0]["total_tokens"] == 100
+    assert body["by_account"][0]["cost_cents"] == 42
     assert body["by_model"] == [
         {"model": "gpt-5", "request_count": 1, "total_tokens": 100, "cost_cents": 42}
     ]
@@ -201,6 +214,103 @@ def test_loan_usages_detail(loan_client_env):
     assert body["by_day"][0]["cost_cents"] == 42
     assert len(body["by_day"][0]["items"]) == 1
     assert body["by_day"][0]["items"][0]["model"] == "gpt-5"
+    assert body["by_day"][0]["items"][0]["account_identifier"] == account_identifier
+
+
+def test_loan_usages_grouped_by_account(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    primary = s.get(AiAccount, env["cursor_account"].id)
+    assert primary is not None
+    other = AiAccount(
+        team_id=primary.team_id,
+        vendor_id=primary.vendor_id,
+        plan_id=primary.plan_id,
+        account_identifier="other-lender@example.com",
+        status="shared",
+        primary_member_id=env["owner"].id,
+        ownership="company",
+    )
+    s.add(other)
+    s.flush()
+    other_cred = AiAccountCredential(
+        account_id=other.id,
+        vendor_id=primary.vendor_id,
+        credential_type="cursor_api_key",
+        encrypted_value="enc-other",
+        key_hint="****other",
+        key_role="primary",
+        bound_by_member_id=env["owner"].id,
+    )
+    s.add(other_cred)
+    s.flush()
+    loan = s.get(KeyLoan, loan_id)
+    assert loan is not None
+    primary_cred_id = loan.credential_id
+    s.add_all(
+        [
+            ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan_id,
+                credential_id=primary_cred_id,
+                model="claude-a",
+                total_tokens=100,
+                cost_cents=10,
+            ),
+            ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan_id,
+                credential_id=primary_cred_id,
+                model="claude-b",
+                total_tokens=50,
+                cost_cents=5,
+            ),
+            ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan_id,
+                credential_id=other_cred.id,
+                model="gpt-5",
+                total_tokens=80,
+                cost_cents=8,
+            ),
+            ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan_id,
+                credential_id=None,
+                model="unknown",
+                total_tokens=7,
+                cost_cents=1,
+            ),
+        ]
+    )
+    s.commit()
+    primary_id = primary.account_identifier
+    s.close()
+
+    res = env["client"].get(f"/api/v2/loans/{loan_id}/usages", headers=_headers(token))
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body["by_account"]) == 3
+    top = body["by_account"][0]
+    assert top["account_identifier"] == primary_id
+    assert top["primary_member_name"] == "Borrower"
+    assert top["request_count"] == 2
+    assert top["total_tokens"] == 150
+    assert top["cost_cents"] == 15
+    assert body["by_account"][1]["account_identifier"] == "other-lender@example.com"
+    assert body["by_account"][1]["primary_member_name"] == "Admin"
+    assert body["by_account"][1]["request_count"] == 1
+    assert body["by_account"][1]["total_tokens"] == 80
+    assert body["by_account"][2]["account_identifier"] == "未知账号"
+    assert body["by_account"][2]["primary_member_name"] is None
+    matched = next(i for i in body["items"] if i["account_identifier"] == primary_id)
+    assert matched["primary_member_name"] == "Borrower"
+    assert any(
+        i["account_identifier"] is None and i["primary_member_name"] is None for i in body["items"]
+    )
 
 
 def test_loan_usages_by_model_aggregates_all_rows(loan_client_env):

@@ -287,17 +287,17 @@
           <template #default="{ row }">
             <div class="day-detail-wrap">
               <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
-                <el-table-column label="时间" min-width="170">
+                <el-table-column label="时间" width="150">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
-                <el-table-column label="账号" min-width="160">
-                  <template #default="{ row: item }">{{ formatAccountWithPrimary(item) }}</template>
+                <el-table-column label="账号" min-width="120" show-overflow-tooltip>
+                  <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
                 </el-table-column>
-                <el-table-column prop="model" label="模型" min-width="120" />
-                <el-table-column label="tokens" width="100" align="right">
+                <el-table-column prop="model" label="模型" min-width="100" show-overflow-tooltip />
+                <el-table-column label="tokens" width="72" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
                 </el-table-column>
-                <el-table-column label="费用" width="100" align="right">
+                <el-table-column label="费用" width="64" align="right">
                   <template #default="{ row: item }">
                     ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
                   </template>
@@ -877,12 +877,17 @@ onMounted(load)
   padding: 0;
 }
 .day-detail-wrap {
-  padding: 8px 12px 12px;
+  padding: 8px;
   background: var(--el-fill-color-lighter);
+  overflow-x: hidden;
 }
 .day-detail-table {
   width: 100%;
   --el-table-bg-color: transparent;
+}
+.day-detail-table :deep(.el-table__header-wrapper),
+.day-detail-table :deep(.el-table__body-wrapper) {
+  overflow-x: hidden !important;
 }
 .day-detail-table :deep(.el-table__body tr) {
   cursor: default;

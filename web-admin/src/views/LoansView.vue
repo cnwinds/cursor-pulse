@@ -65,14 +65,6 @@
           {{ row.loan_expires_on || '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" width="180">
-        <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column label="归还时间" width="180">
-        <template #default="{ row }">
-          {{ row.revoked_at ? formatChinaTime(row.revoked_at) : '—' }}
-        </template>
-      </el-table-column>
       <el-table-column label="借用时长" width="120">
         <template #default="{ row }">
           {{ formatLoanDuration(row.created_at, row.revoked_at) }}
@@ -88,6 +80,14 @@
           <el-button link type="primary" @click="openUsages(row)">
             ${{ ((row.proxy_cost_cents ?? 0) / 100).toFixed(2) }}
           </el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="180">
+        <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="归还时间" width="180">
+        <template #default="{ row }">
+          {{ row.revoked_at ? formatChinaTime(row.revoked_at) : '—' }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="340" fixed="right">
@@ -223,8 +223,27 @@
     <el-drawer v-model="usagesVisible" :title="`用量详情 - ${usagesTitle}`" size="720px">
       <div class="usage-summary" v-if="usageSummary">
         <div>近似消耗：${{ (usageSummary.borrowed_cents / 100).toFixed(2) }}</div>
-        <div>proxy 估算（非账单）：${{ (usageSummary.proxy_cost_cents / 100).toFixed(2) }}（{{ usageSummary.request_count }} 次请求 · {{ formatTokensM(usageSummary.proxy_total_tokens) }}）</div>
+        <div>
+          proxy 估算（非账单）：${{ (usageSummary.proxy_cost_cents / 100).toFixed(2) }}（{{ usageSummary.request_count }} 次请求 · {{ formatTokensM(usageSummary.proxy_total_tokens) }}）
+          <span v-if="usageByAccount.length" class="usage-summary-sub">
+            · 涉及 {{ usageByAccount.length }} 个出借账号
+          </span>
+        </div>
       </div>
+      <h4 class="usage-section-title">按出借账号汇总（本地估算）</h4>
+      <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading">
+        <el-table-column label="账号" min-width="200">
+          <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
+        </el-table-column>
+        <el-table-column prop="plan_name" label="计划" width="100" />
+        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+        <el-table-column label="tokens" width="110" align="right">
+          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+        </el-table-column>
+        <el-table-column label="费用" width="110" align="right">
+          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+        </el-table-column>
+      </el-table>
       <h4 class="usage-section-title">按模型汇总（本地估算）</h4>
       <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading">
         <el-table-column prop="model" label="模型" min-width="180" />
@@ -251,14 +270,17 @@
           <template #default="{ row }">
             <div class="day-detail-wrap">
               <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
-                <el-table-column label="时间" min-width="170">
+                <el-table-column label="时间" width="150">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
-                <el-table-column prop="model" label="模型" min-width="160" />
-                <el-table-column label="tokens" width="110" align="right">
+                <el-table-column label="账号" min-width="120" show-overflow-tooltip>
+                  <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
+                </el-table-column>
+                <el-table-column prop="model" label="模型" min-width="100" show-overflow-tooltip />
+                <el-table-column label="tokens" width="72" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
                 </el-table-column>
-                <el-table-column label="费用" width="110" align="right">
+                <el-table-column label="费用" width="64" align="right">
                   <template #default="{ row: item }">
                     ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
                   </template>
@@ -470,6 +492,7 @@ const cursorKeyPlaintext = ref('')
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
 const usagesTitle = ref('')
+const usageByAccount = ref<LoanUsageByAccountRow[]>([])
 const usageByDay = ref<LoanUsageByDayRow[]>([])
 const usageByModel = ref<LoanUsageByModelRow[]>([])
 const usageSummary = ref<LoanUsageSummary | null>(null)
@@ -477,10 +500,22 @@ const expandedDayKeys = ref<string[]>([])
 
 interface LoanUsageRow {
   id: string
+  account_identifier?: string | null
+  primary_member_name?: string | null
   model: string | null
   total_tokens: number
   cost_cents: number
   ts: string | null
+}
+
+interface LoanUsageByAccountRow {
+  account_id: string | null
+  account_identifier: string
+  primary_member_name: string | null
+  plan_name: string | null
+  request_count: number
+  total_tokens: number
+  cost_cents: number
 }
 
 interface LoanUsageByDayRow {
@@ -503,6 +538,15 @@ interface LoanUsageSummary {
   proxy_cost_cents: number
   proxy_total_tokens: number
   request_count: number
+}
+
+function formatAccountWithPrimary(row: {
+  account_identifier?: string | null
+  primary_member_name?: string | null
+}) {
+  const account = row.account_identifier || '—'
+  if (!row.primary_member_name) return account
+  return `${account}（${row.primary_member_name}）`
 }
 
 function loanStatusType(status: string) {
@@ -743,6 +787,7 @@ function onDayRowClick(row: LoanUsageByDayRow, _column: unknown, event: MouseEve
 
 async function openUsages(row: LoanRow) {
   usagesTitle.value = row.borrower_name || row.source_account_identifier || row.id.slice(0, 8)
+  usageByAccount.value = []
   usageByDay.value = []
   usageByModel.value = []
   usageSummary.value = null
@@ -752,6 +797,7 @@ async function openUsages(row: LoanRow) {
   try {
     const res = await client.get(`/api/v2/loans/${row.id}/usages`)
     usageSummary.value = res.data.summary
+    usageByAccount.value = res.data.by_account || []
     usageByModel.value = res.data.by_model || []
     usageByDay.value = res.data.by_day || []
   } catch (e: any) {
@@ -844,6 +890,9 @@ onMounted(loadLoans)
   color: var(--el-text-color-regular);
   font-size: 14px;
 }
+.usage-summary-sub {
+  color: var(--el-text-color-secondary);
+}
 .usage-section-title {
   margin: 0 0 12px;
   font-size: 14px;
@@ -867,12 +916,17 @@ onMounted(loadLoans)
   padding: 0;
 }
 .day-detail-wrap {
-  padding: 8px 12px 12px;
+  padding: 8px;
   background: var(--el-fill-color-lighter);
+  overflow-x: hidden;
 }
 .day-detail-table {
   width: 100%;
   --el-table-bg-color: transparent;
+}
+.day-detail-table :deep(.el-table__header-wrapper),
+.day-detail-table :deep(.el-table__body-wrapper) {
+  overflow-x: hidden !important;
 }
 .day-detail-table :deep(.el-table__body tr) {
   cursor: default;
