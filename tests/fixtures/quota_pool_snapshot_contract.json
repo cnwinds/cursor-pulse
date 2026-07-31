@@ -1,0 +1,51 @@
+[
+  {
+    "name": "both_unknown",
+    "auto_pct": null,
+    "api_pct": null,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": true, "auto": true, "api": true }
+  },
+  {
+    "name": "both_full",
+    "auto_pct": 100,
+    "api_pct": 100,
+    "intake_ok": false,
+    "snapshot_ok": { "unknown": false, "auto": false, "api": false }
+  },
+  {
+    "name": "api_full_auto_ok",
+    "auto_pct": 40,
+    "api_pct": 100,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": false, "auto": true, "api": false }
+  },
+  {
+    "name": "auto_full_api_ok",
+    "auto_pct": 100,
+    "api_pct": 20,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": false, "auto": false, "api": true }
+  },
+  {
+    "name": "auto_full_api_unknown",
+    "auto_pct": 100,
+    "api_pct": null,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": false, "auto": false, "api": true }
+  },
+  {
+    "name": "both_partial",
+    "auto_pct": 80,
+    "api_pct": 90,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": true, "auto": true, "api": true }
+  },
+  {
+    "name": "at_boundary_99",
+    "auto_pct": 99.9,
+    "api_pct": 99.9,
+    "intake_ok": true,
+    "snapshot_ok": { "unknown": true, "auto": true, "api": true }
+  }
+]

@@ -10,11 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.proxy import service as proxy_service
+from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
     AiAccountCredential,
-    AiPlan,
     KeyLoan,
     Member,
     ProxyKeyUsage,
@@ -32,8 +32,9 @@ from pulse.tool_center.key_loans import (
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
+from pulse.tool_center.quota_reads import latest_snapshots_for_team
 from pulse.tool_center.repository import ToolCenterRepository
-from pulse.util.datetime_fmt import format_china_date, serialize_datetime
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import has_permission
@@ -69,28 +70,6 @@ def _encryption_key(config) -> str:
             detail="未配置凭证加密密钥（PULSE_CREDENTIAL_ENCRYPTION_KEY）",
         )
     return key
-
-
-def _latest_snapshots_by_account(session: Session, team_id: str) -> dict[str, AccountQuotaSnapshot]:
-    accounts = session.scalars(
-        select(AiAccount.id).where(
-            AiAccount.team_id == team_id,
-            AiAccount.deleted_at.is_(None),
-        )
-    ).all()
-    if not accounts:
-        return {}
-    account_ids = list(accounts)
-    snapshots = session.scalars(
-        select(AccountQuotaSnapshot)
-        .where(AccountQuotaSnapshot.account_id.in_(account_ids))
-        .order_by(AccountQuotaSnapshot.captured_at.desc())
-    ).all()
-    latest: dict[str, AccountQuotaSnapshot] = {}
-    for snap in snapshots:
-        if snap.account_id not in latest:
-            latest[snap.account_id] = snap
-    return latest
 
 
 def _board_item(
@@ -168,7 +147,7 @@ def _status_rank(status: str) -> int:
 def build_quota_board_items(session: Session, team_id: str) -> list[dict]:
     repo = ToolCenterRepository(session, team_id)
     today = date.today()
-    snapshots = _latest_snapshots_by_account(session, team_id)
+    snapshots = latest_snapshots_for_team(session, team_id)
     accounts = [
         account
         for account in repo.list_active_accounts()
@@ -430,124 +409,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             .all()
         )
         proxy_tokens, proxy_cost = proxy_service.loan_proxy_totals(session, loan_id)
-
-        cred_ids = {u.credential_id for u in rows if u.credential_id}
-        cred_to_account: dict[str, str] = {}
-        if cred_ids:
-            for cred in session.execute(
-                select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))
-            ).scalars():
-                cred_to_account[cred.id] = cred.account_id
-        account_ids = set(cred_to_account.values())
-        accounts: dict[str, AiAccount] = {}
-        plans: dict[str, str] = {}
-        members: dict[str, str] = {}
-        if account_ids:
-            for acct in session.execute(
-                select(AiAccount).where(AiAccount.id.in_(account_ids))
-            ).scalars():
-                accounts[acct.id] = acct
-            plan_ids = {a.plan_id for a in accounts.values()}
-            if plan_ids:
-                for plan in session.execute(select(AiPlan).where(AiPlan.id.in_(plan_ids))).scalars():
-                    plans[plan.id] = plan.plan_name
-            member_ids = {a.primary_member_id for a in accounts.values() if a.primary_member_id}
-            if member_ids:
-                for m in session.execute(select(Member).where(Member.id.in_(member_ids))).scalars():
-                    members[m.id] = m.display_name
-
-        def _primary_name(acct: AiAccount | None) -> str | None:
-            if not acct or not acct.primary_member_id:
-                return None
-            return members.get(acct.primary_member_id)
-
-        by_account_map: dict[str, dict] = {}
-        by_model_map: dict[str, dict] = {}
-        by_day_map: dict[str, dict] = {}
-        items_all: list[dict] = []
-        for u in rows:
-            account_id = cred_to_account.get(u.credential_id) if u.credential_id else None
-            acct = accounts.get(account_id) if account_id else None
-            item = {
-                "id": u.id,
-                "credential_id": u.credential_id,
-                "account_id": account_id,
-                "account_identifier": acct.account_identifier if acct else None,
-                "primary_member_name": _primary_name(acct),
-                "model": u.model,
-                "tokens_input": u.tokens_input,
-                "tokens_output": u.tokens_output,
-                "tokens_cache_read": u.tokens_cache_read,
-                "tokens_cache_write": u.tokens_cache_write,
-                "tokens_reasoning": u.tokens_reasoning,
-                "total_tokens": u.total_tokens,
-                "cost_cents": u.cost_cents,
-                "ts": serialize_datetime(u.ts),
-            }
-            items_all.append(item)
-
-            bucket_key = account_id or "__unknown__"
-            if bucket_key not in by_account_map:
-                by_account_map[bucket_key] = {
-                    "account_id": account_id,
-                    "account_identifier": acct.account_identifier if acct else "未知账号",
-                    "primary_member_name": _primary_name(acct),
-                    "plan_name": plans.get(acct.plan_id) if acct else None,
-                    "request_count": 0,
-                    "total_tokens": 0,
-                    "cost_cents": 0,
-                }
-            account_bucket = by_account_map[bucket_key]
-            account_bucket["request_count"] += 1
-            account_bucket["total_tokens"] += int(u.total_tokens or 0)
-            account_bucket["cost_cents"] += int(u.cost_cents or 0)
-
-            label = (u.model or "").strip() or "（未知）"
-            bucket = by_model_map.get(label)
-            if bucket is None:
-                bucket = {
-                    "model": label,
-                    "request_count": 0,
-                    "total_tokens": 0,
-                    "cost_cents": 0,
-                }
-                by_model_map[label] = bucket
-            bucket["request_count"] += 1
-            bucket["total_tokens"] += int(u.total_tokens or 0)
-            bucket["cost_cents"] += int(u.cost_cents or 0)
-
-            day = format_china_date(u.ts) or "未知"
-            day_bucket = by_day_map.get(day)
-            if day_bucket is None:
-                day_bucket = {
-                    "day": day,
-                    "request_count": 0,
-                    "total_tokens": 0,
-                    "cost_cents": 0,
-                    "items": [],
-                }
-                by_day_map[day] = day_bucket
-            day_bucket["request_count"] += 1
-            day_bucket["total_tokens"] += int(u.total_tokens or 0)
-            day_bucket["cost_cents"] += int(u.cost_cents or 0)
-            day_bucket["items"].append(item)
-
-        by_account = sorted(
-            by_account_map.values(),
-            key=lambda r: r["total_tokens"],
-            reverse=True,
-        )
-        by_model = sorted(
-            by_model_map.values(),
-            key=lambda r: r["cost_cents"],
-            reverse=True,
-        )
-        # Newest China calendar day first; rows without ts ("未知") last.
-        by_day = sorted(
-            by_day_map.values(),
-            key=lambda r: (0 if r["day"] == "未知" else 1, r["day"]),
-            reverse=True,
-        )
+        rollup = rollup_proxy_usages(session, rows, limit=limit)
         return {
             "summary": {
                 "borrowed_cents": payload["borrowed_cents"],
@@ -555,10 +417,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 "proxy_total_tokens": proxy_tokens,
                 "request_count": len(rows),
             },
-            "by_account": by_account,
-            "by_model": by_model,
-            "by_day": by_day,
-            "items": items_all[:limit],
+            **rollup,
         }
 
     @app.get("/api/v2/loans/{loan_id}/client-setup")

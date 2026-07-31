@@ -349,6 +349,8 @@ def test_pool_ranking_board(env):
             used_cents=7000,
             remaining_cents=0,
             total_pct=100.0,
+            auto_pct=100.0,
+            api_pct=100.0,
         )
     )
     s.commit()

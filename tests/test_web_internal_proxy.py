@@ -633,6 +633,8 @@ def test_pool_hard_filters_exhausted_and_no_snapshot(env):
             used_cents=7000,
             remaining_cents=0,
             total_pct=100.0,
+            auto_pct=100.0,
+            api_pct=100.0,
         )
     )
     s.commit()
@@ -643,3 +645,53 @@ def test_pool_hard_filters_exhausted_and_no_snapshot(env):
     assert "cursor-key-1" in keys
     assert "cursor-key-ex" not in keys
     assert "cursor-key-nosnap" not in keys
+
+
+def test_pool_keeps_total_exhausted_when_one_bucket_has_headroom(env):
+    """Intake OR: total_pct=100 but api_pct still open → credential stays in pool."""
+    s = env["sf"]()
+    mixed = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-mixed-bucket",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+    )
+    s.add(mixed)
+    s.flush()
+    s.add(
+        AiAccountCredential(
+            account_id=mixed.id,
+            vendor_id=env["vendor_id"],
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-mixed", TEST_KEY),
+            key_hint="mx...xx",
+            key_role="primary",
+            status="active",
+            bound_by_member_id="m1",
+        )
+    )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=mixed.id,
+            captured_at=NOW,
+            cycle_start=TODAY - timedelta(days=20),
+            cycle_end=TODAY + timedelta(days=10),
+            limit_cents=7000,
+            used_cents=7000,
+            remaining_cents=0,
+            total_pct=100.0,
+            auto_pct=100.0,
+            api_pct=40.0,
+        )
+    )
+    s.commit()
+    s.close()
+
+    resp = env["client"].get("/api/internal/v1/proxy/pool", headers=_h())
+    assert resp.status_code == 200
+    keys = {c["api_key"] for c in resp.json()["credentials"]}
+    assert "cursor-key-mixed" in keys
+    mixed_row = next(c for c in resp.json()["credentials"] if c["api_key"] == "cursor-key-mixed")
+    assert mixed_row["auto_pct"] == 100.0
+    assert mixed_row["api_pct"] == 40.0

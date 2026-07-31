@@ -96,6 +96,13 @@ func pctQuotaOK(pct *float64) bool {
 	return *pct < 100
 }
 
+// snapshotIntakeOK matches Pulse Credential Pool Intake: at least one Quota
+// Pool still has snapshot headroom (OR). Request-time unknown selection uses
+// snapshotQuotaOK, which requires both buckets.
+func snapshotIntakeOK(autoPct, apiPct *float64) bool {
+	return pctQuotaOK(autoPct) || pctQuotaOK(apiPct)
+}
+
 func (e *keyEntry) snapshotQuotaOK(pool quotaPoolKind) bool {
 	switch pool {
 	case quotaPoolAuto:

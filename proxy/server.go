@@ -19,6 +19,7 @@ type Server struct {
 	ca         *CA
 	pulse      *PulseClient
 	sessions   *SessionMap
+	sticky     *StickySelect
 	sessionTTL time.Duration
 	onRotate   func(entry *keyEntry, binding SessionBinding, kind failKind)
 	transport  *http.Transport
@@ -35,11 +36,12 @@ type Server struct {
 
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
 	return &Server{
-		pool:       pool,
-		ca:         ca,
-		pulse:      pulse,
-		sessions:   sessions,
-		transport:  newOutboundTransport(nil),
+		pool:             pool,
+		ca:               ca,
+		pulse:            pulse,
+		sessions:         sessions,
+		sticky:           NewStickySelect(pool, sessions),
+		transport:        newOutboundTransport(nil),
 		shouldMITM:       defaultShouldMITM,
 		connectAllowlist: resolveConnectAllowlist(),
 	}

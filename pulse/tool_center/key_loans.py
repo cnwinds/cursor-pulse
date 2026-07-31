@@ -24,6 +24,10 @@ from pulse.tool_center.burn_rate import (
     recommend_lenders,
 )
 from pulse.proxy.service import loan_proxy_totals
+from pulse.tool_center.quota_reads import (
+    latest_snapshots_for_accounts,
+    latest_snapshots_for_team,
+)
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.util.datetime_fmt import tool_datetime
 
@@ -125,12 +129,7 @@ class KeyLoanService:
         )
 
     def latest_snapshot(self, account_id: str) -> AccountQuotaSnapshot | None:
-        return self.session.scalar(
-            select(AccountQuotaSnapshot)
-            .where(AccountQuotaSnapshot.account_id == account_id)
-            .order_by(AccountQuotaSnapshot.captured_at.desc())
-            .limit(1)
-        )
+        return latest_snapshots_for_accounts(self.session, [account_id]).get(account_id)
 
     def create_loan_record(
         self,
@@ -409,23 +408,6 @@ def _resolve_remote_key_id(
     return None
 
 
-def _latest_snapshots_by_account(session: Session, team_id: str) -> dict[str, AccountQuotaSnapshot]:
-    repo = ToolCenterRepository(session, team_id)
-    latest: dict[str, AccountQuotaSnapshot] = {}
-    for account in repo.list_active_accounts():
-        if not account.vendor or account.vendor.slug != "cursor":
-            continue
-        snap = session.scalar(
-            select(AccountQuotaSnapshot)
-            .where(AccountQuotaSnapshot.account_id == account.id)
-            .order_by(AccountQuotaSnapshot.captured_at.desc())
-            .limit(1)
-        )
-        if snap:
-            latest[account.id] = snap
-    return latest
-
-
 def account_loan_deadline(account: AiAccount) -> date | None:
     """账号上借用 key 的自动回收日：额度重置日与订阅到期日取先到者。
 
@@ -473,7 +455,7 @@ def build_lender_candidates(
 ) -> list[LenderCandidate]:
     """组装出借候选：最新快照 + renews_on + 当前在借人数。"""
     exclude_account_ids = exclude_account_ids or set()
-    snapshots = _latest_snapshots_by_account(session, team_id)
+    snapshots = latest_snapshots_for_team(session, team_id)
     loan_counts = _active_loan_counts_by_account(session, team_id)
     repo = ToolCenterRepository(session, team_id)
     accounts = [
@@ -860,7 +842,7 @@ def request_self_service_loan(
 
     ensure_borrower_has_cursor_key(session, team_id, borrower.id)
 
-    snapshots = _latest_snapshots_by_account(session, team_id)
+    snapshots = latest_snapshots_for_team(session, team_id)
     own_needs_loan = False
     for account in own_accounts:
         snap = snapshots.get(account.id)

@@ -677,3 +677,50 @@ def test_snapshot_freshness_decays_and_floors():
     snap.captured_at = (now - timedelta(hours=12)).replace(tzinfo=None)  # naive 按 UTC
     assert snapshot_freshness(snap, 24.0, now) == 0.5
     assert snapshot_freshness(snap, 0.0, now) == 1.0  # 尺度 ≤0 恒 1
+
+
+def test_proxy_pool_keeps_total_exhausted_when_one_bucket_has_headroom():
+    """入池：total_pct=100 但 api 仍有余量 → 保留；借贷路径仍排除。"""
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="mixed",
+        used_cents=7000,
+        remaining_cents=0,
+        total_pct=100.0,
+        auto_pct=100.0,
+        api_pct=40.0,
+    )
+    cands = [_candidate(snap, account_id="mixed")]
+    loan_board = explain_lender_selection(cands, today=TODAY, now=NOW)
+    assert {e["account_id"]: e["reason"] for e in loan_board["excluded"]} == {
+        "mixed": "exhausted"
+    }
+    pool_board = explain_lender_selection(
+        cands, today=TODAY, now=NOW, enforce_loan_cap=False
+    )
+    assert pool_board["excluded"] == []
+    assert [r["account_id"] for r in pool_board["ranked"]] == ["mixed"]
+
+
+def test_proxy_pool_excludes_when_both_buckets_full():
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="full",
+        used_cents=7000,
+        remaining_cents=0,
+        total_pct=100.0,
+        auto_pct=100.0,
+        api_pct=100.0,
+    )
+    board = explain_lender_selection(
+        [_candidate(snap, account_id="full")],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
+        "full": "exhausted"
+    }
+

@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
+from pulse.tool_center.snapshot_headroom import snapshot_has_any_pool_headroom
 
 
 @dataclass
@@ -251,12 +252,26 @@ def _hard_filter_reason(
     *,
     enforce_loan_cap: bool = True,
 ) -> str | None:
-    """返回排除原因码；通过硬过滤则 None。"""
+    """返回排除原因码；通过硬过滤则 None。
+
+    借 Key（enforce_loan_cap=True）用 total_pct / burn_rate 的 exhausted。
+    代理入池（False）用 Snapshot Headroom：两桶都满才 exhausted，与 Go
+    per-bucket 选择对齐（入池 OR，请求时按桶过滤）。
+    """
     analysis = analyze_burn_rate(cand.snapshot, today)
-    if analysis.status == "exhausted":
+    if enforce_loan_cap:
+        if analysis.status == "exhausted":
+            return "exhausted"
+    elif not snapshot_has_any_pool_headroom(
+        auto_pct=cand.snapshot.auto_pct,
+        api_pct=cand.snapshot.api_pct,
+    ):
         return "exhausted"
     if analysis.exhausts_before_reset:
-        return "exhausts_before_reset"
+        # Pool intake: total-burn "already exhausted" projection must not
+        # override per-bucket Snapshot Headroom (OR intake rule).
+        if enforce_loan_cap or analysis.status != "exhausted":
+            return "exhausts_before_reset"
     if enforce_loan_cap and cand.active_loans >= cfg.max_active_loans_per_account:
         return "loan_cap"
     deadline = lender_deadline(cand.snapshot.cycle_end, cand.renews_on)
@@ -314,7 +329,8 @@ def _rank_passing_candidates(
 ) -> tuple[list[dict], list[dict]]:
     """硬过滤 + 打分。返回 (ranked_payloads, excluded_payloads)。
 
-    enforce_loan_cap=False 时：不按在借人数硬过滤，且打分忽略 L（load）因子。
+    enforce_loan_cap=False 时：不按在借人数硬过滤，打分忽略 L（load）因子；
+    exhausted 改为两桶 Snapshot Headroom 都满才排除（见 snapshot_has_any_pool_headroom）。
     """
     rows: list[dict] = []
     excluded: list[dict] = []

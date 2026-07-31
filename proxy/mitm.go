@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -125,8 +124,8 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		var err error
 		if loanBound {
 			entry, token, err = s.passthroughToken(req.Context(), binding)
-		} else if s.sessions != nil {
-			entry, token, err = s.poolTokenForBinding(req.Context(), cliTok, &binding, quotaPool)
+		} else if s.sticky != nil {
+			entry, token, err = s.sticky.Select(req.Context(), cliTok, &binding, quotaPool)
 		} else {
 			entry, token, err = s.pool.token(req.Context())
 		}
@@ -415,68 +414,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
 }
 
-func (s *Server) poolTokenForBinding(ctx context.Context, cliTok string, binding *SessionBinding, pool quotaPoolKind) (*keyEntry, string, error) {
-	if binding.StickyCredentialID != "" {
-		stickyID := binding.StickyCredentialID
-		entry := s.pool.findEntry(stickyID)
-		if entry != nil && !entry.unavailable() && entry.hasQuotaForPool(pool) {
-			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
-			if err == nil {
-				return got, tok, nil
-			}
-			// Transient exchange errors must not rotate sticky (align with tokenSkipping).
-			if got != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
-				return got, "", err
-			}
-			if got != nil && isPermanentExchangeErr(err) {
-				log.Printf("[pool] sticky credential %s exchange failed: %v - marking bad", stickyID, err)
-				s.pool.markBad(got)
-			}
-		} else if entry != nil && !entry.unavailable() && !entry.hasQuotaForPool(pool) {
-			log.Printf("[pool] sticky credential %s lacks %s quota (auto_pct=%s api_pct=%s) — rotating",
-				stickyID, pool, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
-		} else if entry != nil && entry.unavailable() {
-			log.Printf("[pool] sticky credential %s unavailable — rotating", stickyID)
-		}
-		next := s.pool.nextAvailableForQuota(stickyID, pool)
-		if next == nil {
-			return nil, "", errAllExhausted
-		}
-		binding.StickyCredentialID = next.credentialID
-		if cliTok != "" {
-			s.sessions.Bind(cliTok, *binding)
-		}
-		log.Printf("[pool] session sticky rotated to credential %s for pool %s", next.credentialID, pool)
-		return s.pool.tokenForCredential(ctx, next.credentialID)
-	}
-	entry, tok, err := s.pool.tokenForQuotaPool(ctx, pool, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	binding.StickyCredentialID = entry.credentialID
-	if cliTok != "" {
-		s.sessions.Bind(cliTok, *binding)
-	}
-	return entry, tok, nil
-}
-
-func (s *Server) rotateSessionSticky(cliTok string, binding *SessionBinding, exhaustedCredID string, pool quotaPoolKind) {
-	if s.sessions == nil || cliTok == "" {
-		return
-	}
-	next := s.pool.nextAvailableForQuota(exhaustedCredID, pool)
-	if next == nil {
-		log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
-		return
-	}
-	if next.credentialID == binding.StickyCredentialID {
-		return
-	}
-	binding.StickyCredentialID = next.credentialID
-	s.sessions.Bind(cliTok, *binding)
-	log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s)", next.credentialID, pool)
-}
-
 func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
 	if kind == failAuth {
 		entry.invalidate()
@@ -497,7 +434,7 @@ func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cl
 	} else {
 		s.pool.markQuotaExhausted(entry, pool)
 		if kind == failAccount {
-			s.rotateSessionSticky(cliTok, &binding, entry.credentialID, pool)
+			s.sticky.RotateOnExhaustion(cliTok, &binding, entry.credentialID, pool)
 		}
 	}
 	if s.pulse != nil {

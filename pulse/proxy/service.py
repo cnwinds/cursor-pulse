@@ -770,12 +770,12 @@ def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None)
 def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
     """入池 primary 凭证上下文：(creds, accounts_by_id, latest_snaps, loan_counts)。"""
     from pulse.storage.models import (
-        AccountQuotaSnapshot,
         AiAccount,
         AiAccountCredential,
         AiVendor,
         KeyLoan,
     )
+    from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
     rows = (
         session.execute(
@@ -815,14 +815,7 @@ def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
             select(AiAccount).where(AiAccount.id.in_(account_ids))
         ).scalars()
     }
-    latest_snaps: dict = {}
-    for snap in session.execute(
-        select(AccountQuotaSnapshot)
-        .where(AccountQuotaSnapshot.account_id.in_(account_ids))
-        .order_by(AccountQuotaSnapshot.captured_at.desc())
-    ).scalars():
-        if snap.account_id not in latest_snaps:
-            latest_snaps[snap.account_id] = snap
+    latest_snaps = latest_snapshots_for_accounts(session, account_ids)
 
     loan_counts: dict = dict(
         session.execute(
