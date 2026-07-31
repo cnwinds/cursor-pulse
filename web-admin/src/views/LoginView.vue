@@ -177,7 +177,7 @@ async function loginPassword() {
       router.push('/pending-approval')
       return
     }
-    auth.setSession(data.access_token, data.user)
+    auth.setSession(data.access_token, data.user, data.refresh_token)
     const redirect = (route.query.redirect as string) || '/'
     router.push(redirect)
   } catch (e: any) {

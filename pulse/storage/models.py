@@ -620,3 +620,19 @@ class ProxyEvent(Base):
     credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class PortalRefreshToken(Base):
+    """Opaque portal refresh tokens (store hash only)."""
+
+    __tablename__ = "portal_refresh_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    replaced_by_id: Mapped[str | None] = mapped_column(
+        ForeignKey("portal_refresh_tokens.id"), nullable=True
+    )

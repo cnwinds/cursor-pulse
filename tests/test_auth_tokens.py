@@ -33,6 +33,95 @@ def member():
     return m
 
 
+def test_create_access_token_default_ttl_is_30_minutes(member):
+    config = AppConfig(web=WebConfig(jwt_secret="jwt-only"))
+    token = create_access_token(config, member)
+    payload = decode_access_token(config, token)
+    ttl = int(payload["exp"] - payload["iat"])
+    assert 29 * 60 <= ttl <= 30 * 60
+
+
+def test_create_access_token_respects_config_minutes(member):
+    config = AppConfig(web=WebConfig(jwt_secret="jwt-only", access_token_minutes=15))
+    token = create_access_token(config, member)
+    payload = decode_access_token(config, token)
+    ttl = int(payload["exp"] - payload["iat"])
+    assert 14 * 60 <= ttl <= 15 * 60
+
+
+def test_hours_kwarg_still_supported(member):
+    config = AppConfig(web=WebConfig(jwt_secret="jwt-only", access_token_minutes=30))
+    token = create_access_token(config, member, hours=2)
+    payload = decode_access_token(config, token)
+    ttl = int(payload["exp"] - payload["iat"])
+    assert 119 * 60 <= ttl <= 120 * 60
+
+
+def test_refresh_token_hash_is_stable():
+    from pulse.web.auth_tokens import create_refresh_token, hash_refresh_token
+
+    raw = create_refresh_token()
+    assert hash_refresh_token(raw) == hash_refresh_token(raw)
+    assert hash_refresh_token(raw) != hash_refresh_token(create_refresh_token())
+
+
+def test_issue_and_rotate_refresh_token(member):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from pulse.storage.models import Base, PortalRefreshToken, Team
+    from pulse.web.auth_tokens import (
+        RefreshTokenError,
+        hash_refresh_token,
+        issue_token_pair,
+        rotate_refresh_token,
+    )
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    team = Team(slug="t", name="T")
+    session.add(team)
+    session.flush()
+    member.team_id = team.id
+    session.add(member)
+    session.commit()
+
+    config = AppConfig(web=WebConfig(jwt_secret="jwt-only", refresh_token_days=7))
+    pair = issue_token_pair(session, config, member)
+    session.commit()
+    assert pair["expires_in"] == 30 * 60
+    assert session.query(PortalRefreshToken).count() == 1
+
+    rotated = rotate_refresh_token(session, config, pair["refresh_token"])
+    session.commit()
+    assert rotated["refresh_token"] != pair["refresh_token"]
+    assert session.query(PortalRefreshToken).count() == 2
+    old = session.query(PortalRefreshToken).filter_by(
+        token_hash=hash_refresh_token(pair["refresh_token"])
+    ).one()
+    assert old.revoked_at is not None
+    assert old.replaced_by_id is not None
+
+    with pytest.raises(RefreshTokenError, match="reuse"):
+        rotate_refresh_token(session, config, pair["refresh_token"])
+    session.commit()
+    # Reuse must not revoke the winner's new session (multi-tab safe).
+    active = (
+        session.query(PortalRefreshToken)
+        .filter(PortalRefreshToken.revoked_at.is_(None))
+        .count()
+    )
+    assert active == 1
+    session.close()
+
+
 def test_jwt_secret_preferred_over_admin_token(member):
     config = AppConfig(
         web=WebConfig(jwt_secret="jwt-only", admin_token="admin-only"),

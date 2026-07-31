@@ -70,6 +70,65 @@ def test_password_login(client):
     assert body["user"]["portal_role"] == "owner"
     assert body["user"]["channel_user_id"] == "admin"
     assert "access_token" in body
+    assert "refresh_token" in body
+    assert body["expires_in"] == 30 * 60
+
+
+def test_refresh_and_logout_flow(client):
+    test_client, _, _, _ = client
+    login = test_client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "pass1234"},
+    )
+    assert login.status_code == 200
+    body = login.json()
+    refresh = body["refresh_token"]
+    access = body["access_token"]
+    assert refresh != access
+    assert not str(refresh).startswith("eyJ")
+
+    me = test_client.get("/api/auth/me", headers=_auth_headers(access))
+    assert me.status_code == 200
+
+    refreshed = test_client.post("/api/auth/refresh", json={"refresh_token": refresh})
+    assert refreshed.status_code == 200
+    new_body = refreshed.json()
+    assert new_body["refresh_token"] != refresh
+    assert not str(new_body["refresh_token"]).startswith("eyJ")
+    assert new_body["access_token"]
+    assert "user" in new_body
+    me2 = test_client.get("/api/auth/me", headers=_auth_headers(new_body["access_token"]))
+    assert me2.status_code == 200
+
+    # Rotated refresh works once more.
+    ok = test_client.post(
+        "/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]}
+    )
+    assert ok.status_code == 200
+    latest = ok.json()["refresh_token"]
+
+    # Reuse of a prior refresh is rejected without killing the latest session.
+    reuse = test_client.post(
+        "/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]}
+    )
+    assert reuse.status_code == 401
+    still = test_client.post("/api/auth/refresh", json={"refresh_token": latest})
+    assert still.status_code == 200
+    latest = still.json()["refresh_token"]
+
+    logout = test_client.post("/api/auth/logout", json={"refresh_token": latest})
+    assert logout.status_code == 204
+
+    after = test_client.post("/api/auth/refresh", json={"refresh_token": latest})
+    assert after.status_code == 401
+
+
+def test_refresh_rejects_unknown_token(client):
+    test_client, _, _, _ = client
+    res = test_client.post(
+        "/api/auth/refresh", json={"refresh_token": "not-a-real-refresh-token"}
+    )
+    assert res.status_code == 401
 
 
 def _password_login_client(admin_password: str):

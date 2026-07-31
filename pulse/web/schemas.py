@@ -10,6 +10,14 @@ class PasswordLoginBody(BaseModel):
     password: str
 
 
+class RefreshTokenBody(BaseModel):
+    refresh_token: str
+
+
+class LogoutBody(BaseModel):
+    refresh_token: str | None = None
+
+
 class DingTalkCallbackBody(BaseModel):
     code: str
 

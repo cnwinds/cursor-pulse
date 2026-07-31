@@ -110,6 +110,8 @@ class WebConfig(BaseModel):
     admin_token: str = ""
     admin_password: str = ""
     jwt_secret: str = ""
+    access_token_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    refresh_token_days: int = Field(default=7, ge=1, le=365)
     dingtalk_oauth_redirect_uri: str = "http://localhost:5173/login/callback"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
@@ -322,6 +324,8 @@ class EnvSettings(BaseSettings):
     admin_web_token: str = ""
     admin_password: str = ""
     jwt_secret: str = ""
+    access_token_minutes: str = ""
+    refresh_token_days: str = ""
     web_cors_origins: str = ""
     dingtalk_oauth_redirect_uri: str = ""
     pulse_team_slug: str = ""
@@ -442,6 +446,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.web.admin_password = env.admin_password
     if env.jwt_secret:
         cfg.web.jwt_secret = env.jwt_secret
+    if env.access_token_minutes.strip().isdigit():
+        cfg.web.access_token_minutes = int(env.access_token_minutes)
+    if env.refresh_token_days.strip().isdigit():
+        cfg.web.refresh_token_days = int(env.refresh_token_days)
     if env.dingtalk_oauth_redirect_uri:
         cfg.web.dingtalk_oauth_redirect_uri = env.dingtalk_oauth_redirect_uri
     if env.web_cors_origins:

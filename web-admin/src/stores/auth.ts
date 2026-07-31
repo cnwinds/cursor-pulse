@@ -1,35 +1,59 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import axios from 'axios'
 import client from '@/api/client'
+import {
+  applySession,
+  clearStoredSession,
+  readAccessToken,
+  readRefreshToken,
+  readStoredUser,
+  type SessionUser,
+} from '@/utils/authSession'
 
-export interface PortalUser {
-  id: string
-  display_name: string
-  channel_user_id: string
-  portal_role: string | null
-  permissions: string[]
-}
+export type PortalUser = SessionUser
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('pulse_token') || '')
-  const user = ref<PortalUser | null>(
-    localStorage.getItem('pulse_user') ? JSON.parse(localStorage.getItem('pulse_user')!) : null,
-  )
+  const token = ref(readAccessToken())
+  const refreshToken = ref(readRefreshToken())
+  const user = ref<PortalUser | null>(readStoredUser())
 
   const isLoggedIn = computed(() => Boolean(token.value && user.value))
 
-  function setSession(accessToken: string, portalUser: PortalUser) {
+  function setSession(accessToken: string, portalUser: PortalUser, refresh?: string | null) {
+    applySession(accessToken, portalUser, refresh)
     token.value = accessToken
     user.value = portalUser
-    localStorage.setItem('pulse_token', accessToken)
-    localStorage.setItem('pulse_user', JSON.stringify(portalUser))
+    if (refresh) {
+      refreshToken.value = refresh
+    }
   }
 
-  function logout() {
+  function syncFromStorage() {
+    token.value = readAccessToken()
+    refreshToken.value = readRefreshToken()
+    user.value = readStoredUser()
+  }
+
+  function clearSession() {
+    clearStoredSession()
     token.value = ''
+    refreshToken.value = ''
     user.value = null
-    localStorage.removeItem('pulse_token')
-    localStorage.removeItem('pulse_user')
+  }
+
+  async function logout() {
+    const currentRefresh = readRefreshToken() || refreshToken.value
+    try {
+      if (currentRefresh) {
+        // Use bare axios to avoid the shared client's 401→refresh interceptor.
+        await axios.post('/api/auth/logout', { refresh_token: currentRefresh }, { timeout: 10000 })
+      }
+    } catch {
+      // Best-effort revoke; always clear local session.
+    } finally {
+      clearSession()
+    }
   }
 
   function hasPermission(code: string) {
@@ -39,9 +63,20 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchMe() {
     const { data } = await client.get('/api/auth/me')
     user.value = data
-    localStorage.setItem('pulse_user', JSON.stringify(data))
+    applySession(token.value || readAccessToken(), data, readRefreshToken() || null)
     return data
   }
 
-  return { token, user, isLoggedIn, setSession, logout, hasPermission, fetchMe }
+  return {
+    token,
+    refreshToken,
+    user,
+    isLoggedIn,
+    setSession,
+    syncFromStorage,
+    clearSession,
+    logout,
+    hasPermission,
+    fetchMe,
+  }
 })

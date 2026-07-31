@@ -37,9 +37,9 @@ onMounted(() => {
   }
 })
 
-function backLogin() {
+async function backLogin() {
   sessionStorage.removeItem('portal_pending_user')
-  auth.logout()
+  await auth.logout()
   router.replace({ name: 'login' })
 }
 

@@ -3,14 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.web.auth_providers import list_auth_providers
 from pulse.web.auth_routes import auth_response, member_payload
+from pulse.web.auth_tokens import RefreshTokenError, revoke_refresh_token, rotate_refresh_token
 from pulse.web.deps import require_portal_user
-from pulse.web.schemas import DingTalkCallbackBody, FeishuCallbackBody, PasswordLoginBody
+from pulse.web.schemas import (
+    DingTalkCallbackBody,
+    FeishuCallbackBody,
+    LogoutBody,
+    PasswordLoginBody,
+    RefreshTokenBody,
+)
 from pulse.web.settings_store import effective_config_for_tenant
 
 
@@ -45,8 +52,9 @@ def _oauth_pending_or_auth(*, config: AppConfig, session: Session, member):
         )
 
     member.last_portal_login_at = datetime.now(timezone.utc)
+    response = auth_response(config, member, session)
     session.commit()
-    return auth_response(config, member)
+    return response
 
 
 def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
@@ -62,6 +70,29 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
     def auth_providers(session: Session = Depends(get_db)):
         runtime = effective_config_for_tenant(session, config)
         return {"providers": list_auth_providers(runtime)}
+
+    @app.post("/api/auth/refresh")
+    def auth_refresh(body: RefreshTokenBody, session: Session = Depends(get_db)):
+        try:
+            pair = rotate_refresh_token(session, config, body.refresh_token)
+        except RefreshTokenError:
+            session.commit()
+            raise HTTPException(status_code=401, detail="刷新令牌无效或已过期") from None
+        response = {
+            "access_token": pair["access_token"],
+            "refresh_token": pair["refresh_token"],
+            "token_type": "bearer",
+            "expires_in": pair["expires_in"],
+            "user": member_payload(pair["member"]),
+        }
+        session.commit()
+        return response
+
+    @app.post("/api/auth/logout")
+    def auth_logout(body: LogoutBody, session: Session = Depends(get_db)):
+        revoke_refresh_token(session, body.refresh_token or "")
+        session.commit()
+        return Response(status_code=204)
 
     @app.get("/api/auth/dingtalk/login-url")
     def dingtalk_login_url(
@@ -185,8 +216,9 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
             if not can_access_portal(member):
                 raise HTTPException(status_code=403, detail="账号未开通或已禁用")
             member.last_portal_login_at = datetime.now(timezone.utc)
+            response = auth_response(config, member, session)
             session.commit()
-            return auth_response(config, member)
+            return response
 
         # Bootstrap: env ADMIN_PASSWORD for reserved admin username only.
         if username != ADMIN_LOGIN_USERNAME:
@@ -209,5 +241,6 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         elif not member.password_hash:
             member.password_hash = hash_password(body.password)
         member.last_portal_login_at = datetime.now(timezone.utc)
+        response = auth_response(config, member, session)
         session.commit()
-        return auth_response(config, member)
+        return response

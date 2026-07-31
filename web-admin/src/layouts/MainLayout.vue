@@ -131,8 +131,8 @@ const auth = useAuthStore()
 const active = computed(() => route.path)
 const pageTitle = computed(() => (route.meta.title as string) || '小脉后台')
 
-function onLogout() {
-  auth.logout()
+async function onLogout() {
+  await auth.logout()
   router.push({ name: 'login' })
 }
 </script>

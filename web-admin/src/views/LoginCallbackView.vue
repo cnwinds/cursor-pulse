@@ -53,7 +53,7 @@ onMounted(async () => {
       router.replace({ name: 'pending-approval' })
       return
     }
-    auth.setSession(data.access_token, data.user)
+    auth.setSession(data.access_token, data.user, data.refresh_token)
     const redirect = sessionStorage.getItem('oauth_redirect') || '/'
     sessionStorage.removeItem('oauth_state')
     sessionStorage.removeItem('oauth_redirect')
