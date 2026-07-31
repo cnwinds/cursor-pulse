@@ -24,12 +24,16 @@ func TestResolveExhaustedResetInterval(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	t.Setenv("PROXY_EXHAUSTED_RESET", "")
-	if got := resolveExhaustedResetInterval(); got != 0 {
-		t.Fatalf("default disabled: got %v want 0", got)
+	if got := resolveExhaustedResetInterval(); got != 30*time.Minute {
+		t.Fatalf("default: got %v want 30m", got)
 	}
 	t.Setenv("PROXY_EXHAUSTED_RESET", "off")
 	if got := resolveExhaustedResetInterval(); got != 0 {
 		t.Fatalf("off: got %v want 0", got)
+	}
+	t.Setenv("PROXY_EXHAUSTED_RESET", "0")
+	if got := resolveExhaustedResetInterval(); got != 0 {
+		t.Fatalf("0: got %v want 0", got)
 	}
 }
 

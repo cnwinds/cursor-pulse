@@ -128,6 +128,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | 流式 usage tap 缓冲 | 8 MiB | —（超限后停止解析，仍转发） |
 | 每连接读头超时 | 30s | — |
 | 每连接空闲超时 | 120s | — |
+| 池 exhausted 周期清零 | 30m | `PROXY_EXHAUSTED_RESET`（`0`/`off`/`false` 关闭） |
 
 ## 池 exhausted 语义
 
@@ -137,8 +138,8 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 - **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
 - Pulse 模式下每个 **CLI session JWT** 在 exchange 时绑定一个池内凭证（`StickyCredentialID`）。
 - 热更新 **保留** `cur` 指针，不会每 60s 把池子打回 index 0。
-- 进程默认 **不** 周期性 reset（`PROXY_EXHAUSTED_RESET` 未设置或为 `0`/`off`）。需要时可设为如 `30m`，会清掉所有耗尽标志与 `badUntil` 并将 `cur` 置 0。
-- 日志：`[pool] exhaustion flags reset`（仅当启用了 reset 时）。
+- 进程默认每 **30m** 清一次耗尽标志与 `badUntil`，并将 `cur` 置 0（`PROXY_EXHAUSTED_RESET`；设为 `0`/`off`/`false` 可关闭）。
+- 日志：`[pool] exhaustion flags reset`。
 
 ## 开发
 

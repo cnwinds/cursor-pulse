@@ -130,7 +130,7 @@ Point agent at this proxy and trust the CA (PowerShell):
 		go pollExhaustedReset(pool, exhaustedReset)
 		log.Printf("pool exhausted reset every %s (PROXY_EXHAUSTED_RESET)", exhaustedReset)
 	} else {
-		log.Printf("pool exhausted reset disabled (set PROXY_EXHAUSTED_RESET to enable)")
+		log.Printf("pool exhausted reset disabled (PROXY_EXHAUSTED_RESET=0/off)")
 	}
 
 	srv := NewServer(pool, ca, pulse, sessions)

@@ -12,7 +12,7 @@ const (
 	defaultMaxUsageTapBuffer = 8 << 20  // 8 MiB
 	defaultReadHeaderTimeout = 30 * time.Second
 	defaultIdleTimeout       = 120 * time.Second
-	defaultExhaustedReset    = 0 // disabled; set PROXY_EXHAUSTED_RESET to enable periodic reset
+	defaultExhaustedReset = 30 * time.Minute // override with PROXY_EXHAUSTED_RESET; 0/off/false disables
 )
 
 // maxUsageTapBuffer caps usageTapWriter accumulation; tests may temporarily lower it.
@@ -29,8 +29,11 @@ func maxNonStreamBodyLimit() int64 {
 
 func resolveExhaustedResetInterval() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("PROXY_EXHAUSTED_RESET"))
-	if raw == "" || raw == "0" || strings.EqualFold(raw, "off") || strings.EqualFold(raw, "false") {
+	if raw == "0" || strings.EqualFold(raw, "off") || strings.EqualFold(raw, "false") {
 		return 0
+	}
+	if raw == "" {
+		return defaultExhaustedReset
 	}
 	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
 		return d
