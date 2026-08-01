@@ -267,6 +267,7 @@ import {
   formatTokens,
   hasApiPoolSummary,
   poolHasTokens,
+  periodsForBoardCycle,
   poolModelBreakdown,
   poolTotalTokens,
   premiumApiSpend,
@@ -456,21 +457,63 @@ function currentPeriod() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-async function loadSummaries() {
-  const res = await client.get('/api/v2/usage-summaries', {
-    params: { period: currentPeriod() },
-  })
-  summaryMap.value = Object.fromEntries(
-    (res.data as UsageSummary[]).map((s) => [s.account_id, s]),
-  )
+function preferSummary(
+  current: UsageSummary | undefined,
+  next: UsageSummary,
+  cycleStart: string | null | undefined,
+): UsageSummary {
+  if (!current) return next
+  // Prefer the summary whose billing cycle matches the board snapshot cycle.
+  if (cycleStart) {
+    if (next.billing_cycle_start === cycleStart && current.billing_cycle_start !== cycleStart) {
+      return next
+    }
+    if (current.billing_cycle_start === cycleStart && next.billing_cycle_start !== cycleStart) {
+      return current
+    }
+  }
+  // Otherwise keep the denser API breakdown, then newer period key.
+  const curApi = Object.keys(current.cursor_pools?.api?.breakdown_by_model || {}).length
+  const nextApi = Object.keys(next.cursor_pools?.api?.breakdown_by_model || {}).length
+  if (nextApi !== curApi) return nextApi > curApi ? next : current
+  return (next.period || '') > (current.period || '') ? next : current
+}
+
+async function loadSummaries(items: BoardItem[]) {
+  const periods = new Set<string>([currentPeriod()])
+  const cycleByAccount = new Map<string, string | null>()
+  for (const item of items) {
+    cycleByAccount.set(item.account_id, item.cycle_start)
+    for (const period of periodsForBoardCycle(item.cycle_start, item.cycle_end)) {
+      periods.add(period)
+    }
+  }
+  const rows = (
+    await Promise.all(
+      [...periods].map(async (period) => {
+        const res = await client.get('/api/v2/usage-summaries', { params: { period } })
+        return res.data as UsageSummary[]
+      }),
+    )
+  ).flat()
+
+  const merged: Record<string, UsageSummary> = {}
+  for (const row of rows) {
+    merged[row.account_id] = preferSummary(
+      merged[row.account_id],
+      row,
+      cycleByAccount.get(row.account_id),
+    )
+  }
+  summaryMap.value = merged
 }
 
 async function loadAll() {
   loading.value = true
   try {
     const boardRes = await client.get('/api/v2/quota-board')
-    await loadSummaries()
-    board.value = boardRes.data
+    board.value = boardRes.data as BoardItem[]
+    await loadSummaries(board.value)
   } finally {
     loading.value = false
   }

@@ -15,6 +15,7 @@ export interface ExternalModelStats {
 
 export interface UsageSummary {
   account_id: string
+  period?: string
   primary_metric_value: number
   primary_metric_unit: string
   reported_spend_usd?: number | null
@@ -119,17 +120,19 @@ export function poolModelBreakdown(
   pool: 'auto_composer' | 'api' | 'third_party',
 ) {
   const bucket = summary?.cursor_pools?.[pool]
-  const breakdown = bucket?.breakdown_by_model
-  if (!breakdown) return []
+  const breakdown = bucket?.breakdown_by_model || {}
   const tokens = bucket?.tokens_by_model || {}
-  return Object.entries(breakdown)
-    .filter(([, amount]) => Number(amount) > 0)
-    .sort((a, b) => Number(b[1]) - Number(a[1]))
-    .map(([name, value]) => ({
+  const names = new Set([...Object.keys(breakdown), ...Object.keys(tokens)])
+  if (!names.size) return []
+  return [...names]
+    .map((name) => ({
       name,
-      value: Number(value),
+      value: Number(breakdown[name] || 0),
       tokens: Number(tokens[name] || 0) || null,
     }))
+    // Keep rows with spend or tokens — included API models can be $0 after estimate miss.
+    .filter((row) => row.value > 0 || (row.tokens || 0) > 0)
+    .sort((a, b) => b.value - a.value || (b.tokens || 0) - (a.tokens || 0) || a.name.localeCompare(b.name))
 }
 
 export function poolHasTokens(
@@ -174,8 +177,31 @@ export function periodDateRange(periodStr: string): [string, string] {
 
 export function billingCycleDateRange(cycleStart?: string | null, cycleEnd?: string | null): [string, string] | null {
   if (!cycleStart || !cycleEnd) return null
-  const end = new Date(cycleEnd)
-  end.setDate(end.getDate() - 1)
+  // Parse as UTC calendar dates to avoid local-TZ shifting the exclusive cycle_end.
+  const end = new Date(`${cycleEnd}T00:00:00Z`)
+  if (Number.isNaN(end.getTime())) return null
+  end.setUTCDate(end.getUTCDate() - 1)
   const endStr = end.toISOString().slice(0, 10)
   return [cycleStart, endStr]
+}
+
+/** Calendar months that may hold UsageSummary rows for a board snapshot cycle. */
+export function periodsForBoardCycle(
+  cycleStart?: string | null,
+  cycleEnd?: string | null,
+): string[] {
+  const range = billingCycleDateRange(cycleStart, cycleEnd)
+  if (!range) return []
+  const [start, end] = range
+  const periods: string[] = []
+  const cursor = new Date(`${start}T00:00:00Z`)
+  const last = new Date(`${end}T00:00:00Z`)
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(last.getTime())) return []
+  while (cursor <= last) {
+    periods.push(
+      `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`,
+    )
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1)
+  }
+  return periods
 }
