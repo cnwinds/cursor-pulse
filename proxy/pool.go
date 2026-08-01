@@ -51,12 +51,9 @@ type keyEntry struct {
 	jwt       string
 	jwtAPIKey string // apiKey that minted jwt; re-exchange when apiKey changes
 	exp       time.Time
-	// Per-pool runtime exhaustion (sticky across Pulse hot-updates).
-	autoQuotaExhausted bool
-	apiQuotaExhausted  bool
-	autoPct            *float64 // Pulse snapshot: planUsage.autoPercentUsed
-	apiPct             *float64 // Pulse snapshot: planUsage.apiPercentUsed
-	badUntil           time.Time // auth/exchange failure cooldown — cleared on hot-update / after TTL
+
+	// CredentialQuotaState (embedded): Snapshot Headroom, runtime marks, auth cooldown.
+	credentialQuotaState
 }
 
 func (e *keyEntry) id() string {
@@ -74,21 +71,6 @@ func (e *keyEntry) masked() string {
 	return k[:6] + "..." + k[len(k)-4:]
 }
 
-func (e *keyEntry) quotaFullyExhausted() bool {
-	return e.autoQuotaExhausted && e.apiQuotaExhausted
-}
-
-func (e *keyEntry) runtimeQuotaOK(pool quotaPoolKind) bool {
-	switch pool {
-	case quotaPoolAuto:
-		return !e.autoQuotaExhausted
-	case quotaPoolAPI:
-		return !e.apiQuotaExhausted
-	default:
-		return !e.quotaFullyExhausted()
-	}
-}
-
 func pctQuotaOK(pct *float64) bool {
 	if pct == nil {
 		return true
@@ -101,34 +83,6 @@ func pctQuotaOK(pct *float64) bool {
 // snapshotQuotaOK, which requires both buckets.
 func snapshotIntakeOK(autoPct, apiPct *float64) bool {
 	return pctQuotaOK(autoPct) || pctQuotaOK(apiPct)
-}
-
-func (e *keyEntry) snapshotQuotaOK(pool quotaPoolKind) bool {
-	switch pool {
-	case quotaPoolAuto:
-		return pctQuotaOK(e.autoPct)
-	case quotaPoolAPI:
-		return pctQuotaOK(e.apiPct)
-	default:
-		return pctQuotaOK(e.autoPct) && pctQuotaOK(e.apiPct)
-	}
-}
-
-func (e *keyEntry) hasQuotaForPool(pool quotaPoolKind) bool {
-	if pool == quotaPoolUnknown {
-		return !e.quotaFullyExhausted() && e.snapshotQuotaOK(pool)
-	}
-	return e.runtimeQuotaOK(pool) && e.snapshotQuotaOK(pool)
-}
-
-// unavailable reports whether the key should be skipped (quota or auth cooldown).
-func (e *keyEntry) unavailable() bool {
-	return e.quotaFullyExhausted() || (!e.badUntil.IsZero() && time.Now().Before(e.badUntil))
-}
-
-func (e *keyEntry) setFullyQuotaExhausted() {
-	e.autoQuotaExhausted = true
-	e.apiQuotaExhausted = true
 }
 
 // invalidate clears the cached JWT so the next ensureToken re-exchanges.
@@ -219,8 +173,10 @@ func NewPoolFromCredentials(creds []PoolCredential) *Pool {
 		p.keys = append(p.keys, &keyEntry{
 			credentialID: c.CredentialID,
 			apiKey:       c.APIKey,
-			autoPct:      c.AutoPct,
-			apiPct:       c.ApiPct,
+			credentialQuotaState: credentialQuotaState{
+				autoPct: c.AutoPct,
+				apiPct:  c.ApiPct,
+			},
 		})
 	}
 	return p
@@ -251,7 +207,7 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 		}
 		if old, ok := byID[c.CredentialID]; ok {
 			old.apiKey = c.APIKey
-			old.badUntil = time.Time{} // allow retry after Pulse/pool refresh
+			old.clearAuthCooldown() // allow retry after Pulse/pool refresh
 			old.autoPct = c.AutoPct
 			old.apiPct = c.ApiPct
 			next = append(next, old)
@@ -260,8 +216,10 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 		next = append(next, &keyEntry{
 			credentialID: c.CredentialID,
 			apiKey:       c.APIKey,
-			autoPct:      c.AutoPct,
-			apiPct:       c.ApiPct,
+			credentialQuotaState: credentialQuotaState{
+				autoPct: c.AutoPct,
+				apiPct:  c.ApiPct,
+			},
 		})
 	}
 	p.keys = next
@@ -437,24 +395,15 @@ func (p *Pool) markExhausted(e *keyEntry) {
 func (p *Pool) markQuotaExhausted(e *keyEntry, pool quotaPoolKind) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !e.observeExhaustion(pool) {
+		return
+	}
 	switch pool {
 	case quotaPoolAuto:
-		if e.autoQuotaExhausted {
-			return
-		}
-		e.autoQuotaExhausted = true
 		log.Printf("[pool] key %s marked auto quota exhausted", e.masked())
 	case quotaPoolAPI:
-		if e.apiQuotaExhausted {
-			return
-		}
-		e.apiQuotaExhausted = true
 		log.Printf("[pool] key %s marked api quota exhausted", e.masked())
 	default:
-		if e.quotaFullyExhausted() {
-			return
-		}
-		e.setFullyQuotaExhausted()
 		log.Printf("[pool] key %s marked exhausted (quota)", e.masked())
 	}
 	if e.quotaFullyExhausted() {
@@ -467,9 +416,10 @@ func (p *Pool) markQuotaExhausted(e *keyEntry, pool quotaPoolKind) {
 // "all keys exhausted" after transient Pulse/Cursor outages.
 func (p *Pool) markBad(e *keyEntry) {
 	p.mu.Lock()
-	e.badUntil = time.Now().Add(authBadCooldown)
+	until := time.Now().Add(authBadCooldown)
+	e.setAuthCooldown(until)
 	log.Printf("[pool] key %s marked bad until %s (auth/exchange failure)",
-		e.masked(), e.badUntil.Format(time.RFC3339))
+		e.masked(), until.Format(time.RFC3339))
 	p.advanceLocked()
 	p.mu.Unlock()
 	e.invalidate()
@@ -487,14 +437,25 @@ func (p *Pool) advanceLocked() {
 	}
 }
 
-// reset clears exhaustion and auth-bad flags (e.g. on manual signal / new day).
+// resetQuotaMarks clears runtime Quota Pool exhaustion only (decayQuotaMarks).
+// Auth cooldowns keep their TTL / Pulse hot-update path.
+func (p *Pool) resetQuotaMarks() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.keys {
+		e.decayQuotaMarks()
+	}
+	p.cur = 0
+	log.Printf("[pool] runtime quota marks reset (%d keys)", len(p.keys))
+}
+
+// reset clears exhaustion and auth-bad flags (full recovery / tests).
 func (p *Pool) reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.keys {
-		e.autoQuotaExhausted = false
-		e.apiQuotaExhausted = false
-		e.badUntil = time.Time{}
+		e.decayQuotaMarks()
+		e.clearAuthCooldown()
 	}
 	p.cur = 0
 	log.Printf("[pool] exhaustion flags reset")

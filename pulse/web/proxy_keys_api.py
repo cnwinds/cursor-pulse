@@ -200,7 +200,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
             )
         if "expires_at" in data:
             key.expires_at = data["expires_at"]
-        key.updated_at = proxy_service._utcnow()
+        key.updated_at = proxy_service.utcnow()
         session.commit()
         return proxy_service.key_summary(session, key)
 
@@ -211,7 +211,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
     def revoke_proxy_key(key_id: str, session: Session = Depends(get_db)):
         key = _get_key(session, key_id)
         key.status = "revoked"
-        key.updated_at = proxy_service._utcnow()
+        key.updated_at = proxy_service.utcnow()
         proxy_service.record_event(session, event_type="revoked", proxy_key_id=key.id)
         session.commit()
         return proxy_service.key_summary(session, key)
@@ -342,7 +342,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         if body.proxy_enabled:
             _require_pool_ready(session, account.id)
         account.proxy_enabled = body.proxy_enabled
-        account.updated_at = proxy_service._utcnow()
+        account.updated_at = proxy_service.utcnow()
         proxy_service.record_event(
             session,
             event_type="pool_toggled",
@@ -411,7 +411,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         if body.proxy_enabled:
             _require_pool_ready(session, account.id)
         account.proxy_enabled = body.proxy_enabled
-        account.updated_at = proxy_service._utcnow()
+        account.updated_at = proxy_service.utcnow()
         # 同步写凭证列，便于旧数据观察；池过滤已不读此列
         cred.proxy_enabled = body.proxy_enabled
         proxy_service.record_event(

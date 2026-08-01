@@ -109,7 +109,7 @@ def _issue_loan(env) -> tuple[str, str]:
     mock_client.list_user_api_keys.return_value = [{"id": 99, "name": "pulse-loan-Borrower"}]
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = env["session_factory"]()
         cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
         cred_service.bind_cursor_api_key(
@@ -573,7 +573,7 @@ def test_revoke_clears_alias_fields(loan_client_env):
     assert loan.alias_encrypted_key
     s.close()
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient") as mock_cls:
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient") as mock_cls:
         mock_cls.return_value.get_access_token.return_value = "session-token"
         mock_cls.return_value.revoke_user_api_key.return_value = None
         res = env["client"].post(

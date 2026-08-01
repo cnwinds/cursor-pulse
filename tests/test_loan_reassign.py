@@ -76,7 +76,7 @@ def _prepare_two_lenders(session, env, mock_client):
     return source_a, source_b
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_reassign_keeps_pka_and_switches_source(mock_client_cls, quota_env):
     env = quota_env
     session = env["session_factory"]()
@@ -134,7 +134,7 @@ def test_reassign_keeps_pka_and_switches_source(mock_client_cls, quota_env):
     session.close()
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_reassign_rejects_same_account(mock_client_cls, quota_env):
     env = quota_env
     session = env["session_factory"]()
@@ -164,7 +164,7 @@ def test_reassign_rejects_same_account(mock_client_cls, quota_env):
     session.close()
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_reassign_source_api(mock_client_cls, quota_env):
     env = quota_env
     client = env["client"]
@@ -179,7 +179,7 @@ def test_reassign_source_api(mock_client_cls, quota_env):
     source_a, source_b = _prepare_two_lenders(session, env, mock_client)
     session.commit()
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         issue = client.post(
             f"/api/v2/accounts/{source_a.id}/loan-key",
             headers=_headers(token),

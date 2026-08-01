@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.periods import current_period
-from pulse.proxy.service import loan_proxy_usage_summary
+from pulse.proxy.usage import loan_proxy_usage_summary
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,

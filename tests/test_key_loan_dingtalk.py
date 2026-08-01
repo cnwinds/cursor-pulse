@@ -96,7 +96,7 @@ def _bind_borrower_own_key(session, env, mock_client) -> None:
     )
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_request_self_service_loan_success(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     mock_client = MagicMock()
@@ -147,7 +147,7 @@ def test_request_self_service_loan_rejects_missing_borrower_key(loan_bot_env):
         )
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_request_self_service_loan_rejects_partially_bound_accounts(
     mock_client_cls, loan_bot_env
 ):
@@ -211,7 +211,7 @@ def _invoke(session, *, team_id: str, member_id: str, capability_key: str, argum
     )
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
@@ -252,7 +252,7 @@ def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
     assert "loan_expires_on" in (result.result or {})
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
@@ -291,7 +291,7 @@ def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
     assert result.user_message == ""
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_dingtalk_self_loan_read_includes_key(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
@@ -347,7 +347,7 @@ def test_dingtalk_self_loan_read_includes_key(mock_client_cls, loan_bot_env):
     assert loan.get("requires_proxy") is True
     assert payload.get("empty_reason") is None
     assert str(payload.get("loan", {}).get("api_key") or "").startswith("pka_")
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_dingtalk_return_key_command(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     config = _config()
@@ -393,7 +393,7 @@ def test_dingtalk_return_key_command(mock_client_cls, loan_bot_env):
     assert loan_svc.active_loan_for_borrower(env["borrower"].id) is None
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_self_service_recommend_respects_configured_cap(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     mock_client = MagicMock()
@@ -437,7 +437,7 @@ def test_self_service_recommend_respects_configured_cap(mock_client_cls, loan_bo
         )
 
 
-@patch("pulse.tool_center.key_loans.CursorApiClient")
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_self_service_rejects_second_active_loan(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     mock_client = MagicMock()

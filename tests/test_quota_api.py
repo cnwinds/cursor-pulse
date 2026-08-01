@@ -112,7 +112,7 @@ def test_loan_key_returns_plaintext_once(quota_env):
 
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = quota_env["session_factory"]()
         cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
         cred_service.bind_cursor_api_key(
@@ -194,7 +194,7 @@ def test_patch_loan_auto_revoke_on_reset(quota_env):
 
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = quota_env["session_factory"]()
         cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
         cred_service.bind_cursor_api_key(
@@ -278,7 +278,7 @@ def test_list_loans_includes_primary_member_name(quota_env):
 
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = quota_env["session_factory"]()
         cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
         cred_service.bind_cursor_api_key(
@@ -376,7 +376,7 @@ def test_loan_key_enforces_account_cap(quota_env):
 
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = quota_env["session_factory"]()
         cred_service = CredentialService(s, TEST_KEY, cursor_client=mock_client)
         cred_service.bind_cursor_api_key(
@@ -420,7 +420,7 @@ def test_request_self_loan_and_mine_via_web(quota_env):
     mock_client.list_user_api_keys.return_value = [{"id": 77, "name": "pulse-loan-Borrower"}]
     from tests.conftest import mock_cursor_key_exchange
 
-    with patch("pulse.tool_center.key_loans.CursorApiClient", return_value=mock_client):
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
         s = quota_env["session_factory"]()
         tool_repo = ToolCenterRepository(s, owner.team_id)
         cursor_accounts = [a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"]

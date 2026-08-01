@@ -59,6 +59,26 @@ func TestPoolResetClearsExhausted(t *testing.T) {
 	}
 }
 
+func TestPoolResetQuotaMarksKeepsAuthCooldown(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1"},
+		{CredentialID: "c2", APIKey: "k2"},
+	})
+	p.keys[0].setFullyQuotaExhausted()
+	p.keys[1].badUntil = time.Now().Add(time.Hour)
+	p.cur = 1
+	p.resetQuotaMarks()
+	if p.keys[0].quotaFullyExhausted() {
+		t.Fatal("quota marks should clear")
+	}
+	if p.keys[1].badUntil.IsZero() {
+		t.Fatal("auth cooldown must survive quota-mark reset")
+	}
+	if p.cur != 0 {
+		t.Fatalf("cur=%d want 0", p.cur)
+	}
+}
+
 func TestUsageTapBufferCapStopsGrowth(t *testing.T) {
 	old := maxUsageTapBuffer
 	maxUsageTapBuffer = 64

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"time"
 )
 
 // StickySelect picks and rotates the sticky credential for a CLI session JWT
@@ -24,11 +25,13 @@ func NewStickySelect(pool *Pool, sessions *SessionMap) *StickySelect {
 // Select returns a JWT for the session's sticky credential when that
 // credential still has quota for pool; otherwise rotates sticky within the
 // pool order and persists via sessions.Bind.
-func (s *StickySelect) Select(ctx context.Context, sessionKey string, binding *SessionBinding, pool quotaPoolKind) (*keyEntry, string, error) {
+// sessionJWT is the CLI session JWT used as the SessionMap key (not a Proxy Key).
+func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *SessionBinding, pool quotaPoolKind) (*keyEntry, string, error) {
+	now := time.Now()
 	if binding.StickyCredentialID != "" {
 		stickyID := binding.StickyCredentialID
 		entry := s.pool.findEntry(stickyID)
-		if entry != nil && !entry.unavailable() && entry.hasQuotaForPool(pool) {
+		if entry != nil && !entry.authCooling(now) && entry.availableFor(pool) {
 			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
 			if err == nil {
 				return got, tok, nil
@@ -43,19 +46,19 @@ func (s *StickySelect) Select(ctx context.Context, sessionKey string, binding *S
 				log.Printf("[pool] sticky credential %s exchange failed: %v - marking bad", stickyID, err)
 				s.pool.markBad(got)
 			}
-		} else if entry != nil && !entry.unavailable() && !entry.hasQuotaForPool(pool) {
+		} else if entry != nil && !entry.authCooling(now) && !entry.availableFor(pool) {
 			log.Printf("[pool] sticky credential %s lacks %s quota (auto_pct=%s api_pct=%s) — rotating",
 				stickyID, pool, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
-		} else if entry != nil && entry.unavailable() {
-			log.Printf("[pool] sticky credential %s unavailable — rotating", stickyID)
+		} else if entry != nil && entry.authCooling(now) {
+			log.Printf("[pool] sticky credential %s auth cooling — rotating", stickyID)
 		}
 		next := s.pool.nextAvailableForQuota(stickyID, pool)
 		if next == nil {
 			return nil, "", errAllExhausted
 		}
 		binding.StickyCredentialID = next.credentialID
-		if sessionKey != "" {
-			s.sessions.Bind(sessionKey, *binding)
+		if sessionJWT != "" {
+			s.sessions.Bind(sessionJWT, *binding)
 		}
 		log.Printf("[pool] session sticky rotated to credential %s for pool %s", next.credentialID, pool)
 		return s.pool.tokenForCredential(ctx, next.credentialID)
@@ -65,16 +68,16 @@ func (s *StickySelect) Select(ctx context.Context, sessionKey string, binding *S
 		return nil, "", err
 	}
 	binding.StickyCredentialID = entry.credentialID
-	if sessionKey != "" {
-		s.sessions.Bind(sessionKey, *binding)
+	if sessionJWT != "" {
+		s.sessions.Bind(sessionJWT, *binding)
 	}
 	return entry, tok, nil
 }
 
 // RotateOnExhaustion advances sticky to the next credential with quota for
 // pool after the current one was marked exhausted. No-op when none remain.
-func (s *StickySelect) RotateOnExhaustion(sessionKey string, binding *SessionBinding, exhaustedCredID string, pool quotaPoolKind) {
-	if s == nil || sessionKey == "" || binding == nil {
+func (s *StickySelect) RotateOnExhaustion(sessionJWT string, binding *SessionBinding, exhaustedCredID string, pool quotaPoolKind) {
+	if s == nil || sessionJWT == "" || binding == nil {
 		return
 	}
 	next := s.pool.nextAvailableForQuota(exhaustedCredID, pool)
@@ -86,6 +89,6 @@ func (s *StickySelect) RotateOnExhaustion(sessionKey string, binding *SessionBin
 		return
 	}
 	binding.StickyCredentialID = next.credentialID
-	s.sessions.Bind(sessionKey, *binding)
+	s.sessions.Bind(sessionJWT, *binding)
 	log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s)", next.credentialID, pool)
 }

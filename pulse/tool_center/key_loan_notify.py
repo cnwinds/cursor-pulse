@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from pulse.channels.base import normalize_platform, outbound_messenger_or_none
 from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
-from pulse.proxy.service import build_client_command
+from pulse.proxy.key_crud import build_client_command
 from pulse.storage.models import KeyLoan, Member
 
 logger = logging.getLogger(__name__)

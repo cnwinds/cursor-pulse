@@ -13,13 +13,9 @@ from pulse.config import LoanSelectionConfig
 from pulse.ingestion.credentials import CredentialService
 from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot
-from pulse.tool_center.key_loans import (
-    KeyLoanError,
-    KeyLoanService,
-    _lock_account_for_loan_issue,
-    issue_loan_key,
-    recommend_lender_for_borrower,
-)
+from pulse.tool_center.key_loan_issue import _lock_account_for_loan_issue, issue_loan_key, request_self_service_loan
+from pulse.tool_center.key_loans import KeyLoanError, KeyLoanService, recommend_lender_for_borrower
+
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from tests.conftest import make_team_repo, mock_cursor_key_exchange

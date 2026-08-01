@@ -6,7 +6,7 @@ import logging
 from datetime import date
 
 from pulse.channels.commands_common import encryption_key
-from pulse.proxy.service import loan_proxy_usage_summary
+from pulse.proxy.usage import loan_proxy_usage_summary
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
 from pulse.tool_center.burn_rate import analyze_burn_rate

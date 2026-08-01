@@ -52,7 +52,7 @@ func TestEffectiveMarkQuotaPoolFromBody(t *testing.T) {
 func TestUnknownSnapshotRequiresBothPools(t *testing.T) {
 	apiFull := 100.0
 	autoOK := 15.0
-	e := &keyEntry{autoPct: &autoOK, apiPct: &apiFull}
+	e := &keyEntry{credentialQuotaState: credentialQuotaState{autoPct: &autoOK, apiPct: &apiFull}}
 	if e.hasQuotaForPool(quotaPoolUnknown) {
 		t.Fatal("unknown pool should fail when api snapshot full")
 	}

@@ -138,8 +138,8 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 - **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
 - Pulse 模式下每个 **CLI session JWT** 在 exchange 时绑定一个池内凭证（`StickyCredentialID`）。
 - 热更新 **保留** `cur` 指针，不会每 60s 把池子打回 index 0。
-- 进程默认每 **30m** 清一次耗尽标志与 `badUntil`，并将 `cur` 置 0（`PROXY_EXHAUSTED_RESET`；设为 `0`/`off`/`false` 可关闭）。
-- 日志：`[pool] exhaustion flags reset`。
+- 进程默认每 **30m** 清一次 **runtime 额度耗尽标志**（不清 `badUntil`），并将 `cur` 置 0（`PROXY_EXHAUSTED_RESET`；设为 `0`/`off`/`false` 可关闭）。auth 冷却仍靠 TTL / 热更新。
+- 日志：`[pool] runtime quota marks reset (N keys)`（全量 `reset()` 仍为 `[pool] exhaustion flags reset`）。
 
 ## 开发
 

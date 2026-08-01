@@ -156,7 +156,8 @@ func pollExhaustedReset(pool *Pool, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for range tick.C {
-		pool.reset()
+		// Only runtime Quota Pool marks — auth cooldowns keep their own TTL.
+		pool.resetQuotaMarks()
 	}
 }
 

@@ -32,7 +32,7 @@ func TestQuotaPoolSnapshotContract(t *testing.T) {
 		if got := snapshotIntakeOK(c.AutoPct, c.ApiPct); got != c.IntakeOK {
 			t.Errorf("%s: intake_ok want %v got %v", c.Name, c.IntakeOK, got)
 		}
-		e := &keyEntry{autoPct: c.AutoPct, apiPct: c.ApiPct}
+		e := &keyEntry{credentialQuotaState: credentialQuotaState{autoPct: c.AutoPct, apiPct: c.ApiPct}}
 		checks := map[string]quotaPoolKind{
 			"unknown": quotaPoolUnknown,
 			"auto":    quotaPoolAuto,
