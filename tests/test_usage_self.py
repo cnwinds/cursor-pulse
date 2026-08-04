@@ -6,19 +6,27 @@ from types import SimpleNamespace
 import pytest
 
 from pulse.storage.db import init_db
-from pulse.storage.models import UsageDailyAggregate
+from pulse.storage.models import (
+    AiAccountCredential,
+    KeyLoan,
+    ProxyKeyUsage,
+    UsageDailyAggregate,
+)
+from pulse.tool_center.key_loans import KeyLoanService
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.tool_center.usage_self import (
     _loan_borrowed_quota_pct,
     _model_share_pct,
     aggregate_models_from_daily_rows,
+    build_loan_usage_payload,
     build_usage_self_payload,
     format_usage_self_message,
     is_self_usage_query,
     load_account_model_usage,
     parse_usage_period_request,
     resolve_account_window,
+    resolve_loan_usage_window,
 )
 from tests.conftest import make_team_repo
 
@@ -190,6 +198,174 @@ def test_format_lists_all_models():
     assert "数据最后更新：2026-07-15 12:30:00" in msg
     assert "总览" not in msg
     assert "| 账号 |" not in msg
+
+
+def _loan_created(created_at: datetime | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        created_at=created_at
+        if created_at is not None
+        else datetime(2026, 7, 27, 1, 56, 7)
+    )
+
+
+def test_resolve_loan_usage_window_billing_cycle_uses_full_loan_period():
+    """Default「我的用量」：Proxy 按借用周期，不按借出账号账期截断。"""
+    start, end, label = resolve_loan_usage_window(
+        _loan_created(),
+        mode="billing_cycle",
+        period="2026-08",
+        today=date(2026, 8, 4),
+    )
+    assert start == date(2026, 7, 27)
+    assert end == date(2026, 8, 5)
+    assert label == "借用周期"
+    # 借出账号账期本会是 8/1~9/1；不得用其截掉 7 月用量
+    assert start < date(2026, 8, 1)
+
+
+def test_resolve_loan_usage_window_calendar_month_intersects_loan():
+    loan = _loan_created()
+    start, end, label = resolve_loan_usage_window(
+        loan,
+        mode="calendar_month",
+        period="2026-08",
+        today=date(2026, 8, 4),
+    )
+    assert start == date(2026, 8, 1)
+    assert end == date(2026, 8, 5)
+    assert label == "自然月 2026-08 · 借用段"
+
+    start_jul, end_jul, label_jul = resolve_loan_usage_window(
+        loan,
+        mode="calendar_month",
+        period="2026-07",
+        today=date(2026, 8, 4),
+    )
+    assert start_jul == date(2026, 7, 27)
+    assert end_jul == date(2026, 8, 1)
+    assert label_jul == "自然月 2026-07 · 借用段"
+
+
+def test_resolve_loan_usage_window_missing_created_at_falls_back_to_today():
+    start, end, label = resolve_loan_usage_window(
+        SimpleNamespace(created_at=None),
+        mode="billing_cycle",
+        period="2026-08",
+        today=date(2026, 8, 4),
+    )
+    assert start == date(2026, 8, 4)
+    assert end == date(2026, 8, 5)
+    assert label == "借用周期"
+
+
+def test_resolve_loan_usage_window_empty_calendar_month_falls_back():
+    """指定尚未开始的自然月时缩到可展示的最小窗，不报错。"""
+    start, end, label = resolve_loan_usage_window(
+        _loan_created(),
+        mode="calendar_month",
+        period="2026-09",
+        today=date(2026, 8, 4),
+    )
+    assert start == date(2026, 7, 27)
+    assert end == date(2026, 7, 28)
+    assert label == "自然月 2026-09 · 借用段"
+
+
+def _seed_proxy_loan_with_july_usage(session):
+    team, repo = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = next(a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor")
+    account.usage_resets_on = date(2027, 2, 1)
+    borrower = repo.add_member("borrower-lzj", "陆宗靖")
+    session.flush()
+    cred = AiAccountCredential(
+        account_id=account.id,
+        vendor_id=account.vendor_id,
+        credential_type="cursor_api_key",
+        encrypted_value="enc",
+        key_hint="crsr_...test",
+        key_role="loan",
+        bound_by_member_id=borrower.id,
+        assignee_member_id=borrower.id,
+    )
+    session.add(cred)
+    session.flush()
+    loan = KeyLoan(
+        source_account_id=account.id,
+        credential_id=cred.id,
+        borrower_member_id=borrower.id,
+        baseline_used_cents=3197,
+        status="active",
+        created_at=datetime(2026, 7, 27, 1, 56, 7),
+    )
+    session.add(loan)
+    session.flush()
+    session.add(
+        ProxyKeyUsage(
+            loan_id=loan.id,
+            model="composer-2.5-fast",
+            total_tokens=1_000_000,
+            cost_cents=1453,
+            ts=datetime(2026, 7, 29, 8, 0, 0),
+        )
+    )
+    session.commit()
+    return loan
+
+
+def test_build_loan_usage_payload_proxy_spans_billing_month_rollover():
+    """Regression: 7 月 Proxy 用量在 8 月问「我的用量」仍按借用周期可见。"""
+    session = init_db("sqlite:///:memory:")()
+    try:
+        loan = _seed_proxy_loan_with_july_usage(session)
+        loan_svc = KeyLoanService(session, "")
+        payload = build_loan_usage_payload(
+            session,
+            loan,
+            loan_svc,
+            mode="billing_cycle",
+            period="2026-08",
+            today=date(2026, 8, 4),
+        )
+        assert payload is not None
+        assert payload["usage_source"] == "proxy"
+        assert payload["window_label"] == "借用周期"
+        assert payload["range_text"] == "2026-07-27 ~ 2026-08-04"
+        assert payload["events"] == 1
+        assert payload["cost_usd"] == pytest.approx(14.53)
+        assert payload["models"][0]["model"] == "composer-2.5-fast"
+
+        july = build_loan_usage_payload(
+            session,
+            loan,
+            loan_svc,
+            mode="calendar_month",
+            period="2026-07",
+            today=date(2026, 8, 4),
+        )
+        assert july is not None
+        assert july["usage_source"] == "proxy"
+        assert july["range_text"] == "2026-07-27 ~ 2026-07-31"
+        assert july["events"] == 1
+        assert july["cost_usd"] == pytest.approx(14.53)
+        assert july["models"][0]["model"] == "composer-2.5-fast"
+
+        august = build_loan_usage_payload(
+            session,
+            loan,
+            loan_svc,
+            mode="calendar_month",
+            period="2026-08",
+            today=date(2026, 8, 4),
+        )
+        assert august is not None
+        assert august["usage_source"] == "quota_approx"
+        assert august["events"] == 0
+        assert august["cost_usd"] == pytest.approx(0.0)
+    finally:
+        session.close()
 
 
 def test_loan_borrowed_quota_pct_from_total_pct():

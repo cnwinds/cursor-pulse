@@ -80,29 +80,28 @@ def resolve_loan_usage_window(
     *,
     mode: str,
     period: str,
-    usage_resets_on: date | None,
     today: date,
 ) -> tuple[date, date, str]:
-    """借用期间与查询窗口的交集 [start, end)。"""
+    """返回借用用量窗口 [start, end) 与标签。
+
+    默认（billing_cycle）为整段借用期；calendar_month 与自然月求交。
+    不使用借出账号记账周期截断 Proxy 窗。
+    """
     loan_start = loan.created_at.date() if loan.created_at else today
+    end_cap = today + timedelta(days=1)
+
     if mode == "calendar_month":
         win_start = period_first_day(period)
         win_end = add_months(win_start, 1)
         label = f"自然月 {period} · 借用段"
-    elif usage_resets_on:
-        win_start, win_end = billing_cycle_containing(today, usage_resets_on)
-        label = "记账周期 · 借用段"
-    else:
-        win_start = period_first_day(period)
-        win_end = add_months(win_start, 1)
-        label = f"自然月 {period} · 借用段（无记账重置日，已回退）"
+        start = max(loan_start, win_start)
+        end = min(win_end, end_cap)
+        if start >= end:
+            start = loan_start
+            end = min(win_end, loan_start + timedelta(days=1))
+        return start, end, label
 
-    start = max(loan_start, win_start)
-    end = min(win_end, today + timedelta(days=1))
-    if start >= end:
-        start = loan_start
-        end = min(win_end, loan_start + timedelta(days=1))
-    return start, end, label
+    return loan_start, end_cap, "借用周期"
 
 
 def _loan_borrowed_quota_pct(loan: KeyLoan, snapshot: AccountQuotaSnapshot) -> float | None:
@@ -156,7 +155,6 @@ def build_loan_usage_payload(
         loan,
         mode=mode,
         period=period,
-        usage_resets_on=account.usage_resets_on,
         today=today,
     )
     ts_start, ts_end = _date_window_to_utc_datetimes(win_start, win_end)
