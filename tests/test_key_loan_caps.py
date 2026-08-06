@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,6 +23,12 @@ from tests.conftest import make_team_repo, mock_cursor_key_exchange
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
 
+def _active_cycle_bounds(today: date | None = None) -> tuple[date, date]:
+    """Snapshot cycle that still has coverage headroom relative to *today*."""
+    day = today or date.today()
+    return day - timedelta(days=14), day + timedelta(days=16)
+
+
 @pytest.fixture
 def cap_env():
     session_factory = init_db("sqlite:///:memory:")
@@ -33,12 +39,13 @@ def cap_env():
     session.flush()
     tool_repo = ToolCenterRepository(session, team.id)
     lender = next(a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor")
+    cycle_start, cycle_end = _active_cycle_bounds()
     session.add(
         AccountQuotaSnapshot(
             account_id=lender.id,
             captured_at=datetime.now(timezone.utc),
-            cycle_start=date(2026, 7, 1),
-            cycle_end=date(2026, 8, 1),
+            cycle_start=cycle_start,
+            cycle_end=cycle_end,
             limit_cents=7000,
             used_cents=1000,
             remaining_cents=6000,

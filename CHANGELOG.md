@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-06
+
+### 新增
+
+- **出站消息入会话账本**：Key 借用通知、知识库群推、渠道本地回复等 Pulse 出站 IM，在投递成功后写入 Assistant 会话账本（挂当前 open 会话，无则新建）；`pk_` / `pka_` 入账脱敏
+- **门户 access/refresh 鉴权**：安全轮换与静默续期
+- **Proxy 模型感知配额池路由**：按模型选择配额池，并支持 stream body wait
+
+### 变更
+
+- **借 Key / Proxy 模块加深**：拆分 Loan Lifecycle、CredentialQuotaState，以及 authorize / usage ledger / pool board 等控制面缝
+- **代理池打分与用量明细**：改进 pool scoring；借 Key 用量按出借账号展示，明细列整理
+- **默认 `PROXY_EXHAUSTED_RESET=30m`**：周期性清理 sticky 配额标记
+
+### 修复
+
+- 额度看板用量摘要按计费周期月份加载
+- 借 Key 代理用量按借用区间展示
+- Proxy session sticky rotation 与 Run 请求模型提取
+
+### 杂项
+
+- 路线图后续条目改为「待定」；README 演示视频与视觉一致性更新
+- 借 Key 相关测试快照计费周期改为相对今天，避免周期结束后 CI 误伤
+
 ## [0.2.0] - 2026-07-30
 
 ### 新增
@@ -57,6 +82,7 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cnwinds/cursor-pulse/releases/tag/v0.1.0

@@ -7,7 +7,7 @@ def _msg(result):
 
 import base64
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,6 +28,11 @@ from tests.conftest import make_team_repo, mock_cursor_key_exchange
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
 
+def _active_cycle_bounds(today: date | None = None) -> tuple[date, date]:
+    day = today or date.today()
+    return day - timedelta(days=14), day + timedelta(days=16)
+
+
 @pytest.fixture
 def loan_bot_env():
     session_factory = init_db("sqlite:///:memory:")
@@ -45,11 +50,12 @@ def loan_bot_env():
     tool_repo.update_account(own_account.id, primary_member_id=borrower.id, status="shared")
     session.flush()
 
+    cycle_start, cycle_end = _active_cycle_bounds()
     exhausted_snap = AccountQuotaSnapshot(
         account_id=own_account.id,
         captured_at=datetime.now(timezone.utc),
-        cycle_start=date(2026, 7, 1),
-        cycle_end=date(2026, 8, 1),
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
         limit_cents=7000,
         used_cents=7000,
         remaining_cents=0,
@@ -58,8 +64,8 @@ def loan_bot_env():
     healthy_snap = AccountQuotaSnapshot(
         account_id=lender_account.id,
         captured_at=datetime.now(timezone.utc),
-        cycle_start=date(2026, 7, 1),
-        cycle_end=date(2026, 8, 1),
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
         limit_cents=7000,
         used_cents=1000,
         remaining_cents=6000,
