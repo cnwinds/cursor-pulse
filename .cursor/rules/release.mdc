@@ -1,0 +1,14 @@
+---
+description: Cutting a versioned release (CHANGELOG, tag, GitHub Release). English Release notes; Chinese CHANGELOG.
+alwaysApply: false
+---
+
+# Releases
+
+When the user asks to release / publish / tag a version (`vX.Y.Z`, GitHub Release, changelog bump):
+
+1. Read and follow **`docs/agents/release.md`** end-to-end.
+2. **GitHub Release body = English only** (mirror `v0.1.0` / `v0.2.0`). Never paste Chinese `CHANGELOG.md` into `gh release create` / `edit`.
+3. **`CHANGELOG.md` stays Chinese**; bump `pyproject.toml` version; annotated tag `vX.Y.Z`.
+4. Gate on CI jobs: pytest, `proxy` go test, `web-admin` build — all green before push/tag.
+5. Authenticate `gh` before creating the Release; give the user the live device code if needed.
