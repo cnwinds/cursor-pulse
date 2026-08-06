@@ -49,3 +49,9 @@ Five canonical triage roles with default label strings. See `docs/agents/triage-
 ### Domain docs
 
 Single-context layout: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+### Releases
+
+Version bumps, tags, and GitHub Releases: see `docs/agents/release.md`.
+
+**Critical**: GitHub Release notes must be **English** (same style as `v0.2.0`); `CHANGELOG.md` remains Chinese. Do not paste the Chinese changelog into `gh release create`.
