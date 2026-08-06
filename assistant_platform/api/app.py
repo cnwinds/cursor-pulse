@@ -12,6 +12,7 @@ from assistant_platform.api.auth import build_require_service_token
 from assistant_platform.api.capabilities import register_capability_routes
 from assistant_platform.api.evaluations import register_evaluation_routes
 from assistant_platform.api.memories import register_memory_routes
+from assistant_platform.api.outbound_ledger import register_outbound_ledger_routes
 from assistant_platform.api.profiles import register_profile_routes
 from assistant_platform.api.prompts import register_prompt_routes
 from assistant_platform.api.sessions import register_session_routes
@@ -110,6 +111,11 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
     register_capability_routes(
         app,
         config=config,
+        session_factory=session_factory,
+        require_service_token=require_service_token,
+    )
+    register_outbound_ledger_routes(
+        app,
         session_factory=session_factory,
         require_service_token=require_service_token,
     )

@@ -8,9 +8,11 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session
 
 from pulse.channels.base import normalize_platform, outbound_messenger_or_none
+from pulse.channels.outbound_ledger import send_oto_and_ledger
 from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
 from pulse.proxy.key_crud import build_client_command
 from pulse.storage.models import KeyLoan, Member
+from pulse.tenant.context import team_repository
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +150,35 @@ def resolve_member_im_user_id(session: Session, config: Any, member: Member) -> 
     return None
 
 
-def _send_oto(messenger: Any, user_id: str, text: str, *, context: str) -> None:
+def _send_oto(
+    session: Session,
+    config: Any,
+    messenger: Any,
+    user_id: str,
+    text: str,
+    *,
+    source: str,
+    context: str,
+) -> None:
     try:
-        messenger.send_oto_text(user_id, text)
+        team_id = None
+        try:
+            team, _ = team_repository(session, config)
+            team_id = team.id
+        except Exception:
+            logger.exception(
+                "key loan notify: team resolve failed (%s); sending without ledger",
+                context,
+            )
+        send_oto_and_ledger(
+            config,
+            messenger,
+            user_id=user_id,
+            text=text,
+            source=source,
+            team_id=team_id,
+            session=session if team_id else None,
+        )
     except Exception:
         logger.exception("key loan IM notify failed (%s) user=%s", context, user_id)
 
@@ -194,7 +222,15 @@ def notify_loan_issued(
                     proxy_url=proxy_url,
                     delivery_mode=str(delivery_mode) if delivery_mode else None,
                 )
-                _send_oto(messenger, uid, text, context="issued-borrower")
+                _send_oto(
+                    session,
+                    config,
+                    messenger,
+                    uid,
+                    text,
+                    source="key_loan.issued",
+                    context="issued-borrower",
+                )
             else:
                 logger.info("key loan issued: borrower has no IM identity loan=%s", loan_id[:8])
 
@@ -205,7 +241,15 @@ def notify_loan_issued(
         delivery_mode=str(delivery_mode) if delivery_mode else None,
     )
     for admin_uid in resolve_admin_dingtalk_ids(config):
-        _send_oto(messenger, admin_uid, admin_text, context="issued-admin")
+        _send_oto(
+            session,
+            config,
+            messenger,
+            admin_uid,
+            admin_text,
+            source="key_loan.issued",
+            context="issued-admin",
+        )
 
 
 def format_admin_reassigned(
@@ -238,7 +282,6 @@ def notify_loan_reassigned(
     result: dict[str, Any],
 ) -> None:
     """Admin-only IM notify after lender reassignment (borrower not notified)."""
-    del session  # reserved for future recipient resolution
     messenger = outbound_messenger_or_none(config)
     if messenger is None:
         return
@@ -251,7 +294,15 @@ def notify_loan_reassigned(
         alias_key_hint=result.get("alias_key_hint") or result.get("key_hint"),
     )
     for admin_uid in resolve_admin_dingtalk_ids(config):
-        _send_oto(messenger, admin_uid, text, context="reassigned-admin")
+        _send_oto(
+            session,
+            config,
+            messenger,
+            admin_uid,
+            text,
+            source="key_loan.reassigned",
+            context="reassigned-admin",
+        )
 
 
 def notify_loan_reclaimed(
@@ -281,7 +332,15 @@ def notify_loan_reclaimed(
                 reason=reason,
                 borrowed_cents=borrowed_cents,
             )
-            _send_oto(messenger, uid, text, context="reclaimed-borrower")
+            _send_oto(
+                session,
+                config,
+                messenger,
+                uid,
+                text,
+                source="key_loan.reclaimed",
+                context="reclaimed-borrower",
+            )
         else:
             logger.info(
                 "key loan reclaimed: borrower has no IM identity loan=%s", loan.id[:8]
@@ -294,4 +353,12 @@ def notify_loan_reclaimed(
         borrowed_cents=borrowed_cents,
     )
     for admin_uid in resolve_admin_dingtalk_ids(config):
-        _send_oto(messenger, admin_uid, admin_text, context="reclaimed-admin")
+        _send_oto(
+            session,
+            config,
+            messenger,
+            admin_uid,
+            admin_text,
+            source="key_loan.reclaimed",
+            context="reclaimed-admin",
+        )

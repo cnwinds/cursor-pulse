@@ -30,6 +30,12 @@ from pulse.channels.dingtalk.work_group import (
 )
 from pulse.channels.dingtalk.messenger import DingTalkMessenger
 from pulse.channels.inbound import InboundMessage, dispatch_text_command
+from pulse.channels.outbound_ledger import (
+    record_outbound_ledger,
+    resolve_group_conversation_id,
+    resolve_team_id,
+    send_oto_and_ledger,
+)
 from pulse.config import AppConfig
 from pulse.tenant.context import team_repository
 
@@ -52,9 +58,46 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
         if logger:
             self.logger = logger
 
+    def _team_id(self) -> str | None:
+        session = self.session_factory()
+        try:
+            return resolve_team_id(self.pulse_config, session=session)
+        except Exception:
+            logger.exception("resolve team_id for outbound ledger failed")
+            return None
+        finally:
+            session.close()
+
+    def _record_local_outbound(
+        self,
+        *,
+        text: str,
+        source: str,
+        conversation_type: str,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> None:
+        team_id = self._team_id()
+        if not team_id:
+            return
+        record_outbound_ledger(
+            self.pulse_config,
+            team_id=team_id,
+            channel="dingtalk",
+            conversation_type=conversation_type,
+            text=text,
+            source=source,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+
     def reply_text(self, text: str, incoming_message: dingtalk_stream.ChatbotMessage):
         from pulse.channels.dingtalk.messenger import _looks_like_markdown_message
 
+        is_group = incoming_message.conversation_type == "2"
+        user_id = incoming_message.sender_staff_id or incoming_message.sender_id
+        result = None
+        delivered = False
         if _looks_like_markdown_message(text) and incoming_message.session_webhook:
             try:
                 self.messenger.reply_session_text(
@@ -62,10 +105,36 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                     text,
                     at_user_id=incoming_message.sender_staff_id,
                 )
-                return None
+                delivered = True
             except Exception:
                 logger.exception("markdown session reply failed; falling back to plain text")
-        return super().reply_text(text, incoming_message)
+                result = super().reply_text(text, incoming_message)
+                delivered = True
+        else:
+            result = super().reply_text(text, incoming_message)
+            delivered = True
+
+        if delivered:
+            if is_group:
+                cid = (
+                    incoming_message.conversation_id
+                    or resolve_group_conversation_id(self.pulse_config, "dingtalk")
+                )
+                if cid:
+                    self._record_local_outbound(
+                        text=text,
+                        source="dingtalk.local_reply",
+                        conversation_type="group",
+                        conversation_id=cid,
+                    )
+            elif user_id:
+                self._record_local_outbound(
+                    text=text,
+                    source="dingtalk.local_reply",
+                    conversation_type="private",
+                    user_id=user_id,
+                )
+        return result
 
     def _is_admin(self, user_id: str) -> bool:
         from pulse.channels.admin_gate import is_channel_admin
@@ -83,7 +152,16 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
     ) -> None:
         if channel == "group":
             self.reply_text(f"@{user_name} 已收到，详情见私聊。", incoming)
-            self.messenger.send_oto_text(user_id, detail)
+            team_id = self._team_id()
+            send_oto_and_ledger(
+                self.pulse_config,
+                self.messenger,
+                user_id=user_id,
+                text=detail,
+                source="dingtalk.local_reply",
+                team_id=team_id,
+                channel="dingtalk",
+            )
         else:
             self.reply_text(detail, incoming)
 
@@ -357,7 +435,16 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             reply = f"引导图保存失败：{exc}"
         if is_group:
             self.reply_text("引导图已处理，详情见私聊。", incoming)
-            self.messenger.send_oto_text(user_id, reply)
+            team_id = self._team_id()
+            send_oto_and_ledger(
+                self.pulse_config,
+                self.messenger,
+                user_id=user_id,
+                text=reply,
+                source="dingtalk.local_reply",
+                team_id=team_id,
+                channel="dingtalk",
+            )
         else:
             self.reply_text(reply, incoming)
 

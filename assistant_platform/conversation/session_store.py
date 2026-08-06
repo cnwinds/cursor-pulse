@@ -125,41 +125,44 @@ def close_session(
     return session_row
 
 
-def attach_user_message(
+def ensure_open_session(
     db_session: Session,
-    event: IncomingMessageEvent,
     *,
-    incoming_event_id: str | None = None,
+    assistant_id: str,
+    team_id: str,
+    channel: str,
+    conversation_type: str,
+    conversation_id: str,
+    user_id: str | None = None,
     now: datetime | None = None,
-) -> tuple[ChatSessionRow, ChatMessageRow]:
+) -> ChatSessionRow:
+    """Return an open session for the key; close idle and create if needed."""
     effective_now = now or _utcnow()
-    key = session_key_fields(event)
     open_session = get_open_session(
         db_session,
-        assistant_id=key["assistant_id"],
-        team_id=key["team_id"],
-        channel=key["channel"],
-        conversation_type=key["conversation_type"],
-        conversation_id=key["conversation_id"],
-        user_id=key["user_id"],
+        assistant_id=assistant_id,
+        team_id=team_id,
+        channel=channel,
+        conversation_type=conversation_type,
+        conversation_id=conversation_id,
+        user_id=user_id,
     )
 
     if open_session is not None:
-        idle = _idle_for(event.conversation_type)
+        idle = _idle_for(conversation_type)
         if effective_now - _ensure_aware(open_session.last_activity_at) > idle:
             close_session(db_session, open_session, reason="idle_timeout", now=effective_now)
             open_session = None
 
     if open_session is None:
-        new_session_id = str(uuid.uuid4())
         open_session = ChatSessionRow(
-            id=new_session_id,
-            assistant_id=key["assistant_id"],
-            team_id=key["team_id"],
-            channel=key["channel"],
-            conversation_type=key["conversation_type"],
-            conversation_id=key["conversation_id"],
-            user_id=key["user_id"],
+            id=str(uuid.uuid4()),
+            assistant_id=assistant_id,
+            team_id=team_id,
+            channel=channel,
+            conversation_type=conversation_type,
+            conversation_id=conversation_id,
+            user_id=user_id,
             status="open",
             prompt_release_id=None,
             opened_at=effective_now,
@@ -171,6 +174,29 @@ def attach_user_message(
         open_session.last_activity_at = effective_now
         db_session.add(open_session)
         db_session.flush()
+
+    return open_session
+
+
+def attach_user_message(
+    db_session: Session,
+    event: IncomingMessageEvent,
+    *,
+    incoming_event_id: str | None = None,
+    now: datetime | None = None,
+) -> tuple[ChatSessionRow, ChatMessageRow]:
+    effective_now = now or _utcnow()
+    key = session_key_fields(event)
+    open_session = ensure_open_session(
+        db_session,
+        assistant_id=key["assistant_id"],
+        team_id=key["team_id"],
+        channel=key["channel"],
+        conversation_type=key["conversation_type"],
+        conversation_id=key["conversation_id"],
+        user_id=key["user_id"],
+        now=effective_now,
+    )
 
     message_row = ChatMessageRow(
         session_id=open_session.id,

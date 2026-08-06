@@ -130,7 +130,8 @@ def register_knowledge_routes(app, get_db, require_capability, team_repo_fn, con
         text = svc.build_monthly_digest(period)
         if not text:
             raise HTTPException(status_code=400, detail="该账期暂无心得可发布")
-        from pulse.channels.base import messenger_delivered, outbound_messenger_or_none
+        from pulse.channels.base import outbound_messenger_or_none
+        from pulse.channels.outbound_ledger import send_group_and_ledger
 
         messenger = outbound_messenger_or_none(config)
         if messenger is None:
@@ -138,7 +139,16 @@ def register_knowledge_routes(app, get_db, require_capability, team_repo_fn, con
                 status_code=503,
                 detail="当前 BOT_PLATFORM=none 或渠道未配置，无法发布到群",
             )
-        result = messenger.send_group_text(text)
+        result = send_group_and_ledger(
+            config,
+            messenger,
+            text=text,
+            source="knowledge.digest",
+            team_id=team.id,
+            session=session,
+        )
+        from pulse.channels.base import messenger_delivered
+
         if not messenger_delivered(result):
             raise HTTPException(
                 status_code=503,

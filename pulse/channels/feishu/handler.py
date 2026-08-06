@@ -142,9 +142,41 @@ class FeishuEventHandler:
             return
 
         try:
+            from pulse.channels.base import messenger_delivered
+            from pulse.channels.outbound_ledger import record_outbound_ledger, send_oto_and_ledger
+
             if inbound.conversation_id:
-                self.messenger.send_text_to_chat(inbound.conversation_id, reply)
+                result = self.messenger.send_text_to_chat(inbound.conversation_id, reply)
+                if messenger_delivered(result):
+                    if inbound.conversation_type == "group":
+                        record_outbound_ledger(
+                            self.config,
+                            team_id=team_id,
+                            channel="feishu",
+                            conversation_type="group",
+                            conversation_id=inbound.conversation_id,
+                            text=reply,
+                            source="feishu.local_reply",
+                        )
+                    else:
+                        record_outbound_ledger(
+                            self.config,
+                            team_id=team_id,
+                            channel="feishu",
+                            conversation_type="private",
+                            user_id=inbound.channel_user_id,
+                            text=reply,
+                            source="feishu.local_reply",
+                        )
             else:
-                self.messenger.send_oto_text(inbound.channel_user_id, reply)
+                send_oto_and_ledger(
+                    self.config,
+                    self.messenger,
+                    user_id=inbound.channel_user_id,
+                    text=reply,
+                    source="feishu.local_reply",
+                    team_id=team_id,
+                    channel="feishu",
+                )
         except Exception:
             logger.exception("Feishu reply send failed")

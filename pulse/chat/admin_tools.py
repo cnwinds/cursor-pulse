@@ -136,7 +136,16 @@ def _send_group_tip(ctx: AdminContext, args: dict) -> ToolResult:
             capability="tasks:group_message",
         )
     message = args.get("message") or "小提示：Cursor 用量绑定 API Key 后自动同步。"
-    ctx.messenger.send_group_text(message, at_all=False)
+    from pulse.channels.outbound_ledger import send_group_and_ledger
+
+    send_group_and_ledger(
+        ctx.config,
+        ctx.messenger,
+        text=message,
+        source="admin.group_tip",
+        team_id=ctx.team_id,
+        session=ctx.session,
+    )
     return ToolResult(
         tool="send_group_tip",
         status="executed",
