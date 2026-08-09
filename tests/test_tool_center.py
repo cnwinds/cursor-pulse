@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,7 +9,7 @@ from sqlalchemy import select
 from pulse.channels.reminders.scheduler import SyncSchedulerService, build_scheduler
 from pulse.config import AppConfig, CollectionConfig, CredentialConfig, CursorSyncConfig
 from pulse.storage.db import init_db
-from pulse.storage.models import Member, UsageSummary
+from pulse.storage.models import AccountQuotaSnapshot, Member, UsageSummary
 from pulse.tool_center.reminders import build_daily_nudge_targets, format_deadline_group_message
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
@@ -194,6 +194,188 @@ def test_aggregate_account_metrics(session):
     assert metrics["account_count_active"] == 3
     assert metrics["account_count_submitted"] == 1
     assert "Claude" in metrics["model_family_pct"]
+
+
+def test_aggregate_account_metrics_prefers_snapshot_api_pct(session):
+    team, _repo = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = tool_repo.list_accounts()[0]
+    plan = tool_repo.get_plan(account.plan_id)
+    tool_repo.upsert_usage_summary(
+        account_id=account.id,
+        period="2026-06",
+        ingestion_id="sub-snap",
+        submitted_by_member_id="m1",
+        summary={
+            "primary_metric_value": 10.0,
+            "primary_metric_unit": "usd",
+            "quota_usage_ratio": compute_quota_ratio(plan, 10.0),
+            "breakdown_by_model": {"Claude": 10.0},
+        },
+    )
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+            cycle_start=date(2026, 6, 1),
+            cycle_end=date(2026, 7, 1),
+            limit_cents=2000,
+            used_cents=1800,
+            remaining_cents=200,
+            api_pct=90.0,
+            total_pct=80.0,
+        )
+    )
+    session.flush()
+
+    from pulse.tool_center.aggregate import aggregate_account_metrics
+
+    metrics = aggregate_account_metrics(session, "2026-06", team_id=team.id)
+    row = next(r for r in metrics["accounts"] if r["account_id"] == account.id)
+    assert row["quota_usage_ratio"] == pytest.approx(90.0)
+
+
+def test_aggregate_account_metrics_does_not_contaminate_earlier_cycle_month(session):
+    team, _repo = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = tool_repo.list_accounts()[0]
+    plan = tool_repo.get_plan(account.plan_id)
+    local_ratio = compute_quota_ratio(plan, 10.0)
+    tool_repo.upsert_usage_summary(
+        account_id=account.id,
+        period="2026-07",
+        ingestion_id="sub-hist",
+        submitted_by_member_id="m1",
+        summary={
+            "primary_metric_value": 10.0,
+            "primary_metric_unit": "usd",
+            "quota_usage_ratio": local_ratio,
+            "breakdown_by_model": {"Claude": 10.0},
+        },
+    )
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            cycle_start=date(2026, 7, 9),
+            cycle_end=date(2026, 8, 9),
+            limit_cents=2000,
+            used_cents=1800,
+            remaining_cents=200,
+            api_pct=90.0,
+            total_pct=80.0,
+        )
+    )
+    session.flush()
+
+    from pulse.tool_center.aggregate import aggregate_account_metrics
+
+    july = aggregate_account_metrics(session, "2026-07", team_id=team.id)
+    july_row = next(r for r in july["accounts"] if r["account_id"] == account.id)
+    assert july_row["quota_usage_ratio"] == pytest.approx(local_ratio)
+
+    tool_repo.upsert_usage_summary(
+        account_id=account.id,
+        period="2026-08",
+        ingestion_id="sub-aug",
+        submitted_by_member_id="m1",
+        summary={
+            "primary_metric_value": 10.0,
+            "primary_metric_unit": "usd",
+            "quota_usage_ratio": local_ratio,
+            "breakdown_by_model": {"Claude": 10.0},
+        },
+    )
+    session.flush()
+    august = aggregate_account_metrics(session, "2026-08", team_id=team.id)
+    aug_row = next(r for r in august["accounts"] if r["account_id"] == account.id)
+    assert aug_row["quota_usage_ratio"] == pytest.approx(90.0)
+
+
+def test_evaluate_upgrade_ignores_live_snapshot_on_earlier_cycle_month(session):
+    team, repo = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = tool_repo.list_accounts()[0]
+    plan = tool_repo.get_plan(account.plan_id)
+    assert plan is not None
+    for period, value in [("2026-06", 66.5), ("2026-07", 10.0)]:
+        tool_repo.upsert_usage_summary(
+            account_id=account.id,
+            period=period,
+            ingestion_id="sub-up-" + period,
+            submitted_by_member_id="m1",
+            summary={
+                "primary_metric_value": value,
+                "primary_metric_unit": "usd",
+                "quota_usage_ratio": compute_quota_ratio(plan, value),
+                "breakdown_by_model": {"Claude": value},
+            },
+        )
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            cycle_start=date(2026, 7, 9),
+            cycle_end=date(2026, 8, 9),
+            limit_cents=2000,
+            used_cents=2000,
+            remaining_cents=0,
+            api_pct=100.0,
+            total_pct=100.0,
+        )
+    )
+    session.flush()
+
+    from pulse.tool_center.upgrade import evaluate_account_upgrade
+
+    assert evaluate_account_upgrade(session, account.id, "2026-07") is False
+
+
+def test_evaluate_upgrade_uses_live_api_pct_on_latest_cycle_month(session):
+    team, _repo = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = tool_repo.list_accounts()[0]
+    plan = tool_repo.get_plan(account.plan_id)
+    assert plan is not None
+    for period, value in [("2026-05", 66.5), ("2026-06", 10.0)]:
+        tool_repo.upsert_usage_summary(
+            account_id=account.id,
+            period=period,
+            ingestion_id="sub-live-" + period,
+            submitted_by_member_id="m1",
+            summary={
+                "primary_metric_value": value,
+                "primary_metric_unit": "usd",
+                "quota_usage_ratio": compute_quota_ratio(plan, value),
+                "breakdown_by_model": {"Claude": value},
+            },
+        )
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+            cycle_start=date(2026, 6, 1),
+            cycle_end=date(2026, 7, 1),
+            limit_cents=2000,
+            used_cents=2000,
+            remaining_cents=0,
+            api_pct=100.0,
+            total_pct=100.0,
+        )
+    )
+    session.flush()
+
+    from pulse.tool_center.upgrade import evaluate_account_upgrade
+
+    assert evaluate_account_upgrade(session, account.id, "2026-06") is True
 
 
 def test_account_usage_resets_on(session):

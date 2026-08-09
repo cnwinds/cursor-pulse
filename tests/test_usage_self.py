@@ -16,6 +16,7 @@ from pulse.tool_center.key_loans import KeyLoanService
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.tool_center.usage_self import (
+    _format_model_table,
     _loan_borrowed_quota_pct,
     _model_share_pct,
     aggregate_models_from_daily_rows,
@@ -39,9 +40,11 @@ def _daily_row(
     tokens_output: int = 0,
     tokens_cache_read: int = 0,
     total_cost_usd: float = 0.0,
+    kind_family: str = "unknown",
 ):
     return SimpleNamespace(
         model=model,
+        kind_family=kind_family,
         event_count=event_count,
         tokens_input=tokens_input,
         tokens_output=tokens_output,
@@ -71,6 +74,47 @@ def test_aggregate_models_from_daily_rows():
     assert cheap["events"] == 15
     assert cheap["tokens"] == 30
     assert cheap["cost_usd"] == pytest.approx(0.8)
+
+
+def test_format_model_table_labels_unknown_kind_family():
+    lines = _format_model_table(
+        [
+            {
+                "model": "GLM-5.2",
+                "kind_family": "unknown",
+                "events": 1,
+                "tokens": 10,
+                "cost_usd": 0.0,
+            },
+            {
+                "model": "claude-4-sonnet",
+                "kind_family": "included",
+                "events": 1,
+                "tokens": 20,
+                "cost_usd": 1.0,
+            },
+            {"model": "composer-2", "events": 1, "tokens": 5, "cost_usd": 0.0},
+        ]
+    )
+    text = "\n".join(lines)
+    assert "GLM-5.2 (未知)" in text
+    assert "claude-4-sonnet (套餐)" in text
+    assert "| composer-2 |" in text
+    assert "composer-2 (" not in text
+
+
+def test_aggregate_models_splits_same_model_by_kind_family():
+    rows = [
+        _daily_row("GLM-5.2", kind_family="included", event_count=2, tokens_input=100, total_cost_usd=1.0),
+        _daily_row("GLM-5.2", kind_family="user_api_key", event_count=3, tokens_input=200, total_cost_usd=0.0),
+    ]
+    result = aggregate_models_from_daily_rows(rows)
+    assert len(result) == 2
+    by_family = {r["kind_family"]: r for r in result}
+    assert by_family["included"]["tokens"] == 100
+    assert by_family["included"]["pool"] == "api"
+    assert by_family["user_api_key"]["tokens"] == 200
+    assert by_family["user_api_key"]["pool"] == "external"
 
 
 def test_load_account_model_usage_daily_aggregate():

@@ -13,6 +13,9 @@ func TestQuotaPoolForModel(t *testing.T) {
 		{"claude-4-sonnet", quotaPoolAPI},
 		{"gpt-5.6-sol-medium", quotaPoolAPI},
 		{"glm-4", quotaPoolAPI},
+		{"glm-5.2-high", quotaPoolAPI},
+		{"GLM-5.2", quotaPoolUnknown},
+		{"MiniMax-M2.7", quotaPoolUnknown},
 		{"", quotaPoolUnknown},
 	}
 	for _, c := range cases {

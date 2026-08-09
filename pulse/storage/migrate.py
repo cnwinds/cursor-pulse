@@ -122,6 +122,8 @@ _USAGE_SUMMARY_INGESTION_COLUMNS: dict[str, str] = {
     "last_synced_at": "DATETIME",
 }
 
+_DAILY_AGG_KIND_UNIQUE_COLS = ("account_id", "event_date", "model", "kind_family")
+
 
 def _drop_column(engine: Engine, table_name: str, column_name: str) -> None:
     """Drop a column on SQLite (rebuild fallback) or Postgres/MySQL ALTER DROP."""
@@ -706,10 +708,184 @@ def migrate_schema(engine: Engine) -> None:
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
 
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
+    _migrate_daily_agg_kind_family(engine)
 
     Base.metadata.create_all(engine)
     _migrate_member_identities_table(engine)
     # personamem tables are initialized by assistant_platform (assistant.db), not pulse.db.
+
+
+def _daily_agg_unique_cols(engine: Engine) -> list[str] | None:
+    inspector = inspect(engine)
+    if "usage_daily_aggregates" not in inspector.get_table_names():
+        return None
+    for constraint in inspector.get_unique_constraints("usage_daily_aggregates"):
+        if constraint.get("name") == "uq_daily_agg":
+            return list(constraint.get("column_names") or [])
+    for index in inspector.get_indexes("usage_daily_aggregates"):
+        if index.get("name") == "uq_daily_agg" and index.get("unique"):
+            return list(index.get("column_names") or [])
+    return None
+
+
+def _daily_agg_has_kind_unique(engine: Engine) -> bool:
+    target = list(_DAILY_AGG_KIND_UNIQUE_COLS)
+    if _daily_agg_unique_cols(engine) == target:
+        return True
+    inspector = inspect(engine)
+    for constraint in inspector.get_unique_constraints("usage_daily_aggregates"):
+        if list(constraint.get("column_names") or []) == target:
+            return True
+    for index in inspector.get_indexes("usage_daily_aggregates"):
+        if index.get("unique") and list(index.get("column_names") or []) == target:
+            return True
+    return False
+
+
+def _sqlite_rebuild_daily_agg_kind_unique(engine: Engine) -> None:
+    """Rebuild usage_daily_aggregates so uq_daily_agg includes kind_family."""
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        try:
+            rows = conn.execute(text("PRAGMA table_info(usage_daily_aggregates)")).fetchall()
+            existing = {row[1] for row in rows}
+            col_defs: list[str] = []
+            col_names: list[str] = []
+            for _cid, name, col_type, notnull, default, pk in rows:
+                col_names.append(name)
+                definition = f'"{name}" {col_type}'
+                if pk:
+                    definition += " PRIMARY KEY"
+                elif notnull and name != "kind_family":
+                    definition += " NOT NULL"
+                if default is not None:
+                    definition += f" DEFAULT {default}"
+                col_defs.append(definition)
+            if "kind_family" not in existing:
+                col_names.append("kind_family")
+                col_defs.append("\"kind_family\" VARCHAR(32) DEFAULT 'unknown'")
+
+            quoted_cols = ", ".join(f'"{name}"' for name in col_names)
+            select_cols = []
+            for name in col_names:
+                if name == "kind_family" and name not in existing:
+                    select_cols.append("'unknown'")
+                elif name == "kind_family":
+                    select_cols.append("COALESCE(NULLIF(kind_family, ''), 'unknown')")
+                else:
+                    select_cols.append(f'"{name}"')
+            conn.execute(
+                text(
+                    "CREATE TABLE usage_daily_aggregates__new ("
+                    f"{', '.join(col_defs)}, "
+                    "CONSTRAINT uq_daily_agg "
+                    "UNIQUE (account_id, event_date, model, kind_family))"
+                )
+            )
+            conn.execute(
+                text(
+                    f"INSERT INTO usage_daily_aggregates__new ({quoted_cols}) "
+                    f"SELECT {', '.join(select_cols)} FROM usage_daily_aggregates"
+                )
+            )
+            conn.execute(text("DROP TABLE usage_daily_aggregates"))
+            conn.execute(
+                text(
+                    "ALTER TABLE usage_daily_aggregates__new RENAME TO usage_daily_aggregates"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_usage_daily_aggregates_account_id "
+                    "ON usage_daily_aggregates (account_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_usage_daily_aggregates_event_date "
+                    "ON usage_daily_aggregates (event_date)"
+                )
+            )
+            logger.info("Rebuilt usage_daily_aggregates with kind_family unique")
+        finally:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _migrate_daily_agg_kind_family(engine: Engine) -> None:
+    """Add kind_family and widen uq_daily_agg so BYOK vs included can coexist."""
+    inspector = inspect(engine)
+    if "usage_daily_aggregates" not in inspector.get_table_names():
+        return
+    dialect = engine.dialect.name
+    columns = {col["name"] for col in inspector.get_columns("usage_daily_aggregates")}
+    if "kind_family" not in columns and dialect != "sqlite":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE usage_daily_aggregates "
+                    "ADD COLUMN kind_family VARCHAR(32) DEFAULT 'unknown'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE usage_daily_aggregates SET kind_family = 'unknown' "
+                    "WHERE kind_family IS NULL OR kind_family = ''"
+                )
+            )
+        logger.info("Added kind_family column to usage_daily_aggregates")
+
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("usage_daily_aggregates")}
+    schema_changed = False
+    if "kind_family" in columns and _daily_agg_has_kind_unique(engine):
+        _backfill_daily_kind_families(engine)
+        return
+
+    if dialect == "sqlite":
+        _sqlite_rebuild_daily_agg_kind_unique(engine)
+        schema_changed = True
+    else:
+        with engine.begin() as conn:
+            if dialect == "postgresql":
+                conn.execute(
+                    text("ALTER TABLE usage_daily_aggregates DROP CONSTRAINT IF EXISTS uq_daily_agg")
+                )
+                conn.execute(
+                    text(
+                        "ALTER TABLE usage_daily_aggregates ADD CONSTRAINT uq_daily_agg "
+                        "UNIQUE (account_id, event_date, model, kind_family)"
+                    )
+                )
+            else:
+                try:
+                    conn.execute(text("ALTER TABLE usage_daily_aggregates DROP CONSTRAINT uq_daily_agg"))
+                except Exception:
+                    logger.info(
+                        "Could not drop uq_daily_agg on %s; creating new unique index", dialect
+                    )
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_agg "
+                        "ON usage_daily_aggregates (account_id, event_date, model, kind_family)"
+                    )
+                )
+        schema_changed = True
+        logger.info("Updated uq_daily_agg to include kind_family")
+
+    if schema_changed:
+        _backfill_daily_kind_families(engine)
+
+
+def _backfill_daily_kind_families(engine: Engine) -> None:
+    from sqlalchemy.orm import Session
+
+    from pulse.ingestion.daily import backfill_unknown_daily_kind_families
+
+    with Session(engine) as session:
+        updated = backfill_unknown_daily_kind_families(session)
+        if updated:
+            session.commit()
+            logger.info("Backfilled kind_family daily aggregates for %s accounts", updated)
 
 
 def _migrate_member_identities_table(engine: Engine) -> None:

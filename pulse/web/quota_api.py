@@ -19,7 +19,12 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
-from pulse.tool_center.burn_rate import analyze_burn_rate, display_remaining_cents, recommend_lenders
+from pulse.tool_center.burn_rate import (
+    analyze_burn_rate,
+    display_api_remaining_cents,
+    display_remaining_cents,
+    recommend_lenders,
+)
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
@@ -112,6 +117,7 @@ def _board_item(
             "used_cents": None,
             "remaining_cents": None,
             "display_remaining_cents": None,
+            "display_api_remaining_cents": None,
         }
     analysis = analyze_burn_rate(snapshot, today)
     return {
@@ -136,6 +142,7 @@ def _board_item(
         "used_cents": snapshot.used_cents,
         "remaining_cents": snapshot.remaining_cents,
         "display_remaining_cents": display_remaining_cents(snapshot),
+        "display_api_remaining_cents": display_api_remaining_cents(snapshot),
         "captured_at": serialize_datetime(snapshot.captured_at),
     }
 

@@ -8,6 +8,7 @@ from pulse.tool_center.burn_rate import (
     LenderCandidate,
     analyze_burn_rate,
     digestion_urgency,
+    display_api_remaining_cents,
     display_remaining_cents,
     explain_lender_selection,
     projected_surplus_cents,
@@ -88,6 +89,50 @@ def test_display_remaining_cents_prefers_total_pct_over_raw_remaining():
         total_pct=34.0,
     )
     assert display_remaining_cents(snap) == 4620  # 7000 * 66%
+
+
+def test_display_api_remaining_cents_follows_api_pct_not_total():
+    snap = _snapshot(
+        cycle_start=date(2026, 8, 2),
+        cycle_end=date(2026, 9, 2),
+        limit_cents=2000,
+        used_cents=16211,
+        remaining_cents=0,
+        total_pct=47.0,
+        auto_pct=39.0,
+        api_pct=90.0,
+    )
+    assert display_remaining_cents(snap) == 1060  # Total Snapshot Headroom
+    assert display_api_remaining_cents(snap) == 200  # API Quota Pool: $20 * 10%
+
+
+def test_display_api_remaining_cents_zero_when_api_pct_100():
+    snap = _snapshot(
+        cycle_start=date(2026, 8, 2),
+        cycle_end=date(2026, 9, 2),
+        limit_cents=2000,
+        used_cents=16211,
+        remaining_cents=0,
+        total_pct=47.0,
+        auto_pct=39.0,
+        api_pct=100.0,
+    )
+    assert display_api_remaining_cents(snap) == 0
+    assert display_remaining_cents(snap) == 1060
+
+
+def test_display_api_remaining_cents_unknown_when_api_pct_missing():
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        limit_cents=7000,
+        used_cents=2000,
+        remaining_cents=5000,
+        total_pct=28.5,
+        api_pct=None,
+    )
+    assert display_api_remaining_cents(snap) is None
+    assert display_remaining_cents(snap) == 5005
 
 
 def test_exhausted_when_total_pct_reaches_100():

@@ -87,14 +87,14 @@
                     <span
                       class="api-inline-note"
                       :class="apiNoteStatus(item)"
-                      :title="apiRemainingTitle(item)"
+                      :title="apiRemainingTitle()"
                     >
                       · {{ apiRemainingText(item) }}
                     </span>
                   </span>
-                  <span>{{ apiPctLabel(item) }}</span>
+                  <span>{{ cursorPct(item.api_pct) }}</span>
                 </div>
-                <el-progress :percentage="apiPctNum(item)" :show-text="false" />
+                <el-progress :percentage="cursorPctNum(item.api_pct)" :show-text="false" />
               </div>
             </div>
 
@@ -136,7 +136,7 @@
               >
                 <span class="pool-label">高级模型 API</span>
                 <span class="model-tokens">{{ formatCompactTokens(poolTotalTokens(summaryMap[item.account_id], 'api')) || '—' }}</span>
-                <span class="pool-value">{{ formatSpend(premiumApiSpend(summaryMap[item.account_id])) }}<template v-if="apiQuotaUsd(summaryMap[item.account_id])"> / {{ formatSpend(apiQuotaUsd(summaryMap[item.account_id])) }}</template></span>
+                <span class="pool-value">{{ formatSpend(premiumApiSpend(summaryMap[item.account_id])) }}</span>
               </div>
               <div
                 v-if="spendExpanded[item.account_id]"
@@ -153,30 +153,33 @@
                   <span class="model-cost">{{ formatSpend(m.value) }}</span>
                 </div>
               </div>
-              <template v-if="thirdPartySpend(summaryMap[item.account_id]) > 0">
+              <template v-if="hasByokUsage(summaryMap[item.account_id])">
                 <div
                   class="usage-pool"
-                  :class="{ 'has-tokens': poolHasTokens(summaryMap[item.account_id], 'third_party') }"
+                  :class="{ 'has-tokens': byokHasTokens(summaryMap[item.account_id]) }"
                 >
-                  <span class="pool-label">三方模型</span>
-                  <span class="model-tokens">{{ formatCompactTokens(poolTotalTokens(summaryMap[item.account_id], 'third_party')) || '—' }}</span>
+                  <span class="pool-label">三方 / BYOK</span>
+                  <span class="model-tokens">{{ formatCompactTokens(byokTotalTokens(summaryMap[item.account_id])) || '—' }}</span>
                   <span class="pool-value">
-                    {{ formatSpend(thirdPartySpend(summaryMap[item.account_id])) }}
+                    <template v-if="thirdPartySpend(summaryMap[item.account_id]) > 0">
+                      {{ formatSpend(thirdPartySpend(summaryMap[item.account_id])) }}
+                    </template>
+                    <template v-else>—</template>
                   </span>
                 </div>
                 <div
                   v-if="spendExpanded[item.account_id]"
                   class="usage-model-table"
-                  :class="{ 'has-tokens': poolHasTokens(summaryMap[item.account_id], 'third_party') }"
+                  :class="{ 'has-tokens': byokHasTokens(summaryMap[item.account_id]) }"
                 >
                   <div
-                    v-for="m in poolModelBreakdown(summaryMap[item.account_id], 'third_party')"
+                    v-for="m in byokModelRows(summaryMap[item.account_id])"
                     :key="'tp-' + m.name"
                     class="usage-model-row muted"
                   >
                     <span class="model-name" :title="m.name">{{ m.name }}</span>
                     <span class="model-tokens">{{ formatCompactTokens(m.tokens) || '—' }}</span>
-                    <span class="model-cost">{{ formatSpend(m.value) }}</span>
+                    <span class="model-cost">{{ m.value != null ? formatSpend(m.value) : '—' }}</span>
                   </div>
                 </div>
               </template>
@@ -234,8 +237,17 @@
             <span>{{ group.date }}</span>
             <span class="muted">{{ group.event_count }} 次 · {{ formatSpend(group.total_cost_usd) }}</span>
           </header>
-          <div v-for="row in group.models" :key="row.model" class="daily-model-row">
-            <span class="daily-model-name">{{ row.model }}</span>
+          <div
+            v-for="row in group.models"
+            :key="`${row.model}-${row.kind_family || 'unknown'}`"
+            class="daily-model-row"
+          >
+            <span class="daily-model-name" :title="row.model">
+              {{ row.model }}
+              <span v-if="kindFamilyLabel(row.kind_family)" class="muted">
+                · {{ kindFamilyLabel(row.kind_family) }}
+              </span>
+            </span>
             <div class="daily-bar-track">
               <div class="daily-bar-fill" :style="{ width: dailyBarWidth(row.tokens_total, dailyBarDenominator(group)) }" />
             </div>
@@ -257,15 +269,16 @@ import { ElMessage } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import {
-  apiPoolRemainingUsd,
-  apiPoolUsagePct,
   autoComposerSpend,
-  apiQuotaUsd,
   billingCycleDateRange,
+  byokHasTokens,
+  byokModelRows,
+  byokTotalTokens,
   formatCompactTokens,
   formatSpend,
   formatTokens,
-  hasApiPoolSummary,
+  hasByokUsage,
+  kindFamilyLabel,
   poolHasTokens,
   periodsForBoardCycle,
   poolModelBreakdown,
@@ -299,6 +312,7 @@ interface BoardItem {
   used_cents: number | null
   remaining_cents: number | null
   display_remaining_cents: number | null
+  display_api_remaining_cents: number | null
   api_limit_usd: number | null
   projected_exhaustion_date: string | null
   exhausts_before_reset: boolean | null
@@ -320,6 +334,7 @@ interface DailyUsageRow {
   account_id: string
   event_date: string
   model: string
+  kind_family?: string | null
   event_count: number
   total_cost_usd: number
   tokens_input: number
@@ -389,45 +404,19 @@ function formatUsdCents(cents: number | null | undefined) {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-function accountSummary(item: BoardItem): UsageSummary | undefined {
-  return summaryMap.value[item.account_id]
-}
-
 function apiRemainingText(item: BoardItem): string {
-  const summary = accountSummary(item)
-  if (hasApiPoolSummary(summary)) {
-    const remaining = apiPoolRemainingUsd(summary)
-    const quota = apiQuotaUsd(summary)
-    return `剩余 ${formatSpend(remaining)} / ${formatSpend(quota)}`
-  }
-  return `剩余 ${formatUsdCents(item.display_remaining_cents)} / ${formatUsdCents(item.limit_cents)}`
+  return `剩余 ${formatUsdCents(item.display_api_remaining_cents)} / ${formatUsdCents(item.limit_cents)}`
 }
 
-function apiRemainingTitle(item: BoardItem): string {
-  if (hasApiPoolSummary(accountSummary(item))) {
-    return '本周期高级模型 API 池：按同步用量事件汇总（与下方用量明细一致）'
-  }
-  return '按 Cursor totalPercentUsed 推算；同步用量事件后可显示明细汇总'
-}
-
-function apiPctLabel(item: BoardItem): string {
-  const local = apiPoolUsagePct(accountSummary(item))
-  if (local != null) return `${local}%`
-  return cursorPct(item.api_pct)
-}
-
-function apiPctNum(item: BoardItem): number {
-  const local = apiPoolUsagePct(accountSummary(item))
-  if (local != null) return local
-  return cursorPctNum(item.api_pct)
+function apiRemainingTitle(): string {
+  return 'API Quota Pool Snapshot Headroom：与 Cursor apiPercentUsed 对齐；不含三方/BYOK'
 }
 
 function apiNoteStatus(item: BoardItem): Record<string, boolean> {
-  const local = apiPoolUsagePct(accountSummary(item))
-  if (local != null) {
-    return { danger: local >= 100, warning: local >= 80 && local < 100 }
+  if (item.api_pct == null) {
+    return {}
   }
-  return { danger: item.status === 'exhausted', warning: item.status === 'warning' }
+  return { danger: item.api_pct >= 100, warning: item.api_pct >= 80 && item.api_pct < 100 }
 }
 
 function cursorPct(v: number | null) {

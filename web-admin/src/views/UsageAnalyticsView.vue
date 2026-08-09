@@ -4,7 +4,7 @@
       <div>
         <h2>用量分析</h2>
         <p class="desc">
-          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分按模型名归类）。
+          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。
           <span v-if="overview?.timezone" class="tz">时区 {{ overview.timezone }}</span>
         </p>
       </div>
@@ -143,6 +143,13 @@
         </el-table-column>
         <el-table-column
           v-if="dimension === 'model'"
+          label="计费类型"
+          width="100"
+        >
+          <template #default="{ row }">{{ kindFamilyLabel(row.kind_family) }}</template>
+        </el-table-column>
+        <el-table-column
+          v-if="dimension === 'model'"
           prop="family"
           label="模型族"
           width="100"
@@ -183,7 +190,12 @@
       <el-table v-loading="drillLoading" :data="drillItems" stripe size="small" max-height="70vh">
         <el-table-column prop="date" label="日期" width="120" />
         <el-table-column prop="account_identifier" label="账号" min-width="160" />
-        <el-table-column prop="model" label="模型" min-width="160" />
+        <el-table-column prop="model" label="模型" min-width="160">
+          <template #default="{ row }">
+            {{ row.model }}
+            <span v-if="row.kind_family" class="muted"> · {{ kindFamilyLabel(row.kind_family) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="tokens_total" label="Token" width="100">
           <template #default="{ row }">{{ formatTokens(row.tokens_total) }}</template>
         </el-table-column>
@@ -202,7 +214,7 @@ import VChart from 'vue-echarts'
 import '@/utils/echarts'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
-import { formatSpend, formatTokens } from '@/utils/usage'
+import { formatSpend, formatTokens, kindFamilyLabel } from '@/utils/usage'
 
 type Dimension = 'account' | 'model' | 'family' | 'pool'
 type RangePreset = 'this_month' | 'last_month' | 'last_7' | 'last_30' | 'custom'
@@ -249,7 +261,7 @@ interface Overview {
       primary_member_name?: string | null
     }
   >
-  by_model: Array<MetricRow & { model: string; pool: string; family: string }>
+  by_model: Array<MetricRow & { model: string; kind_family?: string; pool: string; family: string }>
   by_pool: Array<MetricRow & { pool: string; pool_label: string }>
   by_family: Array<MetricRow & { family: string }>
 }
@@ -259,6 +271,7 @@ interface TableRow extends MetricRow {
   label: string
   account_id?: string
   model?: string
+  kind_family?: string
   pool?: string
   family?: string
   primary_member_name?: string | null
@@ -268,6 +281,7 @@ interface DrillItem {
   date: string
   account_identifier: string
   model: string
+  kind_family?: string
   tokens_total: number
   event_count: number
   cost_usd: number
@@ -276,7 +290,9 @@ interface DrillItem {
 const POOL_LABELS: Record<string, string> = {
   auto_composer: 'Auto+Composer',
   api: 'API',
-  third_party: '三方',
+  external: '三方/BYOK',
+  third_party: '三方/BYOK',
+  excluded: '未计费',
 }
 
 const topN = 10
@@ -341,12 +357,17 @@ const dimensionRows = computed<TableRow[]>(() => {
     }))
   }
   if (dimension.value === 'model') {
-    return o.by_model.map((r) => ({
-      ...r,
-      key: r.model,
-      label: r.model,
-      model: r.model,
-    }))
+    return o.by_model.map((r) => {
+      const kindText =
+        r.kind_family && r.kind_family !== 'unknown' ? kindFamilyLabel(r.kind_family) : ''
+      return {
+        ...r,
+        key: `${r.model}\0${r.kind_family || 'unknown'}`,
+        label: kindText ? `${r.model} · ${kindText}` : r.model,
+        model: r.model,
+        kind_family: r.kind_family,
+      }
+    })
   }
   if (dimension.value === 'family') {
     return o.by_family.map((r) => ({
@@ -570,7 +591,10 @@ async function openDrill(row: TableRow) {
   try {
     const params: Record<string, string> = { start, end }
     if (dimension.value === 'account' && row.account_id) params.account_id = row.account_id
-    if (dimension.value === 'model' && row.model) params.model = row.model
+    if (dimension.value === 'model' && row.model) {
+      params.model = row.model
+      if (row.kind_family) params.kind_family = row.kind_family
+    }
     const res = await client.get('/api/v2/usage-analytics/daily-breakdown', { params })
     drillItems.value = res.data.items || []
   } catch (e: unknown) {

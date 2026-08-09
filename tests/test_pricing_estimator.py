@@ -122,8 +122,8 @@ def test_included_events_pool_spend_exceeds_reported_only():
     assert pools["estimated_included_spend_usd"] > 0
     assert pools["pool_spend_usd"] == pools["estimated_included_spend_usd"]
     assert pools["cursor_pools"]["auto_composer"]["spend_usd"] > 0
-    assert pools["cursor_pools"]["third_party"]["spend_usd"] > 0
-    assert "GLM-5.1" in pools["cursor_pools"]["third_party"]["breakdown_by_model"]
+    assert pools["cursor_pools"]["api"]["spend_usd"] > 0
+    assert "GLM-5.1" in pools["cursor_pools"]["api"]["breakdown_by_model"]
 
 
 def test_build_usage_summary_uses_pool_spend_for_pro_plus(session):
@@ -158,7 +158,41 @@ def test_build_usage_summary_uses_pool_spend_for_pro_plus(session):
     assert summary["quota_usage_ratio"] == pytest.approx(
         summary["primary_metric_value"] / 70 * 100, rel=0.01
     )
-    assert "GLM-5.1" in summary["cursor_pools"]["third_party"]["breakdown_by_model"]
+    assert "GLM-5.1" in summary["cursor_pools"]["api"]["breakdown_by_model"]
+
+
+def test_build_usage_summary_excludes_byok_from_api_spend(session):
+    team, _ = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.flush()
+
+    from pulse.tool_center.repository import ToolCenterRepository
+
+    tool_repo = ToolCenterRepository(session, team.id)
+    plan = next(p for p in tool_repo.list_plans() if p.slug == "pro_plus")
+
+    events = [
+        _included_record(model="premium", source_row_hash="h1"),
+        _included_record(
+            kind="USAGE_EVENT_KIND_USER_API_KEY",
+            model="GLM-5.2",
+            source_row_hash="h2",
+            cost_raw=CostRaw.NONE,
+            tokens_input_no_cache=500_000,
+            tokens_cache_read=0,
+            tokens_output=50_000,
+            tokens_total=550_000,
+        ),
+    ]
+    records = [_usage_record_from_event(rec) for rec in events]
+    summary = build_usage_summary(plan=plan, records=records)
+
+    assert summary["primary_metric_value"] == pytest.approx(
+        summary["cursor_pools"]["api"]["spend_usd"]
+    )
+    assert "GLM-5.2" not in (summary["cursor_pools"]["api"]["breakdown_by_model"] or {})
+    assert "GLM-5.2" not in (summary.get("breakdown_by_model") or {})
+    assert summary["external_models"]["GLM-5.2"]["total_tokens"] == 550_000
 
 
 @pytest.fixture

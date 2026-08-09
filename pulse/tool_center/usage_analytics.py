@@ -8,10 +8,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.pricing.billing_scope import (
-    is_auto_composer_model,
-    is_third_party_model,
-)
+from pulse.pricing.billing_scope import pool_for_model, pool_for_row
 from pulse.storage.models import AiAccount, AiVendor, Member, UsageDailyAggregate
 from pulse.tool_center.usage import model_family
 
@@ -20,17 +17,10 @@ _MAX_RANGE_DAYS = 366
 POOL_LABELS = {
     "auto_composer": "Auto+Composer",
     "api": "API",
-    "third_party": "三方",
+    "external": "三方/BYOK",
+    "third_party": "三方/BYOK",  # legacy analytics key
+    "excluded": "未计费",
 }
-
-
-def pool_for_model(model: str | None) -> str:
-    """Approximate pool from model name (daily agg has no kind)."""
-    if is_auto_composer_model(model):
-        return "auto_composer"
-    if is_third_party_model(model):
-        return "third_party"
-    return "api"
 
 
 def tokens_total_parts(tokens_input: int, tokens_output: int, tokens_cache_read: int) -> int:
@@ -68,6 +58,10 @@ def _metric_bucket() -> dict:
         "event_count": 0,
         "cost_usd": 0.0,
     }
+
+
+def _row_kind_family(row: UsageDailyAggregate) -> str:
+    return (getattr(row, "kind_family", None) or "").strip() or "unknown"
 
 
 def _add_row(bucket: dict, row: UsageDailyAggregate) -> None:
@@ -176,17 +170,20 @@ def build_usage_analytics_overview(
         _add_row(acc_bucket, row)
 
         model = (row.model or "unknown").strip() or "unknown"
-        pool = pool_for_model(model)
+        kind = _row_kind_family(row)
+        pool = pool_for_row(model, kind)
         family = model_family(model)
-        model_bucket = by_model.get(model)
+        model_key = f"{model}\0{kind}"
+        model_bucket = by_model.get(model_key)
         if model_bucket is None:
             model_bucket = {
                 **_metric_bucket(),
                 "model": model,
+                "kind_family": kind,
                 "pool": pool,
                 "family": family,
             }
-            by_model[model] = model_bucket
+            by_model[model_key] = model_bucket
         _add_row(model_bucket, row)
         _add_row(by_pool[pool], row)
         _add_row(by_family[family], row)
@@ -221,6 +218,7 @@ def build_usage_analytics_overview(
         model_rows.append(
             {
                 "model": bucket["model"],
+                "kind_family": bucket["kind_family"],
                 "pool": bucket["pool"],
                 "family": bucket["family"],
                 **metrics,
@@ -245,10 +243,12 @@ def build_usage_analytics_overview(
         "by_account": sorted(
             account_rows, key=lambda x: (-x["tokens_total"], x["account_identifier"])
         ),
-        "by_model": sorted(model_rows, key=lambda x: (-x["tokens_total"], x["model"])),
+        "by_model": sorted(
+            model_rows, key=lambda x: (-x["tokens_total"], x["model"], x["kind_family"])
+        ),
         "by_pool": sorted(pool_rows, key=lambda x: (-x["tokens_total"], x["pool"])),
         "by_family": sorted(family_rows, key=lambda x: (-x["tokens_total"], x["family"])),
-        "note": "用量池按模型名归类（日聚合无 kind）",
+        "note": "用量池优先按 kind_family（INCLUDED vs USER_API_KEY）；无 kind 时按模型名近似。external = 三方/BYOK，不是 Cursor Quota Pool",
     }
 
 
@@ -260,6 +260,7 @@ def build_usage_analytics_daily_breakdown(
     end: date,
     account_id: str | None = None,
     model: str | None = None,
+    kind_family: str | None = None,
 ) -> list[dict]:
     validate_range(start, end)
     account_ids = [account_id] if account_id else None
@@ -272,9 +273,13 @@ def build_usage_analytics_daily_breakdown(
         primary_member_ids=None,
     )
     model_filter = (model or "").strip() or None
+    kind_filter = (kind_family or "").strip() or None
     out: list[dict] = []
     for row, account in pairs:
         if model_filter and (row.model or "") != model_filter:
+            continue
+        kind = _row_kind_family(row)
+        if kind_filter and kind != kind_filter:
             continue
         ti = int(row.tokens_input or 0)
         to = int(row.tokens_output or 0)
@@ -285,7 +290,8 @@ def build_usage_analytics_daily_breakdown(
                 "account_id": account.id,
                 "account_identifier": account.account_identifier or "",
                 "model": row.model,
-                "pool": pool_for_model(row.model),
+                "kind_family": kind,
+                "pool": pool_for_row(row.model, kind),
                 "family": model_family(row.model),
                 "tokens_input": ti,
                 "tokens_output": to,
@@ -295,7 +301,7 @@ def build_usage_analytics_daily_breakdown(
                 "event_count": int(row.event_count or 0),
             }
         )
-    out.sort(key=lambda x: (x["date"], -x["tokens_total"], x["model"]))
+    out.sort(key=lambda x: (x["date"], -x["tokens_total"], x["model"], x["kind_family"]))
     return out
 
 

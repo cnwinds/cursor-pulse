@@ -468,13 +468,16 @@ class KeyLoan(Base):
 class UsageDailyAggregate(Base):
     __tablename__ = "usage_daily_aggregates"
     __table_args__ = (
-        UniqueConstraint("account_id", "event_date", "model", name="uq_daily_agg"),
+        UniqueConstraint(
+            "account_id", "event_date", "model", "kind_family", name="uq_daily_agg"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
     event_date: Mapped[date] = mapped_column(Date, index=True)
     model: Mapped[str] = mapped_column(String(128))
+    kind_family: Mapped[str] = mapped_column(String(32), default="unknown")
     event_count: Mapped[int] = mapped_column(Integer, default=0)
     total_cost_usd: Mapped[float] = mapped_column(Numeric(12, 4), default=0)
     tokens_input: Mapped[int] = mapped_column(Integer, default=0)

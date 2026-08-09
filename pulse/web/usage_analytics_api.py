@@ -63,6 +63,7 @@ def register_usage_analytics_routes(app, get_db, require_capability, team_repo_f
         end: str = Query(..., description="YYYY-MM-DD"),
         account_id: str | None = Query(default=None),
         model: str | None = Query(default=None),
+        kind_family: str | None = Query(default=None),
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
@@ -83,5 +84,6 @@ def register_usage_analytics_routes(app, get_db, require_capability, team_repo_f
                 end=end_d,
                 account_id=account_id,
                 model=model,
+                kind_family=kind_family,
             ),
         }

@@ -542,6 +542,7 @@ def register_accounts_v2_routes(
                 "account_id": row.account_id,
                 "event_date": row.event_date.isoformat(),
                 "model": row.model,
+                "kind_family": getattr(row, "kind_family", None) or "unknown",
                 "event_count": row.event_count,
                 "total_cost_usd": float(row.total_cost_usd),
                 "tokens_input": row.tokens_input,

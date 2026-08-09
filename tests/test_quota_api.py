@@ -92,8 +92,37 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert matched["primary_member_name"] == quota_env["borrower"].display_name
     assert matched["remaining_cents"] == 5000
     assert matched["display_remaining_cents"] == 5005  # 7000 * (100 - 28.5) / 100
+    assert matched["display_api_remaining_cents"] is None  # no api_pct → unknown, not total remaining
     assert matched["limit_cents"] == 7000
     assert matched["used_cents"] == 2000
+
+
+def test_quota_board_api_remaining_follows_cursor_api_pct(quota_env):
+    """API 行与 apiPercentUsed 对齐，不被 total_pct / 三方本地估算带偏。"""
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    s = sf()
+    snap = s.scalar(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
+    )
+    assert snap is not None
+    snap.limit_cents = 2000
+    snap.used_cents = 16211
+    snap.remaining_cents = 0
+    snap.total_pct = 47.0
+    snap.auto_pct = 39.0
+    snap.api_pct = 100.0
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["api_pct"] == 100.0
+    assert matched["display_api_remaining_cents"] == 0
+    assert matched["display_remaining_cents"] == 1060  # still total_pct, not API
 
 
 def test_loan_key_returns_plaintext_once(quota_env):
@@ -534,6 +563,7 @@ def test_account_usage_daily_returns_aggregates(quota_env):
     rows = res.json()
     assert len(rows) == 1
     assert rows[0]["model"] == "claude-4-sonnet"
+    assert rows[0]["kind_family"] == "unknown"
     assert rows[0]["event_date"] == "2026-07-15"
     assert rows[0]["event_count"] == 2
     assert rows[0]["tokens_input"] == 100

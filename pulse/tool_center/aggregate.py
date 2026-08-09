@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from pulse.periods import pct_change, previous_period
 from pulse.storage.models import AiAccount, UsageSummary
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
+from pulse.tool_center.snapshot_headroom import api_quota_ratio_for_period
 
 
 def aggregate_account_metrics(session: Session, period: str, *, team_id: str) -> dict:
@@ -32,6 +34,7 @@ def aggregate_account_metrics(session: Session, period: str, *, team_id: str) ->
         )
     )
     summary_by_account = {s.account_id: s for s in summaries}
+    snapshots = latest_snapshots_for_accounts(session, [a.id for a in active])
 
     by_vendor_currency: dict[str, dict] = {}
     model_family_totals: dict[str, float] = defaultdict(float)
@@ -63,8 +66,9 @@ def aggregate_account_metrics(session: Session, period: str, *, team_id: str) ->
         value = float(summary.primary_metric_value)
         bucket["total_usage"] = round(bucket["total_usage"] + value, 4)
         bucket["account_count"] += 1
-        if summary.quota_usage_ratio is not None:
-            bucket["_ratio_sum"] += float(summary.quota_usage_ratio)
+        ratio = api_quota_ratio_for_period(summary, snapshots.get(account.id), period)
+        if ratio is not None:
+            bucket["_ratio_sum"] += ratio
             bucket["_ratio_count"] += 1
 
         for family, amount in (summary.breakdown_by_model or {}).items():
@@ -79,7 +83,7 @@ def aggregate_account_metrics(session: Session, period: str, *, team_id: str) ->
                 "primary_member_id": account.primary_member_id,
                 "usage": value,
                 "currency": currency,
-                "quota_usage_ratio": summary.quota_usage_ratio,
+                "quota_usage_ratio": ratio,
                 "suggest_dedicated": account.suggest_dedicated,
             }
         )

@@ -61,7 +61,10 @@ def build_usage_summary(
         cursor_pools = billing["cursor_pools"]
         api_pool = dict(cursor_pools["api"])
         third_party_pool = dict(cursor_pools.get("third_party") or {})
-        api_spend = api_pool["spend_usd"] + third_party_pool.get("spend_usd", 0)
+        # Included API Quota Pool spend only (named models + Cursor catalog GLM).
+        # BYOK / USER_API_KEY is external; leftover third_party spend is not API quota.
+        # Quota-board API row uses snapshot api_pct, not this ratio.
+        api_spend = float(api_pool.get("spend_usd") or 0)
         ratio = compute_quota_ratio(plan, api_spend)
         if ratio is not None:
             api_pool["usage_ratio"] = ratio
@@ -74,16 +77,13 @@ def build_usage_summary(
             "api": api_pool,
             "third_party": third_party_pool,
         }
-        api_breakdown = dict(api_pool.get("breakdown_by_model") or {})
-        for name, amount in (third_party_pool.get("breakdown_by_model") or {}).items():
-            api_breakdown[name] = api_breakdown.get(name, 0.0) + amount
         return {
             "primary_metric_value": api_spend,
             "primary_metric_unit": unit,
             "reported_spend_usd": billing["reported_spend_usd"],
             "estimated_included_spend_usd": billing["estimated_included_spend_usd"],
             "quota_usage_ratio": ratio if ratio is not None else (0.0 if not records else None),
-            "breakdown_by_model": api_breakdown,
+            "breakdown_by_model": dict(api_pool.get("breakdown_by_model") or {}),
             "cursor_pools": cursor_pools,
             "external_models": billing["external_models"],
             "excluded_event_count": billing["excluded_event_count"],

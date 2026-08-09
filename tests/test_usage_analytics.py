@@ -12,7 +12,7 @@ from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.storage.models import UsageDailyAggregate
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.tool_center.usage_analytics import pool_for_model
+from pulse.pricing.billing_scope import pool_for_model, pool_for_row
 from pulse.tool_center.usage import model_family
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
@@ -89,7 +89,8 @@ def analytics_env(_analytics_app):
         UsageDailyAggregate(
             account_id=other.id,
             event_date=date(2026, 7, 1),
-            model="glm-4.5",
+            model="GLM-4.5",
+            kind_family="user_api_key",
             event_count=1,
             total_cost_usd=0.2,
             tokens_input=300,
@@ -132,8 +133,18 @@ def test_pool_for_model_mapping():
     assert pool_for_model("cursor-grok-4.5-high") == "auto_composer"
     assert pool_for_model("claude-4-sonnet") == "api"
     assert pool_for_model("gpt-5") == "api"
-    assert pool_for_model("glm-4.5") == "third_party"
-    assert pool_for_model("minimax-m1") == "third_party"
+    assert pool_for_model("glm-5.2-high") == "api"
+    assert pool_for_model("GLM-5.2") == "external"
+    assert pool_for_model("MiniMax-M2.7") == "external"
+
+
+def test_pool_for_row_kind_family_overrides_model_heuristic():
+    assert pool_for_row("GLM-5.2", "included") == "api"
+    assert pool_for_row("glm-5.2-high", "user_api_key") == "external"
+    assert pool_for_row("composer-2.5", "included") == "auto_composer"
+    assert pool_for_row("claude-4-sonnet", "excluded") == "excluded"
+    assert pool_for_row("GLM-5.2", "unknown") == "external"
+    assert pool_for_row("glm-5.2-high", None) == "api"
 
 
 def test_model_family_mapping_edges():
@@ -182,7 +193,7 @@ def test_overview_kpi_and_series(analytics_env):
     pools = {row["pool"]: row for row in data["by_pool"]}
     assert pools["api"]["tokens_total"] == 1700
     assert pools["auto_composer"]["tokens_total"] == 500
-    assert pools["third_party"]["tokens_total"] == 400
+    assert pools["external"]["tokens_total"] == 400
 
     families = {row["family"]: row for row in data["by_family"]}
     assert families["Claude"]["tokens_total"] == 1700
@@ -261,12 +272,79 @@ def test_daily_breakdown(analytics_env):
         params={
             "start": "2026-07-01",
             "end": "2026-07-02",
-            "model": "glm-4.5",
+            "model": "GLM-4.5",
         },
         headers=_headers(token),
     )
     assert res2.status_code == 200
     items2 = res2.json()["items"]
     assert len(items2) == 1
-    assert items2[0]["pool"] == "third_party"
+    assert items2[0]["pool"] == "external"
     assert items2[0]["family"] == "GLM"
+    assert items2[0]["kind_family"] == "user_api_key"
+
+
+def test_overview_by_model_splits_same_model_by_kind_family(analytics_env):
+    sf = analytics_env["session_factory"]
+    alice = analytics_env["cursor_account"]
+    session = sf()
+    session.add_all(
+        [
+            UsageDailyAggregate(
+                account_id=alice.id,
+                event_date=date(2026, 7, 1),
+                model="GLM-5.2",
+                kind_family="included",
+                event_count=2,
+                total_cost_usd=1.0,
+                tokens_input=100,
+                tokens_output=0,
+                tokens_cache_read=0,
+            ),
+            UsageDailyAggregate(
+                account_id=alice.id,
+                event_date=date(2026, 7, 1),
+                model="GLM-5.2",
+                kind_family="user_api_key",
+                event_count=3,
+                total_cost_usd=0.0,
+                tokens_input=200,
+                tokens_output=0,
+                tokens_cache_read=0,
+            ),
+        ]
+    )
+    session.commit()
+    session.close()
+
+    client = analytics_env["client"]
+    token = create_access_token(analytics_env["config"], analytics_env["owner"])
+    res = client.get(
+        "/api/v2/usage-analytics/overview",
+        params={"start": "2026-07-01", "end": "2026-07-02"},
+        headers=_headers(token),
+    )
+    assert res.status_code == 200
+    glm_rows = [r for r in res.json()["by_model"] if r["model"] == "GLM-5.2"]
+    assert len(glm_rows) == 2
+    by_kind = {r["kind_family"]: r for r in glm_rows}
+    assert by_kind["included"]["pool"] == "api"
+    assert by_kind["included"]["tokens_total"] == 100
+    assert by_kind["user_api_key"]["pool"] == "external"
+    assert by_kind["user_api_key"]["tokens_total"] == 200
+
+    drill = client.get(
+        "/api/v2/usage-analytics/daily-breakdown",
+        params={
+            "start": "2026-07-01",
+            "end": "2026-07-02",
+            "model": "GLM-5.2",
+            "kind_family": "user_api_key",
+        },
+        headers=_headers(token),
+    )
+    assert drill.status_code == 200
+    items = drill.json()["items"]
+    assert len(items) == 1
+    assert items[0]["kind_family"] == "user_api_key"
+    assert items[0]["tokens_total"] == 200

@@ -13,7 +13,7 @@ type quotaPoolKind int
 const (
 	quotaPoolUnknown quotaPoolKind = iota
 	quotaPoolAuto                  // Auto + Composer (+ grok in Cursor billing)
-	quotaPoolAPI                   // premium / named API models (+ third-party)
+	quotaPoolAPI                   // premium / named API models (+ Cursor catalog GLM)
 )
 
 func normalizeCursorModel(model string) string {
@@ -48,6 +48,21 @@ func isThirdPartyModel(model string) bool {
 	return false
 }
 
+// isLikelyByokModel guesses USER_API_KEY / self-hosted third-party from the
+// model string when kind is unavailable (MITM request). Keep in sync with
+// pulse/pricing/billing_scope.py is_likely_byok_model. Cursor catalog slugs
+// like glm-5.2-high are lowercase-with-hyphens and consume the API quota pool.
+func isLikelyByokModel(model string) bool {
+	text := strings.TrimSpace(model)
+	if text == "" || !isThirdPartyModel(text) {
+		return false
+	}
+	if text == strings.ToLower(text) && strings.Contains(text, "-") {
+		return false
+	}
+	return true
+}
+
 // quotaPoolForModel maps a billed model to the Pulse auto_pct vs api_pct bucket.
 func quotaPoolForModel(model string) quotaPoolKind {
 	if model == "" {
@@ -56,8 +71,8 @@ func quotaPoolForModel(model string) quotaPoolKind {
 	if isAutoComposerModel(model) {
 		return quotaPoolAuto
 	}
-	if isThirdPartyModel(model) {
-		return quotaPoolAPI
+	if isLikelyByokModel(model) {
+		return quotaPoolUnknown
 	}
 	return quotaPoolAPI
 }

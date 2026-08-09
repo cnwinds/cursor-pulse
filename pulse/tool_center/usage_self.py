@@ -18,6 +18,7 @@ from pulse.storage.models import (
     UsageIngestion,
     UsageRecord,
 )
+from pulse.pricing.billing_scope import KIND_FAMILY_LABELS, kind_family, pool_for_row
 from pulse.tool_center.billing_cycle import (
     add_months,
     billing_cycle_containing,
@@ -186,13 +187,33 @@ def build_loan_usage_payload(
     }
 
 
+def _model_bucket_key(model: str | None, family: str | None) -> str:
+    return f"{model or ''}\0{(family or 'unknown').strip() or 'unknown'}"
+
+
+def _new_model_bucket(model: str | None, family: str) -> dict[str, Any]:
+    return {
+        "model": model,
+        "kind_family": family,
+        "pool": pool_for_row(model, family),
+        "events": 0,
+        "tokens": 0,
+        "cost_usd": 0.0,
+    }
+
+
+def _sorted_model_buckets(by_model: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        by_model.values(),
+        key=lambda x: (-x["cost_usd"], -x["events"], x["model"] or "", x.get("kind_family") or ""),
+    )
+
+
 def aggregate_models_from_daily_rows(rows: list[UsageDailyAggregate]) -> list[dict[str, Any]]:
     by_model: dict[str, dict[str, Any]] = {}
     for r in rows:
-        bucket = by_model.setdefault(
-            r.model,
-            {"model": r.model, "events": 0, "tokens": 0, "cost_usd": 0.0},
-        )
+        family = (getattr(r, "kind_family", None) or "unknown").strip() or "unknown"
+        bucket = by_model.setdefault(_model_bucket_key(r.model, family), _new_model_bucket(r.model, family))
         bucket["events"] += int(r.event_count or 0)
         bucket["tokens"] += (
             int(r.tokens_input or 0)
@@ -200,7 +221,7 @@ def aggregate_models_from_daily_rows(rows: list[UsageDailyAggregate]) -> list[di
             + int(r.tokens_cache_read or 0)
         )
         bucket["cost_usd"] += float(r.total_cost_usd or 0)
-    return sorted(by_model.values(), key=lambda x: (-x["cost_usd"], -x["events"], x["model"]))
+    return _sorted_model_buckets(by_model)
 
 
 def load_account_model_usage(
@@ -241,9 +262,9 @@ def load_account_model_usage(
     by_model: dict[str, dict[str, Any]] = {}
     latest_ingested_at: datetime | None = None
     for rec, ingested_at in rec_rows:
+        family = kind_family(rec.kind)
         bucket = by_model.setdefault(
-            rec.model,
-            {"model": rec.model, "events": 0, "tokens": 0, "cost_usd": 0.0},
+            _model_bucket_key(rec.model, family), _new_model_bucket(rec.model, family)
         )
         bucket["events"] += 1
         bucket["tokens"] += int(rec.tokens_total or 0)
@@ -252,8 +273,7 @@ def load_account_model_usage(
             latest_ingested_at is None or ingested_at > latest_ingested_at
         ):
             latest_ingested_at = ingested_at
-    models = sorted(by_model.values(), key=lambda x: (-x["cost_usd"], -x["events"], x["model"]))
-    return models, latest_ingested_at
+    return _sorted_model_buckets(by_model), latest_ingested_at
 
 
 def _fmt_int(value: int) -> str:
@@ -287,8 +307,13 @@ def _format_model_table(
     ]
     for m in models:
         share = _model_share_pct(m, total_tokens=total_tokens, total_events=total_events)
+        label = m["model"]
+        family = str(m.get("kind_family") or "").strip()
+        kind_label = KIND_FAMILY_LABELS.get(family)
+        if kind_label:
+            label = f"{label} ({kind_label})"
         lines.append(
-            f"| {m['model']} | {_fmt_int(m['events'])} | {_fmt_int(m['tokens'])} | "
+            f"| {label} | {_fmt_int(m['events'])} | {_fmt_int(m['tokens'])} | "
             f"{_fmt_cost(m['cost_usd'], estimated=estimated_cost)} | {share:.1f}% |"
         )
     return lines

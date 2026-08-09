@@ -47,6 +47,19 @@ export function formatAmount(value: number, unit?: string | null) {
   return `${Number(value).toFixed(2)} ${normalized}`
 }
 
+export const KIND_FAMILY_LABELS: Record<string, string> = {
+  included: '套餐',
+  user_api_key: 'BYOK',
+  excluded: '未计费',
+  unknown: '未知',
+}
+
+export function kindFamilyLabel(family?: string | null): string {
+  const key = (family || '').trim()
+  if (!key) return KIND_FAMILY_LABELS.unknown
+  return KIND_FAMILY_LABELS[key] || KIND_FAMILY_LABELS.unknown
+}
+
 export function formatTokens(value: number) {
   const n = Number(value)
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -79,40 +92,6 @@ export function premiumApiSpend(summary?: UsageSummary) {
 
 export function thirdPartySpend(summary?: UsageSummary) {
   return summary?.cursor_pools?.third_party?.spend_usd ?? 0
-}
-
-export function apiSpend(summary?: UsageSummary) {
-  const premium = premiumApiSpend(summary)
-  const thirdParty = thirdPartySpend(summary)
-  if (premium > 0 || thirdParty > 0) {
-    return premium + thirdParty
-  }
-  return summary?.primary_metric_value ?? 0
-}
-
-export function apiQuotaUsd(summary?: UsageSummary) {
-  return summary?.cursor_pools?.api?.quota_usd ?? summary?.quota_denominator_snapshot ?? null
-}
-
-/** 本周期高级模型 API 池剩余（与用量明细同源：quota - spend） */
-export function apiPoolRemainingUsd(summary?: UsageSummary): number | null {
-  const quota = apiQuotaUsd(summary)
-  if (quota == null || quota <= 0) return null
-  return Math.max(0, quota - premiumApiSpend(summary))
-}
-
-export function hasApiPoolSummary(summary?: UsageSummary): boolean {
-  return summary?.cursor_pools?.api != null && apiQuotaUsd(summary) != null
-}
-
-/** 本周期 API 池占用 %（与用量明细同源） */
-export function apiPoolUsagePct(summary?: UsageSummary): number | null {
-  const ratio = summary?.cursor_pools?.api?.usage_ratio
-  if (ratio != null) return Math.min(Math.round(ratio), 100)
-  const quota = apiQuotaUsd(summary)
-  if (quota == null || quota <= 0) return null
-  const spent = premiumApiSpend(summary)
-  return Math.min(Math.round((spent / quota) * 100), 100)
 }
 
 export function poolModelBreakdown(
@@ -159,6 +138,54 @@ export function externalModelBreakdown(summary?: UsageSummary) {
     .filter(([, stats]) => Number(stats.total_tokens) > 0)
     .sort((a, b) => Number(b[1].total_tokens) - Number(a[1].total_tokens))
     .map(([name, stats]) => ({ name, tokens: Number(stats.total_tokens) }))
+}
+
+export type ByokModelRow = {
+  name: string
+  tokens: number | null
+  value: number | null
+}
+
+/** Merge leftover third_party spend rows with BYOK `external_models` (tokens only). */
+export function byokModelRows(summary?: UsageSummary): ByokModelRow[] {
+  const byName = new Map<string, ByokModelRow>()
+  for (const m of poolModelBreakdown(summary, 'third_party')) {
+    byName.set(m.name, {
+      name: m.name,
+      tokens: m.tokens,
+      value: m.value > 0 ? m.value : null,
+    })
+  }
+  for (const m of externalModelBreakdown(summary)) {
+    const existing = byName.get(m.name)
+    if (existing) {
+      existing.tokens = (existing.tokens || 0) + m.tokens
+    } else {
+      byName.set(m.name, { name: m.name, tokens: m.tokens, value: null })
+    }
+  }
+  return [...byName.values()].sort(
+    (a, b) =>
+      (b.value || 0) - (a.value || 0) ||
+      (b.tokens || 0) - (a.tokens || 0) ||
+      a.name.localeCompare(b.name),
+  )
+}
+
+export function hasByokUsage(summary?: UsageSummary) {
+  return (
+    thirdPartySpend(summary) > 0 ||
+    hasExternalModels(summary) ||
+    poolHasTokens(summary, 'third_party')
+  )
+}
+
+export function byokHasTokens(summary?: UsageSummary) {
+  return byokModelRows(summary).some((m) => (m.tokens || 0) > 0)
+}
+
+export function byokTotalTokens(summary?: UsageSummary) {
+  return byokModelRows(summary).reduce((sum, m) => sum + (m.tokens || 0), 0)
 }
 
 export function modelBreakdown(summary?: UsageSummary) {

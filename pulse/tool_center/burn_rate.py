@@ -48,17 +48,32 @@ def api_limit_usd(snapshot: AccountQuotaSnapshot) -> float | None:
     return None
 
 
+def _cents_from_pct_used(limit_cents: int, pct_used: float) -> int:
+    return round(limit_cents * max(0.0, 100.0 - pct_used) / 100.0)
+
+
 def display_remaining_cents(snapshot: AccountQuotaSnapshot) -> int | None:
-    """与 Cursor Dashboard 百分比对齐的 Included 剩余估算（美分）。
+    """Total Snapshot Headroom in cents, from total_pct.
 
     planUsage.remaining（limit - includedSpend）常与 totalPercentUsed 不一致；
-    有百分比时优先按 total_pct 从 limit 推算，与 burn_rate 的 headroom 逻辑一致。
+    有百分比时按 total_pct 从 limit 推算。
     """
     if snapshot.limit_cents <= 0:
         return snapshot.remaining_cents or None
     if snapshot.total_pct is not None:
-        return round(snapshot.limit_cents * max(0.0, 100.0 - snapshot.total_pct) / 100.0)
+        return _cents_from_pct_used(snapshot.limit_cents, snapshot.total_pct)
     return snapshot.remaining_cents or None
+
+
+def display_api_remaining_cents(snapshot: AccountQuotaSnapshot) -> int | None:
+    """API Quota Pool Snapshot Headroom in cents, from api_pct.
+
+    Missing api_pct is unknown → None. Do not fall back to remaining_cents
+    (that is included-total, not the API Quota Pool).
+    """
+    if snapshot.api_pct is None or snapshot.limit_cents <= 0:
+        return None
+    return _cents_from_pct_used(snapshot.limit_cents, snapshot.api_pct)
 
 
 def projected_exhaustion_date(

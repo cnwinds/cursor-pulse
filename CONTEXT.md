@@ -25,8 +25,8 @@ A temporary binding of an underlying Cursor credential to a borrower via a loan 
 ### Proxy data plane
 
 **Quota Pool**:
-The billing bucket a Cursor request consumes — `auto` or `api` — derived from the model / request shape.
-_Avoid_: Pool (alone; ambiguous with the credential list), billing pool (implementation phrase)
+The billing bucket a Cursor request consumes — `auto` or `api`. Request-time routing uses model heuristics (Auto vs API are both `INCLUDED`; BYOK PascalCase → unknown). Usage-event stats use Cursor `kind` (`INCLUDED_*` vs `USER_API_KEY`) then model heuristics for Auto vs API. Daily aggregates store `kind_family` so analytics can split Cursor GLM from BYOK. Analytics dimension `external` is BYOK token volume, not a Quota Pool.
+_Avoid_: Pool (alone; ambiguous with the credential list), billing pool (implementation phrase); treating BYOK `USER_API_KEY` rows as included API spend; calling BYOK a Quota Pool
 
 **Sticky Credential**:
 The pool credential bound to a CLI session JWT for a Quota Pool until that pool is exhausted on that credential, then rotated within pool order.

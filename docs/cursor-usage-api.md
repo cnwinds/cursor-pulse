@@ -242,7 +242,7 @@ curl -sS -X POST "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrent
 |------|------|
 | `timestamp` | 事件时间（毫秒字符串） |
 | `model` | 使用的模型 |
-| `kind` | 计费类型，如 `USAGE_EVENT_KIND_INCLUDED_IN_PRO_PLUS`、`USAGE_EVENT_KIND_USAGE_BASED` |
+| `kind` | 计费类型。`USAGE_EVENT_KIND_INCLUDED_*` / `Included` 计入套餐（含 Cursor 目录 GLM，消耗 API 额度）；`USAGE_EVENT_KIND_USER_API_KEY` / `User API Key` 为自配三方 BYOK，不消耗套餐 API 额度；另有 `ERRORED_*`、`FREE_CREDIT` 等 |
 | `tokenUsage` | 输入/输出/cache token 与 `totalCents` |
 | `chargedCents` | 实际计费（美分），通常含 Cursor Token Fee |
 | `requestsCosts` | 按请求数计费时的消耗单位 |

@@ -5,14 +5,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from pulse.periods import previous_period
 from pulse.storage.models import AiAccount, Member, UsageSummary
-
-
-def _effective_quota_ratio(summary: UsageSummary) -> float | None:
-    if summary.cycle_quota_usage_ratio is not None:
-        return float(summary.cycle_quota_usage_ratio)
-    if summary.quota_usage_ratio is not None:
-        return float(summary.quota_usage_ratio)
-    return None
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
+from pulse.tool_center.snapshot_headroom import api_quota_ratio_for_period
 
 
 def evaluate_account_upgrade(session: Session, account_id: str, period: str) -> bool:
@@ -47,11 +41,12 @@ def evaluate_account_upgrade(session: Session, account_id: str, period: str) -> 
     if len(by_period) < months:
         return False
 
+    snapshot = latest_snapshots_for_accounts(session, [account_id]).get(account_id)
     for p in periods:
         summary = by_period.get(p)
         if summary is None:
             return False
-        ratio = _effective_quota_ratio(summary)
+        ratio = api_quota_ratio_for_period(summary, snapshot, p)
         if ratio is None:
             return False
         if ratio < threshold:

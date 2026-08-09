@@ -40,7 +40,7 @@ def estimate_event_record(
                 pricing_rule_label="included:auto_composer",
                 confidence=0.9,
             )
-        pricing_label = "included:third_party" if scope == "third_party" else "included:api"
+        pricing_label = "included:api"
         return estimate_token_cost(
             model=rec.model,
             max_mode=rec.max_mode,
@@ -189,11 +189,11 @@ def _round_pool_bucket(bucket: dict) -> dict:
 
 
 def aggregate_cursor_billing(records: list[UsageRecord]) -> dict:
-    """Split Cursor usage into auto+composer, API, third-party, and external BYOK."""
+    """Split Cursor usage into auto+composer, API, and external BYOK."""
     pools = {
         "auto_composer": _empty_pool_bucket(),
         "api": _empty_pool_bucket(),
-        "third_party": _empty_pool_bucket(),
+        "third_party": _empty_pool_bucket(),  # legacy key; classify no longer fills it
     }
     external_models: dict[str, dict[str, int]] = defaultdict(
         lambda: {"total_tokens": 0, "event_count": 0}
@@ -243,7 +243,7 @@ def aggregate_cursor_billing(records: list[UsageRecord]) -> dict:
         "api": _round_pool_bucket(pools["api"]),
         "third_party": _round_pool_bucket(pools["third_party"]),
     }
-    billable_keys = ("auto_composer", "api", "third_party")
+    billable_keys = ("auto_composer", "api")
     reported_spend = sum(cursor_pools[key]["reported_spend_usd"] for key in billable_keys)
     estimated_included_spend = sum(
         cursor_pools[key]["estimated_spend_usd"] for key in billable_keys
