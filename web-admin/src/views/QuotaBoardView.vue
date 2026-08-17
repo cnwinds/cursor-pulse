@@ -283,6 +283,7 @@ import {
   periodsForBoardCycle,
   poolModelBreakdown,
   poolTotalTokens,
+  preferSummaryForBoardCycle,
   premiumApiSpend,
   thirdPartySpend,
   type UsageSummary,
@@ -446,28 +447,6 @@ function currentPeriod() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-function preferSummary(
-  current: UsageSummary | undefined,
-  next: UsageSummary,
-  cycleStart: string | null | undefined,
-): UsageSummary {
-  if (!current) return next
-  // Prefer the summary whose billing cycle matches the board snapshot cycle.
-  if (cycleStart) {
-    if (next.billing_cycle_start === cycleStart && current.billing_cycle_start !== cycleStart) {
-      return next
-    }
-    if (current.billing_cycle_start === cycleStart && next.billing_cycle_start !== cycleStart) {
-      return current
-    }
-  }
-  // Otherwise keep the denser API breakdown, then newer period key.
-  const curApi = Object.keys(current.cursor_pools?.api?.breakdown_by_model || {}).length
-  const nextApi = Object.keys(next.cursor_pools?.api?.breakdown_by_model || {}).length
-  if (nextApi !== curApi) return nextApi > curApi ? next : current
-  return (next.period || '') > (current.period || '') ? next : current
-}
-
 async function loadSummaries(items: BoardItem[]) {
   const periods = new Set<string>([currentPeriod()])
   const cycleByAccount = new Map<string, string | null>()
@@ -488,11 +467,13 @@ async function loadSummaries(items: BoardItem[]) {
 
   const merged: Record<string, UsageSummary> = {}
   for (const row of rows) {
-    merged[row.account_id] = preferSummary(
+    const picked = preferSummaryForBoardCycle(
       merged[row.account_id],
       row,
       cycleByAccount.get(row.account_id),
     )
+    if (picked) merged[row.account_id] = picked
+    else delete merged[row.account_id]
   }
   summaryMap.value = merged
 }

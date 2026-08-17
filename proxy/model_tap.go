@@ -417,6 +417,8 @@ func looksLikeModelID(s string) bool {
 	switch lower {
 	case "opus", "sonnet", "haiku", "claude", "gemini", "grok", "composer", "fable":
 		return false
+	case "auto", "default":
+		return true
 	}
 	keywords := []string{
 		"claude", "gpt-", "gpt4", "o1-", "o3-", "o4-", "gemini",

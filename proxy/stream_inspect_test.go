@@ -140,6 +140,38 @@ func TestPassthroughConnectStreamMarksOnQuota(t *testing.T) {
 	}
 }
 
+func TestPassthroughConnectStreamTapsGzipTurnEnded(t *testing.T) {
+	inner := append(append(varintField(1, 1234), varintField(2, 56)...), varintField(5, 7)...)
+	turnEnded := msgField(1, msgField(14, inner))
+	var gz bytes.Buffer
+	zw := gzip.NewWriter(&gz)
+	if _, err := zw.Write(turnEnded); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var upstream bytes.Buffer
+	_ = writeEnvelope(&upstream, endStreamFlag, []byte(`{"metadata":{}}`))
+
+	var client bytes.Buffer
+	var got *TokenCounts
+	err := passthroughConnectStream(&client, &upstream, compressFlag, gz.Bytes(), func(tc TokenCounts) {
+		cp := tc
+		got = &cp
+	}, nil, "/agent.v1.AgentService/Run", "pk1", "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected TurnEnded tokens from gzip-compressed Connect frame")
+	}
+	if got.Input != 1234 || got.Output != 56 || got.Reasoning != 7 {
+		t.Fatalf("tokens=%+v", got)
+	}
+}
+
 func TestPassthroughConnectStreamForwardsLiveRun(t *testing.T) {
 	live := []byte{0xde, 0xad}
 	var upstream bytes.Buffer

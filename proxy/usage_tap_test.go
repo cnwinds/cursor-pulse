@@ -39,3 +39,15 @@ func TestFindTurnEnded(t *testing.T) {
 		t.Fatal("expected nil")
 	}
 }
+
+func TestFindTurnEndedIgnoresUnknownFields(t *testing.T) {
+	// Newer TurnEndedUpdate messages may add fields beyond 1–5 (e.g. gpt-5.6-sol).
+	inner := append(append(varintField(1, 1234), varintField(2, 56)...), varintField(5, 7)...)
+	inner = append(inner, varintField(6, 99)...)
+	inner = append(inner, msgField(7, []byte("extra"))...)
+	payload := msgField(1, msgField(14, inner))
+	tok := findTurnEnded(payload)
+	if tok == nil || tok.Input != 1234 || tok.Output != 56 || tok.Reasoning != 7 {
+		t.Fatalf("%+v", tok)
+	}
+}

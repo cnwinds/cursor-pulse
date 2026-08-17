@@ -232,3 +232,27 @@ export function periodsForBoardCycle(
   }
   return periods
 }
+
+/**
+ * Pick which UsageSummary to show on a quota-board card.
+ *
+ * `loadSummaries` fetches the union of calendar months for *all* cards, so a
+ * previous-month row can arrive for an account that has no row in the current
+ * cycle. Reject those — otherwise 「本周期用量明细」 shows e.g. July while the
+ * 「明细」 dialog opens on the snapshot cycle (August) and looks empty/wrong.
+ */
+export function preferSummaryForBoardCycle(
+  current: UsageSummary | undefined,
+  next: UsageSummary,
+  cycleStart: string | null | undefined,
+): UsageSummary | undefined {
+  if (cycleStart && next.billing_cycle_start !== cycleStart) {
+    return current
+  }
+  if (!current) return next
+  // Prefer denser API breakdown, then newer period key.
+  const curApi = Object.keys(current.cursor_pools?.api?.breakdown_by_model || {}).length
+  const nextApi = Object.keys(next.cursor_pools?.api?.breakdown_by_model || {}).length
+  if (nextApi !== curApi) return nextApi > curApi ? next : current
+  return (next.period || '') > (current.period || '') ? next : current
+}

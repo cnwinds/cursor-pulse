@@ -41,9 +41,10 @@ func (t *usageTapWriter) Write(p []byte) (int, error) {
 		if size < 0 || total > len(t.buf) {
 			break
 		}
+		flags := t.buf[0]
 		payload := t.buf[5:total]
 		t.buf = t.buf[total:]
-		if tok := findTurnEnded(payload); tok != nil && t.onTokens != nil {
+		if tok := findTurnEnded(connectPayloadForInspect(flags, payload)); tok != nil && t.onTokens != nil {
 			t.onTokens(*tok)
 		}
 	}
@@ -53,6 +54,8 @@ func (t *usageTapWriter) Write(p []byte) (int, error) {
 // findTurnEnded best-effort extracts TurnEndedUpdate token counts from a
 // protobuf payload at any nesting depth (agent.v1 InteractionUpdate field 14).
 // Fields: 1 input, 2 output, 3 cache_read, 4 cache_write, 5 reasoning.
+// Unknown fields (>5) are ignored so newer models (e.g. gpt-5.6-sol) still tap.
+// Callers must pass decompressed Connect payloads (see connectPayloadForInspect).
 //
 // Field 1 is often the inclusive input-side total
 // (no_cache + cache_write + cache_read), not Dashboard inputTokens.
@@ -161,7 +164,13 @@ func looksLikeTurnEnded(buf []byte) *TokenCounts {
 	hasField2 := false
 	found := false
 	for _, f := range iterProtoFields(buf) {
-		if f.wire != 0 || f.fieldNo < 1 || f.fieldNo > 5 {
+		if f.fieldNo < 1 {
+			return nil
+		}
+		if f.fieldNo > 5 {
+			continue
+		}
+		if f.wire != 0 {
 			return nil
 		}
 		found = true

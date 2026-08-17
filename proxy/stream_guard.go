@@ -70,7 +70,7 @@ func passthroughConnectStream(
 	}
 
 	process := func(flags byte, payload []byte) error {
-		if tok := findTurnEnded(payload); tok != nil && onTokens != nil {
+		if tok := findTurnEnded(connectPayloadForInspect(flags, payload)); tok != nil && onTokens != nil {
 			onTokens(*tok)
 		}
 		if err := writeFrame(flags, payload); err != nil {

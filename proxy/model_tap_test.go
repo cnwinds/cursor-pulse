@@ -202,9 +202,19 @@ func TestLooksLikeModelIDRejectsBareFamily(t *testing.T) {
 			t.Fatalf("%q should not look like a model id", s)
 		}
 	}
-	for _, s := range []string{"claude-opus-4-8", "gpt-5.6-sol-max", "composer-2.5"} {
+	for _, s := range []string{"claude-opus-4-8", "gpt-5.6-sol-max", "composer-2.5", "auto", "default"} {
 		if !looksLikeModelID(s) {
 			t.Fatalf("%q should look like a model id", s)
+		}
+	}
+}
+
+func TestFindModelNameAutoAndDefault(t *testing.T) {
+	for _, id := range []string{"auto", "default"} {
+		body := buildAgentRunEnvelope(buildRequestedModel(id, false, false))
+		got := findModelName(body)
+		if got != id {
+			t.Fatalf("id %q: got %q", id, got)
 		}
 	}
 }

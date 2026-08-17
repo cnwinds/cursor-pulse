@@ -225,6 +225,58 @@ def test_daily_agg_splits_included_and_byok_same_model(session):
     assert by_family["user_api_key"].tokens_input == 200
 
 
+def test_daily_agg_uses_effective_pool_cost_for_estimated_included(session):
+    """Included events often have cost_usd=0; board summary uses cost_estimated_usd."""
+    team, _ = make_team_repo(session)
+    seed_v2_catalog(session, team)
+    session.commit()
+    tool_repo = ToolCenterRepository(session, team.id)
+    account = next(a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor")
+    member = Member(team_id=team.id, display_name="T", channel_user_id="dt-cost", status="active")
+    session.add(member)
+    session.flush()
+    ingestion = UsageIngestion(
+        member_id=member.id,
+        account_id=account.id,
+        vendor_id=account.vendor_id,
+        billing_period="2026-07",
+        source_type="api_sync",
+        channel="test",
+        status="confirmed",
+        triggered_by=member.id,
+        event_count=1,
+        confirmed_at=datetime.now(timezone.utc),
+    )
+    session.add(ingestion)
+    session.flush()
+    day = date(2026, 7, 17)
+    session.add(
+        UsageRecord(
+            ingestion_id=ingestion.id,
+            member_id=member.id,
+            event_at=datetime(2026, 7, 17, tzinfo=timezone.utc),
+            event_date=day,
+            kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO",
+            model="claude-opus-4-8-thinking-high",
+            tokens_input_no_cache=1000,
+            tokens_output=100,
+            tokens_total=1100,
+            cost_raw="included",
+            cost_usd=0,
+            cost_estimated_usd=23.5376,
+            cost_basis="estimated",
+            source_row_hash="h-est",
+        )
+    )
+    session.flush()
+    rebuild_daily_aggregates(session, account.id, {day})
+    session.flush()
+    row = session.scalars(
+        select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)
+    ).one()
+    assert float(row.total_cost_usd) == pytest.approx(23.5376)
+
+
 def test_backfill_unknown_daily_kind_family_from_records(session):
     from pulse.ingestion.daily import backfill_unknown_daily_kind_families
 
