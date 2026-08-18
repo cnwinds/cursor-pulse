@@ -174,16 +174,18 @@ def projected_surplus_cents(
     """号主自身消耗到 deadline 也用不完的额度（cents）；无法推算时为 0。
 
     days_to_deadline 可为小数（小时精度 = hours/24）。
+    有 total_pct 时按 Snapshot Headroom 推算（与 display_remaining_cents 一致）；
+    planUsage.remaining 常与 totalPercentUsed 不一致，会压低空闲账号的余量。
     """
     today = today or date.today()
     elapsed = max((today - snapshot.cycle_start).days, 1)
-    if snapshot.remaining_cents > 0:
-        daily_burn = snapshot.used_cents / elapsed
-        return round(max(snapshot.remaining_cents - daily_burn * days_to_deadline, 0.0), 2)
     if snapshot.total_pct is not None and snapshot.limit_cents > 0:
         daily_pct = snapshot.total_pct / elapsed
         surplus_pct = max(100.0 - (snapshot.total_pct + daily_pct * days_to_deadline), 0.0)
         return round(surplus_pct / 100.0 * snapshot.limit_cents, 2)
+    if snapshot.remaining_cents > 0:
+        daily_burn = snapshot.used_cents / elapsed
+        return round(max(snapshot.remaining_cents - daily_burn * days_to_deadline, 0.0), 2)
     return 0.0
 
 
@@ -465,7 +467,7 @@ def recommend_lenders(
     借用路径：urgency ≈ 余量/剩余天数；U/S 池内归一化后加权。
     代理池路径（enforce_loan_cap=False）：
     - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化，减少周期末浪费）
-    - surplus = projected_surplus_cents 归一化（剩余额度多的账号优先）
+    - surplus = projected_surplus_cents 归一化（Snapshot Headroom 推算的空闲余量，多者优先）
     - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
     """

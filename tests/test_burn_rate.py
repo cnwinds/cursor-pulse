@@ -402,6 +402,21 @@ def test_surplus_falls_back_to_pct_path_when_remaining_cents_zero():
     assert projected_surplus_cents(snap, 10, today=TODAY) == 4044.44
 
 
+def test_surplus_prefers_total_pct_when_remaining_cents_disagrees():
+    """planUsage.remaining 常低于 Snapshot Headroom；打分余量跟 total_pct。"""
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 9),
+        account_id="idle",
+        limit_cents=7000,
+        used_cents=2139,
+        remaining_cents=4861,
+        total_pct=2.35,
+    )
+    # elapsed=9 → daily_pct=2.35/9；8 天再耗 2.09% → surplus_pct=95.56% × 7000
+    assert projected_surplus_cents(snap, 8, today=TODAY) == 6689.28
+
+
 def test_surplus_zero_when_no_cents_and_no_pct():
     snap = _snapshot(
         cycle_start=date(2026, 7, 1),
@@ -648,6 +663,41 @@ def test_proxy_pool_urgency_uses_hourly_deadline_power():
     near = digestion_urgency(surplus, 24.0, deadline_power=1.75, hourly_power=True)
     far = digestion_urgency(surplus, 120.0, deadline_power=1.75, hourly_power=True)
     assert near > far
+
+
+def test_proxy_pool_prefers_idle_headroom_over_slightly_sooner():
+    """空闲余量大的账号优先于仅早一天作废、但已消耗更多的账号。
+
+    对齐 2026-08-18 共享池打分表：total_pct≈2% 的空闲号 vs 已用≈26%、作废日早一天。
+    """
+    idle = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 18),
+        account_id="idle",
+        used_cents=2139,
+        remaining_cents=4861,
+        total_pct=2.35,
+    )
+    sooner_used = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 17),
+        account_id="sooner-used",
+        used_cents=23418,
+        remaining_cents=0,
+        total_pct=25.73,
+    )
+    ranked = recommend_lenders(
+        [
+            _candidate(sooner_used, account_id="sooner-used"),
+            _candidate(idle, account_id="idle"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in ranked] == ["idle", "sooner-used"]
+    assert ranked[0]["remaining_headroom_pct"] > ranked[1]["remaining_headroom_pct"]
+    assert ranked[0]["surplus_cents"] > ranked[1]["surplus_cents"]
 
 
 def test_proxy_pool_prefers_high_headroom_at_similar_deadline():
