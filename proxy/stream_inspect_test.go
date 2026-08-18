@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"os"
 	"testing"
 )
@@ -98,11 +97,7 @@ func TestClassifyGzipEndStreamFromCapture(t *testing.T) {
 }
 
 func TestConnectPayloadForInspectGzip(t *testing.T) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	_, _ = zw.Write(connectErrorFromPayload(51)) // RATE_LIMITED_CHANGEABLE
-	_ = zw.Close()
-	payload := buf.Bytes()
+	payload := gzipPayload(t, connectErrorFromPayload(51)) // RATE_LIMITED_CHANGEABLE
 	body := connectPayloadForInspect(compressFlag|endStreamFlag, payload)
 	if k := classifyEndStream(body); k != failAccount {
 		t.Fatalf("got %s", k)
@@ -143,21 +138,14 @@ func TestPassthroughConnectStreamMarksOnQuota(t *testing.T) {
 func TestPassthroughConnectStreamTapsGzipTurnEnded(t *testing.T) {
 	inner := append(append(varintField(1, 1234), varintField(2, 56)...), varintField(5, 7)...)
 	turnEnded := msgField(1, msgField(14, inner))
-	var gz bytes.Buffer
-	zw := gzip.NewWriter(&gz)
-	if _, err := zw.Write(turnEnded); err != nil {
-		t.Fatal(err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
+	gz := gzipPayload(t, turnEnded)
 
 	var upstream bytes.Buffer
 	_ = writeEnvelope(&upstream, endStreamFlag, []byte(`{"metadata":{}}`))
 
 	var client bytes.Buffer
 	var got *TokenCounts
-	err := passthroughConnectStream(&client, &upstream, compressFlag, gz.Bytes(), func(tc TokenCounts) {
+	err := passthroughConnectStream(&client, &upstream, compressFlag, gz, func(tc TokenCounts, _ string) {
 		cp := tc
 		got = &cp
 	}, nil, "/agent.v1.AgentService/Run", "pk1", "c1")
@@ -169,6 +157,56 @@ func TestPassthroughConnectStreamTapsGzipTurnEnded(t *testing.T) {
 	}
 	if got.Input != 1234 || got.Output != 56 || got.Reasoning != 7 {
 		t.Fatalf("tokens=%+v", got)
+	}
+}
+
+func TestPassthroughConnectStreamTapsGzipProviderModelName(t *testing.T) {
+	named := msgField(1, cursorProviderModelJSON(t))
+	inner := append(append(varintField(1, 102582), varintField(2, 5643)...), varintField(4, 102580)...)
+	turnEnded := msgField(1, msgField(14, inner))
+	gz := gzipPayload(t, named)
+
+	var upstream bytes.Buffer
+	_ = writeEnvelope(&upstream, 0x00, turnEnded)
+	_ = writeEnvelope(&upstream, endStreamFlag, []byte(`{"metadata":{}}`))
+
+	var client bytes.Buffer
+	var gotModel string
+	err := passthroughConnectStream(&client, &upstream, compressFlag, gz, func(_ TokenCounts, model string) {
+		gotModel = model
+	}, nil, "/agent.v1.AgentService/Run", "pk1", "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotModel != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q", gotModel)
+	}
+}
+
+func TestPassthroughConnectStreamTurnEndedBeforeProviderModel(t *testing.T) {
+	named := msgField(1, cursorProviderModelJSON(t))
+	inner := append(append(varintField(1, 102582), varintField(2, 5643)...), varintField(4, 102580)...)
+	turnEnded := msgField(1, msgField(14, inner))
+
+	var upstream bytes.Buffer
+	_ = writeEnvelope(&upstream, compressFlag, gzipPayload(t, named))
+	_ = writeEnvelope(&upstream, endStreamFlag, []byte(`{"metadata":{}}`))
+
+	var client bytes.Buffer
+	var gotModel string
+	var calls int
+	err := passthroughConnectStream(&client, &upstream, 0x00, turnEnded, func(_ TokenCounts, model string) {
+		calls++
+		gotModel = model
+	}, nil, "/agent.v1.AgentService/Run", "pk1", "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("onTokens calls=%d", calls)
+	}
+	if gotModel != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q", gotModel)
 	}
 }
 

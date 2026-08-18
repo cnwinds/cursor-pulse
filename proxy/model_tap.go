@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -81,6 +82,13 @@ func analyzeModelTap(buf []byte) modelTapReport {
 		return rep
 	}
 
+	// Cursor CLI (2026-08): gzip Connect frames with JSON
+	// providerOptions.cursor.modelName — seen in real Run stream dumps.
+	if m := providerModelFromPayloads(payloads, buf); m != "" {
+		rep.Picked = m
+		return rep
+	}
+
 	// Legacy/simplified test payloads: bare model string at message field 1.
 	if m := legacyModelField1(buf); m != "" {
 		rep.Picked = m
@@ -94,15 +102,50 @@ func analyzeModelTap(buf []byte) modelTapReport {
 func iterConnectPayloads(buf []byte) [][]byte {
 	var out [][]byte
 	for i := 0; i+5 <= len(buf); {
+		flags := buf[i]
 		size := int(binary.BigEndian.Uint32(buf[i+1 : i+5]))
 		total := 5 + size
 		if size < 0 || i+total > len(buf) {
 			break
 		}
-		out = append(out, buf[i+5:i+total])
+		payload := buf[i+5 : i+total]
+		out = append(out, connectPayloadForInspect(flags, payload))
 		i += total
 	}
 	return out
+}
+
+// Compact JSON from real 2026-08-18 AgentService/Run dumps:
+// "providerOptions":{"cursor":{"modelName":"claude-opus-5-thinking-high"}}
+var cursorProviderModelNameRe = regexp.MustCompile(
+	`"providerOptions"\s*:\s*\{\s*"cursor"\s*:\s*\{\s*"modelName"\s*:\s*"([A-Za-z0-9][A-Za-z0-9._-]*)"`,
+)
+
+func cursorProviderModelName(buf []byte) string {
+	matches := cursorProviderModelNameRe.FindAllSubmatch(buf, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return string(matches[len(matches)-1][1])
+}
+
+func providerModelFromPayloads(payloads [][]byte, raw []byte) string {
+	if len(payloads) > 0 {
+		for i := len(payloads) - 1; i >= 0; i-- {
+			if m := cursorProviderModelName(payloads[i]); m != "" {
+				return m
+			}
+		}
+		return ""
+	}
+	return cursorProviderModelName(raw)
+}
+
+func coalesceBilledModel(reqModel, streamProviderModel string) string {
+	if reqModel != "" {
+		return reqModel
+	}
+	return streamProviderModel
 }
 
 // modelFromAgentRunPayload reads agent.v1.AgentRunRequest.{requested_model|model_details}.

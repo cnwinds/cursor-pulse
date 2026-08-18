@@ -36,7 +36,7 @@ func passthroughConnectStream(
 	r io.Reader,
 	firstFlags byte,
 	firstPayload []byte,
-	onTokens func(TokenCounts),
+	onTokens func(tc TokenCounts, streamProviderModel string),
 	onFailure func(failKind),
 	path, proxyKeyID, credID string,
 ) error {
@@ -69,9 +69,30 @@ func passthroughConnectStream(
 		return nil
 	}
 
+	// streamProviderModel is the last providerOptions.cursor.modelName seen
+	// on this Connect response. TurnEnded often arrives in a later frame;
+	// hold tokens until the slug appears or the stream ends. Reset after
+	// each emit so a later turn cannot inherit the previous slug.
+	var streamProviderModel string
+	var pendingTokens *TokenCounts
+	emitPending := func() {
+		if pendingTokens == nil || onTokens == nil {
+			return
+		}
+		onTokens(*pendingTokens, streamProviderModel)
+		pendingTokens = nil
+		streamProviderModel = ""
+	}
 	process := func(flags byte, payload []byte) error {
-		if tok := findTurnEnded(connectPayloadForInspect(flags, payload)); tok != nil && onTokens != nil {
-			onTokens(*tok)
+		inspected := connectPayloadForInspect(flags, payload)
+		if m := cursorProviderModelName(inspected); m != "" {
+			streamProviderModel = m
+		}
+		if tok := findTurnEnded(inspected); tok != nil {
+			pendingTokens = tok
+		}
+		if pendingTokens != nil && (streamProviderModel != "" || flags&endStreamFlag != 0) {
+			emitPending()
 		}
 		if err := writeFrame(flags, payload); err != nil {
 			return err
@@ -83,12 +104,14 @@ func passthroughConnectStream(
 		return err
 	}
 	if firstFlags&endStreamFlag != 0 {
+		emitPending()
 		return nil
 	}
 
 	for {
 		flags, payload, err := readEnvelope(r)
 		if err == io.EOF {
+			emitPending()
 			return nil
 		}
 		if err != nil {
@@ -98,6 +121,7 @@ func passthroughConnectStream(
 			return err
 		}
 		if flags&endStreamFlag != 0 {
+			emitPending()
 			return nil
 		}
 	}

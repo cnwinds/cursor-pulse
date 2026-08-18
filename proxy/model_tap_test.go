@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
+	"os"
 	"testing"
 )
 
@@ -336,5 +339,85 @@ func TestFindModelNameFromRealDumpBinOpus(t *testing.T) {
 	body := buildModelTapEnvelope(cands)
 	if got := findModelName(body); got != "claude-opus-4-8" {
 		t.Fatalf("got %q want claude-opus-4-8", got)
+	}
+}
+
+func gzipPayload(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func gzipConnectEnvelope(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	compressed := gzipPayload(t, payload)
+	frame := make([]byte, 5+len(compressed))
+	frame[0] = compressFlag
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(compressed)))
+	copy(frame[5:], compressed)
+	return frame
+}
+
+func cursorProviderModelJSON(t *testing.T) []byte {
+	t.Helper()
+	b, err := os.ReadFile("testdata/cursor_provider_model_name.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.TrimSpace(b)
+}
+
+func TestFindModelFromGzipRequestedModelOpus5(t *testing.T) {
+	// 2026-08-18 usage: model="" with envelopes>0 — Connect request frames are gzipped
+	// (flag 0x01). Same slug later appears in response dumps as claude-opus-5-thinking-high.
+	req := buildRequestedModel("claude-opus-5-thinking-high", false, false)
+	run := msgField(runFieldRequestedModel, req)
+	got := findModelName(gzipConnectEnvelope(t, run))
+	if got != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q want claude-opus-5-thinking-high", got)
+	}
+}
+
+func TestFindModelFromGzipCursorProviderModelName(t *testing.T) {
+	// testdata shape captured from 20260818-012341 / 013921 gzip Run frames.
+	payload := msgField(1, cursorProviderModelJSON(t))
+	got := findModelName(gzipConnectEnvelope(t, payload))
+	if got != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q want claude-opus-5-thinking-high", got)
+	}
+}
+
+func TestRequestedModelBeatsProviderModelNameJSON(t *testing.T) {
+	jsonBlob := cursorProviderModelJSON(t)
+	req := buildRequestedModel("composer-2.5", false, false)
+	run := msgField(runFieldRequestedModel, req)
+	run = append(run, msgField(1, jsonBlob)...)
+	got := findModelName(buildModelTapEnvelopeFromPayload(run))
+	if got != "composer-2.5" {
+		t.Fatalf("got %q want composer-2.5", got)
+	}
+}
+
+func TestCursorProviderModelNameLastWins(t *testing.T) {
+	jsonBlob := []byte(`{"providerOptions":{"cursor":{"modelName":"composer-2.5"}},"x":1,"providerOptions":{"cursor":{"modelName":"claude-opus-5-thinking-high"}}}`)
+	got := cursorProviderModelName(jsonBlob)
+	if got != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCoalesceBilledModelPrefersRequest(t *testing.T) {
+	if got := coalesceBilledModel("claude-opus-5", "composer-2.5"); got != "claude-opus-5" {
+		t.Fatalf("got %q", got)
+	}
+	if got := coalesceBilledModel("", "claude-opus-5-thinking-high"); got != "claude-opus-5-thinking-high" {
+		t.Fatalf("got %q", got)
 	}
 }

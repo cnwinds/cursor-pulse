@@ -213,7 +213,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		onTok := func(tc TokenCounts) {
+		onTok := func(tc TokenCounts, streamProviderModel string) {
 			if s.pulse == nil {
 				return
 			}
@@ -225,7 +225,10 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				if binding.LoanID == "" {
 					return
 				}
-				model := logUsageModelTap(req.URL.Path, "", binding.CredentialID, tc, body)
+				model := coalesceBilledModel(
+					logUsageModelTap(req.URL.Path, "", binding.CredentialID, tc, body),
+					streamProviderModel,
+				)
 				s.pulse.EnqueueUsage(UsageItem{
 					LoanID:       binding.LoanID,
 					CredentialID: binding.CredentialID,
@@ -237,7 +240,10 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			if binding.ProxyKeyID == "" {
 				return
 			}
-			model := logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body)
+			model := coalesceBilledModel(
+				logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body),
+				streamProviderModel,
+			)
 			s.pulse.EnqueueUsage(UsageItem{
 				ProxyKeyID:   binding.ProxyKeyID,
 				CredentialID: entry.credentialID,
