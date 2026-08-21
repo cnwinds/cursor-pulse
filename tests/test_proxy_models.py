@@ -45,12 +45,14 @@ def test_migrate_creates_proxy_tables_and_credential_column():
     assert "proxy_enabled" in cols
     acct_cols = {c["name"] for c in inspect(engine).get_columns("ai_accounts")}
     assert "proxy_enabled" in acct_cols
+    assert "proxy_score_adjust" in acct_cols
     # 幂等：每次启动都会重跑 migrate_schema，不应报错且 proxy_enabled 列保持存在
     migrate_schema(engine)
     cols = {c["name"] for c in inspect(engine).get_columns("ai_account_credentials")}
     assert "proxy_enabled" in cols
     acct_cols = {c["name"] for c in inspect(engine).get_columns("ai_accounts")}
     assert "proxy_enabled" in acct_cols
+    assert "proxy_score_adjust" in acct_cols
 
 
 def test_migrate_backfills_account_proxy_from_credentials():

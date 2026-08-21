@@ -581,6 +581,64 @@ def test_pool_orders_by_lender_recommend_urgency(env):
     assert [c["api_key"] for c in creds] == ["cursor-key-soon", "cursor-key-far"]
 
 
+def test_pool_orders_by_score_adjust(env):
+    """人工微调后，MITM 下发顺序与打分表一致。"""
+    s = env["sf"]()
+    far = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-far",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+        proxy_score_adjust=1.0,
+    )
+    soon = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-soon",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+    )
+    s.add_all([far, soon])
+    s.flush()
+    s.add(
+        AiAccountCredential(
+            account_id=far.id,
+            vendor_id=env["vendor_id"],
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-far", TEST_KEY),
+            key_hint="far...xx",
+            key_role="primary",
+            status="active",
+            bound_by_member_id="m1",
+        )
+    )
+    s.flush()
+    s.add(
+        AiAccountCredential(
+            account_id=soon.id,
+            vendor_id=env["vendor_id"],
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-soon", TEST_KEY),
+            key_hint="soon...xx",
+            key_role="primary",
+            status="active",
+            bound_by_member_id="m1",
+        )
+    )
+    s.add(_healthy_snap(soon.id, cycle_end=TODAY + timedelta(days=2), total_pct=20.0))
+    s.add(_healthy_snap(far.id, cycle_end=TODAY + timedelta(days=25), total_pct=20.0))
+    default = s.get(AiAccount, env["account_id"])
+    default.proxy_enabled = False
+    s.commit()
+    s.close()
+
+    resp = env["client"].get("/api/internal/v1/proxy/pool", headers=_h())
+    assert resp.status_code == 200
+    creds = resp.json()["credentials"]
+    assert [c["api_key"] for c in creds] == ["cursor-key-far", "cursor-key-soon"]
+
+
 def test_pool_hard_filters_exhausted_and_no_snapshot(env):
     s = env["sf"]()
     exhausted = AiAccount(

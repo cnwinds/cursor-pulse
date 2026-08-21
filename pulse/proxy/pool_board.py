@@ -121,6 +121,7 @@ def _build_pool_lender_candidates(
         active_loans = loan_counts.get(aid, 0)
         if not snap:
             if include_no_snap_excluded:
+                adjust = account.proxy_score_adjust
                 excluded_no_snap.append(
                     {
                         "account_id": aid,
@@ -133,6 +134,7 @@ def _build_pool_lender_candidates(
                         "renews_on": account.renews_on.isoformat() if account.renews_on else None,
                         "remaining_headroom_pct": None,
                         "total_pct": None,
+                        "score_adjust": None if adjust is None else round(adjust, 4),
                     }
                 )
             continue
@@ -143,6 +145,7 @@ def _build_pool_lender_candidates(
                 account_identifier=account.account_identifier,
                 renews_on=account.renews_on,
                 active_loans=active_loans,
+                score_adjust=account.proxy_score_adjust,
             )
         )
     return candidates, excluded_no_snap

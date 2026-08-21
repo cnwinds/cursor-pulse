@@ -54,6 +54,7 @@ def _candidate(
     identifier: str | None = None,
     renews_on: date | None = None,
     active_loans: int = 0,
+    score_adjust: float | None = None,
 ) -> LenderCandidate:
     return LenderCandidate(
         snapshot=snap,
@@ -61,6 +62,7 @@ def _candidate(
         account_identifier=identifier or f"{account_id}@x.com",
         renews_on=renews_on,
         active_loans=active_loans,
+        score_adjust=score_adjust,
     )
 
 
@@ -818,4 +820,97 @@ def test_proxy_pool_excludes_when_both_buckets_full():
     assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
         "full": "exhausted"
     }
+
+
+def test_score_adjust_adds_to_computed_score_and_can_reorder():
+    """人工分加在算法综合分上微调；未设置账号仍用算法分。"""
+    soon = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 12),
+        account_id="soon",
+        used_cents=100,
+        remaining_cents=2000,
+    )
+    far = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 4),
+        account_id="far",
+        limit_cents=20000,
+        used_cents=2000,
+        remaining_cents=18000,
+    )
+    natural = recommend_lenders(
+        [_candidate(far, account_id="far"), _candidate(soon, account_id="soon")],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in natural] == ["soon", "far"]
+    natural_far = next(r for r in natural if r["account_id"] == "far")
+    natural_soon = next(r for r in natural if r["account_id"] == "soon")
+
+    ranked = recommend_lenders(
+        [
+            _candidate(far, account_id="far", score_adjust=1.0),
+            _candidate(soon, account_id="soon"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in ranked] == ["far", "soon"]
+    by_id = {r["account_id"]: r for r in ranked}
+    assert by_id["far"]["score_adjust"] == 1.0
+    assert by_id["far"]["computed_score"] == natural_far["score"]
+    assert by_id["far"]["score"] == round(natural_far["score"] + 1.0, 4)
+    assert by_id["soon"]["score_adjust"] is None
+    assert by_id["soon"]["score"] == natural_soon["score"]
+
+    demoted = recommend_lenders(
+        [
+            _candidate(far, account_id="far"),
+            _candidate(soon, account_id="soon", score_adjust=-1.0),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in demoted] == ["far", "soon"]
+    soon_row = next(r for r in demoted if r["account_id"] == "soon")
+    assert soon_row["score"] == round(soon_row["computed_score"] - 1.0, 4)
+
+
+def test_score_adjust_does_not_bypass_hard_filter():
+    exhausted = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="full",
+        used_cents=7000,
+        remaining_cents=0,
+        total_pct=100.0,
+        auto_pct=100.0,
+        api_pct=100.0,
+    )
+    healthy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="ok",
+        total_pct=20.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    board = explain_lender_selection(
+        [
+            _candidate(exhausted, account_id="full", score_adjust=9.0),
+            _candidate(healthy, account_id="ok"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+    )
+    assert [r["account_id"] for r in board["ranked"]] == ["ok"]
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
+        "full": "exhausted"
+    }
+    assert board["excluded"][0]["score_adjust"] == 9.0
 

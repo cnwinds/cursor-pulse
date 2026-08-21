@@ -93,7 +93,7 @@
 
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
-          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom），避免周期末浪费与主使用人额度被打光</p>
+          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动）。硬过滤仍生效。</p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>
         <h4 class="usage-section-title">入选排序</h4>
@@ -102,7 +102,35 @@
             <template #default="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
           <el-table-column prop="account_identifier" label="账号" min-width="160" />
-          <el-table-column prop="score" label="综合分" width="90" />
+          <el-table-column label="综合分" width="120">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="row.score_adjust != null"
+                :content="`算法分 ${row.computed_score}，人工 ${row.score_adjust >= 0 ? '+' : ''}${row.score_adjust}`"
+              >
+                <span>{{ row.score }} <el-tag size="small" type="warning">微调</el-tag></span>
+              </el-tooltip>
+              <span v-else>{{ row.score }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="人工分" width="180">
+            <template #default="{ row }">
+              <el-input-number
+                :model-value="row.score_adjust ?? undefined"
+                :disabled="!canWrite"
+                :min="-10"
+                :max="10"
+                :step="0.05"
+                :precision="4"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="微调"
+                size="small"
+                class="score-override-input"
+                @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
+              />
+            </template>
+          </el-table-column>
           <el-table-column prop="surplus_cents" label="预计余量" width="100" />
           <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="110" />
           <el-table-column prop="remaining_headroom_pct" label="剩余占比 %" width="110" />
@@ -116,6 +144,24 @@
           <el-table-column prop="account_identifier" label="账号" min-width="160" />
           <el-table-column label="原因" min-width="160">
             <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
+          </el-table-column>
+          <el-table-column label="人工分" width="180">
+            <template #default="{ row }">
+              <el-input-number
+                :model-value="row.score_adjust ?? undefined"
+                :disabled="!canWrite"
+                :min="-10"
+                :max="10"
+                :step="0.05"
+                :precision="4"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="微调"
+                size="small"
+                class="score-override-input"
+                @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
+              />
+            </template>
           </el-table-column>
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="status" label="额度状态" width="110" />
@@ -368,6 +414,8 @@ interface RankingRow {
   account_id: string
   account_identifier: string
   score?: number
+  computed_score?: number
+  score_adjust?: number | null
   surplus_cents?: number
   urgency_cents_per_day?: number
   remaining_headroom_pct?: number
@@ -751,6 +799,22 @@ async function loadRanking() {
   }
 }
 
+async function setScoreAdjust(row: RankingRow, val: number | null) {
+  if (!row.account_id) return
+  const prev = row.score_adjust ?? null
+  if (val === prev) return
+  try {
+    await client.post(`/api/v2/proxy-pool/accounts/${row.account_id}/score`, {
+      score_adjust: val,
+    })
+    await loadRanking()
+    ElMessage.success(val == null ? '已恢复自动打分' : '已保存人工微调')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '设置失败')
+  }
+}
+
 watch(tab, (name) => {
   if (name === 'ranking' && !rankingLoaded.value) {
     void loadRanking()
@@ -805,6 +869,9 @@ onMounted(load)
 .ranking-toolbar .pool-hint {
   margin-bottom: 0;
   flex: 1;
+}
+.score-override-input {
+  width: 150px;
 }
 .created-actions {
   display: flex;

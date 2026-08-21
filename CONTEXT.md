@@ -67,3 +67,7 @@ _Avoid_: Collapsing auth cooldown into the same reset as quota marks
 **Proxy Authorize / Usage Ledger / Credential Pool Board**:
 Caller-facing seams carved from the former `pulse.proxy.service` mega-module (`service.py` remains a facade). Concrete modules: `authorize.authorize_status`, `usage` / `usage_queries` (ledger writes & reads), `usage_rollup` (by_account / by_model / by_day), `pool_board.list_pool_credentials` / `list_pool_ranking_board`, `key_crud`.
 _Avoid_: Putting authorize, usage pricing, and pool ranking in one file again; conflating Usage Ledger with Proxy Usage Rollup
+
+**Manual Rank Score**:
+Optional per-account delta (`proxy_score_adjust`) added to the computed Credential Pool ranking score, used to fine-tune MITM pool order. Hard filters (Snapshot Headroom / coverage) still apply. Does not affect Key Loan lender selection.
+_Avoid_: pin, sticky priority, treating this as a replacement for the computed score or a loan ranking override

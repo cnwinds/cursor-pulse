@@ -145,6 +145,7 @@ class LenderCandidate:
     renews_on: date | None = None
     active_loans: int = 0
     primary_member_name: str | None = None
+    score_adjust: float | None = None
 
 
 def lender_deadline(cycle_end: date, renews_on: date | None) -> date:
@@ -309,13 +310,17 @@ def _score_payload(
     urgency: float,
     freshness: float,
     score: float,
+    computed_score: float,
 ) -> dict:
     snapshot = cand.snapshot
+    adjust = cand.score_adjust
     return {
         "account_id": cand.account_id,
         "account_identifier": cand.account_identifier,
         "primary_member_name": cand.primary_member_name,
         "score": round(score, 4),
+        "computed_score": round(computed_score, 4),
+        "score_adjust": None if adjust is None else round(adjust, 4),
         "deadline": deadline.isoformat(),
         "days_to_deadline": days,
         "hours_to_deadline": hours,
@@ -360,6 +365,7 @@ def _rank_passing_candidates(
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
             deadline = lender_deadline(cand.snapshot.cycle_end, cand.renews_on)
+            adjust = cand.score_adjust
             excluded.append(
                 {
                     "account_id": cand.account_id,
@@ -372,6 +378,7 @@ def _rank_passing_candidates(
                     "renews_on": cand.renews_on.isoformat() if cand.renews_on else None,
                     "remaining_headroom_pct": analysis.remaining_headroom_pct,
                     "total_pct": cand.snapshot.total_pct,
+                    "score_adjust": None if adjust is None else round(adjust, 4),
                 }
             )
             continue
@@ -425,6 +432,9 @@ def _rank_passing_candidates(
             + profile.weight_freshness * row["freshness"]
         )
         cand: LenderCandidate = row["candidate"]
+        computed_score = score
+        if cand.score_adjust is not None:
+            score = computed_score + cand.score_adjust
         ranked.append(
             (
                 score,
@@ -439,6 +449,7 @@ def _rank_passing_candidates(
                     urgency=row["urgency"],
                     freshness=row["freshness"],
                     score=score,
+                    computed_score=computed_score,
                 ),
             )
         )
@@ -469,6 +480,7 @@ def recommend_lenders(
     - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化，减少周期末浪费）
     - surplus = projected_surplus_cents 归一化（Snapshot Headroom 推算的空闲余量，多者优先）
     - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
+    - score_adjust 非空时加在算法综合分上再排序（微调，不绕过硬过滤）
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
     """
     cfg = loan_selection or LoanSelectionConfig()

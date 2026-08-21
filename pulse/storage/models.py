@@ -309,6 +309,7 @@ class AiAccount(Base):
     resets_on_source: Mapped[str] = mapped_column(String(16), default="manual")
     suggest_dedicated: Mapped[bool] = mapped_column(Boolean, default=False)
     proxy_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    proxy_score_adjust: Mapped[float | None] = mapped_column(Float, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

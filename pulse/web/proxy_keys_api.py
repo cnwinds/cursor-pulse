@@ -44,6 +44,10 @@ class ToggleProxyEnabledBody(BaseModel):
     proxy_enabled: bool
 
 
+class SetProxyScoreAdjustBody(BaseModel):
+    score_adjust: float | None = Field(default=None, ge=-10, le=10, allow_inf_nan=False)
+
+
 def _active_primary_counts(
     creds: list[AiAccountCredential], account_ids: list[str]
 ) -> dict[str, int]:
@@ -350,6 +354,34 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         )
         session.commit()
         return {"id": account.id, "proxy_enabled": account.proxy_enabled}
+
+    @app.post(
+        "/api/v2/proxy-pool/accounts/{account_id}/score",
+        dependencies=[Depends(require_capability("proxy:write"))],
+    )
+    def set_pool_account_score(
+        account_id: str,
+        body: SetProxyScoreAdjustBody,
+        session: Session = Depends(get_db),
+    ):
+        account = session.get(AiAccount, account_id)
+        if account is None or account.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="account 不存在")
+        vendor = session.get(AiVendor, account.vendor_id)
+        if vendor is None or vendor.slug != "cursor":
+            raise HTTPException(status_code=404, detail="account 不存在")
+        adjust = (
+            None if body.score_adjust is None else round(float(body.score_adjust), 4)
+        )
+        account.proxy_score_adjust = adjust
+        account.updated_at = proxy_service.utcnow()
+        proxy_service.record_event(
+            session,
+            event_type="pool_score_adjust",
+            detail=f"account_id={account.id} score_adjust={adjust}",
+        )
+        session.commit()
+        return {"id": account.id, "score_adjust": adjust}
 
     @app.get(
         "/api/v2/proxy-pool/credentials",

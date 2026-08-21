@@ -428,6 +428,116 @@ def test_pool_ranking_ignores_loan_cap(env):
     assert row["active_loans"] == 3
 
 
+def test_set_and_clear_pool_score_adjust(env):
+    from datetime import date, datetime, timedelta, timezone
+
+    today = date.today()
+    now = datetime.now(timezone.utc)
+    s = env["sf"]()
+    default = s.get(AiAccount, env["account_id"])
+    default.proxy_enabled = True
+    vendor_id = default.vendor_id
+    plan_id = default.plan_id
+    team_id = default.team_id
+    soon = AiAccount(
+        vendor_id=vendor_id,
+        plan_id=plan_id,
+        account_identifier="acct-soon",
+        team_id=team_id,
+        proxy_enabled=True,
+    )
+    far = AiAccount(
+        vendor_id=vendor_id,
+        plan_id=plan_id,
+        account_identifier="acct-far",
+        team_id=team_id,
+        proxy_enabled=True,
+    )
+    s.add_all([soon, far])
+    s.flush()
+    for acc, hint, key in [
+        (soon, "soon...", "cursor-key-soon"),
+        (far, "far...", "cursor-key-far"),
+    ]:
+        s.add(
+            AiAccountCredential(
+                account_id=acc.id,
+                vendor_id=vendor_id,
+                credential_type="api_key",
+                encrypted_value=encrypt_secret(key, TEST_KEY),
+                key_hint=hint,
+                key_role="primary",
+                status="active",
+                bound_by_member_id=env["owner"].id,
+            )
+        )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=soon.id,
+            captured_at=now,
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=2),
+            limit_cents=7000,
+            used_cents=500,
+            remaining_cents=6500,
+            total_pct=7.0,
+        )
+    )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=far.id,
+            captured_at=now,
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=20000,
+            used_cents=1000,
+            remaining_cents=19000,
+            total_pct=5.0,
+        )
+    )
+    default.proxy_enabled = False
+    s.commit()
+    far_id = far.id
+    s.close()
+
+    headers = _admin(env)
+    resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
+    ranked = resp.json()["ranked"]
+    assert [r["account_identifier"] for r in ranked][0] == "acct-soon"
+    natural_far = next(r for r in ranked if r["account_identifier"] == "acct-far")
+
+    resp = env["client"].post(
+        f"/api/v2/proxy-pool/accounts/{far_id}/score",
+        json={"score_adjust": 1},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"id": far_id, "score_adjust": 1.0}
+
+    resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
+    ranked = resp.json()["ranked"]
+    assert [r["account_identifier"] for r in ranked][0] == "acct-far"
+    far_row = next(r for r in ranked if r["account_identifier"] == "acct-far")
+    assert far_row["score_adjust"] == 1.0
+    assert far_row["computed_score"] == natural_far["score"]
+    assert far_row["score"] == round(natural_far["score"] + 1.0, 4)
+
+    resp = env["client"].post(
+        f"/api/v2/proxy-pool/accounts/{far_id}/score",
+        json={"score_adjust": None},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["score_adjust"] is None
+
+    resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
+    ranked = resp.json()["ranked"]
+    assert [r["account_identifier"] for r in ranked][0] == "acct-soon"
+    far_row = next(r for r in ranked if r["account_identifier"] == "acct-far")
+    assert far_row["score_adjust"] is None
+    assert far_row["score"] == far_row["computed_score"]
+
+
 def test_usages_endpoint(env):
     key_id = _create_key(env).json()["id"]
     resp = env["client"].get(f"/api/v2/proxy-keys/{key_id}/usages", headers=_admin(env))

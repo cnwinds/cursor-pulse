@@ -28,6 +28,7 @@ _CREDENTIAL_PROXY_COLUMNS: dict[str, str] = {
 
 _ACCOUNT_PROXY_COLUMNS: dict[str, str] = {
     "proxy_enabled": "BOOLEAN DEFAULT 0",
+    "proxy_score_adjust": "FLOAT",
 }
 
 _PROXY_USAGE_COLUMNS: dict[str, str] = {
@@ -591,6 +592,20 @@ def migrate_schema(engine: Engine) -> None:
                     )
                 logger.info("Added %s column to ai_accounts", col_name)
                 columns.add(col_name)
+        if "proxy_score_override" in columns:
+            if "proxy_score_adjust" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE ai_accounts ADD COLUMN proxy_score_adjust FLOAT"))
+                columns.add("proxy_score_adjust")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE ai_accounts SET proxy_score_adjust = proxy_score_override "
+                        "WHERE proxy_score_adjust IS NULL AND proxy_score_override IS NOT NULL"
+                    )
+                )
+            _drop_column(engine, "ai_accounts", "proxy_score_override")
+            columns.discard("proxy_score_override")
         # 回填：凭证级开启 → 账号级开启（幂等）
         if "proxy_enabled" in columns and "ai_account_credentials" in tables:
             cred_cols = {col["name"] for col in inspector.get_columns("ai_account_credentials")}
