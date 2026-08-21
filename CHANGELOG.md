@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **代理窗口限额延后到请求时**：`window_limited` 不再在 exchange/登录失败（避免 CLI 误报 invalid API key）；登录仍可成功，业务请求返回可展示的 `resource_exhausted` 限额说明
+
 ## [0.3.0] - 2026-08-06
 
 ### 新增

@@ -102,6 +102,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 ## 原理（简述）
 
 - agent 的 API key 用于向 `api2.cursor.sh/auth/exchange_user_api_key` 换取 JWT；Pulse 模式下该 exchange 由代理拦截，用 `pk_...`（共享池）或 `pka_...`（借贷 alias）授权并映射到池内 Cursor 凭证。会话绑定默认 **120s** 后向 Pulse 重新 authorize（`-session-ttl` / `PROXY_SESSION_TTL`）。
+- **窗口费用限额**（5h / 7d）在 **业务请求** 时以 `429 resource_exhausted` 拒绝，不在 exchange 登录阶段失败（避免 CLI 误报 “API key is invalid”）。撤销 / 停用 / 未知 key 仍在 exchange 失败。
 - 配额/限流错误时自动换凭证重放，CLI 侧无感（流式路径在尚未转发数据时可整体重放）。
 - 通过 `HTTPS_PROXY` + 自签 CA（MITM `*.cursor.sh`）实现，无需修改 agent 本体。
 

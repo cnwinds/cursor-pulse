@@ -122,6 +122,95 @@ func TestSessionReauthAfterTTLSuspended(t *testing.T) {
 	}
 }
 
+func TestSessionReauthAfterTTLWindowLimited(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	var authCalls atomic.Int32
+	pulse := newCountingFakePulse(t, &authCalls, map[string]string{"pk_ok": "window_limited"})
+	proxyAddr, caPEM, sessions := newPulseTestProxyWithTTL(t, fu, pulse.URL, 50*time.Millisecond)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	sessions.Bind("jwt-stale", SessionBinding{
+		ProxyKeyID: "pk1",
+		PulseKey:   "pk_ok",
+		BoundAt:    time.Now().Add(-time.Minute),
+	})
+
+	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
+	bizReq, err := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+"/aiserver.v1.TestService/Unary", bytes.NewReader([]byte{0x0A}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bizReq.Header.Set("Authorization", "Bearer jwt-stale")
+	bizReq.Header.Set("Content-Type", "application/proto")
+	bizResp, err := client.Do(bizReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bizResp.Body.Close()
+	if bizResp.StatusCode != http.StatusTooManyRequests {
+		b, _ := io.ReadAll(bizResp.Body)
+		t.Fatalf("status %d body %s", bizResp.StatusCode, b)
+	}
+	var errBody struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(bizResp.Body).Decode(&errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Code != "resource_exhausted" || !strings.Contains(errBody.Message, "window") {
+		t.Fatalf("unexpected body: %+v", errBody)
+	}
+	if authCalls.Load() < 1 {
+		t.Fatal("expected re-authorize after TTL")
+	}
+	b, ok := sessions.Lookup("jwt-stale")
+	if !ok {
+		t.Fatal("session should remain bound after window_limited re-auth")
+	}
+	if b.WindowLimitReason == "" {
+		t.Fatal("expected WindowLimitReason set on re-auth")
+	}
+}
+
+func TestSessionReauthAfterTTLOkClearsWindowLimit(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	var authCalls atomic.Int32
+	pulse := newCountingFakePulse(t, &authCalls, map[string]string{"pk_ok": "ok"})
+	proxyAddr, caPEM, sessions := newPulseTestProxyWithTTL(t, fu, pulse.URL, 50*time.Millisecond)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	sessions.Bind("jwt-stale", SessionBinding{
+		ProxyKeyID:        "pk1",
+		PulseKey:          "pk_ok",
+		WindowLimitReason: "window_5h_exceeded",
+		BoundAt:           time.Now().Add(-time.Minute),
+	})
+
+	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
+	bizReq, err := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+"/aiserver.v1.TestService/Unary", bytes.NewReader([]byte{0x0A}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bizReq.Header.Set("Authorization", "Bearer jwt-stale")
+	bizReq.Header.Set("Content-Type", "application/proto")
+	bizResp, err := client.Do(bizReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bizResp.Body.Close()
+	if bizResp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", bizResp.StatusCode)
+	}
+	b, ok := sessions.Lookup("jwt-stale")
+	if !ok {
+		t.Fatal("session should remain bound")
+	}
+	if b.WindowLimitReason != "" {
+		t.Fatalf("expected WindowLimitReason cleared, got %q", b.WindowLimitReason)
+	}
+}
+
 func TestSessionReauthAfterTTLOkRefreshesBoundAt(t *testing.T) {
 	fu := newFakeUpstreamSession(t)
 	var authCalls atomic.Int32
@@ -180,6 +269,9 @@ func newCountingFakePulse(t *testing.T, calls *atomic.Int32, keyStatus map[strin
 			status = "invalid"
 		}
 		reason := "account suspended"
+		if status == "window_limited" {
+			reason = "window_5h_exceeded"
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": status, "proxy_key_id": "pk1", "mode": "quota", "reason": reason,
 		})

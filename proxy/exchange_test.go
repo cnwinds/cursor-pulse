@@ -39,6 +39,11 @@ func newFakePulse(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "suspended", "proxy_key_id": "pk2", "mode": "quota", "reason": reason,
 			})
+		case "pk_limited":
+			reason := "window_5h_exceeded"
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "window_limited", "proxy_key_id": "pk1", "mode": "quota", "reason": reason,
+			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "invalid", "proxy_key_id": "", "mode": "", "reason": nil,
@@ -145,6 +150,87 @@ func TestExchangeSuspended(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+}
+
+func TestExchangeWindowLimitedAllowsLogin(t *testing.T) {
+	fu := newFakeUpstream(t)
+	pulse := newFakePulse(t)
+	proxyAddr, caPEM, sessions := newPulseTestProxy(t, fu, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
+	req, err := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+exchangePath, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer pk_limited")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("exchange should succeed when window_limited: status %d body %s", resp.StatusCode, b)
+	}
+	var out struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	b, ok := sessions.Lookup(out.AccessToken)
+	if !ok || b.WindowLimitReason != "window_5h_exceeded" {
+		t.Fatalf("expected WindowLimitReason on session: ok=%v %+v", ok, b)
+	}
+}
+
+func TestBusinessWindowLimitedReturnsResourceExhausted(t *testing.T) {
+	fu := newFakeUpstream(t)
+	pulse := newFakePulse(t)
+	proxyAddr, caPEM, sessions := newPulseTestProxy(t, fu, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	sessions.Bind("jwt-limited", SessionBinding{
+		ProxyKeyID:        "pk1",
+		PulseKey:          "pk_limited",
+		WindowLimitReason: "window_5h_exceeded",
+		BoundAt:           time.Now(),
+	})
+
+	upstreamAddr := strings.TrimPrefix(fu.URL, "https://")
+	bizReq, err := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+"/aiserver.v1.TestService/Unary", bytes.NewReader([]byte{0x0A}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bizReq.Header.Set("Authorization", "Bearer jwt-limited")
+	bizReq.Header.Set("Content-Type", "application/proto")
+	bizResp, err := client.Do(bizReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bizResp.Body.Close()
+	if bizResp.StatusCode != http.StatusTooManyRequests {
+		body, _ := io.ReadAll(bizResp.Body)
+		t.Fatalf("status %d body %s", bizResp.StatusCode, body)
+	}
+	var errBody struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(bizResp.Body).Decode(&errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Code != "resource_exhausted" {
+		t.Fatalf("code=%q", errBody.Code)
+	}
+	if !strings.Contains(errBody.Message, "5h window") {
+		t.Fatalf("message=%q", errBody.Message)
+	}
+	if _, ok := sessions.Lookup("jwt-limited"); !ok {
+		t.Fatal("session should remain bound after window limit reject")
 	}
 }
 

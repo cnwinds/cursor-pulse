@@ -18,7 +18,11 @@ type SessionBinding struct {
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
-	BoundAt      time.Time
+	// WindowLimitReason is set when authorize reports window_limited. Exchange
+	// still mints a session JWT so agent login succeeds; business requests then
+	// surface a clear resource_exhausted limit error instead of "invalid API key".
+	WindowLimitReason string
+	BoundAt           time.Time
 }
 
 type SessionMap struct {

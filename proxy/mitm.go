@@ -84,25 +84,38 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			if res.Status != "ok" {
+			switch res.Status {
+			case "ok":
+				b.WindowLimitReason = ""
+				b.BoundAt = time.Now()
+				if res.CredentialID != "" {
+					b.CredentialID = res.CredentialID
+				}
+				if res.LoanID != "" {
+					b.LoanID = res.LoanID
+				}
+				if res.Mode != "" {
+					b.Mode = res.Mode
+				}
+				if strings.TrimSpace(res.CursorAPIKey) != "" {
+					b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
+				}
+				s.sessions.Bind(cliTok, b)
+			case "window_limited":
+				b.WindowLimitReason = authWindowReason(res)
+				b.BoundAt = time.Now()
+				s.sessions.Bind(cliTok, b)
+				writeWindowLimited(w, b.WindowLimitReason)
+				return
+			default:
 				s.sessions.Delete(cliTok)
 				http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 				return
 			}
-			b.BoundAt = time.Now()
-			if res.CredentialID != "" {
-				b.CredentialID = res.CredentialID
-			}
-			if res.LoanID != "" {
-				b.LoanID = res.LoanID
-			}
-			if res.Mode != "" {
-				b.Mode = res.Mode
-			}
-			if strings.TrimSpace(res.CursorAPIKey) != "" {
-				b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
-			}
-			s.sessions.Bind(cliTok, b)
+		}
+		if b.WindowLimitReason != "" {
+			writeWindowLimited(w, b.WindowLimitReason)
+			return
 		}
 		binding = b
 	}
@@ -303,6 +316,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	var windowLimitReason string
 	switch res.Status {
 	case "invalid":
 		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
@@ -315,10 +329,11 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	case "window_limited":
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"code":"resource_exhausted","message":"5h window limited; retry later"}`))
-		return
+		// Defer limit enforcement to business requests so agent login does not
+		// collapse into the misleading "API key is invalid" warning.
+		windowLimitReason = authWindowReason(res)
+		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
+			res.ProxyKeyID, windowLimitReason)
 	case "ok":
 		// continue
 	default:
@@ -350,11 +365,12 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		}
 		if s.sessions != nil {
 			s.sessions.Bind(token, SessionBinding{
-				Mode:         res.Mode,
-				LoanID:       res.LoanID,
-				CredentialID: res.CredentialID,
-				PulseKey:     pulseKey,
-				CursorAPIKey: exchangeKey,
+				Mode:              res.Mode,
+				LoanID:            res.LoanID,
+				CredentialID:      res.CredentialID,
+				PulseKey:          pulseKey,
+				CursorAPIKey:      exchangeKey,
+				WindowLimitReason: windowLimitReason,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -410,6 +426,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			ProxyKeyID:         res.ProxyKeyID,
 			PulseKey:           pulseKey,
 			StickyCredentialID: entry.credentialID,
+			WindowLimitReason:  windowLimitReason,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -418,6 +435,37 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
+}
+
+func authWindowReason(res AuthResult) string {
+	if res.Reason != nil && strings.TrimSpace(*res.Reason) != "" {
+		return strings.TrimSpace(*res.Reason)
+	}
+	return "window_limited"
+}
+
+func windowLimitMessage(reason string) string {
+	switch reason {
+	case "window_5h_exceeded":
+		return "pulse: 5h window cost limit exceeded; raise limit or retry later"
+	case "window_7d_exceeded":
+		return "pulse: 7d window cost limit exceeded; raise limit or retry later"
+	case "", "window_limited":
+		return "pulse: window cost limit exceeded; raise limit or retry later"
+	default:
+		return "pulse: window cost limit exceeded (" + reason + "); raise limit or retry later"
+	}
+}
+
+func writeWindowLimited(w http.ResponseWriter, reason string) {
+	msg := windowLimitMessage(reason)
+	log.Printf("[mitm] reject request: %s", msg)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    "resource_exhausted",
+		"message": msg,
+	})
 }
 
 func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
