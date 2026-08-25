@@ -431,6 +431,9 @@ class AccountQuotaSnapshot(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
     cycle_start: Mapped[date] = mapped_column(Date)
     cycle_end: Mapped[date] = mapped_column(Date)
+    # Exact Cursor billingCycleStart/End (ms→UTC). Prefer over date-only EOD for hours_to_deadline.
+    cycle_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cycle_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     limit_cents: Mapped[int] = mapped_column(Integer, default=0)
     used_cents: Mapped[int] = mapped_column(Integer, default=0)
     remaining_cents: Mapped[int] = mapped_column(Integer, default=0)

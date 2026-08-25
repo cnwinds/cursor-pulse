@@ -32,12 +32,16 @@ def _snapshot(
     total_pct: float | None = None,
     auto_pct: float | None = None,
     api_pct: float | None = None,
+    cycle_start_at: datetime | None = None,
+    cycle_end_at: datetime | None = None,
 ) -> AccountQuotaSnapshot:
     return AccountQuotaSnapshot(
         account_id=account_id,
         captured_at=datetime.now(timezone.utc),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
+        cycle_start_at=cycle_start_at,
+        cycle_end_at=cycle_end_at,
         limit_cents=limit_cents,
         used_cents=used_cents,
         remaining_cents=remaining_cents,
@@ -458,6 +462,37 @@ def test_same_day_deadline_over_one_hour_passes():
     assert len(ranked) == 1
     assert ranked[0]["days_to_deadline"] == 0
     assert ranked[0]["hours_to_deadline"] == 12.0
+
+
+def test_hours_to_deadline_uses_exact_cycle_end_at_not_utc_eod():
+    """Cursor billingCycleEnd 是精确时刻；不得按作废日 UTC 23:59:59 虚报剩余小时。
+
+    复现 feong@live.com：作废日 2026-08-24，实际 10:18:51Z 重置；
+    05:24Z 时应约 4.9h，而不是按 EOD 算出的 ~18.6h。
+    """
+    from pulse.tool_center.burn_rate import hours_until_deadline
+
+    end_at = datetime(2026, 8, 24, 10, 18, 51, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 24, 5, 24, tzinfo=timezone.utc)
+    assert round(hours_until_deadline(end_at, now), 1) == 4.9
+
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 24),
+        cycle_end=date(2026, 8, 24),
+        cycle_end_at=end_at,
+        account_id="feong",
+        used_cents=1000,
+        remaining_cents=6000,
+        total_pct=20.0,
+    )
+    ranked = recommend_lenders(
+        [_candidate(snap, account_id="feong")],
+        today=date(2026, 8, 24),
+        now=now,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["hours_to_deadline"] == 4.9
+    assert ranked[0]["deadline_at"] == "2026-08-24T10:18:51+00:00"
 
 
 def test_shorter_deadline_gets_more_urgency_weight():

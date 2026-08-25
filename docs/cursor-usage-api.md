@@ -135,7 +135,7 @@ Connect-Protocol-Version: 1
 
 | 字段 | 说明 |
 |------|------|
-| `billingCycleStart` / `billingCycleEnd` | 计费周期起止（毫秒） |
+| `billingCycleStart` / `billingCycleEnd` | 计费周期起止（**Unix 毫秒**，含具体时刻；重置发生在该时刻，不是日历日终） |
 | `planUsage.totalSpend` | 已消耗金额（美分） |
 | `planUsage.includedSpend` | 计入套餐的部分（美分） |
 | `planUsage.remaining` | 剩余额度（美分） |

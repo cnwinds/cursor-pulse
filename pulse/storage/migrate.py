@@ -50,6 +50,11 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
     "expires_on": "DATE",
 }
 
+_QUOTA_SNAPSHOT_AT_COLUMNS: dict[str, str] = {
+    "cycle_start_at": "DATETIME",
+    "cycle_end_at": "DATETIME",
+}
+
 
 _MEMBER_V2_COLUMNS: dict[str, str] = {
     "department_name": "VARCHAR(128)",
@@ -721,6 +726,18 @@ def migrate_schema(engine: Engine) -> None:
                     )
                 )
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
+
+    if "account_quota_snapshots" in tables:
+        columns = {col["name"] for col in inspector.get_columns("account_quota_snapshots")}
+        for col_name, col_type in _QUOTA_SNAPSHOT_AT_COLUMNS.items():
+            if col_name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE account_quota_snapshots ADD COLUMN {col_name} {col_type}"
+                        )
+                    )
+                logger.info("Added %s column to account_quota_snapshots", col_name)
 
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
     _migrate_daily_agg_kind_family(engine)

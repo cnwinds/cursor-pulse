@@ -160,13 +160,44 @@ def lender_deadline(cycle_end: date, renews_on: date | None) -> date:
     return cycle_end
 
 
-def hours_until_deadline(deadline: date, now: datetime | None = None) -> float:
-    """距作废的小时数（deadline 日期按 UTC 当天 23:59:59 计）。"""
-    now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    end_of_day = datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
-    return max((end_of_day - now).total_seconds() / 3600.0, 0.0)
+def _ensure_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def lender_deadline_at(
+    cycle_end: date,
+    renews_on: date | None,
+    *,
+    cycle_end_at: datetime | None = None,
+) -> datetime:
+    """作废截止时刻：优先 Cursor billingCycleEnd 精确时间；无则 UTC 日终。
+
+    renews_on 早于 cycle_end 时只有日期、无时钟，仍按该日 UTC 23:59:59。
+    """
+    deadline = lender_deadline(cycle_end, renews_on)
+    if renews_on is not None and renews_on < cycle_end:
+        return datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+    if cycle_end_at is not None:
+        return _ensure_aware(cycle_end_at)
+    return datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+
+
+def hours_until_deadline(
+    deadline: date | datetime, now: datetime | None = None
+) -> float:
+    """距作废的小时数。
+
+    deadline 为 datetime 时用精确时刻；仅为 date 时回退 UTC 当天 23:59:59
+    （兼容无 cycle_end_at 的旧快照）。
+    """
+    now = _ensure_aware(now or datetime.now(timezone.utc))
+    if isinstance(deadline, datetime):
+        end = _ensure_aware(deadline)
+    else:
+        end = datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+    return max((end - now).total_seconds() / 3600.0, 0.0)
 
 
 def projected_surplus_cents(
@@ -292,8 +323,12 @@ def _hard_filter_reason(
             return "exhausts_before_reset"
     if enforce_loan_cap and cand.active_loans >= cfg.max_active_loans_per_account:
         return "loan_cap"
-    deadline = lender_deadline(cand.snapshot.cycle_end, cand.renews_on)
-    hours = hours_until_deadline(deadline, now)
+    deadline_at = lender_deadline_at(
+        cand.snapshot.cycle_end,
+        cand.renews_on,
+        cycle_end_at=cand.snapshot.cycle_end_at,
+    )
+    hours = hours_until_deadline(deadline_at, now)
     if hours <= cfg.min_coverage_hours:
         return "coverage_too_short"
     return None
@@ -304,6 +339,7 @@ def _score_payload(
     *,
     analysis: BurnRateAnalysis,
     deadline: date,
+    deadline_at: datetime,
     days: int,
     hours: float,
     surplus: float,
@@ -322,6 +358,7 @@ def _score_payload(
         "computed_score": round(computed_score, 4),
         "score_adjust": None if adjust is None else round(adjust, 4),
         "deadline": deadline.isoformat(),
+        "deadline_at": deadline_at.isoformat(),
         "days_to_deadline": days,
         "hours_to_deadline": hours,
         "renews_on": cand.renews_on.isoformat() if cand.renews_on else None,
@@ -365,6 +402,11 @@ def _rank_passing_candidates(
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
             deadline = lender_deadline(cand.snapshot.cycle_end, cand.renews_on)
+            deadline_at = lender_deadline_at(
+                cand.snapshot.cycle_end,
+                cand.renews_on,
+                cycle_end_at=cand.snapshot.cycle_end_at,
+            )
             adjust = cand.score_adjust
             excluded.append(
                 {
@@ -374,7 +416,8 @@ def _rank_passing_candidates(
                     "active_loans": cand.active_loans,
                     "status": analysis.status,
                     "deadline": deadline.isoformat(),
-                    "hours_to_deadline": round(hours_until_deadline(deadline, now), 1),
+                    "deadline_at": deadline_at.isoformat(),
+                    "hours_to_deadline": round(hours_until_deadline(deadline_at, now), 1),
                     "renews_on": cand.renews_on.isoformat() if cand.renews_on else None,
                     "remaining_headroom_pct": analysis.remaining_headroom_pct,
                     "total_pct": cand.snapshot.total_pct,
@@ -385,8 +428,13 @@ def _rank_passing_candidates(
         snapshot = cand.snapshot
         analysis = analyze_burn_rate(snapshot, today)
         deadline = lender_deadline(snapshot.cycle_end, cand.renews_on)
+        deadline_at = lender_deadline_at(
+            snapshot.cycle_end,
+            cand.renews_on,
+            cycle_end_at=snapshot.cycle_end_at,
+        )
         days = (deadline - today).days
-        hours = round(hours_until_deadline(deadline, now), 1)
+        hours = round(hours_until_deadline(deadline_at, now), 1)
         surplus = projected_surplus_cents(snapshot, hours / 24.0, today)
         if enforce_loan_cap:
             load_factor = 1.0 - cand.active_loans / max(
@@ -399,6 +447,7 @@ def _rank_passing_candidates(
                 "candidate": cand,
                 "analysis": analysis,
                 "deadline": deadline,
+                "deadline_at": deadline_at,
                 "days": days,
                 "hours": hours,
                 "surplus": surplus,
@@ -443,6 +492,7 @@ def _rank_passing_candidates(
                     cand,
                     analysis=row["analysis"],
                     deadline=row["deadline"],
+                    deadline_at=row["deadline_at"],
                     days=row["days"],
                     hours=row["hours"],
                     surplus=row["surplus"],

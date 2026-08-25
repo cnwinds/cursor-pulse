@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -13,6 +13,10 @@ from pulse.ingestion.credentials import CredentialService, _apply_key_account_id
 from pulse.ingestion.on_demand import (
     OnDemandEnforceResult,
     enforce_on_demand_disabled,
+)
+from pulse.ingestion.plan_infer import (
+    cycle_end_at_from_period_usage,
+    cycle_start_at_from_period_usage,
 )
 from pulse.ingestion.service import UsageIngestionService
 from pulse.ingestion.sync_errors import classify_sync_error
@@ -37,10 +41,6 @@ def _recompute_account_summaries(
         repo.recompute_usage_summary(account_id, period)
 
 
-def _ms_to_date(ms: str | int) -> date:
-    return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).date()
-
-
 def _apply_period_usage(
     session: Session,
     account: AiAccount,
@@ -52,8 +52,12 @@ def _apply_period_usage(
     if not plan_usage:
         return None
 
-    cycle_start = _ms_to_date(period_usage["billingCycleStart"])
-    cycle_end = _ms_to_date(period_usage["billingCycleEnd"])
+    cycle_start_at = cycle_start_at_from_period_usage(period_usage)
+    cycle_end_at = cycle_end_at_from_period_usage(period_usage)
+    if cycle_start_at is None or cycle_end_at is None:
+        return None
+    cycle_start = cycle_start_at.date()
+    cycle_end = cycle_end_at.date()
 
     if account.resets_on_source != "manual-locked":
         account.usage_resets_on = cycle_end
@@ -64,6 +68,8 @@ def _apply_period_usage(
         captured_at=captured_at or datetime.now(timezone.utc),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
+        cycle_start_at=cycle_start_at,
+        cycle_end_at=cycle_end_at,
         limit_cents=int(plan_usage.get("limit") or 0),
         used_cents=int(plan_usage.get("totalSpend") or 0),
         remaining_cents=int(plan_usage.get("remaining") or 0),

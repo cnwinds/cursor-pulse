@@ -8,20 +8,37 @@ from typing import Sequence
 from pulse.storage.models import AiPlan
 
 
-def _ms_to_date(value: object) -> date | None:
+def _ms_to_datetime(value: object) -> datetime | None:
     if value is None:
         return None
     try:
         ms = int(value)
     except (TypeError, ValueError):
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+
+
+def _ms_to_date(value: object) -> date | None:
+    at = _ms_to_datetime(value)
+    return at.date() if at else None
 
 
 def cycle_end_from_period_usage(period_usage: dict | None) -> date | None:
     if not period_usage:
         return None
     return _ms_to_date(period_usage.get("billingCycleEnd"))
+
+
+def cycle_end_at_from_period_usage(period_usage: dict | None) -> datetime | None:
+    if not period_usage:
+        return None
+    return _ms_to_datetime(period_usage.get("billingCycleEnd"))
+
+
+def cycle_start_at_from_period_usage(period_usage: dict | None) -> datetime | None:
+    if not period_usage:
+        return None
+    return _ms_to_datetime(period_usage.get("billingCycleStart"))
 
 
 def _plan_pool_usd(plan: AiPlan) -> float | None:

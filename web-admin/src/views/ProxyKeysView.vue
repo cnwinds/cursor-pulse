@@ -134,7 +134,11 @@
           <el-table-column prop="surplus_cents" label="预计余量" width="100" />
           <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="110" />
           <el-table-column prop="remaining_headroom_pct" label="剩余占比 %" width="110" />
-          <el-table-column prop="deadline" label="作废日" width="120" />
+          <el-table-column label="作废时刻" min-width="170">
+            <template #default="{ row }">
+              {{ formatDeadline(row) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="snapshot_freshness" label="快照新鲜度" width="100" />
@@ -165,7 +169,11 @@
           </el-table-column>
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="status" label="额度状态" width="110" />
-          <el-table-column prop="deadline" label="作废日" width="120" />
+          <el-table-column label="作废时刻" min-width="170">
+            <template #default="{ row }">
+              {{ formatDeadline(row) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
         </el-table>
       </el-tab-pane>
@@ -420,6 +428,7 @@ interface RankingRow {
   urgency_cents_per_day?: number
   remaining_headroom_pct?: number
   deadline?: string | null
+  deadline_at?: string | null
   hours_to_deadline?: number | null
   active_loans?: number
   snapshot_freshness?: number
@@ -781,6 +790,11 @@ function onDayRowClick(row: UsageByDayRow, _column: unknown, event: MouseEvent) 
   const target = event.target as HTMLElement | null
   if (target?.closest('.el-table__expand-icon')) return
   toggleDayExpand(row)
+}
+
+function formatDeadline(row: RankingRow): string {
+  if (row.deadline_at) return formatChinaTime(row.deadline_at)
+  return row.deadline || '—'
 }
 
 async function loadRanking() {

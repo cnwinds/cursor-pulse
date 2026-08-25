@@ -53,6 +53,12 @@ def test_apply_period_usage_writes_snapshot_and_resets_on(session):
     assert stored is not None
     assert stored.limit_cents == 7000
     assert stored.used_cents == 3500
+    # Fixture billingCycleEnd 1784958141000 → 2026-07-25 05:42:21 UTC（精确时刻，非日终）
+    assert stored.cycle_end.isoformat() == "2026-07-25"
+    assert stored.cycle_end_at is not None
+    assert stored.cycle_end_at.isoformat().startswith("2026-07-25T05:42:21")
+    assert stored.cycle_start_at is not None
+    assert stored.cycle_start_at.isoformat().startswith("2026-07-09T10:05:55")
 
 
 def test_apply_period_usage_respects_manual_locked(session):

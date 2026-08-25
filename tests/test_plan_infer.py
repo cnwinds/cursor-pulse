@@ -35,6 +35,15 @@ def test_cycle_end_from_period_usage():
     assert cycle_end_from_period_usage(period).isoformat() == "2026-07-25"
 
 
+def test_cycle_end_at_from_period_usage_keeps_clock():
+    from pulse.ingestion.plan_infer import cycle_end_at_from_period_usage
+
+    period = {"billingCycleEnd": "1787566731000"}  # feong 实际重置
+    at = cycle_end_at_from_period_usage(period)
+    assert at is not None
+    assert at.isoformat() == "2026-08-24T10:18:51+00:00"
+
+
 def test_default_cursor_plan_prefers_pro():
     plans = [_plan("ultra", 400), _plan("pro", 20), _plan("pro_plus", 70)]
     assert default_cursor_plan(plans).slug == "pro"
