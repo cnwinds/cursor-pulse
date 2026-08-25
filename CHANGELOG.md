@@ -4,13 +4,27 @@
 
 ## [Unreleased]
 
-### 变更
-
-- **代理窗口限额延后到请求时**：`window_limited` 不再在 exchange/登录失败（避免 CLI 误报 invalid API key）；登录仍可成功，业务请求返回可展示的 `resource_exhausted` 限额说明
+## [0.4.0] - 2026-08-25
 
 ### 新增
 
 - **共享池人工分**：打分表可为账号指定微调分，加在算法综合分上调整入池排名（硬过滤仍生效；不影响借 Key 出借排序）
+- **按 Cursor kind 拆分 included / BYOK 用量**：日聚合与分析区分套餐内与 `USER_API_KEY`；额度看板 API 进度跟快照 `api_pct`（不含第三方）
+
+### 变更
+
+- **代理窗口限额延后到请求时**：`window_limited` 不再在 exchange/登录失败（避免 CLI 误报 invalid API key）；登录仍可成功，业务请求返回可展示的 `resource_exhausted` 限额说明
+- **共享池打分余量**：按 Snapshot Headroom（`total_pct`）估余量，避免 `planUsage.remaining` 低估空闲号导致排序偏差
+- **作废时刻用 Cursor `billingCycleEnd` 精确时钟**：同步写入 `cycle_end_at`；`hours_to_deadline` 不再按 UTC 日终虚报；打分表「作废时刻」按中国时间展示
+
+### 修复
+
+- gzip Connect 帧内 `TurnEnded` token 计数与额度看板 spend 对齐；拒绝错计费周期摘要污染看板
+- 从 gzip Connect `providerOptions` 提取 billed model
+
+### 杂项
+
+- 记录 GitHub Release 英文正文约定（`docs/agents/release.md`），并从 `AGENTS.md` 链接
 
 ## [0.3.0] - 2026-08-06
 
@@ -90,7 +104,8 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/cnwinds/cursor-pulse/releases/tag/v0.1.0
