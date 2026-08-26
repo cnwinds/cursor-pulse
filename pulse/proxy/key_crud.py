@@ -83,19 +83,16 @@ def reveal_plaintext(key: ProxyKey, encryption_key: str) -> str | None:
 
 
 def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> str:
+    """生成仅对本次 agent 进程生效的启动命令（不污染当前 shell）。"""
     url = proxy_url.rstrip("/")
     if shell == "powershell":
+        # cmd 子进程隔离环境变量；可在 PowerShell / cmd 中直接粘贴
         return (
-            f'$env:HTTPS_PROXY = "{url}"\n'
-            f'$env:CURSOR_API_KEY = "{plaintext_key}"\n'
-            "agent -k"
+            f'cmd /c "set HTTPS_PROXY={url}&& '
+            f'set CURSOR_API_KEY={plaintext_key}&& agent -k"'
         )
-    # bash / linux / macos
-    return (
-        f'export HTTPS_PROXY="{url}"\n'
-        f'export CURSOR_API_KEY="{plaintext_key}"\n'
-        "agent -k"
-    )
+    # bash / linux / macos：前缀赋值仅作用于该命令
+    return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
 
 def evaluate_key(session: Session, key: ProxyKey) -> bool:

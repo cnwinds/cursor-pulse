@@ -431,10 +431,10 @@ def test_loan_client_setup_powershell(loan_client_env):
     assert body["delivery_mode"] == "proxy_alias"
     assert body["proxy_url"] == "http://proxy.example.com:8317"
     assert body["shell"] == "powershell"
-    assert "$env:HTTPS_PROXY" in body["command"]
-    assert "$env:CURSOR_API_KEY" in body["command"]
-    assert api_key in body["command"]
+    assert body["command"].startswith('cmd /c "set HTTPS_PROXY=')
+    assert f"set CURSOR_API_KEY={api_key}" in body["command"]
     assert "agent -k" in body["command"]
+    assert "\n" not in body["command"]
 
 
 def test_loan_client_setup_bash(loan_client_env):
@@ -449,10 +449,12 @@ def test_loan_client_setup_bash(loan_client_env):
     )
     assert res.status_code == 200
     body = res.json()
-    assert "export HTTPS_PROXY" in body["command"]
-    assert "export CURSOR_API_KEY" in body["command"]
+    assert body["command"].startswith("HTTPS_PROXY=")
+    assert "CURSOR_API_KEY=" in body["command"]
+    assert "export " not in body["command"]
     assert api_key in body["command"]
     assert "agent -k" in body["command"]
+    assert "\n" not in body["command"]
 
 
 def test_loan_client_setup_revoked_410(loan_client_env):

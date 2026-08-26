@@ -752,10 +752,11 @@ def test_client_setup_admin_and_owner(env):
     body = resp.json()
     assert body["plaintext_key"] == plaintext
     assert body["proxy_url"] == "http://proxy.example.com:8317"
-    assert "$env:HTTPS_PROXY" in body["command"]
-    assert plaintext in body["command"]
+    assert body["command"].startswith('cmd /c "set HTTPS_PROXY=')
+    assert f"set CURSOR_API_KEY={plaintext}" in body["command"]
     assert "agent -k" in body["command"]
     assert "cursor-agent" not in body["command"]
+    assert "\n" not in body["command"]
 
     # 本人可读
     resp = env["client"].get(
@@ -765,8 +766,10 @@ def test_client_setup_admin_and_owner(env):
     )
     assert resp.status_code == 200
     bash_cmd = resp.json()["command"]
-    assert "export HTTPS_PROXY" in bash_cmd
+    assert bash_cmd.startswith("HTTPS_PROXY=")
+    assert "export " not in bash_cmd
     assert "agent -k" in bash_cmd
+    assert "\n" not in bash_cmd
     assert "cursor-agent" not in bash_cmd
 
     # 其他只读用户不可读他人 key

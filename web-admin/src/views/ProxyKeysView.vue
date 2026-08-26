@@ -596,9 +596,9 @@ function canCopyCommand(row: ProxyKeyRow) {
 
 function buildLocalCommand(shell: ShellKind, proxyUrl: string, plaintext: string) {
   if (shell === 'powershell') {
-    return `$env:HTTPS_PROXY = "${proxyUrl}"\n$env:CURSOR_API_KEY = "${plaintext}"\nagent -k`
+    return `cmd /c "set HTTPS_PROXY=${proxyUrl}&& set CURSOR_API_KEY=${plaintext}&& agent -k"`
   }
-  return `export HTTPS_PROXY="${proxyUrl}"\nexport CURSOR_API_KEY="${plaintext}"\nagent -k`
+  return `HTTPS_PROXY="${proxyUrl}" CURSOR_API_KEY="${plaintext}" agent -k`
 }
 
 async function load() {

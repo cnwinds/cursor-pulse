@@ -25,10 +25,13 @@ def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
     assert "abcdef12" in text
     assert "Windows PowerShell" in text
     assert "Linux / macOS" in text
-    assert '$env:HTTPS_PROXY = "http://proxy.example:8317"' in text
-    assert '$env:CURSOR_API_KEY = "pka_testkey"' in text
-    assert 'export HTTPS_PROXY="http://proxy.example:8317"' in text
-    assert 'export CURSOR_API_KEY="pka_testkey"' in text
+    assert (
+        'cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& '
+        'set CURSOR_API_KEY=pka_testkey&& agent -k"'
+    ) in text
+    assert 'HTTPS_PROXY="http://proxy.example:8317" CURSOR_API_KEY="pka_testkey" agent -k' in text
+    assert "export " not in text
+    assert "$env:" not in text
     assert "须配置 HTTPS_PROXY" in text
 
 
