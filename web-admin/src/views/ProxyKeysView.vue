@@ -133,19 +133,38 @@
           </el-table-column>
           <el-table-column prop="surplus_cents" label="预计余量" width="100" />
           <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="110" />
-          <el-table-column prop="remaining_headroom_pct" label="剩余占比 %" width="110" />
+          <el-table-column label="额度进度" min-width="200">
+            <template #default="{ row }">
+              <QuotaProgressBars
+                :total_pct="row.total_pct"
+                :auto_pct="row.auto_pct"
+                :api_pct="row.api_pct"
+                :status="row.status"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column label="作废时刻" min-width="170">
             <template #default="{ row }">
               {{ formatDeadline(row) }}
             </template>
           </el-table-column>
-          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="snapshot_freshness" label="快照新鲜度" width="100" />
         </el-table>
         <h4 class="usage-section-title">已排除</h4>
         <el-table v-loading="rankingLoading" :data="ranking.excluded" style="width: 100%">
           <el-table-column prop="account_identifier" label="账号" min-width="160" />
+          <el-table-column label="额度进度" min-width="200">
+            <template #default="{ row }">
+              <QuotaProgressBars
+                :total_pct="row.total_pct"
+                :auto_pct="row.auto_pct"
+                :api_pct="row.api_pct"
+                :status="row.status"
+              />
+            </template>
+          </el-table-column>
           <el-table-column label="原因" min-width="160">
             <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
           </el-table-column>
@@ -169,12 +188,12 @@
           </el-table-column>
           <el-table-column prop="active_loans" label="在借" width="70" />
           <el-table-column prop="status" label="额度状态" width="110" />
+          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
           <el-table-column label="作废时刻" min-width="170">
             <template #default="{ row }">
               {{ formatDeadline(row) }}
             </template>
           </el-table-column>
-          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="100" />
         </el-table>
       </el-tab-pane>
     </el-tabs>
@@ -382,6 +401,7 @@ import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
+import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 
 type ShellKind = 'bash' | 'powershell'
 
@@ -427,6 +447,9 @@ interface RankingRow {
   surplus_cents?: number
   urgency_cents_per_day?: number
   remaining_headroom_pct?: number
+  total_pct?: number | null
+  auto_pct?: number | null
+  api_pct?: number | null
   deadline?: string | null
   deadline_at?: string | null
   hours_to_deadline?: number | null

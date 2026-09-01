@@ -421,6 +421,8 @@ def _rank_passing_candidates(
                     "renews_on": cand.renews_on.isoformat() if cand.renews_on else None,
                     "remaining_headroom_pct": analysis.remaining_headroom_pct,
                     "total_pct": cand.snapshot.total_pct,
+                    "auto_pct": cand.snapshot.auto_pct,
+                    "api_pct": cand.snapshot.api_pct,
                     "score_adjust": None if adjust is None else round(adjust, 4),
                 }
             )

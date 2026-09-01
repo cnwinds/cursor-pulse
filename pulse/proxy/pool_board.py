@@ -134,6 +134,8 @@ def _build_pool_lender_candidates(
                         "renews_on": account.renews_on.isoformat() if account.renews_on else None,
                         "remaining_headroom_pct": None,
                         "total_pct": None,
+                        "auto_pct": None,
+                        "api_pct": None,
                         "score_adjust": None if adjust is None else round(adjust, 4),
                     }
                 )
