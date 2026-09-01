@@ -60,6 +60,43 @@ export function formatDurationMs(ms: number): string {
   return parts.join('')
 }
 
+/**
+ * 解析额度重置时刻：优先精确 billingCycleEnd；无则 cycle_end 当日 UTC 23:59:59
+ * （与后端 hours_until_deadline 回退一致）。
+ */
+export function resolveResetInstant(
+  cycleEndAt: string | null | undefined,
+  cycleEnd: string | null | undefined,
+): Date | null {
+  const exact = parseApiDateTime(cycleEndAt)
+  if (exact) return exact
+  if (!cycleEnd) return null
+  return parseApiDateTime(`${cycleEnd.trim()}T23:59:59Z`)
+}
+
+/**
+ * 距下次额度重置的自适应文案：≥1 天用「N天后」；否则「N小时后」/「N分钟后」。
+ */
+export function formatResetCountdown(
+  cycleEndAt: string | null | undefined,
+  cycleEnd: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const end = resolveResetInstant(cycleEndAt, cycleEnd)
+  if (!end) return '—'
+
+  const ms = end.getTime() - now.getTime()
+  if (ms <= 0) return '即将重置'
+
+  const totalMinutes = Math.floor(ms / 60_000)
+  const totalHours = Math.floor(ms / 3_600_000)
+  const totalDays = Math.floor(ms / 86_400_000)
+
+  if (totalDays >= 1) return `${totalDays}天后重置`
+  if (totalHours >= 1) return `${totalHours}小时后重置`
+  return `${Math.max(totalMinutes, 1)}分钟后重置`
+}
+
 /** 借用时长：未归还时计至当前时刻 */
 export function formatLoanDuration(
   createdAt: string | null | undefined,

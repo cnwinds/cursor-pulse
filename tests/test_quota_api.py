@@ -95,6 +95,33 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert matched["display_api_remaining_cents"] is None  # no api_pct → unknown, not total remaining
     assert matched["limit_cents"] == 7000
     assert matched["used_cents"] == 2000
+    assert matched["cycle_end"] == "2026-08-01"
+    assert matched["cycle_end_at"] is None  # fixture snap has date-only cycle_end
+
+
+def test_quota_board_exposes_cycle_end_at(quota_env):
+    sf = quota_env["session_factory"]
+    account_id = quota_env["cursor_account"].id
+    end_at = datetime(2026, 8, 1, 10, 18, 51, tzinfo=timezone.utc)
+    s = sf()
+    snap = s.scalar(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id)
+    )
+    assert snap is not None
+    snap.cycle_end_at = end_at
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(
+        item for item in res.json() if item["account_id"] == account_id
+    )
+    assert matched["cycle_end_at"] is not None
+    assert "2026-08-01" in matched["cycle_end_at"]
+    assert "10:18:51" in matched["cycle_end_at"] or "18:18:51" in matched["cycle_end_at"]
 
 
 def test_quota_board_api_remaining_follows_cursor_api_pct(quota_env):

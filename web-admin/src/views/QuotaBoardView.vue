@@ -44,9 +44,12 @@
                 {{ shortDate(item.cycle_start) }} ~ {{ shortDate(item.cycle_end) }}
               </span>
               <span class="meta-sep">·</span>
-              <span class="meta-item" title="距下次重置">
+              <span
+                class="meta-item"
+                :title="item.cycle_end_at ? `重置时刻 ${formatChinaTime(item.cycle_end_at)}` : '距下次重置'"
+              >
                 <el-icon><Timer /></el-icon>
-                {{ item.days_until_reset }}天后重置
+                {{ formatResetCountdown(item.cycle_end_at, item.cycle_end) }}
               </span>
               <template v-if="item.projected_exhaustion_date">
                 <span class="meta-sep">·</span>
@@ -288,7 +291,7 @@ import {
   thirdPartySpend,
   type UsageSummary,
 } from '@/utils/usage'
-import { formatChinaTime } from '@/utils/time'
+import { formatChinaTime, formatResetCountdown } from '@/utils/time'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
@@ -304,6 +307,7 @@ interface BoardItem {
   has_snapshot: boolean
   cycle_start: string | null
   cycle_end: string | null
+  cycle_end_at: string | null
   usage_resets_on: string | null
   total_pct: number | null
   auto_pct: number | null
