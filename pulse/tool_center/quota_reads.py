@@ -89,7 +89,12 @@ def prune_quota_snapshots_for_account(
     *,
     keep: int = SNAPSHOT_KEEP_PER_ACCOUNT,
 ) -> int:
-    """Drop older snapshots for one account, keeping the newest ``keep`` rows."""
+    """Drop older snapshots for one account, keeping the newest ``keep`` rows.
+
+    Uses ``synchronize_session='fetch'`` so matching is done in SQL. Default
+    ``evaluate`` compares in-memory ``captured_at`` values and blows up when the
+    session mixes SQLite-naive rows with freshly flushed aware UTC datetimes.
+    """
     if keep < 1 or not account_id:
         return 0
     cutoff = session.scalar(
@@ -105,6 +110,7 @@ def prune_quota_snapshots_for_account(
         delete(AccountQuotaSnapshot).where(
             AccountQuotaSnapshot.account_id == account_id,
             AccountQuotaSnapshot.captured_at < cutoff,
-        )
+        ),
+        execution_options={"synchronize_session": "fetch"},
     )
     return int(result.rowcount or 0)

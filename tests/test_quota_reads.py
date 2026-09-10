@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiVendor
@@ -194,6 +194,74 @@ def test_prune_quota_snapshots_keeps_newest(qr_env):
     assert len(remaining) == 3
     latest = latest_snapshots_for_accounts(session, [qr_env["cursor_id"]])
     assert latest[qr_env["cursor_id"]].total_pct == 20.0
+
+
+def test_prune_quota_snapshots_naive_aware_mix(qr_env):
+    """Regression: sync flush keeps aware UTC while SQLite round-trips naive."""
+    session = qr_env["session"]
+    account_id = qr_env["cursor_id"]
+    today = date.today()
+    session.execute(
+        delete(AccountQuotaSnapshot).where(
+            AccountQuotaSnapshot.account_id == account_id
+        )
+    )
+    session.commit()
+
+    naive_base = datetime(2026, 9, 10, 6, 0, 0)  # offset-naive, as SQLite returns
+    session.add_all(
+        [
+            AccountQuotaSnapshot(
+                account_id=account_id,
+                captured_at=naive_base - timedelta(minutes=i + 1),
+                cycle_start=today - timedelta(days=5),
+                cycle_end=today + timedelta(days=25),
+                limit_cents=7000,
+                used_cents=10,
+                remaining_cents=6990,
+                total_pct=float(i),
+            )
+            for i in range(10)
+        ]
+    )
+    session.commit()
+
+    # Re-load so identity map holds naive datetimes, then flush an aware row
+    # (mirrors CursorSyncService._apply_period_usage → prune).
+    _ = list(
+        session.scalars(
+            select(AccountQuotaSnapshot).where(
+                AccountQuotaSnapshot.account_id == account_id
+            )
+        )
+    )
+    session.add(
+        AccountQuotaSnapshot(
+            account_id=account_id,
+            captured_at=datetime(2026, 9, 10, 7, 0, 0, tzinfo=timezone.utc),
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=7000,
+            used_cents=20,
+            remaining_cents=6980,
+            total_pct=99.0,
+        )
+    )
+    session.flush()
+
+    deleted = prune_quota_snapshots_for_account(session, account_id, keep=3)
+    session.commit()
+    assert deleted >= 8
+    remaining = list(
+        session.scalars(
+            select(AccountQuotaSnapshot).where(
+                AccountQuotaSnapshot.account_id == account_id
+            )
+        )
+    )
+    assert len(remaining) == 3
+    latest = latest_snapshots_for_accounts(session, [account_id])
+    assert latest[account_id].total_pct == 99.0
 
 
 def test_read_path_indexes_exist_after_migrate(qr_env):
