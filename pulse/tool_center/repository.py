@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import delete, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from pulse.storage.models import (
     AccountQuotaSnapshot,
@@ -22,6 +22,7 @@ from pulse.storage.models import (
 from pulse.tool_center.billing_cycle import add_months
 
 _ACCOUNT_ACTIVE_STATUSES = frozenset({"trial", "shared", "dedicated"})
+ACTIVE_ACCOUNT_STATUSES = _ACCOUNT_ACTIVE_STATUSES
 
 
 class ToolCenterRepository:
@@ -47,22 +48,85 @@ class ToolCenterRepository:
     def get_plan(self, plan_id: str) -> AiPlan | None:
         return self.session.get(AiPlan, plan_id)
 
-    def list_accounts(self, *, status: str | None = None) -> list[AiAccount]:
+    def list_accounts(
+        self,
+        *,
+        status: str | None = None,
+        statuses: frozenset[str] | set[str] | None = None,
+        vendor_slug: str | None = None,
+        load_secondary: bool = True,
+    ) -> list[AiAccount]:
+        options = [joinedload(AiAccount.plan), joinedload(AiAccount.vendor)]
+        if load_secondary:
+            options.append(selectinload(AiAccount.secondary_members))
         query = (
             select(AiAccount)
-            .options(joinedload(AiAccount.plan), joinedload(AiAccount.vendor))
+            .options(*options)
             .where(AiAccount.team_id == self.team_id, AiAccount.deleted_at.is_(None))
         )
         if status:
             query = query.where(AiAccount.status == status)
+        elif statuses:
+            query = query.where(AiAccount.status.in_(statuses))
+        if vendor_slug:
+            query = query.where(
+                AiAccount.vendor_id.in_(
+                    select(AiVendor.id).where(AiVendor.slug == vendor_slug)
+                )
+            )
         return list(self.session.scalars(query.order_by(AiAccount.account_identifier)))
 
-    def list_active_accounts(self) -> list[AiAccount]:
-        return [
-            account
-            for account in self.list_accounts()
-            if account.status in _ACCOUNT_ACTIVE_STATUSES
-        ]
+    def list_active_accounts(self, *, vendor_slug: str | None = None) -> list[AiAccount]:
+        return self.list_accounts(
+            statuses=_ACCOUNT_ACTIVE_STATUSES,
+            vendor_slug=vendor_slug,
+            load_secondary=False,
+        )
+
+    def count_active_accounts(self) -> int:
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(AiAccount)
+                .where(
+                    AiAccount.team_id == self.team_id,
+                    AiAccount.deleted_at.is_(None),
+                    AiAccount.status.in_(_ACCOUNT_ACTIVE_STATUSES),
+                )
+            )
+            or 0
+        )
+
+    def count_accounts_missing_primary(self) -> int:
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(AiAccount)
+                .where(
+                    AiAccount.team_id == self.team_id,
+                    AiAccount.deleted_at.is_(None),
+                    AiAccount.status.in_(_ACCOUNT_ACTIVE_STATUSES),
+                    AiAccount.primary_member_id.is_(None),
+                )
+            )
+            or 0
+        )
+
+    def count_submitted_accounts(self, period: str) -> int:
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(UsageSummary)
+                .join(AiAccount, UsageSummary.account_id == AiAccount.id)
+                .where(
+                    AiAccount.team_id == self.team_id,
+                    AiAccount.deleted_at.is_(None),
+                    AiAccount.status.in_(_ACCOUNT_ACTIVE_STATUSES),
+                    UsageSummary.period == period,
+                )
+            )
+            or 0
+        )
 
     def get_account(self, account_id: str) -> AiAccount | None:
         account = self.session.scalar(
@@ -282,12 +346,9 @@ class ToolCenterRepository:
         return None
 
     def latest_quota_snapshot(self, account_id: str) -> AccountQuotaSnapshot | None:
-        return self.session.scalar(
-            select(AccountQuotaSnapshot)
-            .where(AccountQuotaSnapshot.account_id == account_id)
-            .order_by(AccountQuotaSnapshot.captured_at.desc())
-            .limit(1)
-        )
+        from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
+
+        return latest_snapshots_for_accounts(self.session, [account_id]).get(account_id)
 
     def build_summary_for_account(
         self,
@@ -346,7 +407,13 @@ class ToolCenterRepository:
 
     def get_submitted_account_ids(self, period: str) -> set[str]:
         rows = self.session.scalars(
-            select(UsageSummary.account_id).where(UsageSummary.period == period)
+            select(UsageSummary.account_id)
+            .join(AiAccount, UsageSummary.account_id == AiAccount.id)
+            .where(
+                AiAccount.team_id == self.team_id,
+                AiAccount.deleted_at.is_(None),
+                UsageSummary.period == period,
+            )
         )
         return set(rows)
 

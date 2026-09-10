@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiVendor
 from pulse.tool_center.quota_reads import (
     latest_snapshots_for_accounts,
     latest_snapshots_for_team,
+    prune_quota_snapshots_for_account,
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
@@ -129,3 +131,74 @@ def test_latest_snapshots_for_team_all_vendors_and_inactive(qr_env):
     assert qr_env["cursor_id"] in latest
     assert qr_env["other_id"] in latest
     assert qr_env["inactive_id"] in latest
+
+
+def test_latest_snapshots_for_accounts_picks_newest_among_many(qr_env):
+    session = qr_env["session"]
+    today = date.today()
+    now = datetime.now(timezone.utc)
+    extras = [
+        AccountQuotaSnapshot(
+            account_id=qr_env["cursor_id"],
+            captured_at=now - timedelta(minutes=i + 1),
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=7000,
+            used_cents=50 + i,
+            remaining_cents=6950,
+            total_pct=float(i),
+        )
+        for i in range(40)
+    ]
+    session.add_all(extras)
+    session.commit()
+    latest = latest_snapshots_for_accounts(session, [qr_env["cursor_id"]])
+    assert latest[qr_env["cursor_id"]].total_pct == 20.0
+
+
+def test_latest_snapshots_for_accounts_empty_ids(qr_env):
+    assert latest_snapshots_for_accounts(qr_env["session"], []) == {}
+    assert latest_snapshots_for_accounts(qr_env["session"], [""]) == {}
+
+
+def test_prune_quota_snapshots_keeps_newest(qr_env):
+    session = qr_env["session"]
+    today = date.today()
+    now = datetime.now(timezone.utc)
+    session.add_all(
+        [
+            AccountQuotaSnapshot(
+                account_id=qr_env["cursor_id"],
+                captured_at=now - timedelta(minutes=i + 10),
+                cycle_start=today - timedelta(days=5),
+                cycle_end=today + timedelta(days=25),
+                limit_cents=7000,
+                used_cents=10,
+                remaining_cents=6990,
+                total_pct=1.0,
+            )
+            for i in range(20)
+        ]
+    )
+    session.commit()
+    deleted = prune_quota_snapshots_for_account(session, qr_env["cursor_id"], keep=3)
+    session.commit()
+    assert deleted >= 18
+    remaining = list(
+        session.scalars(
+            select(AccountQuotaSnapshot).where(
+                AccountQuotaSnapshot.account_id == qr_env["cursor_id"]
+            )
+        )
+    )
+    assert len(remaining) == 3
+    latest = latest_snapshots_for_accounts(session, [qr_env["cursor_id"]])
+    assert latest[qr_env["cursor_id"]].total_pct == 20.0
+
+
+def test_read_path_indexes_exist_after_migrate(qr_env):
+    from sqlalchemy import inspect
+
+    inspector = inspect(qr_env["session"].get_bind())
+    names = {idx["name"] for idx in inspector.get_indexes("account_quota_snapshots")}
+    assert "ix_account_quota_snapshots_account_captured" in names

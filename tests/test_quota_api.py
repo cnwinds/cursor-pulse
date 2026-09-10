@@ -104,6 +104,44 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert matched["cycle_end"] == "2026-08-01"
     assert matched["cycle_end_at"] is None  # fixture snap has date-only cycle_end
     assert matched["active_loans"] == 0
+    assert "usage_summary" not in matched or matched.get("usage_summary") is None
+
+
+def test_quota_board_include_summaries_embeds_cycle_row(quota_env):
+    from pulse.storage.models import UsageSummary
+
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    s = sf()
+    s.add(
+        UsageSummary(
+            account_id=account.id,
+            period="2026-07",
+            primary_metric_value=12.5,
+            primary_metric_unit="usd",
+            billing_cycle_start=date(2026, 7, 1),
+            billing_cycle_end=date(2026, 8, 1),
+            cursor_pools={
+                "api": {"spend_usd": 12.5, "breakdown_by_model": {"claude-4-sonnet": 12.5}}
+            },
+        )
+    )
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get(
+        "/api/v2/quota-board",
+        params={"include_summaries": True},
+        headers=_headers(token),
+    )
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    summary = matched["usage_summary"]
+    assert summary is not None
+    assert summary["period"] == "2026-07"
+    assert summary["cursor_pools"]["api"]["spend_usd"] == 12.5
 
 
 def test_quota_board_exposes_cycle_end_at(quota_env):

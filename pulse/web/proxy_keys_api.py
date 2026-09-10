@@ -118,8 +118,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             ).scalars()
         }
         rows = []
-        for key in keys:
-            row = proxy_service.key_summary(session, key)
+        for row, key in zip(proxy_service.key_summaries(session, list(keys)), keys, strict=True):
             row["member_name"] = member_names.get(key.member_id)
             row["recoverable"] = bool(key.encrypted_key)
             rows.append(row)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AiAccount, KeyLoan, Member
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
-from pulse.tool_center.quota_reads import latest_snapshots_for_team
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 
 def account_loan_deadline(account: AiAccount) -> date | None:
@@ -58,17 +58,15 @@ def build_lender_candidates(
 ) -> list[LenderCandidate]:
     """组装出借候选：最新快照 + renews_on + 当前在借人数。"""
     exclude_account_ids = exclude_account_ids or set()
-    snapshots = latest_snapshots_for_team(session, team_id)
-    loan_counts = active_loan_counts_by_account(session, team_id)
     repo = ToolCenterRepository(session, team_id)
     accounts = [
         account
-        for account in repo.list_active_accounts()
-        if account.vendor
-        and account.vendor.slug == "cursor"
-        and account.id not in exclude_account_ids
-        and snapshots.get(account.id)
+        for account in repo.list_active_accounts(vendor_slug="cursor")
+        if account.id not in exclude_account_ids
     ]
+    snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
+    loan_counts = active_loan_counts_by_account(session, team_id)
+    accounts = [account for account in accounts if snapshots.get(account.id)]
     primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
     if primary_ids:

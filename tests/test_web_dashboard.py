@@ -168,6 +168,27 @@ def test_dashboard_overview_section_failure_isolated(dash_client_with_roles, mon
     assert sections["quota"] is not None
 
 
+def test_dashboard_overview_does_not_build_full_ingestion_payload(
+    dash_client_with_roles, monkeypatch
+):
+    def _boom(*args, **kwargs):
+        raise AssertionError("full ingestion payload should not run for dashboard")
+
+    monkeypatch.setattr(
+        "pulse.tool_center.ingestion_status.build_ingestion_status_payload", _boom
+    )
+    monkeypatch.setattr(
+        "pulse.tool_center.usage_analytics.build_usage_analytics_overview", _boom
+    )
+    monkeypatch.setattr("pulse.web.dashboard_api.settings_for_api", _boom)
+    client, config, owner, _viewer, _acct = dash_client_with_roles
+    token = create_access_token(config, owner)
+    res = client.get("/api/dashboard/overview", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    assert res.json()["sections"]["sync"] is not None
+    assert res.json()["sections"]["usage"] is not None
+
+
 def test_dashboard_overview_usage_section_with_data(_dash_app):
     client, config, proxy = _dash_app
     sf = make_test_session_factory()

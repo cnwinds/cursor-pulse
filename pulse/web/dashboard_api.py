@@ -4,7 +4,6 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
@@ -227,19 +226,18 @@ def _usage_section(
     timezone_name: str,
 ) -> dict:
     from pulse.tool_center.ingestion_status import period_date_range
-    from pulse.tool_center.usage_analytics import build_usage_analytics_overview
+    from pulse.tool_center.usage_analytics import build_usage_kpi_and_series
 
     period_start, period_end = period_date_range(period)
     # period 按团队时区计算，end 也必须取团队时区的当天，
     # 否则月初边界（团队已进入新月、服务器仍在上月末）会使 end < period_start 触发降级
     end = min(datetime.now(ZoneInfo(timezone_name)).date(), period_end)
-    overview = build_usage_analytics_overview(
+    overview = build_usage_kpi_and_series(
         session,
         team_id,
         start=period_start,
         end=end,
         timezone=timezone_name,
-        top_n=5,
     )
     kpi = overview["kpi"]
     return {
@@ -260,12 +258,9 @@ def _loans_section(session: Session, team_id: str) -> dict:
 
 
 def _sync_section(session: Session, team_id: str, period: str, actor: Member) -> dict:
-    # 复用全量 ingestion payload 只取 summary：内部逐账号构建状态行（每账号有查询），
-    # 明细全部丢弃。当前账号规模可接受；若成为瓶颈，应给 ingestion_status 加 summary-only 轻量入口。
-    from pulse.tool_center.ingestion_status import build_ingestion_status_payload
+    from pulse.tool_center.ingestion_status import summarize_ingestion_status
 
-    payload = build_ingestion_status_payload(session, team_id, period, actor)
-    s = payload["summary"]
+    s = summarize_ingestion_status(session, team_id)
     return {
         "total_accounts": s["total_accounts"],
         "submitted_count": s["submitted_count"],
@@ -279,31 +274,27 @@ def _sync_section(session: Session, team_id: str, period: str, actor: Member) ->
 
 
 def _proxy_section(session: Session) -> dict:
-    from pulse.proxy import service as proxy_service
-    from pulse.storage.models import ProxyKey
+    from pulse.proxy.usage_queries import active_proxy_key_usage_totals
 
-    keys = session.scalars(select(ProxyKey).where(ProxyKey.status == "active")).all()
-    total_tokens = 0
-    total_cents = 0
-    for key in keys:
-        tokens, cents = proxy_service.total_usage(session, key.id)
-        total_tokens += tokens
-        total_cents += cents
+    count, total_tokens, total_cents = active_proxy_key_usage_totals(session)
     return {
-        "active_key_count": len(keys),
+        "active_key_count": count,
         "total_tokens": total_tokens,
         "total_cost_usd": round(total_cents / 100.0, 2),
     }
 
 
 def _integrations_section(config: AppConfig, session: Session, team_id: str) -> dict:
-    full = build_integrations_status(config, session, team_id)
+    from pulse.web.channel_status import resolve_im_group_status
+
+    effective_raw = effective_config_dict(config, session, team_id)
+    im_status = resolve_im_group_status(effective_raw)
     issues = []
-    if not full["im_group_configured"]:
+    if not im_status["im_group_configured"]:
         issues.append({"key": "im_group", "label": "IM 工作群未配置"})
     return {
-        "bot_platform": full["bot_platform"],
-        "im_group_configured": full["im_group_configured"],
+        "bot_platform": im_status["bot_platform"],
+        "im_group_configured": im_status["im_group_configured"],
         "issues": issues,
     }
 
@@ -354,7 +345,6 @@ def build_dashboard_overview(
     repo,
     actor: Member | None = None,
 ) -> dict:
-    effective = settings_for_api(config, session, team_id)
     effective_raw = effective_config_dict(config, session, team_id)
     period = _period_for_effective(config, effective_raw)
 
@@ -367,7 +357,7 @@ def build_dashboard_overview(
                 session,
                 team_id,
                 period=period,
-                timezone_name=effective["collection"]["timezone"],
+                timezone_name=effective_raw["collection"]["timezone"],
                 actor=actor,
             )
             if actor
@@ -381,15 +371,15 @@ def build_dashboard_overview(
         from pulse.web.channel_status import resolve_im_group_status
 
         merged_for_im = {
-            "bot": {"name": (effective.get("bot") or {}).get("name") or config.bot.name},
+            "bot": {"name": (effective_raw.get("bot") or {}).get("name") or config.bot.name},
             "dingtalk": {
-                "group_open_conversation_id": (effective.get("dingtalk") or {}).get(
+                "group_open_conversation_id": (effective_raw.get("dingtalk") or {}).get(
                     "group_open_conversation_id"
                 )
                 or config.dingtalk.group_open_conversation_id,
             },
             "feishu": {
-                "group_chat_id": (effective.get("feishu") or {}).get("group_chat_id")
+                "group_chat_id": (effective_raw.get("feishu") or {}).get("group_chat_id")
                 or config.feishu.group_chat_id,
             },
         }
@@ -397,7 +387,7 @@ def build_dashboard_overview(
         payload["summary"] = {
             "current_period": period,
             "team_slug": config.tenant.slug,
-            "timezone": effective["collection"]["timezone"],
+            "timezone": effective_raw["collection"]["timezone"],
             "bot_platform": im_status["bot_platform"],
             "im_group_configured": im_status["im_group_configured"],
             "group_configured": im_status["im_group_configured"],
@@ -405,12 +395,10 @@ def build_dashboard_overview(
 
     if actor and has_permission(actor, "accounts:read"):
         tool_repo = ToolCenterRepository(session, team_id)
-        active_accounts = tool_repo.list_active_accounts()
-        submitted_account_ids = tool_repo.get_submitted_account_ids(period)
-        missing_primary = tool_repo.accounts_missing_primary()
+        active_count = tool_repo.count_active_accounts()
+        submitted_count = tool_repo.count_submitted_accounts(period)
+        missing_primary_count = tool_repo.count_accounts_missing_primary()
 
-        submitted_count = len(submitted_account_ids)
-        active_count = len(active_accounts)
         unsubmitted_count = max(0, active_count - submitted_count)
 
         payload["ingestion"] = {
@@ -418,7 +406,7 @@ def build_dashboard_overview(
             "submitted_count": submitted_count,
             "unsubmitted_count": unsubmitted_count,
             "pending_review_count": 0,
-            "missing_primary_count": len(missing_primary),
+            "missing_primary_count": missing_primary_count,
         }
         payload["submission"] = {
             "active_count": active_count,

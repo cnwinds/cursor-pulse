@@ -4,64 +4,106 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
-from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiAccountCredential, KeyLoan, Member
+from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
+from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_CURSOR_DIRECT,
     DELIVERY_PROXY_ALIAS,
     KeyLoanError,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
-from pulse.proxy.usage_queries import loan_proxy_totals
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.util.datetime_fmt import tool_datetime
 
-def loan_payload(loan: KeyLoan, session: Session) -> dict:
-    borrower_name = None
-    if loan.borrower_member_id:
-        member = session.get(Member, loan.borrower_member_id)
-        borrower_name = member.display_name if member else None
-    account = session.get(AiAccount, loan.source_account_id)
-    primary_member_name = None
-    if account and account.primary_member_id:
-        primary = session.get(Member, account.primary_member_id)
-        primary_member_name = primary.display_name if primary else None
-    borrowed_cents = max(
-        (session.scalar(
-            select(AccountQuotaSnapshot.used_cents)
-            .where(AccountQuotaSnapshot.account_id == loan.source_account_id)
-            .order_by(AccountQuotaSnapshot.captured_at.desc())
-            .limit(1)
-        ) or 0)
-        - loan.baseline_used_cents,
-        0,
-    )
-    deadline = loan_display_expires_on(loan, account)
-    _, proxy_cost_cents = loan_proxy_totals(session, loan.id)
-    delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
-    if delivery_mode == DELIVERY_PROXY_ALIAS:
-        key_hint = loan.alias_key_hint
-    else:
-        cred = session.get(AiAccountCredential, loan.credential_id)
-        key_hint = cred.key_hint if cred else None
-    return {
-        "id": loan.id,
-        "source_account_id": loan.source_account_id,
-        "source_account_identifier": account.account_identifier if account else None,
-        "primary_member_name": primary_member_name,
-        "credential_id": loan.credential_id,
-        "borrower_member_id": loan.borrower_member_id,
-        "borrower_name": borrower_name,
-        "baseline_used_cents": loan.baseline_used_cents,
-        "borrowed_cents": borrowed_cents,
-        "proxy_cost_cents": proxy_cost_cents,
-        "status": loan.status,
-        "auto_revoke_on_reset": loan.auto_revoke_on_reset,
-        "loan_expires_on": deadline.isoformat() if deadline else None,
-        "note": loan.note,
-        "delivery_mode": delivery_mode,
-        "key_hint": key_hint,
-        "created_at": tool_datetime(loan.created_at),
-        "revoked_at": tool_datetime(loan.revoked_at),
+
+def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
+    if not loans:
+        return []
+    borrower_ids = {loan.borrower_member_id for loan in loans if loan.borrower_member_id}
+    account_ids = {loan.source_account_id for loan in loans}
+    accounts = {
+        account.id: account
+        for account in session.scalars(select(AiAccount).where(AiAccount.id.in_(account_ids)))
     }
+    primary_ids = {
+        account.primary_member_id
+        for account in accounts.values()
+        if account.primary_member_id
+    }
+    member_ids = borrower_ids | primary_ids
+    members = {
+        member.id: member
+        for member in (
+            session.scalars(select(Member).where(Member.id.in_(member_ids))).all()
+            if member_ids
+            else []
+        )
+    }
+    snapshots = latest_snapshots_for_accounts(session, account_ids)
+    proxy_totals = loan_proxy_totals_by_loan(session, [loan.id for loan in loans])
+    cred_ids = {
+        loan.credential_id
+        for loan in loans
+        if (getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT)
+        != DELIVERY_PROXY_ALIAS
+        and loan.credential_id
+    }
+    credentials = {
+        cred.id: cred
+        for cred in (
+            session.scalars(
+                select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))
+            ).all()
+            if cred_ids
+            else []
+        )
+    }
+    payloads = []
+    for loan in loans:
+        account = accounts.get(loan.source_account_id)
+        borrower = members.get(loan.borrower_member_id) if loan.borrower_member_id else None
+        primary = (
+            members.get(account.primary_member_id)
+            if account and account.primary_member_id
+            else None
+        )
+        used_cents = snapshots[loan.source_account_id].used_cents if loan.source_account_id in snapshots else 0
+        borrowed_cents = max(used_cents - loan.baseline_used_cents, 0)
+        deadline = loan_display_expires_on(loan, account)
+        _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
+        delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+        if delivery_mode == DELIVERY_PROXY_ALIAS:
+            key_hint = loan.alias_key_hint
+        else:
+            cred = credentials.get(loan.credential_id)
+            key_hint = cred.key_hint if cred else None
+        payloads.append(
+            {
+                "id": loan.id,
+                "source_account_id": loan.source_account_id,
+                "source_account_identifier": account.account_identifier if account else None,
+                "primary_member_name": primary.display_name if primary else None,
+                "credential_id": loan.credential_id,
+                "borrower_member_id": loan.borrower_member_id,
+                "borrower_name": borrower.display_name if borrower else None,
+                "baseline_used_cents": loan.baseline_used_cents,
+                "borrowed_cents": borrowed_cents,
+                "proxy_cost_cents": proxy_cost_cents,
+                "status": loan.status,
+                "auto_revoke_on_reset": loan.auto_revoke_on_reset,
+                "loan_expires_on": deadline.isoformat() if deadline else None,
+                "note": loan.note,
+                "delivery_mode": delivery_mode,
+                "key_hint": key_hint,
+                "created_at": tool_datetime(loan.created_at),
+                "revoked_at": tool_datetime(loan.revoked_at),
+            }
+        )
+    return payloads
+
+
+def loan_payload(loan: KeyLoan, session: Session) -> dict:
+    return loan_payloads([loan], session)[0]
 
 
 def reveal_loan_user_key(loan: KeyLoan, encryption_key: str, session: Session) -> str:
