@@ -349,6 +349,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -359,6 +360,7 @@ import { formatTokensM } from '@/utils/usage'
 type ShellKind = 'bash' | 'powershell'
 
 const auth = useAuthStore()
+const router = useRouter()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 const canSelfLoan = computed(() => auth.hasPermission('loans:self'))
 const selfRequesting = ref(false)
@@ -744,16 +746,37 @@ async function copyCursorKey() {
   }
 }
 
+async function handleClientSetupError(err: any) {
+  const status = err?.response?.status
+  const detail = err?.response?.data?.detail
+
+  if (status === 422) {
+    try {
+      await ElMessageBox.confirm(
+        detail || '尚未配置代理地址，请前往「系统设置 → 代理地址」添加',
+        '需要配置代理地址',
+        {
+          confirmButtonText: '前往配置',
+          cancelButtonText: '取消',
+          type: 'warning',
+        }
+      )
+      router.push('/settings?tab=proxy_addresses')
+    } catch {
+      // 用户取消
+    }
+  } else {
+    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
+  }
+}
+
 async function openCommandDialog(loanId: string) {
   try {
     const res = await client.get(`/api/v2/loans/${loanId}/client-setup`)
     commandOptions.value = res.data.commands || []
     commandDialogVisible.value = true
   } catch (err: any) {
-    const detail = err?.response?.data?.detail
-    ElMessage.error(
-      typeof detail === 'string' ? detail : err?.message || '获取命令失败'
-    )
+    await handleClientSetupError(err)
   }
 }
 

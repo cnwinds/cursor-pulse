@@ -83,6 +83,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
@@ -99,6 +100,7 @@ interface LoanRow {
   created_at: string
 }
 
+const router = useRouter()
 const loading = ref(false)
 const requesting = ref(false)
 const loans = ref<LoanRow[]>([])
@@ -115,6 +117,30 @@ const commandOptions = ref<CommandOption[]>([])
 
 function loanStatusType(status: string) {
   return { active: 'primary', revoked: 'info', expired: 'warning' }[status] || 'info'
+}
+
+async function handleClientSetupError(err: any) {
+  const status = err?.response?.status
+  const detail = err?.response?.data?.detail
+
+  if (status === 422) {
+    try {
+      await ElMessageBox.confirm(
+        detail || '尚未配置代理地址，请前往「系统设置 → 代理地址」添加',
+        '需要配置代理地址',
+        {
+          confirmButtonText: '前往配置',
+          cancelButtonText: '取消',
+          type: 'warning',
+        }
+      )
+      router.push('/settings?tab=proxy_addresses')
+    } catch {
+      // 用户取消
+    }
+  } else {
+    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
+  }
 }
 
 async function loadLoans() {
@@ -167,8 +193,7 @@ async function openCommandDialog(loanId: string) {
     commandOptions.value = res.data.commands || []
     commandDialogVisible.value = true
   } catch (err: any) {
-    const detail = err?.response?.data?.detail
-    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
+    await handleClientSetupError(err)
   }
 }
 

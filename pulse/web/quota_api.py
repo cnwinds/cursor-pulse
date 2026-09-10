@@ -463,10 +463,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         proxy_addresses = runtime.proxy_addresses.addresses
 
         if not proxy_addresses:
-            fallback_url = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
-            proxy_addresses = [
-                type("ProxyAddress", (), {"url": fallback_url, "display_name": "默认代理"})()
-            ]
+            raise HTTPException(
+                status_code=422,
+                detail="尚未配置代理地址，请前往「系统设置 → 代理地址」添加",
+            )
 
         commands = []
         for addr in proxy_addresses:
