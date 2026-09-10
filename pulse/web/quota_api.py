@@ -460,7 +460,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=410, detail=str(exc)) from exc
 
         runtime = effective_config(config, session, team.id)
-        proxy_addresses = runtime.proxy_addresses.addresses
+        proxy_addresses = getattr(runtime.proxy_addresses, "addresses", None) if runtime.proxy_addresses else None
 
         if not proxy_addresses:
             raise HTTPException(

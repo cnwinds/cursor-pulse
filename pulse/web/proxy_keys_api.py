@@ -175,7 +175,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
 
         team_id = key.team_id
         runtime = effective_config(config, session, team_id)
-        proxy_addresses = runtime.proxy_addresses.addresses
+        proxy_addresses = getattr(runtime.proxy_addresses, "addresses", None) if runtime.proxy_addresses else None
 
         if not proxy_addresses:
             raise HTTPException(

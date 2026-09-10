@@ -356,6 +356,7 @@ import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime, formatLoanDuration } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
+import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
 
 type ShellKind = 'bash' | 'powershell'
 
