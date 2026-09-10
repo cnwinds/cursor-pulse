@@ -14,7 +14,6 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.ingestion.credentials import CredentialService
-<<<<<<< HEAD
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccountCredential,
