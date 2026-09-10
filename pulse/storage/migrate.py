@@ -1006,6 +1006,10 @@ def _ensure_read_path_indexes(engine: Engine) -> None:
     for table, name, columns in _READ_PATH_INDEXES:
         if table not in tables:
             continue
+        col_names = {col["name"] for col in inspector.get_columns(table)}
+        needed = [part.strip() for part in columns.split(",") if part.strip()]
+        if any(col not in col_names for col in needed):
+            continue
         existing = {idx["name"] for idx in inspector.get_indexes(table)}
         if name in existing:
             continue
