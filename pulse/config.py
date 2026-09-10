@@ -356,7 +356,6 @@ class EnvSettings(BaseSettings):
     assistant_mirror_base_url: str = ""
     assistant_service_token: str = ""
     pulse_internal_service_token: str = ""
-    proxy_public_url: str = ""
     capability_bridge_quota_self_read: str = ""
     capability_bridge_cursor_key_bind: str = ""
     capability_bridge_guide_image_update: str = ""
@@ -503,8 +502,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.assistant_mirror.service_token = env.assistant_service_token
     if env.pulse_internal_service_token:
         cfg.internal.service_token = env.pulse_internal_service_token
-    if env.proxy_public_url.strip():
-        cfg.proxy.public_url = env.proxy_public_url.strip().rstrip("/")
     if env.capability_bridge_quota_self_read.lower() in ("1", "true", "yes", "on"):
         cfg.capability_bridge.quota_self_read = True
     elif env.capability_bridge_quota_self_read.lower() in ("0", "false", "no", "off"):

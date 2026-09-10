@@ -26,6 +26,13 @@ _RECLAIM_REASON_LABEL = {
 
 
 def proxy_public_url(config: Any) -> str:
+    """返回第一个代理地址用于通知消息（向后兼容）。
+
+    优先使用系统设置中的第一个代理地址，否则使用 config.proxy.public_url 默认值。
+    """
+    proxy_addresses = getattr(getattr(config, "proxy_addresses", None), "addresses", None)
+    if proxy_addresses and len(proxy_addresses) > 0:
+        return proxy_addresses[0].url.rstrip("/")
     return (getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317").rstrip(
         "/"
     )
