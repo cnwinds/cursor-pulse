@@ -100,7 +100,7 @@ def _can_reveal_key(user: PortalUser, key: ProxyKey) -> bool:
     return has_permission(user.member, "proxy:read") and key.member_id == user.member.id
 
 
-def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
+def register_proxy_keys_routes(app, get_db, require_capability, config, require_user=None) -> None:
     @app.get(
         "/api/v2/proxy-keys",
         dependencies=[Depends(require_capability("proxy:read"))],
@@ -153,14 +153,34 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         row["proxy_url"] = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
         return row
 
+    @app.get("/api/v2/proxy-addresses")
+    def list_proxy_addresses(
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_user or require_capability("proxy:read")),
+    ):
+        del user
+        from pulse.settings import configured_proxy_addresses
+        from pulse.tenant.context import team_repository
+
+        team, _ = team_repository(session, config)
+        addresses = configured_proxy_addresses(session, team.id)
+        return {
+            "addresses": [
+                {"url": addr.url.rstrip("/"), "display_name": addr.display_name}
+                for addr in addresses
+            ]
+        }
+
     @app.get("/api/v2/proxy-keys/{key_id}/client-setup")
     def client_setup(
         key_id: str,
         shell: str = Query(default="powershell", pattern="^(bash|powershell)$"),
+        proxy_url: str | None = Query(default=None),
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("proxy:read")),
     ):
-        from pulse.settings import effective_config
+        from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
+        from pulse.tenant.context import team_repository
 
         key = _get_key(session, key_id)
         if not _can_reveal_key(user, key):
@@ -173,32 +193,23 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
                 detail="该 Key 不可还原（历史 Key 未加密保存），请新建",
             )
 
-        team_id = key.team_id
-        runtime = effective_config(config, session, team_id)
-        proxy_addresses = getattr(runtime.proxy_addresses, "addresses", None) if runtime.proxy_addresses else None
+        # ProxyKey has no team_id; resolve the tenant team instead of key.team_id.
+        team, _ = team_repository(session, config)
+        addresses = configured_proxy_addresses(session, team.id)
+        if not addresses:
+            raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
-        if not proxy_addresses:
-            raise HTTPException(
-                status_code=422,
-                detail="尚未配置代理地址，请前往「系统设置 → 代理地址」添加",
-            )
-
-        commands = []
-        for addr in proxy_addresses:
-            proxy_url = addr.url.rstrip("/")
-            for sh in ["powershell", "bash"]:
-                command = proxy_service.build_client_command(
-                    shell=sh, proxy_url=proxy_url, plaintext_key=plaintext
-                )
-                commands.append({
-                    "proxy_url": proxy_url,
-                    "proxy_name": addr.display_name,
-                    "shell": sh,
-                    "command": command,
-                })
-
+        commands = proxy_service.build_client_setup_commands(
+            plaintext_key=plaintext, addresses=addresses
+        )
+        chosen = proxy_service.pick_client_setup_command(
+            commands, shell=shell, proxy_url=proxy_url
+        )
         return {
             "plaintext_key": plaintext,
+            "proxy_url": chosen["proxy_url"],
+            "shell": chosen["shell"],
+            "command": chosen["command"],
             "commands": commands,
         }
     @app.patch(

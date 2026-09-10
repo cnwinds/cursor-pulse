@@ -38,15 +38,11 @@
           <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
               <el-button size="small" @click="openUsages(row)">用量</el-button>
-              <el-button
+              <CopyCommandDropdown
                 v-if="canCopyCommand(row)"
                 size="small"
-                type="primary"
-                plain
-                @click="openCommandDialog(row)"
-              >
-                复制命令
-              </el-button>
+                :setup-url="`/api/v2/proxy-keys/${row.id}/client-setup`"
+              />
               <el-button v-if="canWrite" size="small" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canWrite && row.status === 'suspended'" size="small" type="warning" @click="resume(row)">恢复</el-button>
               <el-button v-if="canWrite && row.status !== 'revoked'" size="small" type="danger" @click="revoke(row)">吊销</el-button>
@@ -247,9 +243,12 @@
           <el-button @click="copyCreated">复制密钥</el-button>
         </template>
       </el-input>
-      <div class="created-actions">
-        <el-button type="primary" plain @click="openCreatedCommandDialog">复制命令</el-button>
-      </div>
+        <div class="created-actions">
+          <CopyCommandDropdown
+            v-if="createdKeyId"
+            :setup-url="`/api/v2/proxy-keys/${createdKeyId}/client-setup`"
+          />
+        </div>
       <template #footer>
         <el-button type="primary" @click="createdVisible = false">完成</el-button>
       </template>
@@ -386,17 +385,11 @@
       </div>
     </el-drawer>
 
-    <CommandSelectDialog
-      :open="commandDialogVisible"
-      :commands="commandOptions"
-      @close="commandDialogVisible = false"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -404,9 +397,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
-import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
-
-type ShellKind = 'bash' | 'powershell'
+import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 
 interface MemberOption {
   id: string
@@ -503,7 +494,6 @@ interface UsageByModelRow {
 }
 
 const auth = useAuthStore()
-const router = useRouter()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const loading = ref(false)
 const saving = ref(false)
@@ -540,15 +530,12 @@ const usageOverview = computed(() => {
 const createVisible = ref(false)
 const createdVisible = ref(false)
 const createdKey = ref('')
-const createdProxyUrl = ref('http://127.0.0.1:8317')
+const createdKeyId = ref('')
 const editVisible = ref(false)
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
 const usageLoaded = ref(false)
 const usagesKeyName = ref('')
-
-const commandDialogVisible = ref(false)
-const commandOptions = ref<CommandOption[]>([])
 
 const createForm = reactive({
   member_id: '',
@@ -624,37 +611,6 @@ function canCopyCommand(row: ProxyKeyRow) {
   return auth.hasPermission('proxy:read') && row.member_id === auth.user?.id
 }
 
-function buildLocalCommand(shell: ShellKind, proxyUrl: string, plaintext: string) {
-  if (shell === 'powershell') {
-    return `cmd /c "set HTTPS_PROXY=${proxyUrl}&& set CURSOR_API_KEY=${plaintext}&& agent -k"`
-  }
-  return `HTTPS_PROXY="${proxyUrl}" CURSOR_API_KEY="${plaintext}" agent -k`
-}
-
-async function handleClientSetupError(err: any) {
-  const status = err?.response?.status
-  const detail = err?.response?.data?.detail
-
-  if (status === 422) {
-    try {
-      await ElMessageBox.confirm(
-        detail || '尚未配置代理地址，请前往「系统设置 → 代理地址」添加',
-        '需要配置代理地址',
-        {
-          confirmButtonText: '前往配置',
-          cancelButtonText: '取消',
-          type: 'warning',
-        }
-      )
-      router.push('/settings?tab=proxy_addresses')
-    } catch {
-      // 用户取消
-    }
-  } else {
-    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
-  }
-}
-
 async function load() {
   loading.value = true
   try {
@@ -702,7 +658,7 @@ async function submitCreate() {
       window_7d_cost_usd: createForm.window_7d_cost_usd,
     })
     createdKey.value = res.data.plaintext_key
-    createdProxyUrl.value = res.data.proxy_url || 'http://127.0.0.1:8317'
+    createdKeyId.value = res.data.id
     createVisible.value = false
     createdVisible.value = true
     await load()
@@ -719,32 +675,6 @@ async function copyCreated() {
     ElMessage.success('已复制 Key')
   } catch (err: any) {
     ElMessage.error(err?.message || '复制失败')
-  }
-}
-
-async function openCreatedCommandDialog() {
-  if (!createdKey.value) return
-  try {
-    const keyId = keys.value[keys.value.length - 1]?.id
-    if (!keyId) {
-      ElMessage.error('无法获取密钥 ID')
-      return
-    }
-    const res = await client.get(`/api/v2/proxy-keys/${keyId}/client-setup`)
-    commandOptions.value = res.data.commands || []
-    commandDialogVisible.value = true
-  } catch (err: any) {
-    await handleClientSetupError(err)
-  }
-}
-
-async function openCommandDialog(row: ProxyKeyRow) {
-  try {
-    const res = await client.get(`/api/v2/proxy-keys/${row.id}/client-setup`)
-    commandOptions.value = res.data.commands || []
-    commandDialogVisible.value = true
-  } catch (err: any) {
-    await handleClientSetupError(err)
   }
 }
 

@@ -14,7 +14,7 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.ingestion.credentials import CredentialService
-from pulse.storage.models import AccountQuotaSnapshot, Member
+from pulse.storage.models import AccountQuotaSnapshot, Member, TeamSetting
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
@@ -518,6 +518,17 @@ def test_request_self_loan_and_mine_via_web(quota_env):
             account_id=lender.id,
             api_key="crsr_lender_key_for_self_web_abcdefghijklmn",
             member_id=owner.id,
+        )
+        s.add(
+            TeamSetting(
+                team_id=owner.team_id,
+                section="proxy_addresses",
+                data={
+                    "addresses": [
+                        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
+                    ]
+                },
+            )
         )
         s.commit()
         s.close()

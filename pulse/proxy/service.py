@@ -17,11 +17,13 @@ from pulse.proxy.authorize import authorize_status
 from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
 from pulse.proxy.key_crud import (
     build_client_command,
+    build_client_setup_commands,
     cents_to_usd,
     create_key,
     evaluate_key,
     find_key_by_plaintext,
     key_summary,
+    pick_client_setup_command,
     record_event,
     resume_key,
     reveal_plaintext,
@@ -50,6 +52,8 @@ __all__ = [
     "WINDOW_7D",
     "authorize_status",
     "build_client_command",
+    "build_client_setup_commands",
+    "pick_client_setup_command",
     "canonical_turn_ended_tokens",
     "cents_to_usd",
     "create_key",

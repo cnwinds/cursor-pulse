@@ -433,10 +433,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     def loan_client_setup(
         loan_id: str,
         shell: str = Query(default="powershell", pattern="^(bash|powershell)$"),
+        proxy_url: str | None = Query(default=None),
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
-        from pulse.settings import effective_config
+        from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
 
         team, _ = team_repo_fn(session)
         loan = session.scalar(
@@ -459,32 +460,22 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         except KeyLoanError as exc:
             raise HTTPException(status_code=410, detail=str(exc)) from exc
 
-        runtime = effective_config(config, session, team.id)
-        proxy_addresses = getattr(runtime.proxy_addresses, "addresses", None) if runtime.proxy_addresses else None
+        addresses = configured_proxy_addresses(session, team.id)
+        if not addresses:
+            raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
-        if not proxy_addresses:
-            raise HTTPException(
-                status_code=422,
-                detail="尚未配置代理地址，请前往「系统设置 → 代理地址」添加",
-            )
-
-        commands = []
-        for addr in proxy_addresses:
-            proxy_url = addr.url.rstrip("/")
-            for sh in ["powershell", "bash"]:
-                command = proxy_service.build_client_command(
-                    shell=sh, proxy_url=proxy_url, plaintext_key=plaintext
-                )
-                commands.append({
-                    "proxy_url": proxy_url,
-                    "proxy_name": addr.display_name,
-                    "shell": sh,
-                    "command": command,
-                })
-
+        commands = proxy_service.build_client_setup_commands(
+            plaintext_key=plaintext, addresses=addresses
+        )
+        chosen = proxy_service.pick_client_setup_command(
+            commands, shell=shell, proxy_url=proxy_url
+        )
         return {
             "plaintext_key": plaintext,
             "delivery_mode": getattr(loan, "delivery_mode", None) or "cursor_direct",
+            "proxy_url": chosen["proxy_url"],
+            "shell": chosen["shell"],
+            "command": chosen["command"],
             "commands": commands,
         }
 

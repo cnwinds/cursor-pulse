@@ -92,15 +92,11 @@
       </el-table-column>
       <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }">
-          <el-button
+          <CopyCommandDropdown
             v-if="row.status === 'active'"
             size="small"
-            type="primary"
-            plain
-            @click="openCommandDialog(row.id)"
-          >
-            复制命令
-          </el-button>
+            :setup-url="`/api/v2/loans/${row.id}/client-setup`"
+          />
           <el-button
             v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
             size="small"
@@ -317,7 +313,10 @@
           </template>
         </el-input>
         <div class="reveal-actions">
-          <el-button type="primary" plain @click="openRevealCommandDialog">复制命令</el-button>
+          <CopyCommandDropdown
+            v-if="revealedKey?.loan_id"
+            :setup-url="`/api/v2/loans/${revealedKey.loan_id}/client-setup`"
+          />
         </div>
       </div>
       <template #footer>
@@ -339,29 +338,20 @@
       </template>
     </el-dialog>
 
-    <CommandSelectDialog
-      :open="commandDialogVisible"
-      :commands="commandOptions"
-      @close="commandDialogVisible = false"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime, formatLoanDuration } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
-import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
-
-type ShellKind = 'bash' | 'powershell'
+import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 
 const auth = useAuthStore()
-const router = useRouter()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 const canSelfLoan = computed(() => auth.hasPermission('loans:self'))
 const selfRequesting = ref(false)
@@ -492,9 +482,6 @@ const revealedKey = ref<{
 
 const cursorKeyVisible = ref(false)
 const cursorKeyPlaintext = ref('')
-
-const commandDialogVisible = ref(false)
-const commandOptions = ref<CommandOption[]>([])
 
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
@@ -745,45 +732,6 @@ async function copyCursorKey() {
   } catch (err: any) {
     ElMessage.error(err?.message || '复制失败')
   }
-}
-
-async function handleClientSetupError(err: any) {
-  const status = err?.response?.status
-  const detail = err?.response?.data?.detail
-
-  if (status === 422) {
-    try {
-      await ElMessageBox.confirm(
-        detail || '尚未配置代理地址，请前往「系统设置 → 代理地址」添加',
-        '需要配置代理地址',
-        {
-          confirmButtonText: '前往配置',
-          cancelButtonText: '取消',
-          type: 'warning',
-        }
-      )
-      router.push('/settings?tab=proxy_addresses')
-    } catch {
-      // 用户取消
-    }
-  } else {
-    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
-  }
-}
-
-async function openCommandDialog(loanId: string) {
-  try {
-    const res = await client.get(`/api/v2/loans/${loanId}/client-setup`)
-    commandOptions.value = res.data.commands || []
-    commandDialogVisible.value = true
-  } catch (err: any) {
-    await handleClientSetupError(err)
-  }
-}
-
-async function openRevealCommandDialog() {
-  if (!revealedKey.value?.loan_id) return
-  await openCommandDialog(revealedKey.value.loan_id)
 }
 
 function closeKeyReveal() {
