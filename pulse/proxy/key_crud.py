@@ -95,6 +95,41 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
     return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
 
+def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:
+    commands: list[dict] = []
+    for addr in addresses:
+        proxy_url = str(getattr(addr, "url", "")).rstrip("/")
+        display_name = str(getattr(addr, "display_name", "") or proxy_url)
+        if not proxy_url:
+            continue
+        for sh in ("powershell", "bash"):
+            commands.append(
+                {
+                    "proxy_url": proxy_url,
+                    "proxy_name": display_name,
+                    "shell": sh,
+                    "command": build_client_command(
+                        shell=sh, proxy_url=proxy_url, plaintext_key=plaintext_key
+                    ),
+                }
+            )
+    return commands
+
+
+def pick_client_setup_command(
+    commands: list[dict], *, shell: str, proxy_url: str | None = None
+) -> dict:
+    if proxy_url:
+        wanted = proxy_url.rstrip("/")
+        for item in commands:
+            if item["shell"] == shell and item["proxy_url"] == wanted:
+                return item
+    for item in commands:
+        if item["shell"] == shell:
+            return item
+    return commands[0]
+
+
 def evaluate_key(session: Session, key: ProxyKey) -> bool:
     """额度评估。窗口超限走 authorize soft-reject，不再 suspend。"""
     del session, key

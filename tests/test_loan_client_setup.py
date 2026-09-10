@@ -18,6 +18,7 @@ from pulse.storage.models import (
     AiAccountCredential,
     KeyLoan,
     ProxyKeyUsage,
+    TeamSetting,
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
@@ -92,6 +93,22 @@ def loan_client_env(_loan_client_app):
 
 def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _seed_proxy_addresses(env, addresses=None):
+    addresses = addresses or [
+        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
+    ]
+    s = env["session_factory"]()
+    s.add(
+        TeamSetting(
+            team_id=env["owner"].team_id,
+            section="proxy_addresses",
+            data={"addresses": addresses},
+        )
+    )
+    s.commit()
+    s.close()
 
 
 def _issue_loan(env) -> tuple[str, str]:
@@ -416,6 +433,7 @@ def test_loan_usages_by_day_groups_china_calendar(loan_client_env):
 
 def test_loan_client_setup_powershell(loan_client_env):
     env = loan_client_env
+    _seed_proxy_addresses(env)
     loan_id, api_key = _issue_loan(env)
     token = create_access_token(env["config"], env["owner"])
 
@@ -439,6 +457,7 @@ def test_loan_client_setup_powershell(loan_client_env):
 
 def test_loan_client_setup_bash(loan_client_env):
     env = loan_client_env
+    _seed_proxy_addresses(env)
     loan_id, api_key = _issue_loan(env)
     token = create_access_token(env["config"], env["owner"])
 
@@ -455,6 +474,20 @@ def test_loan_client_setup_bash(loan_client_env):
     assert api_key in body["command"]
     assert "agent -k" in body["command"]
     assert "\n" not in body["command"]
+
+
+def test_loan_client_setup_empty_proxy_addresses_is_422_not_500(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    res = env["client"].get(
+        f"/api/v2/loans/{loan_id}/client-setup",
+        headers=_headers(token),
+    )
+    assert res.status_code == 422
+    assert "系统设置" in res.json()["detail"]
+    assert "代理地址" in res.json()["detail"]
 
 
 def test_loan_client_setup_revoked_410(loan_client_env):
@@ -507,6 +540,7 @@ def test_loan_client_setup_undecryptable_410(loan_client_env):
 def test_loan_client_setup_allows_borrower_self(loan_client_env):
     """Borrowers with loans:self may fetch client-setup for their own active loan."""
     env = loan_client_env
+    _seed_proxy_addresses(env)
     loan_id, _ = _issue_loan(env)
     borrower = env["borrower"]
     token = create_access_token(env["config"], borrower)

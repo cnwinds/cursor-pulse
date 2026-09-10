@@ -38,19 +38,11 @@
           <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
               <el-button size="small" @click="openUsages(row)">用量</el-button>
-              <el-dropdown
+              <CopyCommandDropdown
                 v-if="canCopyCommand(row)"
-                trigger="click"
-                @command="(shell: ShellKind) => copyCommand(row, shell)"
-              >
-                <el-button size="small" type="primary" plain>复制命令</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="powershell">Windows PowerShell</el-dropdown-item>
-                    <el-dropdown-item command="bash">Linux / macOS</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+                size="small"
+                :setup-url="`/api/v2/proxy-keys/${row.id}/client-setup`"
+              />
               <el-button v-if="canWrite" size="small" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canWrite && row.status === 'suspended'" size="small" type="warning" @click="resume(row)">恢复</el-button>
               <el-button v-if="canWrite && row.status !== 'revoked'" size="small" type="danger" @click="revoke(row)">吊销</el-button>
@@ -251,10 +243,12 @@
           <el-button @click="copyCreated">复制密钥</el-button>
         </template>
       </el-input>
-      <div class="created-actions">
-        <el-button type="primary" plain @click="copyCreatedCommand('powershell')">复制 PowerShell 命令</el-button>
-        <el-button type="primary" plain @click="copyCreatedCommand('bash')">复制 Linux 命令</el-button>
-      </div>
+        <div class="created-actions">
+          <CopyCommandDropdown
+            v-if="createdKeyId"
+            :setup-url="`/api/v2/proxy-keys/${createdKeyId}/client-setup`"
+          />
+        </div>
       <template #footer>
         <el-button type="primary" @click="createdVisible = false">完成</el-button>
       </template>
@@ -390,6 +384,7 @@
       </el-table>
       </div>
     </el-drawer>
+
   </div>
 </template>
 
@@ -402,8 +397,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
-
-type ShellKind = 'bash' | 'powershell'
+import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 
 interface MemberOption {
   id: string
@@ -536,7 +530,7 @@ const usageOverview = computed(() => {
 const createVisible = ref(false)
 const createdVisible = ref(false)
 const createdKey = ref('')
-const createdProxyUrl = ref('http://127.0.0.1:8317')
+const createdKeyId = ref('')
 const editVisible = ref(false)
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
@@ -617,13 +611,6 @@ function canCopyCommand(row: ProxyKeyRow) {
   return auth.hasPermission('proxy:read') && row.member_id === auth.user?.id
 }
 
-function buildLocalCommand(shell: ShellKind, proxyUrl: string, plaintext: string) {
-  if (shell === 'powershell') {
-    return `cmd /c "set HTTPS_PROXY=${proxyUrl}&& set CURSOR_API_KEY=${plaintext}&& agent -k"`
-  }
-  return `HTTPS_PROXY="${proxyUrl}" CURSOR_API_KEY="${plaintext}" agent -k`
-}
-
 async function load() {
   loading.value = true
   try {
@@ -671,7 +658,7 @@ async function submitCreate() {
       window_7d_cost_usd: createForm.window_7d_cost_usd,
     })
     createdKey.value = res.data.plaintext_key
-    createdProxyUrl.value = res.data.proxy_url || 'http://127.0.0.1:8317'
+    createdKeyId.value = res.data.id
     createVisible.value = false
     createdVisible.value = true
     await load()
@@ -688,31 +675,6 @@ async function copyCreated() {
     ElMessage.success('已复制 Key')
   } catch (err: any) {
     ElMessage.error(err?.message || '复制失败')
-  }
-}
-
-async function copyCreatedCommand(shell: ShellKind) {
-  try {
-    const cmd = buildLocalCommand(shell, createdProxyUrl.value, createdKey.value)
-    await copyText(cmd)
-    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
-  } catch (err: any) {
-    ElMessage.error(err?.message || '复制失败')
-  }
-}
-
-async function copyCommand(row: ProxyKeyRow, shell: ShellKind) {
-  try {
-    const res = await client.get(`/api/v2/proxy-keys/${row.id}/client-setup`, {
-      params: { shell },
-    })
-    await copyText(res.data.command)
-    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
-  } catch (err: any) {
-    const detail = err?.response?.data?.detail
-    ElMessage.error(
-      typeof detail === 'string' ? detail : err?.message || '复制失败'
-    )
   }
 }
 

@@ -6,8 +6,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.config import AppConfig
+from pulse.config import AppConfig, ProxyAddress
 from pulse.storage.models import TeamSetting
+
+PROXY_ADDRESSES_REQUIRED_DETAIL = "尚未配置代理地址，请前往「系统设置 → 代理地址」添加"
 
 EDITABLE_SECTIONS = frozenset(
     {
@@ -22,6 +24,7 @@ EDITABLE_SECTIONS = frozenset(
         "dingtalk",
         "feishu",
         "bot",
+        "proxy_addresses",
     }
 )
 
@@ -39,6 +42,30 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def load_team_settings_map(session: Session, team_id: str) -> dict[str, dict]:
     rows = session.scalars(select(TeamSetting).where(TeamSetting.team_id == team_id)).all()
     return {row.section: row.data for row in rows}
+
+
+def configured_proxy_addresses(session: Session, team_id: str) -> list[ProxyAddress]:
+    """Read team-setting proxy addresses without re-validating the full AppConfig."""
+    overrides = load_team_settings_map(session, team_id)
+    raw = overrides.get("proxy_addresses")
+    if not isinstance(raw, dict):
+        return []
+    items = raw.get("addresses")
+    if not isinstance(items, list):
+        return []
+    out: list[ProxyAddress] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        name = str(item.get("display_name") or "").strip()
+        if not url:
+            continue
+        try:
+            out.append(ProxyAddress(url=url, display_name=name or url))
+        except Exception:
+            continue
+    return out
 
 
 def effective_config_dict(base: AppConfig, session: Session, team_id: str) -> dict[str, Any]:

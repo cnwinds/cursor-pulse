@@ -48,6 +48,33 @@
       <el-tab-pane label="定价" name="pricing" lazy>
         <CursorPricingSettings />
       </el-tab-pane>
+
+      <el-tab-pane label="代理地址" name="proxy_addresses">
+        <el-table :data="proxyAddressRows" stripe class="settings-table">
+          <el-table-column prop="display_name" label="显示名称" min-width="140" />
+          <el-table-column prop="url" label="代理地址" min-width="220" />
+          <el-table-column label="操作" width="180" align="center">
+            <template #default="{ row, $index }">
+              <el-button size="small" @click="editProxyAddress($index)">编辑</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                @click="deleteProxyAddress($index)"
+              >
+                删除
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-button
+          type="primary"
+          style="margin-top: 16px"
+          @click="addProxyAddress"
+        >
+          添加代理地址
+        </el-button>
+      </el-tab-pane>
     </el-tabs>
 
     <SettingEditDialog
@@ -67,7 +94,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Edit } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useSettingsStore } from '@/stores/settings'
 import SettingEditDialog from '@/components/SettingEditDialog.vue'
@@ -119,6 +146,7 @@ const forms = reactive({
   feishu: {} as Record<string, unknown>,
   bot: {} as Record<string, unknown>,
   admin: {} as Record<string, unknown>,
+  proxy_addresses: { addresses: [] as Array<{ url: string; display_name: string }> },
 })
 
 const memberSelectOptions = computed(() =>
@@ -237,6 +265,11 @@ function syncRowSummary(): string {
 function collectionBasicsSummary(): string {
   return String(forms.collection.timezone || schedule.value?.timezone || '—')
 }
+
+const proxyAddressRows = computed(() => {
+  const addresses = forms.proxy_addresses?.addresses || []
+  return Array.isArray(addresses) ? addresses : []
+})
 
 const collectionRows = computed<SettingRow[]>(() => {
   const rows: SettingRow[] = [
@@ -763,6 +796,7 @@ function applySettings(data: Record<string, any>) {
   forms.feishu = { ...(data.feishu || {}) }
   forms.bot = { name: data.bot?.name || 'none', ...(data.bot || {}) }
   forms.admin = { ...(data.admin || {}) }
+  forms.proxy_addresses = { addresses: data.proxy_addresses?.addresses || [] }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
     cursorSync.default_interval_minutes = Number(cursorSync.default_interval_hours) * 60
@@ -1102,6 +1136,96 @@ async function saveDialog(patch: Record<string, unknown>) {
     closeDialog()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
+}
+
+async function addProxyAddress() {
+  try {
+    const result = await ElMessageBox.prompt('请输入显示名称', '添加代理地址', {
+      confirmButtonText: '下一步',
+      cancelButtonText: '取消',
+      inputPattern: /.+/,
+      inputErrorMessage: '请输入显示名称',
+    })
+    if (!result.value) return
+
+    const displayName = result.value.trim()
+    const urlResult = await ElMessageBox.prompt('请输入代理地址（如 http://example.com:8317）', '添加代理地址', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPattern: /^https?:\/\/.+/,
+      inputErrorMessage: '请输入有效的代理地址',
+    })
+    if (!urlResult.value) return
+
+    const url = urlResult.value.trim()
+    const addresses = [...(forms.proxy_addresses.addresses || [])]
+    addresses.push({ display_name: displayName, url })
+
+    await store.patchSection('proxy_addresses', { addresses })
+    await loadAll()
+    ElMessage.success('已添加')
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      ElMessage.error(err?.message || '添加失败')
+    }
+  }
+}
+
+async function editProxyAddress(index: number) {
+  try {
+    const addresses = [...(forms.proxy_addresses.addresses || [])]
+    const item = addresses[index]
+    if (!item) return
+
+    const result = await ElMessageBox.prompt('请输入显示名称', '编辑代理地址', {
+      confirmButtonText: '下一步',
+      cancelButtonText: '取消',
+      inputValue: item.display_name,
+      inputPattern: /.+/,
+      inputErrorMessage: '请输入显示名称',
+    })
+    if (!result.value) return
+
+    const displayName = result.value.trim()
+    const urlResult = await ElMessageBox.prompt('请输入代理地址', '编辑代理地址', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputValue: item.url,
+      inputPattern: /^https?:\/\/.+/,
+      inputErrorMessage: '请输入有效的代理地址',
+    })
+    if (!urlResult.value) return
+
+    const url = urlResult.value.trim()
+    addresses[index] = { display_name: displayName, url }
+
+    await store.patchSection('proxy_addresses', { addresses })
+    await loadAll()
+    ElMessage.success('已更新')
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      ElMessage.error(err?.message || '更新失败')
+    }
+  }
+}
+
+async function deleteProxyAddress(index: number) {
+  try {
+    await ElMessageBox.confirm('确认删除该代理地址？', '删除代理地址', {
+      type: 'warning',
+    })
+
+    const addresses = [...(forms.proxy_addresses.addresses || [])]
+    addresses.splice(index, 1)
+
+    await store.patchSection('proxy_addresses', { addresses })
+    await loadAll()
+    ElMessage.success('已删除')
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      ElMessage.error(err?.message || '删除失败')
+    }
   }
 }
 </script>

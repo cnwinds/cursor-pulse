@@ -261,6 +261,19 @@ class ProxyConfig(BaseModel):
     public_url: str = "http://127.0.0.1:8317"
 
 
+class ProxyAddress(BaseModel):
+    """单个代理地址配置"""
+
+    url: str
+    display_name: str
+
+
+class ProxyAddressesConfig(BaseModel):
+    """系统设置中的多代理地址配置"""
+
+    addresses: list[ProxyAddress] = Field(default_factory=list)
+
+
 class WebSearchConfig(BaseModel):
     """Pulse-layer web search / fetch settings. API keys never leave this layer."""
 
@@ -297,6 +310,7 @@ class AppConfig(BaseModel):
     capability_bridge: CapabilityBridgeConfig = Field(default_factory=CapabilityBridgeConfig)
     internal: InternalApiConfig = Field(default_factory=InternalApiConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+    proxy_addresses: ProxyAddressesConfig = Field(default_factory=ProxyAddressesConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
@@ -342,7 +356,6 @@ class EnvSettings(BaseSettings):
     assistant_mirror_base_url: str = ""
     assistant_service_token: str = ""
     pulse_internal_service_token: str = ""
-    proxy_public_url: str = ""
     capability_bridge_quota_self_read: str = ""
     capability_bridge_cursor_key_bind: str = ""
     capability_bridge_guide_image_update: str = ""
@@ -489,8 +502,6 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.assistant_mirror.service_token = env.assistant_service_token
     if env.pulse_internal_service_token:
         cfg.internal.service_token = env.pulse_internal_service_token
-    if env.proxy_public_url.strip():
-        cfg.proxy.public_url = env.proxy_public_url.strip().rstrip("/")
     if env.capability_bridge_quota_self_read.lower() in ("1", "true", "yes", "on"):
         cfg.capability_bridge.quota_self_read = True
     elif env.capability_bridge_quota_self_read.lower() in ("0", "false", "no", "off"):

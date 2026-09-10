@@ -18,6 +18,7 @@ from pulse.storage.models import (
     AiVendor,
     Member,
     ProxyKey,
+    TeamSetting,
 )
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
@@ -91,6 +92,22 @@ def _admin(env) -> dict:
 def _create_key(env, **extra):
     body = {"member_id": env["owner"].id, **extra}
     return env["client"].post("/api/v2/proxy-keys", json=body, headers=_admin(env))
+
+
+def _seed_proxy_addresses(env, addresses=None):
+    addresses = addresses or [
+        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
+    ]
+    s = env["sf"]()
+    s.add(
+        TeamSetting(
+            team_id=env["owner"].team_id,
+            section="proxy_addresses",
+            data={"addresses": addresses},
+        )
+    )
+    s.commit()
+    s.close()
 
 
 def test_create_and_list_proxy_key(env):
@@ -732,6 +749,7 @@ def test_auditor_read_only(env):
 
 
 def test_client_setup_admin_and_owner(env):
+    _seed_proxy_addresses(env)
     headers, member_id = _member_headers(env, ["proxy:read"], display_name="借款人")
     # 管理员为该成员创建 key
     created = env["client"].post(
@@ -771,6 +789,11 @@ def test_client_setup_admin_and_owner(env):
     assert "agent -k" in bash_cmd
     assert "\n" not in bash_cmd
     assert "cursor-agent" not in bash_cmd
+    commands = resp.json()["commands"]
+    assert {(c["shell"], c["proxy_url"]) for c in commands} == {
+        ("powershell", "http://proxy.example.com:8317"),
+        ("bash", "http://proxy.example.com:8317"),
+    }
 
     # 其他只读用户不可读他人 key
     other_headers, _ = _member_headers(env, ["proxy:read"], display_name="路人")
@@ -779,6 +802,59 @@ def test_client_setup_admin_and_owner(env):
         headers=other_headers,
     )
     assert resp.status_code == 403
+
+
+def test_client_setup_empty_proxy_addresses_is_422_not_500(env):
+    key_id = _create_key(env).json()["id"]
+    resp = env["client"].get(
+        f"/api/v2/proxy-keys/{key_id}/client-setup",
+        headers=_admin(env),
+    )
+    assert resp.status_code == 422
+    assert "系统设置" in resp.json()["detail"]
+    assert "代理地址" in resp.json()["detail"]
+
+
+def test_list_proxy_addresses_empty_and_configured(env):
+    empty = env["client"].get("/api/v2/proxy-addresses", headers=_admin(env))
+    assert empty.status_code == 200
+    assert empty.json()["addresses"] == []
+
+    _seed_proxy_addresses(
+        env,
+        [
+            {"url": "http://lan.example:8317", "display_name": "内网"},
+            {"url": "http://wan.example:8317", "display_name": "公网"},
+        ],
+    )
+    configured = env["client"].get("/api/v2/proxy-addresses", headers=_admin(env))
+    assert configured.status_code == 200
+    assert configured.json()["addresses"] == [
+        {"url": "http://lan.example:8317", "display_name": "内网"},
+        {"url": "http://wan.example:8317", "display_name": "公网"},
+    ]
+
+
+def test_client_setup_multiple_addresses_pick_proxy_url(env):
+    _seed_proxy_addresses(
+        env,
+        [
+            {"url": "http://lan.example:8317", "display_name": "内网"},
+            {"url": "http://wan.example:8317", "display_name": "公网"},
+        ],
+    )
+    key_id = _create_key(env).json()["id"]
+    resp = env["client"].get(
+        f"/api/v2/proxy-keys/{key_id}/client-setup",
+        params={"shell": "bash", "proxy_url": "http://wan.example:8317"},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["proxy_url"] == "http://wan.example:8317"
+    assert body["shell"] == "bash"
+    assert body["command"].startswith('HTTPS_PROXY="http://wan.example:8317"')
+    assert len(body["commands"]) == 4
 
 
 def test_client_setup_legacy_unrecoverable(env):

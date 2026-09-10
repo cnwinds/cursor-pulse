@@ -245,7 +245,9 @@ def create_app(
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)
     register_internal_proxy_routes(app, get_db, config)
-    register_proxy_keys_routes(app, get_db, require_capability, config)
+    register_proxy_keys_routes(
+        app, get_db, require_capability, config, require_user=_require_user
+    )
     register_assistant_capabilities_routes(
         app, get_db, require_capability, _team_repo, config
     )
