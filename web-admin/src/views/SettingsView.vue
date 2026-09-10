@@ -94,7 +94,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Edit } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useSettingsStore } from '@/stores/settings'
 import SettingEditDialog from '@/components/SettingEditDialog.vue'
