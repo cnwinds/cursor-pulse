@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -101,6 +102,14 @@ class MemberIdentity(Base):
 
 class UsageIngestion(Base):
     __tablename__ = "usage_ingestions"
+    __table_args__ = (
+        Index(
+            "ix_usage_ingestions_account_period_ingested",
+            "account_id",
+            "billing_period",
+            "ingested_at",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), index=True, nullable=True)
@@ -289,6 +298,9 @@ class AiPlan(Base):
 
 class AiAccount(Base):
     __tablename__ = "ai_accounts"
+    __table_args__ = (
+        Index("ix_ai_accounts_team_status_deleted", "team_id", "status", "deleted_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), index=True, nullable=True)
@@ -425,6 +437,13 @@ class UsageSummary(Base):
 
 class AccountQuotaSnapshot(Base):
     __tablename__ = "account_quota_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_account_quota_snapshots_account_captured",
+            "account_id",
+            "captured_at",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
@@ -444,6 +463,9 @@ class AccountQuotaSnapshot(Base):
 
 class KeyLoan(Base):
     __tablename__ = "key_loans"
+    __table_args__ = (
+        Index("ix_key_loans_status_source", "status", "source_account_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     source_account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
@@ -597,6 +619,10 @@ class ProxyKey(Base):
 
 class ProxyKeyUsage(Base):
     __tablename__ = "proxy_key_usages"
+    __table_args__ = (
+        Index("ix_proxy_key_usages_key_ts", "proxy_key_id", "ts"),
+        Index("ix_proxy_key_usages_loan_ts", "loan_id", "ts"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     proxy_key_id: Mapped[str | None] = mapped_column(

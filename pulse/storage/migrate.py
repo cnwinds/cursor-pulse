@@ -744,6 +744,7 @@ def migrate_schema(engine: Engine) -> None:
 
     Base.metadata.create_all(engine)
     _migrate_member_identities_table(engine)
+    _ensure_read_path_indexes(engine)
     # personamem tables are initialized by assistant_platform (assistant.db), not pulse.db.
 
 
@@ -974,3 +975,45 @@ def _migrate_member_identities_table(engine: Engine) -> None:
             created += 1
         if created:
             logger.info("Backfilled %s member_identities rows", created)
+
+
+_READ_PATH_INDEXES: tuple[tuple[str, str, str], ...] = (
+    (
+        "account_quota_snapshots",
+        "ix_account_quota_snapshots_account_captured",
+        "account_id, captured_at",
+    ),
+    (
+        "usage_ingestions",
+        "ix_usage_ingestions_account_period_ingested",
+        "account_id, billing_period, ingested_at",
+    ),
+    ("proxy_key_usages", "ix_proxy_key_usages_key_ts", "proxy_key_id, ts"),
+    ("proxy_key_usages", "ix_proxy_key_usages_loan_ts", "loan_id, ts"),
+    ("key_loans", "ix_key_loans_status_source", "status, source_account_id"),
+    (
+        "ai_accounts",
+        "ix_ai_accounts_team_status_deleted",
+        "team_id, status, deleted_at",
+    ),
+)
+
+
+def _ensure_read_path_indexes(engine: Engine) -> None:
+    """Composite indexes for board / dashboard / proxy usage reads on existing DBs."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    for table, name, columns in _READ_PATH_INDEXES:
+        if table not in tables:
+            continue
+        col_names = {col["name"] for col in inspector.get_columns(table)}
+        needed = [part.strip() for part in columns.split(",") if part.strip()]
+        if any(col not in col_names for col in needed):
+            continue
+        existing = {idx["name"] for idx in inspector.get_indexes(table)}
+        if name in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})"))
+        logger.info("Added index %s on %s", name, table)
+        inspector = inspect(engine)

@@ -39,6 +39,7 @@ from pulse.tool_center.key_loan_lender import (
 )
 from pulse.tool_center.key_loan_present import (
     loan_payload,
+    loan_payloads,
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "issue_loan_key",
     "loan_display_expires_on",
     "loan_payload",
+    "loan_payloads",
     "reassign_loan_source",
     "recommend_lender_for_borrower",
     "request_self_service_loan",

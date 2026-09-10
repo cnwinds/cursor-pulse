@@ -180,11 +180,34 @@ def record_event(
 
 
 
-def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None) -> dict:
+def key_summaries(
+    session: Session, keys: list[ProxyKey], *, now: datetime | None = None
+) -> list[dict]:
     now = now or utcnow()
-    total_tokens, total_cost = usage_mod.total_usage(session, key.id)
-    used_5h = usage_mod.window_usage_cost(session, key.id, window=WINDOW_5H, now=now)
-    used_7d = usage_mod.window_usage_cost(session, key.id, window=WINDOW_7D, now=now)
+    ids = [key.id for key in keys]
+    totals = usage_mod.usage_totals_by_proxy_key(session, ids)
+    used_5h = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_5H)
+    used_7d = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_7D)
+    return [
+        _key_summary_row(
+            key,
+            total_tokens=totals.get(key.id, (0, 0))[0],
+            total_cost=totals.get(key.id, (0, 0))[1],
+            used_5h=used_5h.get(key.id, 0),
+            used_7d=used_7d.get(key.id, 0),
+        )
+        for key in keys
+    ]
+
+
+def _key_summary_row(
+    key: ProxyKey,
+    *,
+    total_tokens: int,
+    total_cost: int,
+    used_5h: int,
+    used_7d: int,
+) -> dict:
     return {
         "id": key.id,
         "key_hint": key.key_hint,
@@ -204,3 +227,7 @@ def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None)
         "window_5h_cost_cents": used_5h,
         "window_7d_cost_cents": used_7d,
     }
+
+
+def key_summary(session: Session, key: ProxyKey, *, now: datetime | None = None) -> dict:
+    return key_summaries(session, [key], now=now)[0]

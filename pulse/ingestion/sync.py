@@ -78,6 +78,10 @@ def _apply_period_usage(
         total_pct=float(plan_usage["totalPercentUsed"]) if plan_usage.get("totalPercentUsed") is not None else None,
     )
     session.add(snapshot)
+    session.flush()
+    from pulse.tool_center.quota_reads import prune_quota_snapshots_for_account
+
+    prune_quota_snapshots_for_account(session, account.id)
     return snapshot
 
 

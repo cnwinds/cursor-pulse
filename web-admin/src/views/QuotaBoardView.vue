@@ -283,10 +283,8 @@ import {
   hasByokUsage,
   kindFamilyLabel,
   poolHasTokens,
-  periodsForBoardCycle,
   poolModelBreakdown,
   poolTotalTokens,
-  preferSummaryForBoardCycle,
   premiumApiSpend,
   thirdPartySpend,
   type UsageSummary,
@@ -323,6 +321,7 @@ interface BoardItem {
   exhausts_before_reset: boolean | null
   days_until_reset: number | null
   captured_at: string | null
+  usage_summary?: UsageSummary | null
 }
 
 const loading = ref(false)
@@ -446,48 +445,18 @@ function dailyBarWidth(tokens: number, totalTokens: number) {
   return `${Math.round((tokens / totalTokens) * 100)}%`
 }
 
-function currentPeriod() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
-
-async function loadSummaries(items: BoardItem[]) {
-  const periods = new Set<string>([currentPeriod()])
-  const cycleByAccount = new Map<string, string | null>()
-  for (const item of items) {
-    cycleByAccount.set(item.account_id, item.cycle_start)
-    for (const period of periodsForBoardCycle(item.cycle_start, item.cycle_end)) {
-      periods.add(period)
-    }
-  }
-  const rows = (
-    await Promise.all(
-      [...periods].map(async (period) => {
-        const res = await client.get('/api/v2/usage-summaries', { params: { period } })
-        return res.data as UsageSummary[]
-      }),
-    )
-  ).flat()
-
-  const merged: Record<string, UsageSummary> = {}
-  for (const row of rows) {
-    const picked = preferSummaryForBoardCycle(
-      merged[row.account_id],
-      row,
-      cycleByAccount.get(row.account_id),
-    )
-    if (picked) merged[row.account_id] = picked
-    else delete merged[row.account_id]
-  }
-  summaryMap.value = merged
-}
-
 async function loadAll() {
   loading.value = true
   try {
-    const boardRes = await client.get('/api/v2/quota-board')
+    const boardRes = await client.get('/api/v2/quota-board', {
+      params: { include_summaries: true },
+    })
     board.value = boardRes.data as BoardItem[]
-    await loadSummaries(board.value)
+    const merged: Record<string, UsageSummary> = {}
+    for (const item of board.value) {
+      if (item.usage_summary) merged[item.account_id] = item.usage_summary
+    }
+    summaryMap.value = merged
   } finally {
     loading.value = false
   }

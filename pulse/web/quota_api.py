@@ -33,13 +33,15 @@ from pulse.tool_center.key_loans import (
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
     loan_payload,
+    loan_payloads,
     reassign_loan_source,
     request_self_service_loan,
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
-from pulse.tool_center.quota_reads import latest_snapshots_for_team
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.tool_center.usage_summary_pick import attach_board_usage_summaries
 from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
@@ -156,15 +158,16 @@ def _status_rank(status: str) -> int:
     return {"exhausted": 0, "warning": 1, "healthy": 2, "unknown": 3}.get(status, 4)
 
 
-def build_quota_board_items(session: Session, team_id: str) -> list[dict]:
+def build_quota_board_items(
+    session: Session,
+    team_id: str,
+    *,
+    include_usage_summaries: bool = False,
+) -> list[dict]:
     repo = ToolCenterRepository(session, team_id)
     today = date.today()
-    snapshots = latest_snapshots_for_team(session, team_id)
-    accounts = [
-        account
-        for account in repo.list_active_accounts()
-        if account.vendor and account.vendor.slug == "cursor"
-    ]
+    accounts = repo.list_active_accounts(vendor_slug="cursor")
+    snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
     if member_ids:
@@ -186,6 +189,8 @@ def build_quota_board_items(session: Session, team_id: str) -> list[dict]:
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
+    if include_usage_summaries:
+        attach_board_usage_summaries(session, items)
     return items
 
 
@@ -206,9 +211,14 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         "/api/v2/quota-board",
         dependencies=[Depends(require_capability("accounts:read"))],
     )
-    def quota_board(session: Session = Depends(get_db)):
+    def quota_board(
+        include_summaries: bool = Query(default=False),
+        session: Session = Depends(get_db),
+    ):
         team, _ = team_repo_fn(session)
-        return build_quota_board_items(session, team.id)
+        return build_quota_board_items(
+            session, team.id, include_usage_summaries=include_summaries
+        )
 
     @app.get(
         "/api/v2/quota-board/recommend",
@@ -254,7 +264,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
         ).all()
         return {
-            "items": [loan_payload(loan, session) for loan in loans],
+            "items": loan_payloads(list(loans), session),
             "total": total,
             "limit": limit,
             "offset": offset,
@@ -295,7 +305,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
         ).all()
         return {
-            "items": [loan_payload(loan, session) for loan in loans],
+            "items": loan_payloads(list(loans), session),
             "total": total,
             "limit": limit,
             "offset": offset,

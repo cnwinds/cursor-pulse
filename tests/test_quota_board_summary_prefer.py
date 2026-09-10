@@ -1,34 +1,14 @@
 """Contract for quota-board UsageSummary picking (mirrors web-admin preferSummaryForBoardCycle).
 
-loadSummaries fetches the union of calendar months for *all* board cards. Without
-rejecting rows whose billing_cycle_start ≠ the card's snapshot cycle, a previous
-month (e.g. July) sticks on an account whose current cycle is August — so
-「本周期用量明细」 disagrees with the 「明细」 dialog date range.
+The board API attaches one UsageSummary per card. Without rejecting rows whose
+billing_cycle_start ≠ the card's snapshot cycle, a previous month (e.g. July)
+sticks on an account whose current cycle is August — so 「本周期用量明细」 disagrees
+with the 「明细」 dialog date range.
 """
 
 from __future__ import annotations
 
-
-def prefer_summary_for_board_cycle(
-    current: dict | None,
-    nxt: dict,
-    cycle_start: str | None,
-) -> dict | None:
-    """Keep in sync with web-admin/src/utils/usage.ts preferSummaryForBoardCycle."""
-    if cycle_start and nxt.get("billing_cycle_start") != cycle_start:
-        return current
-    if not current:
-        return nxt
-    cur_api = len(
-        ((current.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model")
-        or {}
-    )
-    next_api = len(
-        ((nxt.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model") or {}
-    )
-    if next_api != cur_api:
-        return nxt if next_api > cur_api else current
-    return nxt if (nxt.get("period") or "") > (current.get("period") or "") else current
+from pulse.tool_center.usage_summary_pick import prefer_summary_for_board_cycle
 
 
 def test_reject_previous_month_when_cycle_does_not_match():

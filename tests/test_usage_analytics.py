@@ -348,3 +348,25 @@ def test_overview_by_model_splits_same_model_by_kind_family(analytics_env):
     assert len(items) == 1
     assert items[0]["kind_family"] == "user_api_key"
     assert items[0]["tokens_total"] == 200
+
+
+def test_kpi_and_series_matches_overview_totals(analytics_env):
+    from pulse.storage.models import AiAccount
+    from pulse.tool_center.usage_analytics import (
+        build_usage_analytics_overview,
+        build_usage_kpi_and_series,
+    )
+
+    s = analytics_env["session_factory"]()
+    account = s.get(AiAccount, analytics_env["cursor_account"].id)
+    assert account is not None
+    start, end = date(2026, 7, 1), date(2026, 7, 2)
+    full = build_usage_analytics_overview(
+        s, account.team_id, start=start, end=end, timezone="Asia/Shanghai"
+    )
+    light = build_usage_kpi_and_series(
+        s, account.team_id, start=start, end=end, timezone="Asia/Shanghai"
+    )
+    s.close()
+    assert light["kpi"] == full["kpi"]
+    assert light["series_by_day"] == full["series_by_day"]

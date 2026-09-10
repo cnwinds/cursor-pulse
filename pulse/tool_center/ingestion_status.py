@@ -133,14 +133,64 @@ def _latest_ingestion(
     account_id: str,
     period: str,
 ) -> UsageIngestion | None:
-    return session.scalar(
-        select(UsageIngestion)
+    return _latest_ingestions_for_accounts(session, [account_id], period).get(account_id)
+
+
+def _latest_ingestions_for_accounts(
+    session: Session,
+    account_ids: list[str],
+    period: str,
+) -> dict[str, UsageIngestion]:
+    if not account_ids:
+        return {}
+    latest_at = (
+        select(
+            UsageIngestion.account_id.label("account_id"),
+            func.max(UsageIngestion.ingested_at).label("ingested_at"),
+        )
         .where(
-            UsageIngestion.account_id == account_id,
+            UsageIngestion.account_id.in_(account_ids),
             UsageIngestion.billing_period == period,
         )
-        .order_by(UsageIngestion.ingested_at.desc())
+        .group_by(UsageIngestion.account_id)
+        .subquery()
     )
+    latest: dict[str, UsageIngestion] = {}
+    for row in session.scalars(
+        select(UsageIngestion).join(
+            latest_at,
+            (UsageIngestion.account_id == latest_at.c.account_id)
+            & (UsageIngestion.ingested_at == latest_at.c.ingested_at)
+            & (UsageIngestion.billing_period == period),
+        )
+    ):
+        if row.account_id and (
+            row.account_id not in latest or row.id > latest[row.account_id].id
+        ):
+            latest[row.account_id] = row
+    return latest
+
+
+def _ingestion_record_stats(
+    session: Session, ingestion_ids: list[str]
+) -> dict[str, tuple[date | None, date | None, float | None]]:
+    if not ingestion_ids:
+        return {}
+    stats: dict[str, tuple[date | None, date | None, float | None]] = {}
+    rows = session.execute(
+        select(
+            UsageRecord.ingestion_id,
+            func.min(UsageRecord.event_date),
+            func.max(UsageRecord.event_date),
+            func.avg(UsageRecord.extraction_confidence),
+        )
+        .where(UsageRecord.ingestion_id.in_(ingestion_ids))
+        .group_by(UsageRecord.ingestion_id)
+    )
+    for ingestion_id, date_min, date_max, avg_conf in rows:
+        confidence = None if avg_conf is None else round(float(avg_conf), 4)
+        stats[ingestion_id] = (date_min, date_max, confidence)
+    return stats
 
 
 def _source_type_to_input_type(source_type: str) -> str:
@@ -157,9 +207,13 @@ def _ingestion_payload(
     *,
     member_names: dict[str, str],
     usage_summary: UsageSummary | None = None,
+    record_stats: tuple[date | None, date | None, float | None] | None = None,
 ) -> dict[str, Any]:
-    date_min, date_max = _ingestion_date_range(session, ingestion.id)
-    confidence = _avg_confidence(session, ingestion.id)
+    if record_stats is None:
+        date_min, date_max = _ingestion_date_range(session, ingestion.id)
+        confidence = _avg_confidence(session, ingestion.id)
+    else:
+        date_min, date_max, confidence = record_stats
     return {
         "id": ingestion.id,
         "id_prefix": ingestion.id[:8],
@@ -205,6 +259,9 @@ def build_account_ingestion_status(
     usage_summary: UsageSummary | None,
     latest_ingestion: UsageIngestion | None,
     credential: AiAccountCredential | None = None,
+    ingestions_by_id: dict[str, UsageIngestion] | None = None,
+    record_stats_by_id: dict[str, tuple[date | None, date | None, float | None]]
+    | None = None,
 ) -> dict[str, Any]:
     period_start, period_end = period_date_range(period)
     plan = account.plan
@@ -274,14 +331,26 @@ def build_account_ingestion_status(
         else:
             base["action_hint"] = "已自动同步"
         if usage_summary:
-            ingestion = (
-                session.get(UsageIngestion, usage_summary.latest_ingestion_id)
-                if usage_summary.latest_ingestion_id
-                else latest_ingestion
-            )
+            ingestion = None
+            if usage_summary.latest_ingestion_id:
+                if ingestions_by_id is not None:
+                    ingestion = ingestions_by_id.get(usage_summary.latest_ingestion_id)
+                else:
+                    ingestion = session.get(
+                        UsageIngestion, usage_summary.latest_ingestion_id
+                    )
+            if ingestion is None:
+                ingestion = latest_ingestion
             if ingestion:
+                stats = None
+                if record_stats_by_id is not None:
+                    stats = record_stats_by_id.get(ingestion.id)
                 payload = _ingestion_payload(
-                    session, ingestion, member_names=member_names, usage_summary=usage_summary
+                    session,
+                    ingestion,
+                    member_names=member_names,
+                    usage_summary=usage_summary,
+                    record_stats=stats,
                 )
                 base["ingestion"] = payload
                 base["submission"] = payload
@@ -305,6 +374,50 @@ def _credential_map(session: Session, account_ids: list[str]) -> dict[str, AiAcc
     return {row.account_id: row for row in rows}
 
 
+def summarize_ingestion_status(session: Session, team_id: str) -> dict[str, Any]:
+    """Counts-only ingestion summary (no per-account rows or usage-record scans)."""
+    accounts = list(
+        session.scalars(
+            select(AiAccount)
+            .options(joinedload(AiAccount.vendor))
+            .where(
+                AiAccount.team_id == team_id,
+                AiAccount.deleted_at.is_(None),
+                AiAccount.status.in_(_ACCOUNT_ACTIVE_STATUSES),
+            )
+        )
+    )
+    credentials = _credential_map(session, [a.id for a in accounts])
+    state_counts: dict[str, int] = {
+        "missing_primary": 0,
+        "no_credential": 0,
+        "sync_failed": 0,
+        "sync_stale": 0,
+        "synced": 0,
+        "unsubmitted": 0,
+        "not_submitted": 0,
+    }
+    submitted_count = 0
+    cursor_done = {"synced", "sync_stale"}
+    for account in accounts:
+        if not account.primary_member_id:
+            state_counts["missing_primary"] += 1
+            continue
+        state = resolve_account_ingestion_status(
+            account, "", credentials.get(account.id), None, None
+        )
+        state_counts[state] = state_counts.get(state, 0) + 1
+        if state in cursor_done:
+            submitted_count += 1
+        if state == "unsubmitted":
+            state_counts["not_submitted"] += 1
+    return {
+        "total_accounts": len(accounts),
+        "submitted_count": submitted_count,
+        **state_counts,
+    }
+
+
 def build_ingestion_status_payload(
     session: Session,
     team_id: str,
@@ -325,6 +438,7 @@ def build_ingestion_status_payload(
             )
             .where(
                 AiAccount.team_id == team_id,
+                AiAccount.deleted_at.is_(None),
                 AiAccount.status.in_(_ACCOUNT_ACTIVE_STATUSES),
             )
             .order_by(AiAccount.account_identifier)
@@ -335,14 +449,40 @@ def build_ingestion_status_payload(
         viewer_member_id=viewer.id,
         see_all=see_all,
     )
+    visible_ids = [a.id for a in visible]
 
-    summaries = {
-        row.account_id: row
-        for row in session.scalars(
-            select(UsageSummary).where(UsageSummary.period == period)
-        ).all()
+    summaries: dict[str, UsageSummary] = {}
+    if visible_ids:
+        summaries = {
+            row.account_id: row
+            for row in session.scalars(
+                select(UsageSummary)
+                .join(AiAccount, UsageSummary.account_id == AiAccount.id)
+                .where(
+                    AiAccount.team_id == team_id,
+                    UsageSummary.period == period,
+                    UsageSummary.account_id.in_(visible_ids),
+                )
+            ).all()
+        }
+    credentials = _credential_map(session, visible_ids)
+    latest_by_account = _latest_ingestions_for_accounts(session, visible_ids, period)
+    needed_ingestion_ids = {
+        ingestion.id for ingestion in latest_by_account.values()
     }
-    credentials = _credential_map(session, [a.id for a in visible])
+    for summary in summaries.values():
+        if summary.latest_ingestion_id:
+            needed_ingestion_ids.add(summary.latest_ingestion_id)
+    ingestions_by_id: dict[str, UsageIngestion] = {
+        ingestion.id: ingestion for ingestion in latest_by_account.values()
+    }
+    missing_ids = needed_ingestion_ids - set(ingestions_by_id)
+    if missing_ids:
+        for ingestion in session.scalars(
+            select(UsageIngestion).where(UsageIngestion.id.in_(missing_ids))
+        ):
+            ingestions_by_id[ingestion.id] = ingestion
+    record_stats_by_id = _ingestion_record_stats(session, list(needed_ingestion_ids))
 
     account_rows: list[dict[str, Any]] = []
     state_counts: dict[str, int] = {
@@ -363,8 +503,10 @@ def build_ingestion_status_payload(
             period,
             member_names=member_names,
             usage_summary=summaries.get(account.id),
-            latest_ingestion=_latest_ingestion(session, account.id, period),
+            latest_ingestion=latest_by_account.get(account.id),
             credential=credentials.get(account.id),
+            ingestions_by_id=ingestions_by_id,
+            record_stats_by_id=record_stats_by_id,
         )
         account_rows.append(row)
         ingestion_state = row.get("ingestion_state", "")

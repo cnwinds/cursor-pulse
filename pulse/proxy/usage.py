@@ -54,13 +54,48 @@ def window_usage_tokens(session: Session, proxy_key_id: str, *, now: datetime | 
 
 
 def total_usage(session: Session, proxy_key_id: str) -> tuple[int, int]:
-    row = session.execute(
+    return usage_totals_by_proxy_key(session, [proxy_key_id]).get(proxy_key_id, (0, 0))
+
+
+def usage_totals_by_proxy_key(
+    session: Session, proxy_key_ids: list[str]
+) -> dict[str, tuple[int, int]]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
         select(
+            ProxyKeyUsage.proxy_key_id,
             func.coalesce(func.sum(ProxyKeyUsage.total_tokens), 0),
             func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0),
-        ).where(ProxyKeyUsage.proxy_key_id == proxy_key_id)
-    ).one()
-    return int(row[0]), int(row[1])
+        )
+        .where(ProxyKeyUsage.proxy_key_id.in_(ids))
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: (int(tokens), int(cents)) for key_id, tokens, cents in rows}
+
+
+def window_costs_by_proxy_key(
+    session: Session,
+    proxy_key_ids: list[str],
+    *,
+    since,
+) -> dict[str, int]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(
+            ProxyKeyUsage.proxy_key_id,
+            func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0),
+        )
+        .where(
+            ProxyKeyUsage.proxy_key_id.in_(ids),
+            ProxyKeyUsage.ts >= since,
+        )
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: int(cents) for key_id, cents in rows}
 
 
 def loan_proxy_usage_summary(
