@@ -261,6 +261,19 @@ class ProxyConfig(BaseModel):
     public_url: str = "http://127.0.0.1:8317"
 
 
+class ProxyAddress(BaseModel):
+    """单个代理地址配置"""
+
+    url: str
+    display_name: str
+
+
+class ProxyAddressesConfig(BaseModel):
+    """系统设置中的多代理地址配置"""
+
+    addresses: list[ProxyAddress] = Field(default_factory=list)
+
+
 class WebSearchConfig(BaseModel):
     """Pulse-layer web search / fetch settings. API keys never leave this layer."""
 
@@ -297,6 +310,7 @@ class AppConfig(BaseModel):
     capability_bridge: CapabilityBridgeConfig = Field(default_factory=CapabilityBridgeConfig)
     internal: InternalApiConfig = Field(default_factory=InternalApiConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+    proxy_addresses: ProxyAddressesConfig = Field(default_factory=ProxyAddressesConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 

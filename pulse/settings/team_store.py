@@ -22,6 +22,7 @@ EDITABLE_SECTIONS = frozenset(
         "dingtalk",
         "feishu",
         "bot",
+        "proxy_addresses",
     }
 )
 

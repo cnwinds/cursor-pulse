@@ -32,19 +32,15 @@
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <el-dropdown
+          <el-button
             v-if="row.status === 'active'"
-            trigger="click"
-            @command="(shell: ShellKind) => copyCommand(row.id, shell)"
+            size="small"
+            type="primary"
+            plain
+            @click="openCommandDialog(row.id)"
           >
-            <el-button size="small" type="primary" plain>复制命令</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="powershell">Windows PowerShell</el-dropdown-item>
-                <el-dropdown-item command="bash">Linux / macOS</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+            复制命令
+          </el-button>
           <el-button
             v-if="row.status === 'active'"
             link
@@ -69,14 +65,19 @@
           </template>
         </el-input>
         <div class="reveal-actions">
-          <el-button type="primary" plain @click="copyRevealCommand('powershell')">复制 PowerShell 命令</el-button>
-          <el-button type="primary" plain @click="copyRevealCommand('bash')">复制 Linux 命令</el-button>
+          <el-button type="primary" plain @click="openRevealCommandDialog">复制命令</el-button>
         </div>
       </div>
       <template #footer>
         <el-button type="primary" @click="closeKeyReveal">我已保存</el-button>
       </template>
     </el-dialog>
+
+    <CommandSelectDialog
+      :open="commandDialogVisible"
+      :commands="commandOptions"
+      @close="commandDialogVisible = false"
+    />
   </div>
 </template>
 
@@ -84,6 +85,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
+import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 
@@ -107,6 +109,9 @@ const revealedKey = ref<{
   api_key: string
   source_account_identifier: string
 } | null>(null)
+
+const commandDialogVisible = ref(false)
+const commandOptions = ref<CommandOption[]>([])
 
 function loanStatusType(status: string) {
   return { active: 'primary', revoked: 'info', expired: 'warning' }[status] || 'info'
@@ -156,22 +161,20 @@ async function copyKey() {
   }
 }
 
-async function copyCommand(loanId: string, shell: ShellKind) {
+async function openCommandDialog(loanId: string) {
   try {
-    const res = await client.get(`/api/v2/loans/${loanId}/client-setup`, {
-      params: { shell },
-    })
-    await copyText(res.data.command)
-    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
+    const res = await client.get(`/api/v2/loans/${loanId}/client-setup`)
+    commandOptions.value = res.data.commands || []
+    commandDialogVisible.value = true
   } catch (err: any) {
     const detail = err?.response?.data?.detail
-    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '复制失败')
+    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
   }
 }
 
-async function copyRevealCommand(shell: ShellKind) {
+async function openRevealCommandDialog() {
   if (!revealedKey.value?.loan_id) return
-  await copyCommand(revealedKey.value.loan_id, shell)
+  await openCommandDialog(revealedKey.value.loan_id)
 }
 
 function closeKeyReveal() {

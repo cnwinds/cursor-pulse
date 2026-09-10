@@ -436,6 +436,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
+        from pulse.settings import effective_config
+
         team, _ = team_repo_fn(session)
         loan = session.scalar(
             select(KeyLoan)
@@ -457,16 +459,33 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         except KeyLoanError as exc:
             raise HTTPException(status_code=410, detail=str(exc)) from exc
 
-        proxy_url = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
-        command = proxy_service.build_client_command(
-            shell=shell, proxy_url=proxy_url, plaintext_key=plaintext
-        )
+        runtime = effective_config(config, session, team.id)
+        proxy_addresses = runtime.proxy_addresses.addresses
+
+        if not proxy_addresses:
+            fallback_url = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
+            proxy_addresses = [
+                type("ProxyAddress", (), {"url": fallback_url, "display_name": "默认代理"})()
+            ]
+
+        commands = []
+        for addr in proxy_addresses:
+            proxy_url = addr.url.rstrip("/")
+            for sh in ["powershell", "bash"]:
+                command = proxy_service.build_client_command(
+                    shell=sh, proxy_url=proxy_url, plaintext_key=plaintext
+                )
+                commands.append({
+                    "proxy_url": proxy_url,
+                    "proxy_name": addr.display_name,
+                    "shell": sh,
+                    "command": command,
+                })
+
         return {
             "plaintext_key": plaintext,
             "delivery_mode": getattr(loan, "delivery_mode", None) or "cursor_direct",
-            "proxy_url": proxy_url,
-            "shell": shell,
-            "command": command,
+            "commands": commands,
         }
 
     @app.get(

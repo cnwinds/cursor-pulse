@@ -160,6 +160,8 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("proxy:read")),
     ):
+        from pulse.settings import effective_config
+
         key = _get_key(session, key_id)
         if not _can_reveal_key(user, key):
             raise HTTPException(status_code=403, detail="无权查看该 Key")
@@ -170,15 +172,34 @@ def register_proxy_keys_routes(app, get_db, require_capability, config) -> None:
                 status_code=410,
                 detail="该 Key 不可还原（历史 Key 未加密保存），请新建",
             )
-        proxy_url = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
-        command = proxy_service.build_client_command(
-            shell=shell, proxy_url=proxy_url, plaintext_key=plaintext
-        )
+
+        team_id = key.team_id
+        runtime = effective_config(config, session, team_id)
+        proxy_addresses = runtime.proxy_addresses.addresses
+
+        if not proxy_addresses:
+            fallback_url = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
+            proxy_addresses = [
+                type("ProxyAddress", (), {"url": fallback_url, "display_name": "默认代理"})()
+            ]
+
+        commands = []
+        for addr in proxy_addresses:
+            proxy_url = addr.url.rstrip("/")
+            for sh in ["powershell", "bash"]:
+                command = proxy_service.build_client_command(
+                    shell=sh, proxy_url=proxy_url, plaintext_key=plaintext
+                )
+                commands.append({
+                    "proxy_url": proxy_url,
+                    "proxy_name": addr.display_name,
+                    "shell": sh,
+                    "command": command,
+                })
+
         return {
             "plaintext_key": plaintext,
-            "proxy_url": proxy_url,
-            "shell": shell,
-            "command": command,
+            "commands": commands,
         }
     @app.patch(
         "/api/v2/proxy-keys/{key_id}",

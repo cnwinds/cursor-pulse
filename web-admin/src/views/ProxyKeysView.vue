@@ -38,19 +38,15 @@
           <el-table-column label="操作" width="300" fixed="right">
             <template #default="{ row }">
               <el-button size="small" @click="openUsages(row)">用量</el-button>
-              <el-dropdown
+              <el-button
                 v-if="canCopyCommand(row)"
-                trigger="click"
-                @command="(shell: ShellKind) => copyCommand(row, shell)"
+                size="small"
+                type="primary"
+                plain
+                @click="openCommandDialog(row)"
               >
-                <el-button size="small" type="primary" plain>复制命令</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="powershell">Windows PowerShell</el-dropdown-item>
-                    <el-dropdown-item command="bash">Linux / macOS</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+                复制命令
+              </el-button>
               <el-button v-if="canWrite" size="small" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canWrite && row.status === 'suspended'" size="small" type="warning" @click="resume(row)">恢复</el-button>
               <el-button v-if="canWrite && row.status !== 'revoked'" size="small" type="danger" @click="revoke(row)">吊销</el-button>
@@ -252,8 +248,7 @@
         </template>
       </el-input>
       <div class="created-actions">
-        <el-button type="primary" plain @click="copyCreatedCommand('powershell')">复制 PowerShell 命令</el-button>
-        <el-button type="primary" plain @click="copyCreatedCommand('bash')">复制 Linux 命令</el-button>
+        <el-button type="primary" plain @click="openCreatedCommandDialog">复制命令</el-button>
       </div>
       <template #footer>
         <el-button type="primary" @click="createdVisible = false">完成</el-button>
@@ -390,6 +385,12 @@
       </el-table>
       </div>
     </el-drawer>
+
+    <CommandSelectDialog
+      :open="commandDialogVisible"
+      :commands="commandOptions"
+      @close="commandDialogVisible = false"
+    />
   </div>
 </template>
 
@@ -402,6 +403,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
+import CommandSelectDialog, { type CommandOption } from '@/components/CommandSelectDialog.vue'
 
 type ShellKind = 'bash' | 'powershell'
 
@@ -542,6 +544,9 @@ const usagesVisible = ref(false)
 const usagesLoading = ref(false)
 const usageLoaded = ref(false)
 const usagesKeyName = ref('')
+
+const commandDialogVisible = ref(false)
+const commandOptions = ref<CommandOption[]>([])
 
 const createForm = reactive({
   member_id: '',
@@ -691,27 +696,32 @@ async function copyCreated() {
   }
 }
 
-async function copyCreatedCommand(shell: ShellKind) {
+async function openCreatedCommandDialog() {
+  if (!createdKey.value) return
   try {
-    const cmd = buildLocalCommand(shell, createdProxyUrl.value, createdKey.value)
-    await copyText(cmd)
-    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
+    const keyId = keys.value[keys.value.length - 1]?.id
+    if (!keyId) {
+      ElMessage.error('无法获取密钥 ID')
+      return
+    }
+    const res = await client.get(`/api/v2/proxy-keys/${keyId}/client-setup`)
+    commandOptions.value = res.data.commands || []
+    commandDialogVisible.value = true
   } catch (err: any) {
-    ElMessage.error(err?.message || '复制失败')
+    const detail = err?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : err?.message || '获取命令失败')
   }
 }
 
-async function copyCommand(row: ProxyKeyRow, shell: ShellKind) {
+async function openCommandDialog(row: ProxyKeyRow) {
   try {
-    const res = await client.get(`/api/v2/proxy-keys/${row.id}/client-setup`, {
-      params: { shell },
-    })
-    await copyText(res.data.command)
-    ElMessage.success(shell === 'powershell' ? '已复制 PowerShell 命令' : '已复制 Linux 命令')
+    const res = await client.get(`/api/v2/proxy-keys/${row.id}/client-setup`)
+    commandOptions.value = res.data.commands || []
+    commandDialogVisible.value = true
   } catch (err: any) {
     const detail = err?.response?.data?.detail
     ElMessage.error(
-      typeof detail === 'string' ? detail : err?.message || '复制失败'
+      typeof detail === 'string' ? detail : err?.message || '获取命令失败'
     )
   }
 }
