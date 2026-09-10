@@ -125,6 +125,7 @@ def issue_loan_key(
     delivery_mode: str = DELIVERY_PROXY_ALIAS,
     cursor_client: CursorApiClient | None = None,
     loan_selection: LoanSelectionConfig | None = None,
+    enforce_loan_cap: bool = True,
 ) -> dict:
     mode = (delivery_mode or DELIVERY_PROXY_ALIAS).strip()
     if mode != DELIVERY_PROXY_ALIAS:
@@ -170,7 +171,10 @@ def issue_loan_key(
         )
         or 0
     )
-    if active_loan_count >= selection.max_active_loans_per_account:
+    if (
+        enforce_loan_cap
+        and active_loan_count >= selection.max_active_loans_per_account
+    ):
         raise KeyLoanError("该账号借用名额已满，请选择其他账号")
 
     borrower_name = borrower.display_name.replace(" ", "-")
@@ -249,6 +253,7 @@ def reassign_loan_source(
     bound_by_member_id: str,
     cursor_client: CursorApiClient | None = None,
     loan_selection: LoanSelectionConfig | None = None,
+    enforce_loan_cap: bool = True,
 ) -> dict:
     """更换出借账号，保持同一 pka_ / loan id；新建远端 Key。
 
@@ -302,7 +307,10 @@ def reassign_loan_source(
         )
         or 0
     )
-    if active_loan_count >= selection.max_active_loans_per_account:
+    if (
+        enforce_loan_cap
+        and active_loan_count >= selection.max_active_loans_per_account
+    ):
         raise KeyLoanError("新出借账号借用名额已满，请选择其他账号")
 
     borrower = session.get(Member, loan.borrower_member_id) if loan.borrower_member_id else None

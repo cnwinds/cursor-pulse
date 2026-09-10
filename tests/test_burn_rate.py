@@ -239,6 +239,26 @@ def test_recommend_filters_accounts_at_loan_cap():
     assert ranked == []
 
 
+def test_recommend_includes_accounts_at_loan_cap_when_not_excluded():
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="full",
+        used_cents=1000,
+        remaining_cents=6000,
+        total_pct=20.0,
+    )
+    ranked = recommend_lenders(
+        [_candidate(snap, account_id="full", active_loans=3)],
+        today=TODAY,
+        now=NOW,
+        exclude_at_loan_cap=False,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["account_id"] == "full"
+    assert ranked[0]["active_loans"] == 3
+
+
 def test_recommend_penalizes_but_allows_partially_loaded_account():
     loaded = _snapshot(
         cycle_start=date(2026, 7, 1),

@@ -21,7 +21,7 @@ from pulse.tool_center.key_loans import (
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.auth_tokens import create_access_token
 from tests.conftest import mock_cursor_key_exchange
-from tests.test_quota_api import TEST_KEY, _headers
+from tests.test_quota_api import TEST_KEY, _headers, _make_active_loan
 
 pytest_plugins = ["tests.test_quota_api"]
 
@@ -205,4 +205,40 @@ def test_reassign_source_api(mock_client_cls, quota_env):
         assert reveal_loan_user_key(loan, TEST_KEY, s2) == pka
         assert hash_proxy_key(pka) == loan.alias_key_hash
         s2.close()
+    session.close()
+
+
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
+def test_reassign_source_api_allows_over_cap(mock_client_cls, quota_env):
+    env = quota_env
+    client = env["client"]
+    config = env["config"]
+    owner = env["owner"]
+    borrower = env["borrower"]
+    token = create_access_token(config, owner)
+
+    session = env["session_factory"]()
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    source_a, source_b = _prepare_two_lenders(session, env, mock_client)
+    _make_active_loan(session, source_b, borrower, owner)
+    _make_active_loan(session, source_b, borrower, owner)
+    session.commit()
+
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
+        issue = client.post(
+            f"/api/v2/accounts/{source_a.id}/loan-key",
+            headers=_headers(token),
+            json={"borrower_member_id": borrower.id, "auto_revoke_on_reset": True},
+        )
+        assert issue.status_code == 200, issue.text
+        loan_id = issue.json()["loan_id"]
+
+        reassigned = client.post(
+            f"/api/v2/loans/{loan_id}/reassign-source",
+            headers=_headers(token),
+            json={"source_account_id": source_b.id},
+        )
+        assert reassigned.status_code == 200, reassigned.text
+        assert reassigned.json()["source_account_id"] == source_b.id
     session.close()

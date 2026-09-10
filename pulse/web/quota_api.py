@@ -25,6 +25,7 @@ from pulse.tool_center.burn_rate import (
     display_remaining_cents,
     recommend_lenders,
 )
+from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
@@ -83,6 +84,7 @@ def _board_item(
     today: date,
     *,
     member_names: dict[str, str] | None = None,
+    active_loans: int = 0,
 ) -> dict:
     primary_member_name = None
     if account.primary_member_id and member_names:
@@ -97,6 +99,7 @@ def _board_item(
         "usage_resets_on": account.usage_resets_on.isoformat() if account.usage_resets_on else None,
         "resets_on_source": account.resets_on_source,
         "has_snapshot": snapshot is not None,
+        "active_loans": active_loans,
     }
     if not snapshot:
         return {
@@ -169,10 +172,19 @@ def build_quota_board_items(session: Session, team_id: str) -> list[dict]:
             select(Member).where(Member.id.in_(member_ids))
         ).all()
         member_names = {m.id: m.display_name for m in members}
+    loan_counts = active_loan_counts_by_account(session, team_id)
     items = []
     for account in accounts:
         snapshot = snapshots.get(account.id)
-        items.append(_board_item(account, snapshot, today, member_names=member_names))
+        items.append(
+            _board_item(
+                account,
+                snapshot,
+                today,
+                member_names=member_names,
+                active_loans=loan_counts.get(account.id, 0),
+            )
+        )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
     return items
 
@@ -210,7 +222,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         today = date.today()
         candidates = build_lender_candidates(session, team.id)
         ranked = recommend_lenders(
-            candidates, today, loan_selection=config.tool_center.loan_selection
+            candidates,
+            today,
+            loan_selection=config.tool_center.loan_selection,
+            exclude_at_loan_cap=False,
         )
         return ranked[:limit]
 
@@ -364,6 +379,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 key_name=body.key_name,
                 delivery_mode=body.delivery_mode,
                 loan_selection=config.tool_center.loan_selection,
+                enforce_loan_cap=False,
             )
             log_admin_action(
                 session,
@@ -588,6 +604,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 new_source_account_id=body.source_account_id,
                 bound_by_member_id=user.member.id,
                 loan_selection=config.tool_center.loan_selection,
+                enforce_loan_cap=False,
             )
             # Commit loan→new credential before remote-revoking the old Cursor key,
             # so a failed commit cannot leave pka_ pointing at a revoked remote key.

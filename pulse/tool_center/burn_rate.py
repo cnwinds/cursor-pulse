@@ -300,12 +300,15 @@ def _hard_filter_reason(
     now: datetime,
     *,
     enforce_loan_cap: bool = True,
+    exclude_at_loan_cap: bool | None = None,
 ) -> str | None:
     """返回排除原因码；通过硬过滤则 None。
 
     借 Key（enforce_loan_cap=True）用 total_pct / burn_rate 的 exhausted。
     代理入池（False）用 Snapshot Headroom：两桶都满才 exhausted，与 Go
     per-bucket 选择对齐（入池 OR，请求时按桶过滤）。
+    exclude_at_loan_cap 为 None 时跟随 enforce_loan_cap；管理员选账号列表
+    可传 False，只放开人数上限、仍走借用路径打分。
     """
     analysis = analyze_burn_rate(cand.snapshot, today)
     if enforce_loan_cap:
@@ -321,7 +324,10 @@ def _hard_filter_reason(
         # override per-bucket Snapshot Headroom (OR intake rule).
         if enforce_loan_cap or analysis.status != "exhausted":
             return "exhausts_before_reset"
-    if enforce_loan_cap and cand.active_loans >= cfg.max_active_loans_per_account:
+    should_exclude_cap = (
+        enforce_loan_cap if exclude_at_loan_cap is None else exclude_at_loan_cap
+    )
+    if should_exclude_cap and cand.active_loans >= cfg.max_active_loans_per_account:
         return "loan_cap"
     deadline_at = lender_deadline_at(
         cand.snapshot.cycle_end,
@@ -385,11 +391,14 @@ def _rank_passing_candidates(
     now: datetime,
     *,
     enforce_loan_cap: bool = True,
+    exclude_at_loan_cap: bool | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """硬过滤 + 打分。返回 (ranked_payloads, excluded_payloads)。
 
     enforce_loan_cap=False 时：不按在借人数硬过滤，打分忽略 L（load）因子；
     exhausted 改为两桶 Snapshot Headroom 都满才排除（见 snapshot_has_any_pool_headroom）。
+    exclude_at_loan_cap=False 且 enforce_loan_cap=True：仍用借用打分，但不因
+    在借人数达上限排除。
     """
     rows: list[dict] = []
     excluded: list[dict] = []
@@ -397,7 +406,12 @@ def _rank_passing_candidates(
 
     for cand in candidates:
         reason = _hard_filter_reason(
-            cand, cfg, today, now, enforce_loan_cap=enforce_loan_cap
+            cand,
+            cfg,
+            today,
+            now,
+            enforce_loan_cap=enforce_loan_cap,
+            exclude_at_loan_cap=exclude_at_loan_cap,
         )
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
@@ -524,6 +538,7 @@ def recommend_lenders(
     loan_selection: LoanSelectionConfig | None = None,
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
+    exclude_at_loan_cap: bool | None = None,
 ) -> list[dict]:
     """硬过滤后按待消化压力排序。
 
@@ -542,7 +557,12 @@ def recommend_lenders(
     if today is None:
         today = now.date()
     ranked, _ = _rank_passing_candidates(
-        candidates, cfg, today, now, enforce_loan_cap=enforce_loan_cap
+        candidates,
+        cfg,
+        today,
+        now,
+        enforce_loan_cap=enforce_loan_cap,
+        exclude_at_loan_cap=exclude_at_loan_cap,
     )
     return ranked
 
@@ -554,6 +574,7 @@ def explain_lender_selection(
     loan_selection: LoanSelectionConfig | None = None,
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
+    exclude_at_loan_cap: bool | None = None,
 ) -> dict:
     """与 recommend_lenders 同源打分，额外返回硬过滤排除项。"""
     cfg = loan_selection or LoanSelectionConfig()
@@ -563,6 +584,11 @@ def explain_lender_selection(
     if today is None:
         today = now.date()
     ranked, excluded = _rank_passing_candidates(
-        candidates, cfg, today, now, enforce_loan_cap=enforce_loan_cap
+        candidates,
+        cfg,
+        today,
+        now,
+        enforce_loan_cap=enforce_loan_cap,
+        exclude_at_loan_cap=exclude_at_loan_cap,
     )
     return {"ranked": ranked, "excluded": excluded}
