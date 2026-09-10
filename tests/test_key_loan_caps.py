@@ -149,6 +149,29 @@ def test_recommend_then_full_account_is_rejected_at_issue(cap_env):
         _issue(env, mock_client, b3)
 
 
+def test_issue_allows_over_cap_when_not_enforced(cap_env):
+    env = cap_env
+    mock_client = _mock_client(env)
+    _bind_lender_primary(env, mock_client)
+    b1, b2, b3 = (_add_borrower(env, str(i)) for i in (1, 2, 3))
+
+    _issue(env, mock_client, b1)
+    _issue(env, mock_client, b2)
+    third = issue_loan_key(
+        env["session"],
+        TEST_KEY,
+        team_id=env["repo"].team_id,
+        source_account_id=env["lender"].id,
+        borrower_member_id=b3.id,
+        bound_by_member_id=env["admin"].id,
+        cursor_client=mock_client,
+        enforce_loan_cap=False,
+    )
+    assert third["loan_id"]
+    loan_svc = KeyLoanService(env["session"], TEST_KEY, cursor_client=mock_client)
+    assert len(loan_svc.list_active_loans()) == 3
+
+
 def test_lock_timeout_translated_to_business_error():
     session = MagicMock()
     session.get_bind.return_value.dialect.name = "sqlite"

@@ -40,7 +40,7 @@ def loan_display_expires_on(loan: KeyLoan, account: AiAccount | None) -> date | 
     return account_loan_deadline(account)
 
 
-def _active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, int]:
+def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, int]:
     rows = session.execute(
         select(KeyLoan.source_account_id, func.count())
         .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
@@ -59,7 +59,7 @@ def build_lender_candidates(
     """组装出借候选：最新快照 + renews_on + 当前在借人数。"""
     exclude_account_ids = exclude_account_ids or set()
     snapshots = latest_snapshots_for_team(session, team_id)
-    loan_counts = _active_loan_counts_by_account(session, team_id)
+    loan_counts = active_loan_counts_by_account(session, team_id)
     repo = ToolCenterRepository(session, team_id)
     accounts = [
         account

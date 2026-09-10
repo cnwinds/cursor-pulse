@@ -154,7 +154,7 @@
           <el-select
             v-model="loanForm.source_account_id"
             filterable
-            placeholder="推荐 Top 10（按富余度排序）"
+            placeholder="选择借出账号（显示在借人数，含已满员）"
             style="width: 100%"
           >
             <el-option
@@ -361,7 +361,7 @@ interface Member {
   display_name: string
 }
 
-const LOAN_SOURCE_OPTION_LIMIT = 10
+const LOAN_SOURCE_RECOMMEND_LIMIT = 50
 
 interface RecommendItem {
   account_id: string
@@ -369,6 +369,7 @@ interface RecommendItem {
   primary_member_name?: string | null
   remaining_headroom_pct: number
   days_until_reset: number
+  active_loans?: number
 }
 
 interface QuotaBoardItem {
@@ -379,13 +380,15 @@ interface QuotaBoardItem {
   days_until_reset: number | null
   status?: string | null
   has_snapshot?: boolean
+  active_loans?: number | null
 }
 
 function lenderOptionLabel(r: RecommendItem) {
   const id = r.account_identifier || r.account_id
   const owner = r.primary_member_name?.trim()
   const head = owner ? `${id} · ${owner}` : id
-  return `${head}（剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天）`
+  const loans = r.active_loans ?? 0
+  return `${head}（在借 ${loans} · 剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天）`
 }
 
 function boardToRecommendItem(row: QuotaBoardItem): RecommendItem {
@@ -395,18 +398,25 @@ function boardToRecommendItem(row: QuotaBoardItem): RecommendItem {
     primary_member_name: row.primary_member_name,
     remaining_headroom_pct: row.remaining_headroom_pct ?? 0,
     days_until_reset: row.days_until_reset ?? 0,
+    active_loans: row.active_loans ?? 0,
   }
 }
 
-/** 推荐优先，不足时从额度看板按余量补齐到最多 10 个可选项。 */
+/** 推荐排序优先，再补齐看板中未耗尽账号（含已达在借人数上限）。 */
 function buildLoanSourceOptions(
   ranked: RecommendItem[],
   board: QuotaBoardItem[],
-  limit = LOAN_SOURCE_OPTION_LIMIT,
 ): RecommendItem[] {
-  const options = ranked.slice(0, limit)
-  if (options.length >= limit) return options
-  const seen = new Set(options.map((r) => r.account_id))
+  const options: RecommendItem[] = []
+  const seen = new Set<string>()
+  for (const r of ranked) {
+    if (!r.account_id || seen.has(r.account_id)) continue
+    seen.add(r.account_id)
+    options.push({
+      ...r,
+      active_loans: r.active_loans ?? 0,
+    })
+  }
   const fillers = board
     .filter(
       (row) =>
@@ -420,12 +430,7 @@ function buildLoanSourceOptions(
       (a, b) => (b.remaining_headroom_pct ?? -1) - (a.remaining_headroom_pct ?? -1),
     )
     .map(boardToRecommendItem)
-  for (const row of fillers) {
-    if (options.length >= limit) break
-    if (seen.has(row.account_id)) continue
-    seen.add(row.account_id)
-    options.push(row)
-  }
+  options.push(...fillers)
   return options
 }
 
@@ -570,7 +575,7 @@ async function loadLoanDialogData() {
   const [membersRes, recommendRes, boardRes] = await Promise.all([
     client.get('/api/v2/members'),
     client.get('/api/v2/quota-board/recommend', {
-      params: { limit: LOAN_SOURCE_OPTION_LIMIT },
+      params: { limit: LOAN_SOURCE_RECOMMEND_LIMIT },
     }),
     client.get('/api/v2/quota-board'),
   ])
@@ -578,7 +583,6 @@ async function loadLoanDialogData() {
   recommend.value = buildLoanSourceOptions(
     recommendRes.data as RecommendItem[],
     boardRes.data as QuotaBoardItem[],
-    LOAN_SOURCE_OPTION_LIMIT,
   )
   if (!loanForm.value.source_account_id && recommend.value.length) {
     loanForm.value.source_account_id = recommend.value[0].account_id

@@ -14,7 +14,13 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.ingestion.credentials import CredentialService
-from pulse.storage.models import AccountQuotaSnapshot, Member, TeamSetting
+from pulse.storage.models import (
+    AccountQuotaSnapshot,
+    AiAccountCredential,
+    KeyLoan,
+    Member,
+    TeamSetting,
+)
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
@@ -97,6 +103,7 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert matched["used_cents"] == 2000
     assert matched["cycle_end"] == "2026-08-01"
     assert matched["cycle_end_at"] is None  # fixture snap has date-only cycle_end
+    assert matched["active_loans"] == 0
 
 
 def test_quota_board_exposes_cycle_end_at(quota_env):
@@ -416,7 +423,65 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     assert item["primary_member_name"] == quota_env["borrower"].display_name
 
 
-def test_loan_key_enforces_account_cap(quota_env):
+def test_quota_recommend_includes_account_at_loan_cap(quota_env):
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    account = quota_env["cursor_account"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    s = quota_env["session_factory"]()
+    snap = s.scalar(
+        select(AccountQuotaSnapshot).where(
+            AccountQuotaSnapshot.account_id == account.id
+        )
+    )
+    snap.cycle_start = date.today() - timedelta(days=15)
+    snap.cycle_end = date.today() + timedelta(days=15)
+    _make_active_loan(s, account, borrower, owner)
+    _make_active_loan(s, account, borrower, owner)
+    s.commit()
+    s.close()
+
+    board = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert board.status_code == 200
+    matched = next(item for item in board.json() if item["account_id"] == account.id)
+    assert matched["active_loans"] == 2
+
+    res = client.get("/api/v2/quota-board/recommend", headers=_headers(token))
+    assert res.status_code == 200
+    by_id = {item["account_id"]: item for item in res.json()}
+    assert account.id in by_id
+    assert by_id[account.id]["active_loans"] == 2
+
+
+def _make_active_loan(session, account, borrower, bound_by) -> KeyLoan:
+    cred = AiAccountCredential(
+        account_id=account.id,
+        vendor_id=account.vendor_id,
+        credential_type="cursor_api_key",
+        encrypted_value="enc",
+        key_hint="hint",
+        key_role="loan",
+        bound_by_member_id=bound_by.id,
+        assignee_member_id=borrower.id,
+    )
+    session.add(cred)
+    session.flush()
+    loan = KeyLoan(
+        source_account_id=account.id,
+        credential_id=cred.id,
+        borrower_member_id=borrower.id,
+        baseline_used_cents=0,
+        status="active",
+    )
+    session.add(loan)
+    session.flush()
+    return loan
+
+
+def test_admin_loan_key_allows_over_account_cap(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]
     owner = quota_env["owner"]
@@ -444,21 +509,13 @@ def test_loan_key_enforces_account_cap(quota_env):
         s.close()
 
         url = f"/api/v2/accounts/{account.id}/loan-key"
-        for _ in range(2):
+        for _ in range(3):
             res = client.post(
                 url,
                 headers=_headers(token),
                 json={"borrower_member_id": borrower.id, "auto_revoke_on_reset": True},
             )
-            assert res.status_code == 200
-
-        res = client.post(
-            url,
-            headers=_headers(token),
-            json={"borrower_member_id": borrower.id, "auto_revoke_on_reset": True},
-        )
-        assert res.status_code == 400
-        assert "名额已满" in res.json()["detail"]
+            assert res.status_code == 200, res.text
 
 
 def test_request_self_loan_and_mine_via_web(quota_env):
