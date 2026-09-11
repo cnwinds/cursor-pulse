@@ -240,14 +240,17 @@ def _usage_section(
         timezone=timezone_name,
     )
     kpi = overview["kpi"]
+    # Full billing-period series (same calendar days as 用量分析「本月」).
+    # Do not slice to 14 days: that made mid-month overview diverge from analytics.
     return {
         "period": period,
         "start": overview["start"],
         "end": overview["end"],
+        "timezone": timezone_name,
         "tokens_total": kpi["tokens_total"],
         "cost_usd": kpi["cost_usd"],
         "event_count": kpi["event_count"],
-        "series_by_day": overview["series_by_day"][-14:],
+        "series_by_day": overview["series_by_day"],
     }
 
 
