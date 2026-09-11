@@ -50,8 +50,17 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
         ].join('<br/>')
       },
     },
-    legend: { data: [...DAILY_TREND_TOKEN_NAMES, '花费'] },
-    grid: { left: 12, right: 12, top: 36, bottom: 8, containLabel: true },
+    // ECharts 6 默认 legend.bottom=15，会叠在 x 轴日期和矮柱上；钉到顶部并清掉 bottom。
+    legend: {
+      data: [...DAILY_TREND_TOKEN_NAMES, '花费'],
+      top: 0,
+      left: 'center',
+      itemGap: 16,
+      itemWidth: 18,
+      itemHeight: 10,
+      textStyle: { fontSize: 12 },
+    },
+    grid: { left: 12, right: 12, top: 52, bottom: 8, containLabel: true },
     xAxis: { type: 'category', data: labels, boundaryGap: true },
     yAxis: [
       {
