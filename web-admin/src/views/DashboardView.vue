@@ -49,13 +49,13 @@
       <el-card v-if="usage" shadow="never" class="block">
         <template #header>
           <div class="card-header">
-            <span>本账期日趋势</span>
+            <span>近 30 天日趋势</span>
             <span v-if="usageRangeLabel" class="trend-range">{{ usageRangeLabel }}</span>
             <router-link to="/usage-analytics" class="more-link">用量分析 →</router-link>
           </div>
         </template>
         <v-chart v-if="hasTrend" class="trend-chart" :option="trendOption" autoresize />
-        <el-empty v-else description="本账期暂无用量数据" :image-size="60" />
+        <el-empty v-else description="近 30 天暂无用量数据" :image-size="60" />
       </el-card>
 
       <!-- ④ 额度风险 / 最近动态 -->

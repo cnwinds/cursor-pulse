@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -15,6 +15,25 @@ from pulse.web.portal import list_pending_portal_users
 from pulse.web.settings_store import effective_config_dict, settings_for_api
 
 logger = logging.getLogger(__name__)
+
+# Homepage daily trend: last 30 calendar days in the team timezone
+# (same window as 用量分析「近 30 天」). KPI cards stay on the billing period.
+DASHBOARD_TREND_DAYS = 30
+
+
+def _sum_daily_metrics(days: list[dict]) -> dict:
+    tokens_total = 0
+    event_count = 0
+    cost_usd = 0.0
+    for day in days:
+        tokens_total += int(day.get("tokens_total") or 0)
+        event_count += int(day.get("event_count") or 0)
+        cost_usd += float(day.get("cost_usd") or 0)
+    return {
+        "tokens_total": tokens_total,
+        "event_count": event_count,
+        "cost_usd": round(cost_usd, 4),
+    }
 
 
 def _format_interval_minutes(minutes: int) -> str:
@@ -231,26 +250,40 @@ def _usage_section(
     period_start, period_end = period_date_range(period)
     # period 按团队时区计算，end 也必须取团队时区的当天，
     # 否则月初边界（团队已进入新月、服务器仍在上月末）会使 end < period_start 触发降级
-    end = min(datetime.now(ZoneInfo(timezone_name)).date(), period_end)
+    today = datetime.now(ZoneInfo(timezone_name)).date()
+    kpi_end = min(today, period_end)
+    trend_end = today
+    trend_start = trend_end - timedelta(days=DASHBOARD_TREND_DAYS - 1)
+    query_start = trend_start
+    query_end = trend_end
+    if kpi_end >= period_start:
+        query_start = min(query_start, period_start)
+        query_end = max(query_end, kpi_end)
     overview = build_usage_kpi_and_series(
         session,
         team_id,
-        start=period_start,
-        end=end,
+        start=query_start,
+        end=query_end,
         timezone=timezone_name,
     )
-    kpi = overview["kpi"]
-    # Full billing-period series (same calendar days as 用量分析「本月」).
-    # Do not slice to 14 days: that made mid-month overview diverge from analytics.
+    series = overview["series_by_day"]
+    trend_lo, trend_hi = trend_start.isoformat(), trend_end.isoformat()
+    trend_series = [day for day in series if trend_lo <= day["date"] <= trend_hi]
+    if kpi_end >= period_start:
+        period_lo, period_hi = period_start.isoformat(), kpi_end.isoformat()
+        period_series = [day for day in series if period_lo <= day["date"] <= period_hi]
+        kpi = _sum_daily_metrics(period_series)
+    else:
+        kpi = _sum_daily_metrics([])
     return {
         "period": period,
-        "start": overview["start"],
-        "end": overview["end"],
+        "start": trend_start.isoformat(),
+        "end": trend_end.isoformat(),
         "timezone": timezone_name,
         "tokens_total": kpi["tokens_total"],
         "cost_usd": kpi["cost_usd"],
         "event_count": kpi["event_count"],
-        "series_by_day": overview["series_by_day"],
+        "series_by_day": trend_series,
     }
 
 
