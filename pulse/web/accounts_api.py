@@ -519,7 +519,10 @@ def register_accounts_v2_routes(
         end: date = Query(..., description="结束日期 YYYY-MM-DD"),
         session: Session = Depends(get_db),
     ):
-        """Per-account daily model aggregates for quota-board detail dialog."""
+        """Per-account daily model aggregates for quota-board detail dialog.
+
+        Rows are newest ``event_date`` first so the UI can show recent days at the top.
+        """
         if end < start:
             raise HTTPException(status_code=400, detail="end 不能早于 start")
         team, _ = team_repo_fn(session)
@@ -535,7 +538,7 @@ def register_accounts_v2_routes(
                 UsageDailyAggregate.event_date >= start,
                 UsageDailyAggregate.event_date <= end,
             )
-            .order_by(UsageDailyAggregate.event_date, UsageDailyAggregate.model)
+            .order_by(UsageDailyAggregate.event_date.desc(), UsageDailyAggregate.model)
         ).all()
         return [
             {

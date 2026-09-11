@@ -703,6 +703,62 @@ def test_account_usage_daily_returns_aggregates(quota_env):
     assert float(rows[0]["total_cost_usd"]) == 1.25
 
 
+def test_account_usage_daily_returns_newest_date_first(quota_env):
+    """额度看板「按日用量明细」按日期逆序，最近一天排在最前。"""
+    from pulse.storage.models import UsageDailyAggregate
+
+    client = quota_env["client"]
+    account = quota_env["cursor_account"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+
+    s = quota_env["session_factory"]()
+    s.add_all(
+        [
+            UsageDailyAggregate(
+                account_id=account.id,
+                event_date=date(2026, 7, 10),
+                model="claude-4-sonnet",
+                event_count=1,
+                total_cost_usd=0.5,
+                tokens_input=10,
+                tokens_output=5,
+                tokens_cache_read=0,
+            ),
+            UsageDailyAggregate(
+                account_id=account.id,
+                event_date=date(2026, 7, 20),
+                model="gpt-5",
+                event_count=3,
+                total_cost_usd=2.0,
+                tokens_input=80,
+                tokens_output=20,
+                tokens_cache_read=0,
+            ),
+            UsageDailyAggregate(
+                account_id=account.id,
+                event_date=date(2026, 7, 15),
+                model="composer-1",
+                event_count=2,
+                total_cost_usd=1.0,
+                tokens_input=40,
+                tokens_output=10,
+                tokens_cache_read=0,
+            ),
+        ]
+    )
+    s.commit()
+    s.close()
+
+    res = client.get(
+        f"/api/v2/accounts/{account.id}/usage/daily",
+        headers=_headers(token),
+        params={"start": "2026-07-01", "end": "2026-07-31"},
+    )
+    assert res.status_code == 200, res.text
+    dates = [row["event_date"] for row in res.json()]
+    assert dates == ["2026-07-20", "2026-07-15", "2026-07-10"]
+
+
 def test_account_usage_daily_rejects_inverted_range(quota_env):
     client = quota_env["client"]
     account = quota_env["cursor_account"]

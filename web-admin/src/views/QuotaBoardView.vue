@@ -368,7 +368,7 @@ const dailyGrouped = computed(() => {
     byDate.set(row.event_date, list)
   }
   return [...byDate.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => b.localeCompare(a))
     .map(([date, models]) => {
       const withTokens = models.map((m) => ({
         ...m,
