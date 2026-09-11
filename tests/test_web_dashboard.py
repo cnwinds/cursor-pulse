@@ -8,6 +8,7 @@ from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import AccountQuotaSnapshot, UsageDailyAggregate
 from pulse.tool_center.ingestion_status import period_date_range
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.web.dashboard_api import DASHBOARD_TREND_DAYS
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
@@ -118,12 +119,12 @@ def test_dashboard_overview_sections_owner(dash_client_with_roles):
     assert sections["usage"]["tokens_total"] == 0
     assert isinstance(sections["usage"]["series_by_day"], list)
     usage = sections["usage"]
-    pstart, pend = period_date_range(usage["period"])
     tz_name = usage.get("timezone") or config.collection.timezone
-    end = min(datetime.now(ZoneInfo(tz_name)).date(), pend)
-    assert usage["start"] == pstart.isoformat()
-    assert usage["end"] == end.isoformat()
-    assert len(usage["series_by_day"]) == (end - pstart).days + 1
+    today = datetime.now(ZoneInfo(tz_name)).date()
+    trend_start = today - timedelta(days=DASHBOARD_TREND_DAYS - 1)
+    assert usage["start"] == trend_start.isoformat()
+    assert usage["end"] == today.isoformat()
+    assert len(usage["series_by_day"]) == DASHBOARD_TREND_DAYS
     assert sections["sync"]["total_accounts"] == 0
     assert sections["recent_activity"]["items"] == []
     assert isinstance(sections["integrations"]["im_group_configured"], bool)
@@ -232,6 +233,7 @@ def test_dashboard_overview_usage_section_with_data(_dash_app):
     assert usage["tokens_total"] == 1700
     assert usage["cost_usd"] == 1.5
     assert usage["event_count"] == 3
+    assert len(usage["series_by_day"]) == DASHBOARD_TREND_DAYS
     last = usage["series_by_day"][-1]
     assert last["date"] == today.isoformat()
     assert last["tokens_input"] == 1000
@@ -241,7 +243,7 @@ def test_dashboard_overview_usage_section_with_data(_dash_app):
 
 
 def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
-    """Overview and usage-analytics share the same calendar-day Token/cost series."""
+    """Overview trend is last 30 days; same Token/cost series as 用量分析「近 30 天」."""
     client, config, proxy = _dash_app
     sf = make_test_session_factory()
     proxy.bind(sf)
@@ -255,10 +257,22 @@ def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
     tz = ZoneInfo(config.collection.timezone)
     today = datetime.now(tz).date()
     pstart, pend = period_date_range(today.strftime("%Y-%m"))
-    end = min(today, pend)
+    kpi_end = min(today, pend)
+    trend_start = today - timedelta(days=DASHBOARD_TREND_DAYS - 1)
     earlier = max(pstart, today - timedelta(days=3))
+    prior = trend_start  # always inside the 30-day window, often before this 账期
     s.add_all(
         [
+            UsageDailyAggregate(
+                account_id=cursor_account.id,
+                event_date=prior,
+                model="composer-prior",
+                event_count=2,
+                total_cost_usd=3.25,
+                tokens_input=1_000,
+                tokens_output=200,
+                tokens_cache_read=800,
+            ),
             UsageDailyAggregate(
                 account_id=cursor_account.id,
                 event_date=earlier,
@@ -271,7 +285,7 @@ def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
             ),
             UsageDailyAggregate(
                 account_id=cursor_account.id,
-                event_date=end,
+                event_date=kpi_end,
                 model="composer-high",
                 event_count=5,
                 total_cost_usd=280.0852,
@@ -289,9 +303,9 @@ def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
     dash = client.get("/api/dashboard/overview", headers=headers)
     assert dash.status_code == 200
     usage = dash.json()["sections"]["usage"]
-    assert usage["start"] == pstart.isoformat()
-    assert usage["end"] == end.isoformat()
-    assert len(usage["series_by_day"]) == (end - pstart).days + 1
+    assert usage["start"] == trend_start.isoformat()
+    assert usage["end"] == today.isoformat()
+    assert len(usage["series_by_day"]) == DASHBOARD_TREND_DAYS
 
     analytics = client.get(
         "/api/v2/usage-analytics/overview",
@@ -310,11 +324,35 @@ def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
     by_date = {d["date"]: d for d in usage["series_by_day"]}
     high_total = 739_600_000
     low_total = 92_000
-    if earlier == end:
-        assert by_date[end.isoformat()]["tokens_total"] == high_total + low_total
+    prior_total = 2_000
+    if earlier == kpi_end:
+        assert by_date[kpi_end.isoformat()]["tokens_total"] == high_total + low_total
     else:
-        assert by_date[end.isoformat()]["tokens_total"] == high_total
+        assert by_date[kpi_end.isoformat()]["tokens_total"] == high_total
         assert by_date[earlier.isoformat()]["tokens_total"] == low_total
+    if prior == earlier:
+        assert by_date[prior.isoformat()]["tokens_total"] == prior_total + low_total
+    elif prior == kpi_end:
+        assert by_date[prior.isoformat()]["tokens_total"] == prior_total + high_total
+    else:
+        assert by_date[prior.isoformat()]["tokens_total"] == prior_total
+
+    period_tokens = 0
+    period_events = 0
+    period_cost = 0.0
+    for day in usage["series_by_day"]:
+        day_date = date.fromisoformat(day["date"])
+        if pstart <= day_date <= kpi_end:
+            period_tokens += day["tokens_total"]
+            period_events += day["event_count"]
+            period_cost += day["cost_usd"]
+    assert usage["tokens_total"] == period_tokens
+    assert usage["event_count"] == period_events
+    assert usage["cost_usd"] == round(period_cost, 4)
+    if prior < pstart:
+        assert usage["tokens_total"] == period_tokens
+        assert by_date[prior.isoformat()]["tokens_total"] == prior_total
+        assert usage["tokens_total"] != analytics.json()["kpi"]["tokens_total"]
 
 
 def test_dashboard_overview_quota_risk_top(_dash_app):
