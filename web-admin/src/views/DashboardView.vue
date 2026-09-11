@@ -46,9 +46,16 @@
       </el-row>
 
       <!-- ③ 用量趋势 -->
-      <el-card v-if="usage" shadow="never" class="block" header="近 14 天用量趋势">
+      <el-card v-if="usage" shadow="never" class="block">
+        <template #header>
+          <div class="card-header">
+            <span>本账期日趋势</span>
+            <span v-if="usageRangeLabel" class="trend-range">{{ usageRangeLabel }}</span>
+            <router-link to="/usage-analytics" class="more-link">用量分析 →</router-link>
+          </div>
+        </template>
         <v-chart v-if="hasTrend" class="trend-chart" :option="trendOption" autoresize />
-        <el-empty v-else description="近 14 天暂无用量数据" :image-size="60" />
+        <el-empty v-else description="本账期暂无用量数据" :image-size="60" />
       </el-card>
 
       <!-- ④ 额度风险 / 最近动态 -->
@@ -114,7 +121,8 @@ import '@/utils/echarts'
 import client from '@/api/client'
 import StatCard from '@/components/StatCard.vue'
 import { formatChinaTime } from '@/utils/time'
-import { formatCompactTokens, formatSpend, formatTokensM } from '@/utils/usage'
+import { dailyTrendChartOption } from '@/utils/dailyTrendChart'
+import { formatSpend, formatTokensM } from '@/utils/usage'
 
 interface QuotaRiskItem {
   account_id: string
@@ -137,6 +145,9 @@ interface QuotaSection {
 interface TrendDay {
   date: string
   tokens_total: number
+  tokens_input?: number
+  tokens_output?: number
+  tokens_cache_read?: number
   cost_usd: number
 }
 
@@ -144,6 +155,7 @@ interface UsageSection {
   period: string
   start: string
   end: string
+  timezone?: string
   tokens_total: number
   cost_usd: number
   event_count: number
@@ -302,41 +314,13 @@ const statCards = computed(() => {
 
 const trendDays = computed<TrendDay[]>(() => usage.value?.series_by_day ?? [])
 const hasTrend = computed(() => trendDays.value.some((d) => d.tokens_total > 0 || d.cost_usd > 0))
+const usageRangeLabel = computed(() => {
+  const u = usage.value
+  if (!u?.start || !u?.end) return ''
+  return `${u.start.slice(5)} 至 ${u.end.slice(5)}`
+})
 
-const trendOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['Tokens', '花费'] },
-  grid: { left: 12, right: 12, top: 32, bottom: 8, containLabel: true },
-  xAxis: { type: 'category', data: trendDays.value.map((d) => d.date.slice(5)) },
-  yAxis: [
-    {
-      type: 'value',
-      name: 'Tokens',
-      axisLabel: { formatter: (v: number) => formatCompactTokens(v) || '0' },
-    },
-    {
-      type: 'value',
-      name: '花费 $',
-      axisLabel: { formatter: (v: number) => `$${v}` },
-    },
-  ],
-  series: [
-    {
-      name: 'Tokens',
-      type: 'bar',
-      data: trendDays.value.map((d) => d.tokens_total),
-      itemStyle: { color: '#3b82f6' },
-    },
-    {
-      name: '花费',
-      type: 'line',
-      yAxisIndex: 1,
-      smooth: true,
-      data: trendDays.value.map((d) => d.cost_usd),
-      itemStyle: { color: '#10b981' },
-    },
-  ],
-}))
+const trendOption = computed(() => dailyTrendChartOption(trendDays.value))
 
 const quotaRiskTop = computed<QuotaRiskItem[]>(() => quota.value?.risk_top ?? [])
 const activityItems = computed<ActivityItem[]>(() => activity.value?.items ?? [])
@@ -395,6 +379,11 @@ onMounted(async () => {
   font-weight: 400;
   color: var(--el-color-primary);
   text-decoration: none;
+}
+.trend-range {
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
 }
 .attention-list {
   display: flex;

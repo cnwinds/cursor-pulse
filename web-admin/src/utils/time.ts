@@ -1,5 +1,39 @@
 /** 中国时区（Asia/Shanghai，UTC+8） */
 
+export const DEFAULT_DISPLAY_TIMEZONE = 'Asia/Shanghai'
+
+export function calendarDateInTimeZone(
+  timeZone: string,
+  now: Date = new Date(),
+): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone || DEFAULT_DISPLAY_TIMEZONE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(now)
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value)
+  return { year: get('year'), month: get('month'), day: get('day') }
+}
+
+export function formatYmd(year: number, month: number, day: number): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${year}-${pad(month)}-${pad(day)}`
+}
+
+/** Calendar-date arithmetic (not local-timezone Date getters). */
+export function addCalendarDays(
+  year: number,
+  month: number,
+  day: number,
+  delta: number,
+): { year: number; month: number; day: number } {
+  const dt = new Date(Date.UTC(year, month - 1, day + delta))
+  return { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() }
+}
+
+
 const HAS_TZ = /([zZ]|[+-]\d{2}:?\d{2})$/
 
 /**

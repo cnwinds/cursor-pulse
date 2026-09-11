@@ -2,9 +2,11 @@ import pytest
 
 pytest.importorskip("fastapi")
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import AccountQuotaSnapshot, UsageDailyAggregate
+from pulse.tool_center.ingestion_status import period_date_range
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
@@ -115,7 +117,13 @@ def test_dashboard_overview_sections_owner(dash_client_with_roles):
     assert sections["proxy"]["active_key_count"] == 0
     assert sections["usage"]["tokens_total"] == 0
     assert isinstance(sections["usage"]["series_by_day"], list)
-    assert len(sections["usage"]["series_by_day"]) <= 14
+    usage = sections["usage"]
+    pstart, pend = period_date_range(usage["period"])
+    tz_name = usage.get("timezone") or config.collection.timezone
+    end = min(datetime.now(ZoneInfo(tz_name)).date(), pend)
+    assert usage["start"] == pstart.isoformat()
+    assert usage["end"] == end.isoformat()
+    assert len(usage["series_by_day"]) == (end - pstart).days + 1
     assert sections["sync"]["total_accounts"] == 0
     assert sections["recent_activity"]["items"] == []
     assert isinstance(sections["integrations"]["im_group_configured"], bool)
@@ -200,7 +208,8 @@ def test_dashboard_overview_usage_section_with_data(_dash_app):
     s.flush()
     tool_repo = ToolCenterRepository(s, team.id)
     cursor_account = next(a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor")
-    today = date.today()
+    tz = ZoneInfo(config.collection.timezone)
+    today = datetime.now(tz).date()
     s.add(
         UsageDailyAggregate(
             account_id=cursor_account.id,
@@ -223,7 +232,89 @@ def test_dashboard_overview_usage_section_with_data(_dash_app):
     assert usage["tokens_total"] == 1700
     assert usage["cost_usd"] == 1.5
     assert usage["event_count"] == 3
-    assert usage["series_by_day"][-1]["date"] == today.isoformat()
+    last = usage["series_by_day"][-1]
+    assert last["date"] == today.isoformat()
+    assert last["tokens_input"] == 1000
+    assert last["tokens_output"] == 500
+    assert last["tokens_cache_read"] == 200
+    assert last["tokens_total"] == 1700
+
+
+def test_dashboard_daily_series_matches_usage_analytics(_dash_app):
+    """Overview and usage-analytics share the same calendar-day Token/cost series."""
+    client, config, proxy = _dash_app
+    sf = make_test_session_factory()
+    proxy.bind(sf)
+    s = sf()
+    team, repo = make_team_repo(s)
+    owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
+    seed_v2_catalog(s, team)
+    s.flush()
+    tool_repo = ToolCenterRepository(s, team.id)
+    cursor_account = next(a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor")
+    tz = ZoneInfo(config.collection.timezone)
+    today = datetime.now(tz).date()
+    pstart, pend = period_date_range(today.strftime("%Y-%m"))
+    end = min(today, pend)
+    earlier = max(pstart, today - timedelta(days=3))
+    s.add_all(
+        [
+            UsageDailyAggregate(
+                account_id=cursor_account.id,
+                event_date=earlier,
+                model="composer-low",
+                event_count=4,
+                total_cost_usd=12.5,
+                tokens_input=10_000,
+                tokens_output=2_000,
+                tokens_cache_read=80_000,
+            ),
+            UsageDailyAggregate(
+                account_id=cursor_account.id,
+                event_date=end,
+                model="composer-high",
+                event_count=5,
+                total_cost_usd=280.0852,
+                tokens_input=50_100_000,
+                tokens_output=4_500_000,
+                tokens_cache_read=685_000_000,
+            ),
+        ]
+    )
+    repo.commit()
+    s.close()
+
+    token = create_access_token(config, owner)
+    headers = {"Authorization": f"Bearer {token}"}
+    dash = client.get("/api/dashboard/overview", headers=headers)
+    assert dash.status_code == 200
+    usage = dash.json()["sections"]["usage"]
+    assert usage["start"] == pstart.isoformat()
+    assert usage["end"] == end.isoformat()
+    assert len(usage["series_by_day"]) == (end - pstart).days + 1
+
+    analytics = client.get(
+        "/api/v2/usage-analytics/overview",
+        params={"start": usage["start"], "end": usage["end"]},
+        headers=headers,
+    )
+    assert analytics.status_code == 200
+    series = analytics.json()["series_by_day"]
+    assert [d["date"] for d in usage["series_by_day"]] == [d["date"] for d in series]
+    for left, right in zip(usage["series_by_day"], series):
+        assert left["tokens_total"] == right["tokens_total"]
+        assert left["tokens_input"] == right["tokens_input"]
+        assert left["tokens_output"] == right["tokens_output"]
+        assert left["tokens_cache_read"] == right["tokens_cache_read"]
+        assert left["cost_usd"] == right["cost_usd"]
+    by_date = {d["date"]: d for d in usage["series_by_day"]}
+    high_total = 739_600_000
+    low_total = 92_000
+    if earlier == end:
+        assert by_date[end.isoformat()]["tokens_total"] == high_total + low_total
+    else:
+        assert by_date[end.isoformat()]["tokens_total"] == high_total
+        assert by_date[earlier.isoformat()]["tokens_total"] == low_total
 
 
 def test_dashboard_overview_quota_risk_top(_dash_app):

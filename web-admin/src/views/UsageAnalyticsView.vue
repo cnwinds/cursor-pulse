@@ -91,7 +91,7 @@
     <el-row :gutter="16" class="chart-row">
       <el-col :xs="24" :lg="14">
         <el-card shadow="never" class="chart-card">
-          <div class="chart-title">日趋势</div>
+          <div class="chart-title">日趋势<span class="muted chart-hint">柱高 = 当日总 Token（输入 + 输出 + cache）</span></div>
           <v-chart class="chart" :option="trendOption" autoresize />
         </el-card>
       </el-col>
@@ -214,6 +214,13 @@ import VChart from 'vue-echarts'
 import '@/utils/echarts'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
+import { dailyTrendChartOption } from '@/utils/dailyTrendChart'
+import {
+  addCalendarDays,
+  calendarDateInTimeZone,
+  DEFAULT_DISPLAY_TIMEZONE,
+  formatYmd,
+} from '@/utils/time'
 import { formatSpend, formatTokens, kindFamilyLabel } from '@/utils/usage'
 
 type Dimension = 'account' | 'model' | 'family' | 'pool'
@@ -389,72 +396,7 @@ const tableRows = computed(() => dimensionRows.value)
 
 const chartSeries = computed(() => dimensionRows.value.slice(0, topN))
 
-const trendOption = computed(() => {
-  const days = overview.value?.series_by_day || []
-  const tokenNames = ['输入', '输出', '输入(cache)'] as const
-  return {
-    color: ['#2563eb', '#0d9488', '#8b5cf6', '#f59e0b'],
-    tooltip: {
-      trigger: 'axis',
-      formatter: (params: Array<{ seriesName: string; value: number; marker: string; axisValue: string }>) => {
-        if (!params?.length) return ''
-        const lines = params.map((p) => {
-          const value =
-            p.seriesName === '花费 $' ? formatSpend(p.value) : formatTokens(p.value)
-          return `${p.marker}${p.seriesName}：${value}`
-        })
-        return `${params[0].axisValue}<br/>${lines.join('<br/>')}`
-      },
-    },
-    legend: { data: [...tokenNames, '花费 $'] },
-    grid: { left: 48, right: 48, top: 40, bottom: 28 },
-    xAxis: {
-      type: 'category',
-      data: days.map((d) => d.date.slice(5)),
-      boundaryGap: false,
-    },
-    yAxis: [
-      { type: 'value', name: 'Token', axisLabel: { formatter: (v: number) => formatTokens(v) } },
-      { type: 'value', name: '$', axisLabel: { formatter: (v: number) => `$${v}` } },
-    ],
-    series: [
-      {
-        name: '输入',
-        type: 'line',
-        stack: 'tokens',
-        smooth: true,
-        areaStyle: { opacity: 0.18 },
-        emphasis: { focus: 'series' },
-        data: days.map((d) => d.tokens_input ?? 0),
-      },
-      {
-        name: '输出',
-        type: 'line',
-        stack: 'tokens',
-        smooth: true,
-        areaStyle: { opacity: 0.18 },
-        emphasis: { focus: 'series' },
-        data: days.map((d) => d.tokens_output ?? 0),
-      },
-      {
-        name: '输入(cache)',
-        type: 'line',
-        stack: 'tokens',
-        smooth: true,
-        areaStyle: { opacity: 0.18 },
-        emphasis: { focus: 'series' },
-        data: days.map((d) => d.tokens_cache_read ?? 0),
-      },
-      {
-        name: '花费 $',
-        type: 'line',
-        smooth: true,
-        yAxisIndex: 1,
-        data: days.map((d) => d.cost_usd),
-      },
-    ],
-  }
-})
+const trendOption = computed(() => dailyTrendChartOption(overview.value?.series_by_day || []))
 
 const structOption = computed(() => {
   const rows = chartSeries.value.filter((r) => r.tokens_total > 0)
@@ -521,43 +463,36 @@ function accountLabel(a: AccountRow) {
   return member ? `${a.account_identifier}（${member.display_name}）` : a.account_identifier
 }
 
-function pad(n: number) {
-  return String(n).padStart(2, '0')
-}
-
-function toYmd(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-function startOfMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), 1)
-}
-
-function endOfMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0)
+function presetTimeZone() {
+  return overview.value?.timezone || DEFAULT_DISPLAY_TIMEZONE
 }
 
 function applyPreset(preset: RangePreset) {
-  const today = new Date()
+  const tz = presetTimeZone()
+  const today = calendarDateInTimeZone(tz)
   if (preset === 'this_month') {
-    dateRange.value = [toYmd(startOfMonth(today)), toYmd(today)]
+    dateRange.value = [formatYmd(today.year, today.month, 1), formatYmd(today.year, today.month, today.day)]
     return
   }
   if (preset === 'last_month') {
-    const ref = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-    dateRange.value = [toYmd(startOfMonth(ref)), toYmd(endOfMonth(ref))]
+    const prev = addCalendarDays(today.year, today.month, 1, -1)
+    dateRange.value = [formatYmd(prev.year, prev.month, 1), formatYmd(prev.year, prev.month, prev.day)]
     return
   }
   if (preset === 'last_7') {
-    const start = new Date(today)
-    start.setDate(start.getDate() - 6)
-    dateRange.value = [toYmd(start), toYmd(today)]
+    const start = addCalendarDays(today.year, today.month, today.day, -6)
+    dateRange.value = [
+      formatYmd(start.year, start.month, start.day),
+      formatYmd(today.year, today.month, today.day),
+    ]
     return
   }
   if (preset === 'last_30') {
-    const start = new Date(today)
-    start.setDate(start.getDate() - 29)
-    dateRange.value = [toYmd(start), toYmd(today)]
+    const start = addCalendarDays(today.year, today.month, today.day, -29)
+    dateRange.value = [
+      formatYmd(start.year, start.month, start.day),
+      formatYmd(today.year, today.month, today.day),
+    ]
     return
   }
 }
@@ -725,6 +660,10 @@ onMounted(async () => {
   font-weight: 600;
   margin-bottom: 8px;
   color: #0f172a;
+}
+.chart-hint {
+  margin-left: 8px;
+  font-weight: 400;
 }
 .chart {
   height: 300px;
