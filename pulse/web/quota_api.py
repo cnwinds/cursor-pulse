@@ -49,6 +49,23 @@ from pulse.web.permissions import has_permission
 
 logger = logging.getLogger(__name__)
 
+ABNORMAL_SYNC_RETRY_COUNT = 3
+
+
+def _primary_sync_retry_counts(
+    session: Session, account_ids: list[str]
+) -> dict[str, int]:
+    if not account_ids:
+        return {}
+    rows = session.scalars(
+        select(AiAccountCredential).where(
+            AiAccountCredential.account_id.in_(account_ids),
+            AiAccountCredential.status == "active",
+            AiAccountCredential.key_role == "primary",
+        )
+    ).all()
+    return {row.account_id: int(row.retry_count or 0) for row in rows}
+
 
 class LoanKeyBody(BaseModel):
     borrower_member_id: str
@@ -87,6 +104,7 @@ def _board_item(
     *,
     member_names: dict[str, str] | None = None,
     active_loans: int = 0,
+    sync_retry_count: int = 0,
 ) -> dict:
     primary_member_name = None
     if account.primary_member_id and member_names:
@@ -104,7 +122,7 @@ def _board_item(
         "active_loans": active_loans,
     }
     if not snapshot:
-        return {
+        item = {
             **base,
             "status": "unknown",
             "cycle_start": None,
@@ -125,37 +143,47 @@ def _board_item(
             "display_remaining_cents": None,
             "display_api_remaining_cents": None,
         }
-    analysis = analyze_burn_rate(snapshot, today)
-    return {
-        **base,
-        "status": analysis.status,
-        "cycle_start": snapshot.cycle_start.isoformat(),
-        "cycle_end": snapshot.cycle_end.isoformat(),
-        "cycle_end_at": serialize_datetime(snapshot.cycle_end_at),
-        "remaining_headroom_pct": analysis.remaining_headroom_pct,
-        "api_limit_usd": analysis.api_limit_usd,
-        "quota_progress": analysis.quota_progress,
-        "projected_exhaustion_date": (
-            analysis.projected_exhaustion_date.isoformat()
-            if analysis.projected_exhaustion_date
-            else None
-        ),
-        "exhausts_before_reset": analysis.exhausts_before_reset,
-        "days_until_reset": analysis.days_until_reset,
-        "total_pct": snapshot.total_pct,
-        "auto_pct": snapshot.auto_pct,
-        "api_pct": snapshot.api_pct,
-        "limit_cents": snapshot.limit_cents,
-        "used_cents": snapshot.used_cents,
-        "remaining_cents": snapshot.remaining_cents,
-        "display_remaining_cents": display_remaining_cents(snapshot),
-        "display_api_remaining_cents": display_api_remaining_cents(snapshot),
-        "captured_at": serialize_datetime(snapshot.captured_at),
-    }
+    else:
+        analysis = analyze_burn_rate(snapshot, today)
+        item = {
+            **base,
+            "status": analysis.status,
+            "cycle_start": snapshot.cycle_start.isoformat(),
+            "cycle_end": snapshot.cycle_end.isoformat(),
+            "cycle_end_at": serialize_datetime(snapshot.cycle_end_at),
+            "remaining_headroom_pct": analysis.remaining_headroom_pct,
+            "api_limit_usd": analysis.api_limit_usd,
+            "quota_progress": analysis.quota_progress,
+            "projected_exhaustion_date": (
+                analysis.projected_exhaustion_date.isoformat()
+                if analysis.projected_exhaustion_date
+                else None
+            ),
+            "exhausts_before_reset": analysis.exhausts_before_reset,
+            "days_until_reset": analysis.days_until_reset,
+            "total_pct": snapshot.total_pct,
+            "auto_pct": snapshot.auto_pct,
+            "api_pct": snapshot.api_pct,
+            "limit_cents": snapshot.limit_cents,
+            "used_cents": snapshot.used_cents,
+            "remaining_cents": snapshot.remaining_cents,
+            "display_remaining_cents": display_remaining_cents(snapshot),
+            "display_api_remaining_cents": display_api_remaining_cents(snapshot),
+            "captured_at": serialize_datetime(snapshot.captured_at),
+        }
+    if sync_retry_count >= ABNORMAL_SYNC_RETRY_COUNT:
+        item["status"] = "abnormal"
+    return item
 
 
 def _status_rank(status: str) -> int:
-    return {"exhausted": 0, "warning": 1, "healthy": 2, "unknown": 3}.get(status, 4)
+    return {
+        "exhausted": 0,
+        "warning": 1,
+        "healthy": 2,
+        "unknown": 3,
+        "abnormal": 4,
+    }.get(status, 5)
 
 
 def build_quota_board_items(
@@ -176,6 +204,7 @@ def build_quota_board_items(
         ).all()
         member_names = {m.id: m.display_name for m in members}
     loan_counts = active_loan_counts_by_account(session, team_id)
+    retry_counts = _primary_sync_retry_counts(session, [account.id for account in accounts])
     items = []
     for account in accounts:
         snapshot = snapshots.get(account.id)
@@ -186,6 +215,7 @@ def build_quota_board_items(
                 today,
                 member_names=member_names,
                 active_loans=loan_counts.get(account.id, 0),
+                sync_retry_count=retry_counts.get(account.id, 0),
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))

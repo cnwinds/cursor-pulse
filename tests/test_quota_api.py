@@ -16,6 +16,7 @@ from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.ingestion.credentials import CredentialService
 from pulse.storage.models import (
     AccountQuotaSnapshot,
+    AiAccount,
     AiAccountCredential,
     KeyLoan,
     Member,
@@ -87,6 +88,21 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _primary_cred(account, owner, *, retry_count: int, last_sync_status: str = "failed"):
+    return AiAccountCredential(
+        account_id=account.id,
+        vendor_id=account.vendor_id,
+        credential_type="cursor_api_key",
+        encrypted_value="enc",
+        key_hint="hint",
+        key_role="primary",
+        status="active",
+        bound_by_member_id=owner.id,
+        last_sync_status=last_sync_status,
+        retry_count=retry_count,
+    )
+
+
 def test_quota_board_lists_cursor_accounts(quota_env):
     client = quota_env["client"]
     token = create_access_token(quota_env["config"], quota_env["owner"])
@@ -105,6 +121,120 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert matched["cycle_end_at"] is None  # fixture snap has date-only cycle_end
     assert matched["active_loans"] == 0
     assert "usage_summary" not in matched or matched.get("usage_summary") is None
+
+
+def test_quota_board_three_sync_failures_is_abnormal_not_healthy(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, retry_count=3))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "abnormal"
+
+
+def test_quota_board_three_sync_failures_overrides_exhausted(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    snap = s.scalar(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
+    )
+    snap.total_pct = 110.0
+    snap.used_cents = 7700
+    snap.remaining_cents = 0
+    s.add(_primary_cred(account, owner, retry_count=3))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "abnormal"
+
+
+def test_quota_board_two_sync_failures_keeps_quota_status(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, retry_count=2))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "healthy"
+
+
+def test_quota_board_abnormal_sorts_last(quota_env):
+    sf = quota_env["session_factory"]
+    owner = quota_env["owner"]
+    failed = quota_env["cursor_account"]
+    s = sf()
+    others = s.scalars(
+        select(AiAccount).where(
+            AiAccount.team_id == failed.team_id,
+            AiAccount.id != failed.id,
+            AiAccount.vendor_id == failed.vendor_id,
+        )
+    ).all()
+    assert len(others) >= 2
+    exhausted, healthy = others[0], others[1]
+    today = date.today()
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=exhausted.id,
+            captured_at=datetime.now(timezone.utc),
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=7000,
+            used_cents=7700,
+            remaining_cents=0,
+            total_pct=110.0,
+        )
+    )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=healthy.id,
+            captured_at=datetime.now(timezone.utc),
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=7000,
+            used_cents=700,
+            remaining_cents=6300,
+            total_pct=10.0,
+        )
+    )
+    s.add(_primary_cred(failed, owner, retry_count=3))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    items = res.json()
+    by_id = {item["account_id"]: item for item in items}
+    assert by_id[failed.id]["status"] == "abnormal"
+    assert by_id[exhausted.id]["status"] == "exhausted"
+    assert by_id[healthy.id]["status"] == "healthy"
+    ids = [item["account_id"] for item in items]
+    assert ids.index(exhausted.id) < ids.index(healthy.id)
+    assert ids.index(healthy.id) < ids.index(failed.id)
 
 
 def test_quota_board_include_summaries_embeds_cycle_row(quota_env):

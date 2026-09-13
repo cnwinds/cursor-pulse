@@ -389,11 +389,23 @@ const dailyGrouped = computed(() => {
 })
 
 function statusLabel(status: string) {
-  return { healthy: '正常', warning: '预警', exhausted: '已耗尽', unknown: '未知' }[status] || status
+  return {
+    healthy: '正常',
+    warning: '预警',
+    exhausted: '已耗尽',
+    unknown: '未知',
+    abnormal: '异常',
+  }[status] || status
 }
 
 function statusTagType(status: string) {
-  return { healthy: 'success', warning: 'warning', exhausted: 'danger', unknown: 'info' }[status] || 'info'
+  return {
+    healthy: 'success',
+    warning: 'warning',
+    exhausted: 'danger',
+    unknown: 'info',
+    abnormal: 'danger',
+  }[status] || 'info'
 }
 
 /** YYYY-MM-DD → MM-DD，便于卡片一行展示 */
@@ -534,6 +546,9 @@ onMounted(loadAll)
 }
 .quota-card.warning {
   border-left: 3px solid var(--el-color-warning);
+}
+.quota-card.abnormal {
+  border-left: 3px solid var(--el-color-danger);
 }
 .card-top {
   display: flex;
