@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
-from pulse.storage.models import AccountQuotaSnapshot, UsageDailyAggregate
+from pulse.storage.models import AccountQuotaSnapshot, AiAccountCredential, UsageDailyAggregate
 from pulse.tool_center.ingestion_status import period_date_range
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.dashboard_api import DASHBOARD_TREND_DAYS
@@ -400,6 +400,20 @@ def test_dashboard_overview_quota_risk_top(_dash_app):
             total_pct=85.0,
         )
     )
+    for acc in (exhausted_acc, warning_acc):
+        s.add(
+            AiAccountCredential(
+                account_id=acc.id,
+                vendor_id=acc.vendor_id,
+                credential_type="cursor_api_key",
+                encrypted_value="enc",
+                key_hint="hint",
+                key_role="primary",
+                status="active",
+                bound_by_member_id=owner.id,
+                last_sync_status="success",
+            )
+        )
     repo.commit()
     s.close()
 

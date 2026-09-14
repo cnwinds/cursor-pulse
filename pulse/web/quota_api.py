@@ -50,21 +50,46 @@ from pulse.web.permissions import has_permission
 logger = logging.getLogger(__name__)
 
 ABNORMAL_SYNC_RETRY_COUNT = 3
+_UNSYNCABLE_STATUSES = frozenset(
+    {
+        "no_credential",
+        "key_revoked",
+        "sync_failed",
+        "unsynced",
+        "unknown",
+    }
+)
 
 
-def _primary_sync_retry_counts(
+def _board_primary_credentials(
     session: Session, account_ids: list[str]
-) -> dict[str, int]:
+) -> dict[str, AiAccountCredential]:
     if not account_ids:
         return {}
     rows = session.scalars(
         select(AiAccountCredential).where(
             AiAccountCredential.account_id.in_(account_ids),
-            AiAccountCredential.status == "active",
             AiAccountCredential.key_role == "primary",
         )
     ).all()
-    return {row.account_id: int(row.retry_count or 0) for row in rows}
+    picked: dict[str, AiAccountCredential] = {}
+    for row in rows:
+        existing = picked.get(row.account_id)
+        if existing is None or (existing.status != "active" and row.status == "active"):
+            picked[row.account_id] = row
+    return picked
+
+
+def _sync_blocker(cred: AiAccountCredential | None) -> str | None:
+    if cred is None:
+        return "no_credential"
+    if cred.status != "active":
+        return "key_revoked"
+    if cred.last_sync_status == "failed" or int(cred.retry_count or 0) >= ABNORMAL_SYNC_RETRY_COUNT:
+        return "sync_failed"
+    if cred.last_sync_status != "success":
+        return "unsynced"
+    return None
 
 
 class LoanKeyBody(BaseModel):
@@ -104,7 +129,7 @@ def _board_item(
     *,
     member_names: dict[str, str] | None = None,
     active_loans: int = 0,
-    sync_retry_count: int = 0,
+    sync_blocker: str | None = None,
 ) -> dict:
     primary_member_name = None
     if account.primary_member_id and member_names:
@@ -171,19 +196,15 @@ def _board_item(
             "display_api_remaining_cents": display_api_remaining_cents(snapshot),
             "captured_at": serialize_datetime(snapshot.captured_at),
         }
-    if sync_retry_count >= ABNORMAL_SYNC_RETRY_COUNT:
-        item["status"] = "abnormal"
+    if sync_blocker:
+        item["status"] = sync_blocker
     return item
 
 
 def _status_rank(status: str) -> int:
-    return {
-        "exhausted": 0,
-        "warning": 1,
-        "healthy": 2,
-        "unknown": 3,
-        "abnormal": 4,
-    }.get(status, 5)
+    if status in _UNSYNCABLE_STATUSES:
+        return 3
+    return {"exhausted": 0, "warning": 1, "healthy": 2}.get(status, 3)
 
 
 def build_quota_board_items(
@@ -204,7 +225,7 @@ def build_quota_board_items(
         ).all()
         member_names = {m.id: m.display_name for m in members}
     loan_counts = active_loan_counts_by_account(session, team_id)
-    retry_counts = _primary_sync_retry_counts(session, [account.id for account in accounts])
+    creds = _board_primary_credentials(session, [account.id for account in accounts])
     items = []
     for account in accounts:
         snapshot = snapshots.get(account.id)
@@ -215,7 +236,7 @@ def build_quota_board_items(
                 today,
                 member_names=member_names,
                 active_loans=loan_counts.get(account.id, 0),
-                sync_retry_count=retry_counts.get(account.id, 0),
+                sync_blocker=_sync_blocker(creds.get(account.id)),
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))

@@ -193,7 +193,7 @@
               <div class="card-action-btns">
                 <el-button link type="primary" @click="openDailyUsage(item)">明细</el-button>
                 <el-button
-                  v-if="canWrite"
+                  v-if="canWrite && hasUsableKey(item)"
                   link
                   :loading="syncingId === item.account_id"
                   @click="syncAccount(item)"
@@ -203,8 +203,8 @@
           </template>
 
           <div v-else class="empty-snapshot muted">
-            暂无同步快照，请先在账号台账绑定 API Key
-            <div v-if="canWrite" class="card-actions">
+            {{ emptySnapshotHint(item) }}
+            <div v-if="canWrite && hasUsableKey(item)" class="card-actions">
               <el-button link type="primary" @click="syncAccount(item)" :loading="syncingId === item.account_id">
                 尝试同步
               </el-button>
@@ -395,6 +395,10 @@ function statusLabel(status: string) {
     exhausted: '已耗尽',
     unknown: '未知',
     abnormal: '异常',
+    no_credential: '未绑定',
+    key_revoked: 'Key已删除',
+    sync_failed: 'Key不通',
+    unsynced: '未同步',
   }[status] || status
 }
 
@@ -405,7 +409,24 @@ function statusTagType(status: string) {
     exhausted: 'danger',
     unknown: 'info',
     abnormal: 'danger',
+    no_credential: 'info',
+    key_revoked: 'info',
+    sync_failed: 'danger',
+    unsynced: 'warning',
   }[status] || 'info'
+}
+
+function emptySnapshotHint(item: BoardItem) {
+  return {
+    no_credential: '未绑定 API Key，无法同步最新额度',
+    key_revoked: 'API Key 已删除，无法同步最新额度',
+    sync_failed: 'Key 不通，无法同步最新额度',
+    unsynced: '已绑定 Key，但尚未同步成功',
+  }[item.status] || '暂无同步快照，请先在账号台账绑定 API Key'
+}
+
+function hasUsableKey(item: BoardItem) {
+  return item.status !== 'no_credential' && item.status !== 'key_revoked'
 }
 
 /** YYYY-MM-DD → MM-DD，便于卡片一行展示 */
@@ -547,8 +568,15 @@ onMounted(loadAll)
 .quota-card.warning {
   border-left: 3px solid var(--el-color-warning);
 }
-.quota-card.abnormal {
+.quota-card.abnormal,
+.quota-card.sync_failed {
   border-left: 3px solid var(--el-color-danger);
+}
+.quota-card.no_credential,
+.quota-card.key_revoked,
+.quota-card.unsynced,
+.quota-card.unknown {
+  border-left: 3px solid var(--el-color-info);
 }
 .card-top {
   display: flex;

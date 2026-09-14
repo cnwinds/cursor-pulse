@@ -88,7 +88,14 @@ def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _primary_cred(account, owner, *, retry_count: int, last_sync_status: str = "failed"):
+def _primary_cred(
+    account,
+    owner,
+    *,
+    retry_count: int = 0,
+    last_sync_status: str = "failed",
+    status: str = "active",
+):
     return AiAccountCredential(
         account_id=account.id,
         vendor_id=account.vendor_id,
@@ -96,7 +103,7 @@ def _primary_cred(account, owner, *, retry_count: int, last_sync_status: str = "
         encrypted_value="enc",
         key_hint="hint",
         key_role="primary",
-        status="active",
+        status=status,
         bound_by_member_id=owner.id,
         last_sync_status=last_sync_status,
         retry_count=retry_count,
@@ -123,7 +130,85 @@ def test_quota_board_lists_cursor_accounts(quota_env):
     assert "usage_summary" not in matched or matched.get("usage_summary") is None
 
 
-def test_quota_board_three_sync_failures_is_abnormal_not_healthy(quota_env):
+def test_quota_board_never_configured_key_is_not_healthy(quota_env):
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == quota_env["cursor_account"].id)
+    assert matched["has_snapshot"] is True
+    assert matched["status"] == "no_credential"
+
+
+def test_quota_board_revoked_key_is_not_healthy(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, status="revoked", last_sync_status="success"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "key_revoked"
+
+
+def test_quota_board_failed_key_is_sync_failed(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, retry_count=1, last_sync_status="failed"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "sync_failed"
+
+
+def test_quota_board_successful_sync_keeps_quota_status(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, last_sync_status="success"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "healthy"
+
+
+def test_quota_board_never_synced_key_is_unsynced(quota_env):
+    sf = quota_env["session_factory"]
+    account = quota_env["cursor_account"]
+    owner = quota_env["owner"]
+    s = sf()
+    s.add(_primary_cred(account, owner, last_sync_status="never"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    matched = next(item for item in res.json() if item["account_id"] == account.id)
+    assert matched["status"] == "unsynced"
+
+
+def test_quota_board_three_sync_failures_is_sync_failed(quota_env):
     sf = quota_env["session_factory"]
     account = quota_env["cursor_account"]
     owner = quota_env["owner"]
@@ -137,7 +222,7 @@ def test_quota_board_three_sync_failures_is_abnormal_not_healthy(quota_env):
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
     matched = next(item for item in res.json() if item["account_id"] == account.id)
-    assert matched["status"] == "abnormal"
+    assert matched["status"] == "sync_failed"
 
 
 def test_quota_board_three_sync_failures_overrides_exhausted(quota_env):
@@ -160,15 +245,15 @@ def test_quota_board_three_sync_failures_overrides_exhausted(quota_env):
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
     matched = next(item for item in res.json() if item["account_id"] == account.id)
-    assert matched["status"] == "abnormal"
+    assert matched["status"] == "sync_failed"
 
 
-def test_quota_board_two_sync_failures_keeps_quota_status(quota_env):
+def test_quota_board_two_sync_failures_is_sync_failed(quota_env):
     sf = quota_env["session_factory"]
     account = quota_env["cursor_account"]
     owner = quota_env["owner"]
     s = sf()
-    s.add(_primary_cred(account, owner, retry_count=2))
+    s.add(_primary_cred(account, owner, retry_count=2, last_sync_status="failed"))
     s.commit()
     s.close()
 
@@ -177,10 +262,10 @@ def test_quota_board_two_sync_failures_keeps_quota_status(quota_env):
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
     matched = next(item for item in res.json() if item["account_id"] == account.id)
-    assert matched["status"] == "healthy"
+    assert matched["status"] == "sync_failed"
 
 
-def test_quota_board_abnormal_sorts_last(quota_env):
+def test_quota_board_unsyncable_sorts_last(quota_env):
     sf = quota_env["session_factory"]
     owner = quota_env["owner"]
     failed = quota_env["cursor_account"]
@@ -219,7 +304,9 @@ def test_quota_board_abnormal_sorts_last(quota_env):
             total_pct=10.0,
         )
     )
-    s.add(_primary_cred(failed, owner, retry_count=3))
+    s.add(_primary_cred(exhausted, owner, last_sync_status="success"))
+    s.add(_primary_cred(healthy, owner, last_sync_status="success"))
+    s.add(_primary_cred(failed, owner, retry_count=3, last_sync_status="failed"))
     s.commit()
     s.close()
 
@@ -229,7 +316,7 @@ def test_quota_board_abnormal_sorts_last(quota_env):
     assert res.status_code == 200
     items = res.json()
     by_id = {item["account_id"]: item for item in items}
-    assert by_id[failed.id]["status"] == "abnormal"
+    assert by_id[failed.id]["status"] == "sync_failed"
     assert by_id[exhausted.id]["status"] == "exhausted"
     assert by_id[healthy.id]["status"] == "healthy"
     ids = [item["account_id"] for item in items]
