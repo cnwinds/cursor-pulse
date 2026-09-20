@@ -436,6 +436,8 @@ def request_self_service_loan(
     bound_by_member_id: str | None = None,
     cursor_client: CursorApiClient | None = None,
     loan_selection: LoanSelectionConfig | None = None,
+    quota_pool: str | None = None,
+    config=None,
 ) -> dict:
     if borrower.status != "active":
         raise KeyLoanError("成员状态不可用，请联系管理员")
@@ -476,6 +478,9 @@ def request_self_service_loan(
         team_id,
         exclude_account_ids={a.id for a in own_accounts},
         loan_selection=loan_selection,
+        quota_pool=quota_pool,
+        config=config,
+        borrower_member_id=borrower.id,
     )
     if not lender:
         raise KeyLoanError("当前没有可借出的富余账号，请联系管理员")

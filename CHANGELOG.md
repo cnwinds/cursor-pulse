@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **Key Loan 自动打分选号**：出借推荐按 Quota Pool Surplus（Auto / API / 综合）打分；管理员分配默认自动选最高分账号，也可按用量类型（default/Auto vs API）过滤。人工分（`proxy_score_adjust`）同时作用于借 Key 与共享池。
+- **Switch Cooldown**：自动选号对仍合格的当前账号至少保持 30 分钟，耗尽仍立即换号。
+- **可选 Jev 混合分**：配置 TypeSafe Jev 后，借 Key 路径用 waste / 主使用人安全 / 池适配三个原子问题与规则分混合；失败回退规则分。共享池不走 Jev。
+- **MITM 按桶选号**：`/pool` 下发 `auto_score` / `api_score`，Go 在首次绑定与耗尽轮换时选该配额桶得分最高的凭证。
+
 ### 修复
 
 - **日趋势图例重叠**：ECharts 6 默认把 legend 放在底部，grid 底部留白不够，图例会叠在日期和矮柱上。概览 / 用量分析共用的日趋势改为顶部图例，并加大 `grid.top`。

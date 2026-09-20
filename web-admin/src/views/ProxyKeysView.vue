@@ -85,7 +85,7 @@
 
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
-          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动）。硬过滤仍生效。</p>
+          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动），同时影响借 Key 出借排序。Auto / API 分用于请求时按模型选号。硬过滤仍生效。</p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>
         <h4 class="usage-section-title">入选排序</h4>
@@ -104,6 +104,12 @@
               </el-tooltip>
               <span v-else>{{ row.score }}</span>
             </template>
+          </el-table-column>
+          <el-table-column label="Auto 分" width="90">
+            <template #default="{ row }">{{ row.auto_score ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="API 分" width="90">
+            <template #default="{ row }">{{ row.api_score ?? '—' }}</template>
           </el-table-column>
           <el-table-column label="人工分" width="180">
             <template #default="{ row }">
@@ -438,6 +444,8 @@ interface RankingRow {
   score?: number
   computed_score?: number
   score_adjust?: number | null
+  auto_score?: number | null
+  api_score?: number | null
   surplus_cents?: number
   urgency_cents_per_day?: number
   remaining_headroom_pct?: number

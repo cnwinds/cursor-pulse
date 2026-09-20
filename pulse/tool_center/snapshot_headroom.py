@@ -10,6 +10,53 @@ from pulse.tool_center.billing_cycle import period_first_day, period_last_day
 
 QuotaPoolKind = Literal["auto", "api", "unknown"]
 
+_AUTO_POOL_ALIASES = frozenset({"auto", "auto_composer", "default", "composer"})
+_API_POOL_ALIASES = frozenset({"api"})
+
+
+def normalize_quota_pool(pool: str | None) -> QuotaPoolKind | None:
+    """Map UI / query aliases to a Quota Pool kind.
+
+    ``None`` means combined / unknown (use total burn). ``default`` follows
+    Cursor Auto + Composer. Returns ``None`` for empty or unrecognized values
+    so callers can fall back to combined scoring.
+    """
+    if pool is None:
+        return None
+    text = str(pool).strip().lower()
+    if not text or text in {"unknown", "total", "combined", "all"}:
+        return None
+    if text in _AUTO_POOL_ALIASES:
+        return "auto"
+    if text in _API_POOL_ALIASES:
+        return "api"
+    return None
+
+
+def quota_pool_for_model(model: str | None) -> QuotaPoolKind:
+    """Match Go ``quotaPoolForModel``: Auto vs API vs unknown (BYOK)."""
+    from pulse.pricing.billing_scope import is_auto_composer_model, is_likely_byok_model
+
+    if not (model or "").strip():
+        return "unknown"
+    if is_auto_composer_model(model):
+        return "auto"
+    if is_likely_byok_model(model):
+        return "unknown"
+    return "api"
+
+
+def resolve_quota_pool(*, quota_pool: str | None = None, model: str | None = None) -> QuotaPoolKind | None:
+    """Prefer an explicit Quota Pool; otherwise infer from the billed model."""
+    normalized = normalize_quota_pool(quota_pool)
+    if normalized is not None:
+        return normalized
+    if model:
+        kind = quota_pool_for_model(model)
+        if kind in ("auto", "api"):
+            return kind
+    return None
+
 
 def pct_quota_ok(pct: float | None) -> bool:
     """Snapshot headroom for one Quota Pool.

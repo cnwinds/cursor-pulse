@@ -386,6 +386,7 @@ def test_pool_ranking_board(env):
     assert reasons["acct-exhausted"] == "exhausted"
     assert reasons["acct-nosnap"] == "no_snapshot"
     assert all("score" in r for r in body["ranked"])
+    assert all("auto_score" in r and "api_score" in r for r in body["ranked"])
     assert "loan_cap" not in reasons.values()
 
 

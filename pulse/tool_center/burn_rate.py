@@ -5,7 +5,10 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
-from pulse.tool_center.snapshot_headroom import snapshot_has_any_pool_headroom
+from pulse.tool_center.snapshot_headroom import (
+    snapshot_has_any_pool_headroom,
+    snapshot_quota_ok_for_pool,
+)
 
 
 @dataclass
@@ -200,6 +203,72 @@ def hours_until_deadline(
     return max((end - now).total_seconds() / 3600.0, 0.0)
 
 
+def pool_pct_used(snapshot: AccountQuotaSnapshot, quota_pool: str | None) -> float | None:
+    """Percent used on the requested Quota Pool; ``None`` pool → total_pct."""
+    if quota_pool == "auto":
+        return snapshot.auto_pct
+    if quota_pool == "api":
+        return snapshot.api_pct
+    return snapshot.total_pct
+
+
+def remaining_headroom_pct_for_pool(
+    snapshot: AccountQuotaSnapshot, quota_pool: str | None = None
+) -> float:
+    pct = pool_pct_used(snapshot, quota_pool)
+    if pct is None:
+        return remaining_headroom_pct(snapshot)
+    return round(max(100.0 - pct, 0.0), 2)
+
+
+def projected_exhaustion_date_for_pool(
+    snapshot: AccountQuotaSnapshot,
+    quota_pool: str | None = None,
+    today: date | None = None,
+) -> date | None:
+    today = today or date.today()
+    pct = pool_pct_used(snapshot, quota_pool)
+    if pct is None:
+        return projected_exhaustion_date(snapshot, today)
+    if pct >= 100:
+        return today
+    elapsed = max((today - snapshot.cycle_start).days, 1)
+    daily_pct = pct / elapsed
+    if daily_pct <= 0:
+        return None
+    days_left = (100.0 - pct) / daily_pct
+    return today + timedelta(days=int(days_left))
+
+
+def _surplus_from_pct(
+    snapshot: AccountQuotaSnapshot,
+    pct_used: float,
+    days_to_deadline: float,
+    today: date,
+) -> float:
+    elapsed = max((today - snapshot.cycle_start).days, 1)
+    if snapshot.limit_cents <= 0:
+        return 0.0
+    daily_pct = pct_used / elapsed
+    surplus_pct = max(100.0 - (pct_used + daily_pct * days_to_deadline), 0.0)
+    return round(surplus_pct / 100.0 * snapshot.limit_cents, 2)
+
+
+def projected_surplus_cents_for_pool(
+    snapshot: AccountQuotaSnapshot,
+    days_to_deadline: float,
+    today: date | None = None,
+    *,
+    quota_pool: str | None = None,
+) -> float:
+    """Quota Pool Surplus: leftover after primary burn continues to deadline."""
+    today = today or date.today()
+    pct = pool_pct_used(snapshot, quota_pool)
+    if pct is None:
+        return projected_surplus_cents(snapshot, days_to_deadline, today)
+    return _surplus_from_pct(snapshot, pct, days_to_deadline, today)
+
+
 def projected_surplus_cents(
     snapshot: AccountQuotaSnapshot, days_to_deadline: float, today: date | None = None
 ) -> float:
@@ -301,25 +370,47 @@ def _hard_filter_reason(
     *,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    quota_pool: str | None = None,
 ) -> str | None:
     """返回排除原因码；通过硬过滤则 None。
 
-    借 Key（enforce_loan_cap=True）用 total_pct / burn_rate 的 exhausted。
+    借 Key（enforce_loan_cap=True）用 total_pct / burn_rate 的 exhausted；
+    指定 quota_pool 时改为该桶百分比。
     代理入池（False）用 Snapshot Headroom：两桶都满才 exhausted，与 Go
-    per-bucket 选择对齐（入池 OR，请求时按桶过滤）。
+    per-bucket 选择对齐（入池 OR，请求时按桶过滤）。指定 quota_pool 时
+    只看该桶（用于 auto_score / api_score）。
     exclude_at_loan_cap 为 None 时跟随 enforce_loan_cap；管理员选账号列表
     可传 False，只放开人数上限、仍走借用路径打分。
     """
     analysis = analyze_burn_rate(cand.snapshot, today)
+    pool_pct = pool_pct_used(cand.snapshot, quota_pool) if quota_pool else None
     if enforce_loan_cap:
-        if analysis.status == "exhausted":
+        if quota_pool in ("auto", "api"):
+            if pool_pct is not None and pool_pct >= 100:
+                return "exhausted"
+            if pool_pct is None and analysis.status == "exhausted":
+                return "exhausted"
+        elif analysis.status == "exhausted":
+            return "exhausted"
+    elif quota_pool in ("auto", "api"):
+        if not snapshot_quota_ok_for_pool(
+            quota_pool,
+            auto_pct=cand.snapshot.auto_pct,
+            api_pct=cand.snapshot.api_pct,
+        ):
             return "exhausted"
     elif not snapshot_has_any_pool_headroom(
         auto_pct=cand.snapshot.auto_pct,
         api_pct=cand.snapshot.api_pct,
     ):
         return "exhausted"
-    if analysis.exhausts_before_reset:
+    if quota_pool in ("auto", "api"):
+        projected = projected_exhaustion_date_for_pool(cand.snapshot, quota_pool, today)
+        exhausts_before = projected is not None and projected < cand.snapshot.cycle_end
+        if exhausts_before:
+            if enforce_loan_cap or (pool_pct is not None and pool_pct < 100):
+                return "exhausts_before_reset"
+    elif analysis.exhausts_before_reset:
         # Pool intake: total-burn "already exhausted" projection must not
         # override per-bucket Snapshot Headroom (OR intake rule).
         if enforce_loan_cap or analysis.status != "exhausted":
@@ -353,16 +444,22 @@ def _score_payload(
     freshness: float,
     score: float,
     computed_score: float,
+    quota_pool: str | None = None,
+    headroom: float | None = None,
+    jev_score: float | None = None,
+    sticky_kept: bool = False,
 ) -> dict:
     snapshot = cand.snapshot
     adjust = cand.score_adjust
-    return {
+    payload = {
         "account_id": cand.account_id,
         "account_identifier": cand.account_identifier,
         "primary_member_name": cand.primary_member_name,
         "score": round(score, 4),
         "computed_score": round(computed_score, 4),
         "score_adjust": None if adjust is None else round(adjust, 4),
+        "jev_score": None if jev_score is None else round(jev_score, 4),
+        "quota_pool": quota_pool,
         "deadline": deadline.isoformat(),
         "deadline_at": deadline_at.isoformat(),
         "days_to_deadline": days,
@@ -372,7 +469,9 @@ def _score_payload(
         "urgency_cents_per_day": round(urgency, 2),
         "active_loans": cand.active_loans,
         "snapshot_freshness": freshness,
-        "remaining_headroom_pct": analysis.remaining_headroom_pct,
+        "remaining_headroom_pct": (
+            analysis.remaining_headroom_pct if headroom is None else round(headroom, 2)
+        ),
         "total_pct": snapshot.total_pct,
         "auto_pct": snapshot.auto_pct,
         "api_pct": snapshot.api_pct,
@@ -381,7 +480,36 @@ def _score_payload(
         "status": analysis.status,
         "cycle_start": snapshot.cycle_start.isoformat(),
         "cycle_end": snapshot.cycle_end.isoformat(),
+        "sticky_kept": sticky_kept,
     }
+    return payload
+
+
+def apply_switch_cooldown(
+    ranked: list[dict],
+    *,
+    sticky_account_id: str | None,
+    sticky_since: datetime | None,
+    now: datetime,
+    min_switch_minutes: float,
+) -> list[dict]:
+    """Keep a still-eligible assignment that is younger than Switch Cooldown."""
+    if not sticky_account_id or min_switch_minutes <= 0 or sticky_since is None:
+        return ranked
+    since = _ensure_aware(sticky_since)
+    elapsed_min = max((_ensure_aware(now) - since).total_seconds() / 60.0, 0.0)
+    if elapsed_min >= min_switch_minutes:
+        return ranked
+    sticky = next((row for row in ranked if row["account_id"] == sticky_account_id), None)
+    if sticky is None:
+        return ranked
+    kept = {
+        **sticky,
+        "sticky_kept": True,
+        "sticky_minutes_left": round(min_switch_minutes - elapsed_min, 1),
+    }
+    rest = [row for row in ranked if row["account_id"] != sticky_account_id]
+    return [kept, *rest]
 
 
 def _rank_passing_candidates(
@@ -392,13 +520,17 @@ def _rank_passing_candidates(
     *,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    quota_pool: str | None = None,
+    jev_scores: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """硬过滤 + 打分。返回 (ranked_payloads, excluded_payloads)。
 
     enforce_loan_cap=False 时：不按在借人数硬过滤，打分忽略 L（load）因子；
     exhausted 改为两桶 Snapshot Headroom 都满才排除（见 snapshot_has_any_pool_headroom）。
+    指定 quota_pool 时按该桶 Snapshot Headroom / Quota Pool Surplus 打分。
     exclude_at_loan_cap=False 且 enforce_loan_cap=True：仍用借用打分，但不因
     在借人数达上限排除。
+    jev_scores 为账号 id → [0,1]；缺省或失败则只用规则分。
     """
     rows: list[dict] = []
     excluded: list[dict] = []
@@ -412,6 +544,7 @@ def _rank_passing_candidates(
             now,
             enforce_loan_cap=enforce_loan_cap,
             exclude_at_loan_cap=exclude_at_loan_cap,
+            quota_pool=quota_pool,
         )
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
@@ -433,10 +566,13 @@ def _rank_passing_candidates(
                     "deadline_at": deadline_at.isoformat(),
                     "hours_to_deadline": round(hours_until_deadline(deadline_at, now), 1),
                     "renews_on": cand.renews_on.isoformat() if cand.renews_on else None,
-                    "remaining_headroom_pct": analysis.remaining_headroom_pct,
+                    "remaining_headroom_pct": remaining_headroom_pct_for_pool(
+                        cand.snapshot, quota_pool
+                    ),
                     "total_pct": cand.snapshot.total_pct,
                     "auto_pct": cand.snapshot.auto_pct,
                     "api_pct": cand.snapshot.api_pct,
+                    "quota_pool": quota_pool,
                     "score_adjust": None if adjust is None else round(adjust, 4),
                 }
             )
@@ -451,7 +587,9 @@ def _rank_passing_candidates(
         )
         days = (deadline - today).days
         hours = round(hours_until_deadline(deadline_at, now), 1)
-        surplus = projected_surplus_cents(snapshot, hours / 24.0, today)
+        surplus = projected_surplus_cents_for_pool(
+            snapshot, hours / 24.0, today, quota_pool=quota_pool
+        )
         if enforce_loan_cap:
             load_factor = 1.0 - cand.active_loans / max(
                 cfg.max_active_loans_per_account, 1
@@ -467,7 +605,7 @@ def _rank_passing_candidates(
                 "days": days,
                 "hours": hours,
                 "surplus": surplus,
-                "headroom": analysis.remaining_headroom_pct,
+                "headroom": remaining_headroom_pct_for_pool(snapshot, quota_pool),
                 "urgency": digestion_urgency(
                     surplus,
                     hours,
@@ -487,9 +625,10 @@ def _rank_passing_candidates(
     u_norm = _min_max([row["urgency"] for row in rows])
     s_norm = _min_max([row["surplus"] for row in rows])
     h_norm = _min_max([row["headroom"] for row in rows])
+    jev_weight = cfg.weight_jev if jev_scores else 0.0
     ranked: list[tuple[float, float, dict]] = []
     for idx, row in enumerate(rows):
-        score = (
+        rule_score = (
             profile.weight_urgency * u_norm[idx]
             + profile.weight_surplus * s_norm[idx]
             + profile.weight_load * row["load_factor"]
@@ -497,7 +636,12 @@ def _rank_passing_candidates(
             + profile.weight_freshness * row["freshness"]
         )
         cand: LenderCandidate = row["candidate"]
-        computed_score = score
+        jev_score = None if not jev_scores else jev_scores.get(cand.account_id)
+        if jev_score is not None and jev_weight > 0:
+            computed_score = (1.0 - jev_weight) * rule_score + jev_weight * jev_score
+        else:
+            computed_score = rule_score
+        score = computed_score
         if cand.score_adjust is not None:
             score = computed_score + cand.score_adjust
         ranked.append(
@@ -516,6 +660,9 @@ def _rank_passing_candidates(
                     freshness=row["freshness"],
                     score=score,
                     computed_score=computed_score,
+                    quota_pool=quota_pool,
+                    headroom=row["headroom"],
+                    jev_score=jev_score,
                 ),
             )
         )
@@ -531,6 +678,39 @@ def _rank_passing_candidates(
     return [item for _, _, item in ranked], excluded
 
 
+def _run_lender_rank(
+    candidates: list[LenderCandidate],
+    cfg: LoanSelectionConfig,
+    today: date,
+    now: datetime,
+    *,
+    enforce_loan_cap: bool,
+    exclude_at_loan_cap: bool | None,
+    quota_pool: str | None,
+    jev_scores: dict[str, float] | None,
+    sticky_account_id: str | None,
+    sticky_since: datetime | None,
+) -> tuple[list[dict], list[dict]]:
+    ranked, excluded = _rank_passing_candidates(
+        candidates,
+        cfg,
+        today,
+        now,
+        enforce_loan_cap=enforce_loan_cap,
+        exclude_at_loan_cap=exclude_at_loan_cap,
+        quota_pool=quota_pool,
+        jev_scores=jev_scores,
+    )
+    ranked = apply_switch_cooldown(
+        ranked,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
+        now=now,
+        min_switch_minutes=cfg.min_switch_minutes,
+    )
+    return ranked, excluded
+
+
 def recommend_lenders(
     candidates: list[LenderCandidate],
     today: date | None = None,
@@ -539,16 +719,23 @@ def recommend_lenders(
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    quota_pool: str | None = None,
+    jev_scores: dict[str, float] | None = None,
+    sticky_account_id: str | None = None,
+    sticky_since: datetime | None = None,
 ) -> list[dict]:
     """硬过滤后按待消化压力排序。
 
     借用路径：urgency ≈ 余量/剩余天数；U/S 池内归一化后加权。
+    指定 quota_pool 时余量与 headroom 用该桶 Snapshot Headroom。
     代理池路径（enforce_loan_cap=False）：
     - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化，减少周期末浪费）
     - surplus = projected_surplus_cents 归一化（Snapshot Headroom 推算的空闲余量，多者优先）
     - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
     - score_adjust 非空时加在算法综合分上再排序（微调，不绕过硬过滤）
+    - jev_scores 非空时与规则分按 weight_jev 混合（仅 Key Loan 调用方传入）
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
+    Switch Cooldown：sticky 仍合格且未满 min_switch_minutes 时置顶。
     """
     cfg = loan_selection or LoanSelectionConfig()
     now = now or datetime.now(timezone.utc)
@@ -556,13 +743,17 @@ def recommend_lenders(
         now = now.replace(tzinfo=timezone.utc)
     if today is None:
         today = now.date()
-    ranked, _ = _rank_passing_candidates(
+    ranked, _ = _run_lender_rank(
         candidates,
         cfg,
         today,
         now,
         enforce_loan_cap=enforce_loan_cap,
         exclude_at_loan_cap=exclude_at_loan_cap,
+        quota_pool=quota_pool,
+        jev_scores=jev_scores,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
     )
     return ranked
 
@@ -575,6 +766,10 @@ def explain_lender_selection(
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    quota_pool: str | None = None,
+    jev_scores: dict[str, float] | None = None,
+    sticky_account_id: str | None = None,
+    sticky_since: datetime | None = None,
 ) -> dict:
     """与 recommend_lenders 同源打分，额外返回硬过滤排除项。"""
     cfg = loan_selection or LoanSelectionConfig()
@@ -583,12 +778,17 @@ def explain_lender_selection(
         now = now.replace(tzinfo=timezone.utc)
     if today is None:
         today = now.date()
-    ranked, excluded = _rank_passing_candidates(
+    ranked, excluded = _run_lender_rank(
         candidates,
         cfg,
         today,
         now,
         enforce_loan_cap=enforce_loan_cap,
         exclude_at_loan_cap=exclude_at_loan_cap,
+        quota_pool=quota_pool,
+        jev_scores=jev_scores,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
     )
     return {"ranked": ranked, "excluded": excluded}
+

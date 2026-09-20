@@ -12,6 +12,7 @@ def test_loan_selection_defaults():
     assert sel.max_active_loans_per_account == 2
     assert sel.min_coverage_hours == 1.0
     assert sel.freshness_full_penalty_hours == 24.0
+    assert sel.min_switch_minutes == 30.0
     assert sel.weight_urgency == 0.50
     assert sel.weight_surplus == 0.25
     assert sel.weight_load == 0.15
@@ -21,6 +22,8 @@ def test_loan_selection_defaults():
     assert sel.proxy_weight_headroom == 0.28
     assert sel.proxy_weight_surplus == 0.17
     assert sel.proxy_weight_freshness == 0.03
+    assert sel.weight_jev == 0.35
+    assert cfg.tool_center.jev.enabled is False
 
 
 def test_loan_selection_yaml_override():

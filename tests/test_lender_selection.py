@@ -123,6 +123,39 @@ def test_recommend_excludes_account_at_cap(lender_env):
     assert result["active_loans"] == 0
 
 
+def test_recommend_keeps_borrower_sticky_assignment(lender_env):
+    env = lender_env
+    session = env["session"]
+    sticky_acct, urgent = env["accounts"][0], env["accounts"][1]
+    today = date.today()
+    for snap in session.scalars(select(AccountQuotaSnapshot)).all():
+        if snap.account_id == sticky_acct.id:
+            snap.cycle_end = today + timedelta(days=25)
+            snap.total_pct = 20.0
+        elif snap.account_id == urgent.id:
+            snap.cycle_end = today + timedelta(days=2)
+            snap.total_pct = 20.0
+    loan = _make_loan(session, env, sticky_acct, env["member"])
+    loan.created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    session.flush()
+
+    kept = recommend_lender_for_borrower(
+        session, env["repo"].team_id, borrower_member_id=env["member"].id
+    )
+    assert kept is not None
+    assert kept["account_id"] == sticky_acct.id
+    assert kept["sticky_kept"] is True
+
+    loan.created_at = datetime.now(timezone.utc) - timedelta(minutes=45)
+    session.flush()
+    aged = recommend_lender_for_borrower(
+        session, env["repo"].team_id, borrower_member_id=env["member"].id
+    )
+    assert aged is not None
+    assert aged["account_id"] == urgent.id
+    assert aged.get("sticky_kept") is False
+
+
 def test_recommend_respects_excluded_account_ids(lender_env):
     env = lender_env
     a = env["accounts"][0]

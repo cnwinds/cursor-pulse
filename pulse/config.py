@@ -166,12 +166,23 @@ class CursorSyncConfig(BaseModel):
         return super().model_validate(obj, **kwargs)
 
 
+class JevConfig(BaseModel):
+    """Optional TypeSafe Jev (System One) for Key Loan Assignment Score."""
+
+    enabled: bool = False
+    api_key: str = ""
+    base_url: str = "https://api.typesafe.ai"
+    model: str = "jev-latest"
+    timeout_seconds: float = Field(default=8.0, gt=0, le=60)
+
+
 class LoanSelectionConfig(BaseModel):
     """Key 借用出借账号选择参数（打分权重与硬上限）。"""
 
     max_active_loans_per_account: int = Field(default=2, ge=1)
     min_coverage_hours: float = Field(default=1.0, ge=0)
     freshness_full_penalty_hours: float = Field(default=24.0, ge=0)
+    min_switch_minutes: float = Field(default=30.0, ge=0)
     weight_urgency: float = Field(default=0.50, ge=0)
     weight_surplus: float = Field(default=0.25, ge=0)
     weight_load: float = Field(default=0.15, ge=0)
@@ -182,6 +193,9 @@ class LoanSelectionConfig(BaseModel):
     proxy_weight_headroom: float = Field(default=0.28, ge=0)
     proxy_weight_surplus: float = Field(default=0.17, ge=0)
     proxy_weight_freshness: float = Field(default=0.03, ge=0)
+    # Jev 与规则分混合；仅当本次调用带了 jev_scores 时生效
+    weight_jev: float = Field(default=0.35, ge=0, le=1)
+    jev_min_confidence: float = Field(default=0.35, ge=0, le=1)
 
     @model_validator(mode="after")
     def _validate_weight_sums(self) -> "LoanSelectionConfig":
@@ -206,6 +220,7 @@ class LoanSelectionConfig(BaseModel):
 
 class ToolCenterConfig(BaseModel):
     loan_selection: LoanSelectionConfig = Field(default_factory=LoanSelectionConfig)
+    jev: JevConfig = Field(default_factory=JevConfig)
 
 
 EVOLUTION_DAY_DAILY = -1
@@ -359,6 +374,10 @@ class EnvSettings(BaseSettings):
     capability_bridge_quota_self_read: str = ""
     capability_bridge_cursor_key_bind: str = ""
     capability_bridge_guide_image_update: str = ""
+    typesafe_api_key: str = ""
+    typesafe_enabled: str = ""
+    typesafe_base_url: str = ""
+    typesafe_model: str = ""
     tavily_api_key: str = ""
     tavily_search_url: str = ""
     web_search_enabled: str = ""
@@ -515,6 +534,17 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     elif env.capability_bridge_guide_image_update.lower() in ("0", "false", "no", "off"):
         cfg.capability_bridge.guide_image_update = False
 
+    if env.typesafe_api_key:
+        cfg.tool_center.jev.api_key = env.typesafe_api_key
+        cfg.tool_center.jev.enabled = True
+    if env.typesafe_enabled.lower() in ("1", "true", "yes", "on"):
+        cfg.tool_center.jev.enabled = True
+    elif env.typesafe_enabled.lower() in ("0", "false", "no", "off"):
+        cfg.tool_center.jev.enabled = False
+    if env.typesafe_base_url:
+        cfg.tool_center.jev.base_url = env.typesafe_base_url.rstrip("/")
+    if env.typesafe_model:
+        cfg.tool_center.jev.model = env.typesafe_model
     if env.tavily_api_key:
         cfg.web_search.api_key = env.tavily_api_key
     if env.tavily_search_url:

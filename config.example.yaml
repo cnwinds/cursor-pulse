@@ -60,7 +60,14 @@ tool_center:
     max_active_loans_per_account: 2
     min_coverage_hours: 1
     freshness_full_penalty_hours: 24
+    min_switch_minutes: 30
     weight_urgency: 0.50
     weight_surplus: 0.25
     weight_load: 0.15
     weight_freshness: 0.10
+    # Optional TypeSafe Jev for Key Loan auto-assign (env TYPESAFE_API_KEY)
+    weight_jev: 0.35
+  jev:
+    enabled: false
+    api_key: ${TYPESAFE_API_KEY}
+    model: jev-latest

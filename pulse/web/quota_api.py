@@ -23,13 +23,15 @@ from pulse.tool_center.burn_rate import (
     analyze_burn_rate,
     display_api_remaining_cents,
     display_remaining_cents,
-    recommend_lenders,
 )
-from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
+from pulse.tool_center.key_loan_lender import (
+    active_loan_counts_by_account,
+    rank_lenders_for_assignment,
+    recommend_lender_for_borrower,
+)
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
-    build_lender_candidates,
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
     loan_payload,
@@ -39,6 +41,7 @@ from pulse.tool_center.key_loans import (
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
+from pulse.tool_center.snapshot_headroom import resolve_quota_pool
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.usage_summary_pick import attach_board_usage_summaries
@@ -110,6 +113,17 @@ class LoanPatchBody(BaseModel):
 
 class SelfLoanBody(BaseModel):
     note: str | None = None
+
+
+class AssignLoanBody(BaseModel):
+    borrower_member_id: str
+    source_account_id: str | None = None
+    quota_pool: str | None = None
+    model: str | None = None
+    note: str | None = None
+    auto_revoke_on_reset: bool = True
+    key_name: str | None = None
+    delivery_mode: Literal["proxy_alias"] = "proxy_alias"
 
 
 def _encryption_key(config) -> str:
@@ -277,15 +291,18 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     )
     def quota_recommend(
         limit: int = Query(default=10, ge=1, le=50),
+        quota_pool: str | None = Query(default=None),
+        model: str | None = Query(default=None),
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        today = date.today()
-        candidates = build_lender_candidates(session, team.id)
-        ranked = recommend_lenders(
-            candidates,
-            today,
+        pool = resolve_quota_pool(quota_pool=quota_pool, model=model)
+        ranked = rank_lenders_for_assignment(
+            session,
+            team.id,
             loan_selection=config.tool_center.loan_selection,
+            quota_pool=pool,
+            config=config,
             exclude_at_loan_cap=False,
         )
         return ranked[:limit]
@@ -381,6 +398,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 note=body.note,
                 bound_by_member_id=user.member.id,
                 loan_selection=config.tool_center.loan_selection,
+                config=config,
             )
             log_admin_action(
                 session,
@@ -400,6 +418,80 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             return result
         except KeyLoanError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v2/loans/assign",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def assign_loan(
+        body: AssignLoanBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        """Admin Key Loan assignment. Omit source_account_id to auto-pick the top Assignment Score."""
+        team, _ = team_repo_fn(session)
+        borrower = session.get(Member, body.borrower_member_id)
+        if not borrower or borrower.team_id != team.id:
+            raise HTTPException(status_code=400, detail="借用人不存在")
+
+        pool = resolve_quota_pool(quota_pool=body.quota_pool, model=body.model)
+        source_account_id = (body.source_account_id or "").strip() or None
+        auto_picked = source_account_id is None
+        if source_account_id is None:
+            lender = recommend_lender_for_borrower(
+                session,
+                team.id,
+                loan_selection=config.tool_center.loan_selection,
+                quota_pool=pool,
+                config=config,
+                borrower_member_id=body.borrower_member_id,
+            )
+            if not lender:
+                raise HTTPException(status_code=400, detail="当前没有可借出的富余账号")
+            source_account_id = lender["account_id"]
+
+        enc_key = _encryption_key(config)
+        try:
+            result = issue_loan_key(
+                session,
+                enc_key,
+                team_id=team.id,
+                source_account_id=source_account_id,
+                borrower_member_id=body.borrower_member_id,
+                bound_by_member_id=user.member.id,
+                note=body.note,
+                auto_revoke_on_reset=body.auto_revoke_on_reset,
+                key_name=body.key_name,
+                delivery_mode=body.delivery_mode,
+                loan_selection=config.tool_center.loan_selection,
+                enforce_loan_cap=False,
+            )
+            result["auto_picked"] = auto_picked
+            result["quota_pool"] = pool
+            result["source_account_id"] = source_account_id
+            log_admin_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="quota.assign_loan",
+                capability="accounts:write",
+                detail=f"{source_account_id}->{borrower.display_name}:auto={auto_picked}",
+            )
+            session.commit()
+            try:
+                from pulse.tool_center.key_loan_notify import notify_loan_issued
+
+                notify_loan_issued(session, config, result=result, skip_borrower=False)
+            except Exception:
+                logger.exception("key loan issued notify failed after assign")
+            return result
+        except KeyLoanError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
         except Exception as exc:
             session.rollback()
             raise HTTPException(status_code=400, detail=str(exc)) from exc

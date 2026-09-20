@@ -319,6 +319,8 @@ def test_pool_returns_only_enabled_credentials(env):
     assert creds[0]["api_key"] == "cursor-key-1"
     assert creds[0]["auto_pct"] == 10.0
     assert creds[0]["api_pct"] == 5.0
+    assert isinstance(creds[0].get("auto_score"), (int, float))
+    assert isinstance(creds[0].get("api_score"), (int, float))
 
 
 def test_pool_excludes_loan_credentials(env):

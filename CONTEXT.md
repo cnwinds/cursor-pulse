@@ -69,5 +69,21 @@ Caller-facing seams carved from the former `pulse.proxy.service` mega-module (`s
 _Avoid_: Putting authorize, usage pricing, and pool ranking in one file again; conflating Usage Ledger with Proxy Usage Rollup
 
 **Manual Rank Score**:
-Optional per-account delta (`proxy_score_adjust`) added to the computed Credential Pool ranking score, used to fine-tune MITM pool order. Hard filters (Snapshot Headroom / coverage) still apply. Does not affect Key Loan lender selection.
-_Avoid_: pin, sticky priority, treating this as a replacement for the computed score or a loan ranking override
+Optional per-account delta (`proxy_score_adjust`) added to the computed Assignment Score, used to prefer or demote an account for both Credential Pool order and Key Loan lender selection. Hard filters (Snapshot Headroom / coverage / Switch Cooldown) still apply.
+_Avoid_: pin, sticky priority, treating this as a replacement for the computed score or a way to bypass hard filters
+
+**Assignment Score**:
+Rank used to auto-pick a lender account (Key Loan) or order the Credential Pool. Rule score (urgency / surplus / load / headroom / freshness on the requested Quota Pool) plus optional Jev blend plus Manual Rank Score.
+_Avoid_: treating the linear weights as the only ranking; calling Jev on the MITM hot path
+
+**Quota Pool Surplus**:
+Projected leftover cents on Auto or API Snapshot Headroom after the primary member’s current burn continues to deadline. The waste-avoidance signal: idle leftover that will vanish at reset ranks up.
+_Avoid_: ranking only on total_pct when the borrower is bound to one Quota Pool; treating remaining cents as a substitute for pool percent
+
+**Switch Cooldown**:
+Minimum time (`min_switch_minutes`, default 30) a still-eligible assignment is kept before auto-pick may move the borrower to a higher-scoring account. Exhaustion and other hard-gate failures switch immediately. Admin manual account pick bypasses the floor.
+_Avoid_: rotating MITM sticky for score reasons; treating the cooldown as a lock when the current account is unusable
+
+**Jev Rank**:
+Optional TypeSafe Jev (System One) composite over atomic waste / primary-safety / pool-fit questions, mixed into Key Loan Assignment Score in code. Fail-open to the rule score. Not used for Credential Pool Intake.
+_Avoid_: asking Jev to pick the winner in one question; using chat-completions as a substitute; blocking loan issue when Jev is down

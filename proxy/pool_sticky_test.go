@@ -46,6 +46,44 @@ func TestMarkExhaustedAdvancesOnce(t *testing.T) {
 	}
 }
 
+func TestNextAvailableForQuotaPicksHigherPoolScore(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1", AutoScore: 0.1, ApiScore: 0.9},
+		{CredentialID: "c2", APIKey: "k2", AutoScore: 0.8, ApiScore: 0.2},
+		{CredentialID: "c3", APIKey: "k3", AutoScore: 0.3, ApiScore: 0.4},
+	})
+	nextAPI := p.nextAvailableForQuota("c1", quotaPoolAPI)
+	if nextAPI == nil || nextAPI.credentialID != "c3" {
+		t.Fatalf("api next want c3, got %v", credID(nextAPI))
+	}
+	nextAuto := p.nextAvailableForQuota("c1", quotaPoolAuto)
+	if nextAuto == nil || nextAuto.credentialID != "c2" {
+		t.Fatalf("auto next want c2, got %v", credID(nextAuto))
+	}
+}
+
+func TestSortKeysByPoolScore(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1", AutoScore: 0.1, ApiScore: 0.9},
+		{CredentialID: "c2", APIKey: "k2", AutoScore: 0.8, ApiScore: 0.2},
+	})
+	auto := sortKeysByPoolScore(p.keys, quotaPoolAuto)
+	if auto[0].credentialID != "c2" {
+		t.Fatalf("auto want c2 first, got %s", auto[0].credentialID)
+	}
+	api := sortKeysByPoolScore(p.keys, quotaPoolAPI)
+	if api[0].credentialID != "c1" {
+		t.Fatalf("api want c1 first, got %s", api[0].credentialID)
+	}
+}
+
+func credID(e *keyEntry) string {
+	if e == nil {
+		return "<nil>"
+	}
+	return e.credentialID
+}
+
 func TestNextAvailableAfter(t *testing.T) {
 	p := NewPoolFromCredentials([]PoolCredential{
 		{CredentialID: "c1", APIKey: "k1"},

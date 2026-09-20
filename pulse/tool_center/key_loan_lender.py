@@ -40,6 +40,29 @@ def loan_display_expires_on(loan: KeyLoan, account: AiAccount | None) -> date | 
     return account_loan_deadline(account)
 
 
+def sticky_assignment_for_borrower(
+    session: Session, borrower_member_id: str | None
+) -> tuple[str | None, datetime | None]:
+    """Most recent active Key Loan for Switch Cooldown.
+
+    Returns ``(source_account_id, created_at)`` or ``(None, None)``.
+    """
+    if not borrower_member_id:
+        return None, None
+    loan = session.scalar(
+        select(KeyLoan)
+        .where(
+            KeyLoan.borrower_member_id == borrower_member_id,
+            KeyLoan.status == "active",
+        )
+        .order_by(KeyLoan.created_at.desc())
+        .limit(1)
+    )
+    if loan is None:
+        return None, None
+    return loan.source_account_id, loan.created_at
+
+
 def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, int]:
     rows = session.execute(
         select(KeyLoan.source_account_id, func.count())
@@ -88,9 +111,77 @@ def build_lender_candidates(
                 renews_on=account.renews_on,
                 active_loans=loan_counts.get(account.id, 0),
                 primary_member_name=primary_name,
+                score_adjust=account.proxy_score_adjust,
             )
         )
     return candidates
+
+
+def _jev_scores_for_ranked(config, ranked: list[dict], quota_pool: str | None) -> dict[str, float]:
+    from pulse.llm.jev import build_jev_client
+    from pulse.tool_center.jev_rank import score_assignment_candidates
+
+    if not ranked or config is None:
+        return {}
+    client = build_jev_client(config)
+    if client is None:
+        return {}
+    selection = getattr(getattr(config, "tool_center", None), "loan_selection", None)
+    min_conf = 0.35 if selection is None else selection.jev_min_confidence
+    scored = score_assignment_candidates(
+        client, ranked, quota_pool=quota_pool, min_confidence=min_conf
+    )
+    return {account_id: item.blend for account_id, item in scored.items()}
+
+
+def rank_lenders_for_assignment(
+    session: Session,
+    team_id: str,
+    *,
+    exclude_account_ids: set[str] | None = None,
+    today: date | None = None,
+    now: datetime | None = None,
+    loan_selection: LoanSelectionConfig | None = None,
+    quota_pool: str | None = None,
+    config=None,
+    sticky_account_id: str | None = None,
+    sticky_since: datetime | None = None,
+    exclude_at_loan_cap: bool | None = False,
+    use_jev: bool = True,
+) -> list[dict]:
+    """Rank lenders for Key Loan assignment (optional Jev blend)."""
+    from pulse.tool_center.snapshot_headroom import normalize_quota_pool
+
+    pool = normalize_quota_pool(quota_pool)
+    candidates = build_lender_candidates(
+        session, team_id, exclude_account_ids=exclude_account_ids
+    )
+    ranked = recommend_lenders(
+        candidates,
+        today,
+        now=now,
+        loan_selection=loan_selection,
+        quota_pool=pool,
+        exclude_at_loan_cap=exclude_at_loan_cap,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
+    )
+    if not use_jev or not ranked:
+        return ranked
+    jev_scores = _jev_scores_for_ranked(config, ranked, pool)
+    if not jev_scores:
+        return ranked
+    return recommend_lenders(
+        candidates,
+        today,
+        now=now,
+        loan_selection=loan_selection,
+        quota_pool=pool,
+        jev_scores=jev_scores,
+        exclude_at_loan_cap=exclude_at_loan_cap,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
+    )
 
 
 def recommend_lender_for_borrower(
@@ -99,11 +190,31 @@ def recommend_lender_for_borrower(
     *,
     exclude_account_ids: set[str] | None = None,
     today: date | None = None,
+    now: datetime | None = None,
     loan_selection: LoanSelectionConfig | None = None,
+    quota_pool: str | None = None,
+    config=None,
+    sticky_account_id: str | None = None,
+    sticky_since: datetime | None = None,
+    borrower_member_id: str | None = None,
 ) -> dict | None:
-    candidates = build_lender_candidates(
-        session, team_id, exclude_account_ids=exclude_account_ids
+    if sticky_account_id is None and borrower_member_id:
+        sticky_account_id, sticky_since = sticky_assignment_for_borrower(
+            session, borrower_member_id
+        )
+    ranked = rank_lenders_for_assignment(
+        session,
+        team_id,
+        exclude_account_ids=exclude_account_ids,
+        today=today,
+        now=now,
+        loan_selection=loan_selection,
+        quota_pool=quota_pool,
+        config=config,
+        sticky_account_id=sticky_account_id,
+        sticky_since=sticky_since,
+        exclude_at_loan_cap=None,
+        use_jev=True,
     )
-    ranked = recommend_lenders(candidates, today, loan_selection=loan_selection)
     return ranked[0] if ranked else None
 

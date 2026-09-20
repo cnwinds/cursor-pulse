@@ -711,6 +711,70 @@ def test_quota_recommend_includes_account_at_loan_cap(quota_env):
     assert by_id[account.id]["active_loans"] == 2
 
 
+def test_quota_recommend_filters_by_quota_pool(quota_env):
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    api_left = quota_env["cursor_account"]
+    token = create_access_token(config, owner)
+
+    s = quota_env["session_factory"]()
+    today = date.today()
+    snap = s.scalar(
+        select(AccountQuotaSnapshot).where(
+            AccountQuotaSnapshot.account_id == api_left.id
+        )
+    )
+    snap.cycle_start = today - timedelta(days=5)
+    snap.cycle_end = today + timedelta(days=20)
+    snap.total_pct = 50.0
+    snap.auto_pct = 90.0
+    snap.api_pct = 10.0
+    snap.limit_cents = 10000
+    snap.used_cents = 5000
+    snap.remaining_cents = 5000
+
+    tool_repo = ToolCenterRepository(s, owner.team_id)
+    other = next(
+        a
+        for a in tool_repo.list_accounts()
+        if a.vendor.slug == "cursor" and a.id != api_left.id
+    )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=other.id,
+            captured_at=datetime.now(timezone.utc),
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=20),
+            limit_cents=10000,
+            used_cents=5000,
+            remaining_cents=5000,
+            total_pct=50.0,
+            auto_pct=10.0,
+            api_pct=90.0,
+        )
+    )
+    s.commit()
+    s.close()
+
+    api_res = client.get(
+        "/api/v2/quota-board/recommend",
+        headers=_headers(token),
+        params={"quota_pool": "api", "limit": 10},
+    )
+    auto_res = client.get(
+        "/api/v2/quota-board/recommend",
+        headers=_headers(token),
+        params={"model": "composer-2", "limit": 10},
+    )
+    assert api_res.status_code == 200
+    assert auto_res.status_code == 200
+    assert api_res.json()[0]["account_id"] == api_left.id
+    assert api_res.json()[0]["quota_pool"] == "api"
+    assert auto_res.json()[0]["account_id"] == other.id
+    assert auto_res.json()[0]["quota_pool"] == "auto"
+
+
 def _make_active_loan(session, account, borrower, bound_by) -> KeyLoan:
     cred = AiAccountCredential(
         account_id=account.id,

@@ -36,6 +36,7 @@ ACTION_LABELS: dict[str, str] = {
     "quota.revoke_loan": "收回外借",
     "quota.reassign_loan_source": "更换出借账号",
     "quota.patch_loan": "修改借用设置",
+    "quota.assign_loan": "管理员分配 Key",
     "quota.request_self_loan": "自助申请 Key",
     "usage.manual_submit": "手动提交用量（历史）",
     # Historical / reserved (AccessRequest API not shipped)

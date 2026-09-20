@@ -233,6 +233,7 @@ def request_loan_payload(
             borrower=member,
             note=note,
             loan_selection=config.tool_center.loan_selection,
+            config=config,
         )
         repo.session.flush()
         proxy_url = proxy_public_url(config)

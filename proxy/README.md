@@ -134,7 +134,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 ## 池 exhausted 语义
 
 - 配额按 Cursor **Auto+Composer** 与 **API** 两桶分别标记（`autoQuotaExhausted` / `apiQuotaExhausted`）；仅当两桶都耗尽时凭证才视为 fully unavailable。
-- Pulse `/pool` 下发 `auto_pct` / `api_pct` 快照；`Run` 时按请求模型选桶，**优先复用当前 sticky 账号**，仅在该桶无额度时按池顺序换号（subagent 与父会话共用同一 sticky）。
+- Pulse `/pool` 下发 `auto_pct` / `api_pct` 以及 `auto_score` / `api_score`；`Run` 时按请求模型选桶，**优先复用当前 sticky 账号**，首次绑定与该桶耗尽轮换时选该桶得分最高的凭证（subagent 与父会话共用同一 sticky）。
 - 某凭证因 **配额/限流** 被标记后，运行时耗尽标志 **sticky**：Pulse 热更新凭证池时 **保留**（避免短暂恢复后立刻再烧额度）。
 - **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
 - Pulse 模式下每个 **CLI session JWT** 在 exchange 时绑定一个池内凭证（`StickyCredentialID`）。

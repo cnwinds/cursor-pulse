@@ -153,6 +153,31 @@ def _build_pool_lender_candidates(
     return candidates, excluded_no_snap
 
 
+def _pool_quota_scores(
+    candidates: list[LenderCandidate],
+    today: date,
+    now: datetime,
+    *,
+    loan_selection,
+) -> dict[str, dict[str, float]]:
+    """Per-account Assignment Score on Auto vs API Quota Pools (no Jev)."""
+    from pulse.tool_center.burn_rate import recommend_lenders
+
+    out: dict[str, dict[str, float]] = {}
+    for pool in ("auto", "api"):
+        ranked = recommend_lenders(
+            candidates,
+            today,
+            loan_selection=loan_selection,
+            now=now,
+            enforce_loan_cap=False,
+            quota_pool=pool,
+        )
+        for row in ranked:
+            out.setdefault(row["account_id"], {})[pool] = row["score"]
+    return out
+
+
 def list_pool_credentials(
     session: Session,
     *,
@@ -183,6 +208,9 @@ def list_pool_credentials(
         now=now,
         enforce_loan_cap=False,
     )
+    score_by_account = _pool_quota_scores(
+        candidates, today, now, loan_selection=loan_selection
+    )
     ranked_ids = [item["account_id"] for item in ranked]
     allowed = set(ranked_ids)
 
@@ -206,6 +234,10 @@ def list_pool_credentials(
             if snap is not None:
                 item["auto_pct"] = snap.auto_pct
                 item["api_pct"] = snap.api_pct
+            scores = score_by_account.get(aid)
+            if scores:
+                item["auto_score"] = scores.get("auto")
+                item["api_score"] = scores.get("api")
             out.append(item)
     return out
 
@@ -233,7 +265,20 @@ def list_pool_ranking_board(session: Session, *, loan_selection=None) -> dict:
         now=now,
         enforce_loan_cap=False,
     )
+    scores = _pool_quota_scores(
+        candidates, today, now, loan_selection=loan_selection
+    )
+    ranked = []
+    for row in board["ranked"]:
+        extra = scores.get(row["account_id"]) or {}
+        ranked.append(
+            {
+                **row,
+                "auto_score": extra.get("auto"),
+                "api_score": extra.get("api"),
+            }
+        )
     return {
-        "ranked": board["ranked"],
+        "ranked": ranked,
         "excluded": excluded_no_snap + board["excluded"],
     }
