@@ -62,6 +62,44 @@ class SyncSchedulerService:
         finally:
             session.close()
 
+    def run_auto_lender_reevaluate(self) -> int:
+        """重评 auto 模式的借用并换绑；返回换绑笔数。
+
+        只在 ``loan_selection.auto_mode`` 打开时干活，其余情况直接返回 0。
+        """
+        encryption_key = self.config.credentials.encryption_key
+        if not encryption_key:
+            return 0
+        session = self.session_factory()
+        try:
+            from pulse.settings import effective_config_for_tenant
+
+            runtime_config = effective_config_for_tenant(session, self.config)
+            loan_selection = runtime_config.tool_center.loan_selection
+            if not loan_selection.auto_mode:
+                return 0
+
+            from pulse.llm.jev import build_jev_client
+            from pulse.tenant.service import resolve_team
+            from pulse.tool_center.key_loan_auto import reevaluate_auto_loans
+
+            team = resolve_team(session, runtime_config)
+            stats = reevaluate_auto_loans(
+                session,
+                encryption_key,
+                team_id=team.id,
+                loan_selection=loan_selection,
+                jev=build_jev_client(runtime_config),
+                jev_config=runtime_config.jev,
+            )
+            return stats["switched"]
+        except Exception:
+            logger.exception("auto lender re-evaluate failed")
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
 
 # Backward-compatible alias for imports in tests / legacy code.
 ReminderService = SyncSchedulerService
@@ -104,6 +142,13 @@ def build_scheduler(
         hour=3,
         minute=0,
         id="expire_key_loans",
+    )
+
+    scheduler.add_job(
+        service.run_auto_lender_reevaluate,
+        trigger="interval",
+        minutes=max(1, tick_minutes),
+        id="auto_lender_reevaluate",
     )
 
     return scheduler

@@ -95,6 +95,8 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "note": loan.note,
                 "delivery_mode": delivery_mode,
                 "key_hint": key_hint,
+                "lender_mode": getattr(loan, "lender_mode", None) or "manual",
+                "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),
             }

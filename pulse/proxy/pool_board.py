@@ -18,14 +18,21 @@ from pulse.tool_center.burn_rate import LenderCandidate
 logger = logging.getLogger(__name__)
 
 
-def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
-    """入池 primary 凭证上下文：(creds, accounts_by_id, latest_snaps, loan_counts)。"""
+def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict, dict, dict]:
+    """入池 primary 凭证上下文。
+
+    返回 ``(creds, accounts_by_id, latest_snaps, loan_counts, bound_at_by_account,
+    member_names)``。后两项供候选构造使用：驻留降权需要 bound_at，Jev 候选描述
+    与 owner 列需要主负责人姓名。
+    """
     from pulse.storage.models import (
         AiAccount,
         AiAccountCredential,
         AiVendor,
         KeyLoan,
+        Member,
     )
+    from pulse.tool_center.key_loan_lender import last_bound_at_by_account
     from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
     rows = (
@@ -47,7 +54,7 @@ def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
         .all()
     )
     if not rows:
-        return [], {}, {}, {}
+        return [], {}, {}, {}, {}, {}
 
     # 每账号仅保留最早绑定的一个 primary（防御性；入池前应在 API 层禁止多 primary）
     seen_accounts: set[str] = set()
@@ -78,7 +85,17 @@ def _pool_primary_context(session: Session) -> tuple[list, dict, dict, dict]:
             .group_by(KeyLoan.source_account_id)
         ).all()
     )
-    return rows, accounts, latest_snaps, loan_counts
+    bound_at_by_account = last_bound_at_by_account(session, account_ids)
+    primary_ids = {a.primary_member_id for a in accounts.values() if a.primary_member_id}
+    member_names = (
+        {
+            m.id: m.display_name
+            for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))
+        }
+        if primary_ids
+        else {}
+    )
+    return rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names
 
 
 def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
@@ -104,15 +121,22 @@ def _build_pool_lender_candidates(
     account_ids: set[str],
     *,
     include_no_snap_excluded: bool,
+    bound_at_by_account: dict | None = None,
+    member_names: dict | None = None,
 ) -> tuple[list[LenderCandidate], list[dict]]:
     """Assemble LenderCandidates; optionally collect no_snapshot exclusions.
 
     Snapshot Headroom is applied by burn_rate (enforce_loan_cap=False). Accounts
     that already fail ``snapshot_has_any_pool_headroom`` are still passed through
     so explain_lender_selection can surface the reason.
+
+    bound_at / primary_member_name 必须与借用路径一致，否则驻留降权恒为 1.0，
+    且 Jev 候选描述与 owner 列会退化成 unassigned。
     """
     candidates: list[LenderCandidate] = []
     excluded_no_snap: list[dict] = []
+    bound_at_by_account = bound_at_by_account or {}
+    member_names = member_names or {}
     for aid in sorted(account_ids):
         account = accounts.get(aid)
         if not account:
@@ -148,6 +172,13 @@ def _build_pool_lender_candidates(
                 renews_on=account.renews_on,
                 active_loans=active_loans,
                 score_adjust=account.proxy_score_adjust,
+                reserve_pct=account.proxy_reserve_pct,
+                bound_at=bound_at_by_account.get(aid),
+                primary_member_name=(
+                    member_names.get(account.primary_member_id)
+                    if account.primary_member_id
+                    else None
+                ),
             )
         )
     return candidates, excluded_no_snap
@@ -158,13 +189,20 @@ def list_pool_credentials(
     *,
     encryption_key: str,
     loan_selection=None,
+    jev=None,
+    pool=None,
 ) -> list[dict]:
-    """Credential Pool Board → decryptable primary credentials (ranked)."""
+    """Credential Pool Board → decryptable primary credentials (ranked).
+
+    Auto Lender（Jev + 算法保底）决定顺序；Go 代理按该顺序做 sticky 轮转。
+    """
     from pulse.ingestion.crypto import decrypt_secret
     from pulse.storage.models import AiAccountCredential
-    from pulse.tool_center.burn_rate import recommend_lenders
+    from pulse.tool_center.auto_lender import rank_lenders
 
-    rows, accounts, latest_snaps, loan_counts = _pool_primary_context(session)
+    rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names = (
+        _pool_primary_context(session)
+    )
     if not rows:
         return []
 
@@ -174,16 +212,20 @@ def list_pool_credentials(
         loan_counts,
         {c.account_id for c in rows},
         include_no_snap_excluded=False,
+        bound_at_by_account=bound_at_by_account,
+        member_names=member_names,
     )
     today, now = _pool_scoring_clock(latest_snaps)
-    ranked = recommend_lenders(
+    board = rank_lenders(
         candidates,
-        today,
         loan_selection=loan_selection,
+        pool=pool,
+        today=today,
         now=now,
         enforce_loan_cap=False,
+        jev=jev,
     )
-    ranked_ids = [item["account_id"] for item in ranked]
+    ranked_ids = [item["account_id"] for item in board["ranked"]]
     allowed = set(ranked_ids)
 
     by_account: dict[str, list[AiAccountCredential]] = {}
@@ -210,13 +252,21 @@ def list_pool_credentials(
     return out
 
 
-def list_pool_ranking_board(session: Session, *, loan_selection=None) -> dict:
-    """Credential Pool Board explain view: ranked + excluded (no secrets)."""
-    from pulse.tool_center.burn_rate import explain_lender_selection
+def list_pool_ranking_board(
+    session: Session, *, loan_selection=None, jev=None, pool=None
+) -> dict:
+    """Credential Pool Board explain view: ranked + excluded + decision (no secrets)."""
+    from pulse.tool_center.auto_lender import rank_lenders
 
-    rows, accounts, latest_snaps, loan_counts = _pool_primary_context(session)
+    rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names = (
+        _pool_primary_context(session)
+    )
     if not rows:
-        return {"ranked": [], "excluded": []}
+        return {
+            "ranked": [],
+            "excluded": [],
+            "decision": {"picked_by": "algorithm", "fallback_reason": "no_credentials"},
+        }
 
     candidates, excluded_no_snap = _build_pool_lender_candidates(
         accounts,
@@ -224,16 +274,21 @@ def list_pool_ranking_board(session: Session, *, loan_selection=None) -> dict:
         loan_counts,
         {c.account_id for c in rows},
         include_no_snap_excluded=True,
+        bound_at_by_account=bound_at_by_account,
+        member_names=member_names,
     )
     today, now = _pool_scoring_clock(latest_snaps)
-    board = explain_lender_selection(
+    board = rank_lenders(
         candidates,
-        today,
         loan_selection=loan_selection,
+        pool=pool,
+        today=today,
         now=now,
         enforce_loan_cap=False,
+        jev=jev,
     )
     return {
         "ranked": board["ranked"],
         "excluded": excluded_no_snap + board["excluded"],
+        "decision": board["decision"],
     }

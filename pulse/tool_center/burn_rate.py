@@ -5,7 +5,11 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
-from pulse.tool_center.snapshot_headroom import snapshot_has_any_pool_headroom
+from pulse.tool_center.snapshot_headroom import (
+    QuotaPoolKind,
+    snapshot_has_any_pool_headroom,
+    snapshot_quota_ok_for_pool,
+)
 
 
 @dataclass
@@ -146,6 +150,10 @@ class LenderCandidate:
     active_loans: int = 0
     primary_member_name: str | None = None
     score_adjust: float | None = None
+    # 主负责人保留量（账号级 proxy_reserve_pct）；None 时用配置默认值
+    reserve_pct: float | None = None
+    # 该账号最近一次出借绑定时刻；auto 模式的驻留窗口基准
+    bound_at: datetime | None = None
 
 
 def lender_deadline(cycle_end: date, renews_on: date | None) -> date:
@@ -219,6 +227,98 @@ def projected_surplus_cents(
         daily_burn = snapshot.used_cents / elapsed
         return round(max(snapshot.remaining_cents - daily_burn * days_to_deadline, 0.0), 2)
     return 0.0
+
+
+def _pool_pct(snapshot: AccountQuotaSnapshot, pool: QuotaPoolKind) -> float | None:
+    """该 Quota Pool 的使用百分比。
+
+    ``unknown`` 取两桶较高者：选号时两桶都要有余量，用更紧张的那个评估才安全。
+    """
+    if pool == "auto":
+        return snapshot.auto_pct
+    if pool == "api":
+        return snapshot.api_pct
+    known = [p for p in (snapshot.auto_pct, snapshot.api_pct) if p is not None]
+    if known:
+        return max(known)
+    return None
+
+
+def pool_headroom_pct(
+    snapshot: AccountQuotaSnapshot, pool: QuotaPoolKind | None
+) -> float:
+    """按池的 Snapshot Headroom；pool 为 None 或该桶缺失时回落 total。"""
+    if pool is None:
+        return remaining_headroom_pct(snapshot)
+    pct = _pool_pct(snapshot, pool)
+    if pct is None:
+        return remaining_headroom_pct(snapshot)
+    return round(max(100.0 - pct, 0.0), 2)
+
+
+def pool_surplus_cents(
+    snapshot: AccountQuotaSnapshot,
+    pool: QuotaPoolKind | None,
+    days_to_deadline: float,
+    today: date | None = None,
+) -> float:
+    """按池推算号主到 deadline 也用不完的额度（cents）。
+
+    Cursor 快照只有每桶百分比、没有每桶额度，因此借用 included 总额按比例折算。
+    候选之间比较时这是单调变换，不改变排序；绝对值仅供展示。
+    """
+    if pool is None:
+        return projected_surplus_cents(snapshot, days_to_deadline, today)
+    pct = _pool_pct(snapshot, pool)
+    if pct is None or snapshot.limit_cents <= 0:
+        return projected_surplus_cents(snapshot, days_to_deadline, today)
+    today = today or date.today()
+    elapsed = max((today - snapshot.cycle_start).days, 1)
+    daily_pct = pct / elapsed
+    surplus_pct = max(100.0 - (pct + daily_pct * days_to_deadline), 0.0)
+    return round(surplus_pct / 100.0 * snapshot.limit_cents, 2)
+
+
+def owner_reserve_ok(
+    snapshot: AccountQuotaSnapshot,
+    pool: QuotaPoolKind | None,
+    reserve_pct: float | None,
+    days_to_deadline: float,
+    today: date | None = None,
+) -> bool:
+    """主负责人保留量是否仍安全。
+
+    以号主当前消耗速率外推到作废日：预计占用超过 ``100 - reserve_pct`` 即视为
+    借用会侵占主负责人预留。``reserve_pct`` 为 None/<=0 时不设限。
+    """
+    if not reserve_pct or reserve_pct <= 0:
+        return True
+    pct = _pool_pct(snapshot, pool) if pool is not None else None
+    if pct is None:
+        pct = (
+            snapshot.total_pct
+            if snapshot.total_pct is not None
+            else quota_progress(snapshot) * 100.0
+        )
+    today = today or date.today()
+    elapsed = max((today - snapshot.cycle_start).days, 1)
+    daily_pct = pct / elapsed
+    projected_pct = pct + daily_pct * days_to_deadline
+    return projected_pct <= (100.0 - reserve_pct)
+
+
+def switch_recency_factor(
+    bound_at: datetime | None,
+    min_switch_minutes: float,
+    now: datetime,
+) -> float:
+    """[0,1]：刚绑定/刚切走为 0，已超过驻留窗口为 1。"""
+    if bound_at is None or min_switch_minutes <= 0:
+        return 1.0
+    minutes = (now - _ensure_aware(bound_at)).total_seconds() / 60.0
+    if minutes >= min_switch_minutes:
+        return 1.0
+    return round(max(minutes, 0.0) / min_switch_minutes, 4)
 
 
 def snapshot_freshness(
@@ -301,6 +401,7 @@ def _hard_filter_reason(
     *,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    pool: QuotaPoolKind | None = None,
 ) -> str | None:
     """返回排除原因码；通过硬过滤则 None。
 
@@ -309,12 +410,20 @@ def _hard_filter_reason(
     per-bucket 选择对齐（入池 OR，请求时按桶过滤）。
     exclude_at_loan_cap 为 None 时跟随 enforce_loan_cap；管理员选账号列表
     可传 False，只放开人数上限、仍走借用路径打分。
+    pool 非空时额外要求该 Quota Pool 仍有 Snapshot Headroom（与 Go
+    snapshotQuotaOK 一致），并按池判断主负责人保留量。
     """
     analysis = analyze_burn_rate(cand.snapshot, today)
     if enforce_loan_cap:
         if analysis.status == "exhausted":
             return "exhausted"
     elif not snapshot_has_any_pool_headroom(
+        auto_pct=cand.snapshot.auto_pct,
+        api_pct=cand.snapshot.api_pct,
+    ):
+        return "exhausted"
+    if pool is not None and not snapshot_quota_ok_for_pool(
+        pool,
         auto_pct=cand.snapshot.auto_pct,
         api_pct=cand.snapshot.api_pct,
     ):
@@ -337,7 +446,41 @@ def _hard_filter_reason(
     hours = hours_until_deadline(deadline_at, now)
     if hours <= cfg.min_coverage_hours:
         return "coverage_too_short"
+    reserve_pct = (
+        cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
+    )
+    if not owner_reserve_ok(
+        cand.snapshot, pool, reserve_pct, hours / 24.0, today
+    ):
+        return "owner_reserve"
     return None
+
+
+def _pool_view(
+    snapshot: AccountQuotaSnapshot,
+    *,
+    pool: QuotaPoolKind | None,
+    headroom: float,
+    surplus: float,
+    reserve_ok: bool,
+    recency_factor: float,
+    bound_at: datetime | None,
+    now: datetime,
+) -> dict:
+    """按池指标 + 驻留状态，供打分 payload / UI / Jev state 复用。"""
+    minutes_since_switch = None
+    if bound_at is not None:
+        minutes_since_switch = round(
+            max((now - _ensure_aware(bound_at)).total_seconds() / 60.0, 0.0), 1
+        )
+    return {
+        "pool": pool,
+        "pool_headroom_pct": headroom,
+        "pool_surplus_cents": surplus,
+        "owner_reserve_ok": reserve_ok,
+        "minutes_since_switch": minutes_since_switch,
+        "recency_factor": recency_factor,
+    }
 
 
 def _score_payload(
@@ -353,10 +496,11 @@ def _score_payload(
     freshness: float,
     score: float,
     computed_score: float,
+    pool_view: dict | None = None,
 ) -> dict:
     snapshot = cand.snapshot
     adjust = cand.score_adjust
-    return {
+    payload = {
         "account_id": cand.account_id,
         "account_identifier": cand.account_identifier,
         "primary_member_name": cand.primary_member_name,
@@ -382,6 +526,9 @@ def _score_payload(
         "cycle_start": snapshot.cycle_start.isoformat(),
         "cycle_end": snapshot.cycle_end.isoformat(),
     }
+    if pool_view:
+        payload.update(pool_view)
+    return payload
 
 
 def _rank_passing_candidates(
@@ -392,6 +539,7 @@ def _rank_passing_candidates(
     *,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    pool: QuotaPoolKind | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """硬过滤 + 打分。返回 (ranked_payloads, excluded_payloads)。
 
@@ -399,6 +547,7 @@ def _rank_passing_candidates(
     exhausted 改为两桶 Snapshot Headroom 都满才排除（见 snapshot_has_any_pool_headroom）。
     exclude_at_loan_cap=False 且 enforce_loan_cap=True：仍用借用打分，但不因
     在借人数达上限排除。
+    pool 非空时按该 Quota Pool 取余量/空闲额度，并按池判断主负责人保留量。
     """
     rows: list[dict] = []
     excluded: list[dict] = []
@@ -412,6 +561,7 @@ def _rank_passing_candidates(
             now,
             enforce_loan_cap=enforce_loan_cap,
             exclude_at_loan_cap=exclude_at_loan_cap,
+            pool=pool,
         )
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
@@ -438,6 +588,7 @@ def _rank_passing_candidates(
                     "auto_pct": cand.snapshot.auto_pct,
                     "api_pct": cand.snapshot.api_pct,
                     "score_adjust": None if adjust is None else round(adjust, 4),
+                    "pool": pool,
                 }
             )
             continue
@@ -451,13 +602,16 @@ def _rank_passing_candidates(
         )
         days = (deadline - today).days
         hours = round(hours_until_deadline(deadline_at, now), 1)
-        surplus = projected_surplus_cents(snapshot, hours / 24.0, today)
+        surplus = pool_surplus_cents(snapshot, pool, hours / 24.0, today)
         if enforce_loan_cap:
             load_factor = 1.0 - cand.active_loans / max(
                 cfg.max_active_loans_per_account, 1
             )
         else:
             load_factor = 1.0
+        reserve_pct = (
+            cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
+        )
         rows.append(
             {
                 "candidate": cand,
@@ -467,7 +621,7 @@ def _rank_passing_candidates(
                 "days": days,
                 "hours": hours,
                 "surplus": surplus,
-                "headroom": analysis.remaining_headroom_pct,
+                "headroom": pool_headroom_pct(snapshot, pool),
                 "urgency": digestion_urgency(
                     surplus,
                     hours,
@@ -477,6 +631,12 @@ def _rank_passing_candidates(
                 "load_factor": load_factor,
                 "freshness": snapshot_freshness(
                     snapshot, cfg.freshness_full_penalty_hours, now
+                ),
+                "recency": switch_recency_factor(
+                    cand.bound_at, cfg.min_switch_minutes, now
+                ),
+                "reserve_ok": owner_reserve_ok(
+                    snapshot, pool, reserve_pct, hours / 24.0, today
                 ),
             }
         )
@@ -500,6 +660,18 @@ def _rank_passing_candidates(
         computed_score = score
         if cand.score_adjust is not None:
             score = computed_score + cand.score_adjust
+        # 驻留窗口内降权：避免同一借用人在账号之间来回抖动
+        score -= cfg.recency_penalty * (1.0 - row["recency"])
+        pool_view = _pool_view(
+            cand.snapshot,
+            pool=pool,
+            headroom=row["headroom"],
+            surplus=row["surplus"],
+            reserve_ok=row["reserve_ok"],
+            recency_factor=row["recency"],
+            bound_at=cand.bound_at,
+            now=now,
+        )
         ranked.append(
             (
                 score,
@@ -516,6 +688,7 @@ def _rank_passing_candidates(
                     freshness=row["freshness"],
                     score=score,
                     computed_score=computed_score,
+                    pool_view=pool_view,
                 ),
             )
         )
@@ -539,6 +712,7 @@ def recommend_lenders(
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    pool: QuotaPoolKind | None = None,
 ) -> list[dict]:
     """硬过滤后按待消化压力排序。
 
@@ -548,6 +722,7 @@ def recommend_lenders(
     - surplus = projected_surplus_cents 归一化（Snapshot Headroom 推算的空闲余量，多者优先）
     - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
     - score_adjust 非空时加在算法综合分上再排序（微调，不绕过硬过滤）
+    pool 非空时上述余量/空闲额度按该 Quota Pool 计算。
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
     """
     cfg = loan_selection or LoanSelectionConfig()
@@ -563,6 +738,7 @@ def recommend_lenders(
         now,
         enforce_loan_cap=enforce_loan_cap,
         exclude_at_loan_cap=exclude_at_loan_cap,
+        pool=pool,
     )
     return ranked
 
@@ -575,6 +751,7 @@ def explain_lender_selection(
     now: datetime | None = None,
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
+    pool: QuotaPoolKind | None = None,
 ) -> dict:
     """与 recommend_lenders 同源打分，额外返回硬过滤排除项。"""
     cfg = loan_selection or LoanSelectionConfig()
@@ -590,5 +767,6 @@ def explain_lender_selection(
         now,
         enforce_loan_cap=enforce_loan_cap,
         exclude_at_loan_cap=exclude_at_loan_cap,
+        pool=pool,
     )
     return {"ranked": ranked, "excluded": excluded}

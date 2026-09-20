@@ -6,10 +6,33 @@ lifecycle modules do not depend on the write ledger.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.storage.models import ProxyKeyUsage
+
+
+def last_loan_usage_at(session: Session, loan_ids: list[str]) -> dict[str, datetime]:
+    """每个借用最近一次代理流量的时刻（UTC）。
+
+    Auto Lender 换绑前用它判断该借用是否正在被使用，避免打断在用会话。
+    """
+    ids = [loan_id for loan_id in loan_ids if loan_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(ProxyKeyUsage.loan_id, func.max(ProxyKeyUsage.ts))
+        .where(ProxyKeyUsage.loan_id.in_(ids))
+        .group_by(ProxyKeyUsage.loan_id)
+    )
+    out: dict[str, datetime] = {}
+    for loan_id, ts in rows:
+        if loan_id is None or ts is None:
+            continue
+        out[loan_id] = ts
+    return out
 
 
 def loan_proxy_totals_by_loan(

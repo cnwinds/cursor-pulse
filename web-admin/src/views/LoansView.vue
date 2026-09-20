@@ -32,6 +32,14 @@
           <span v-if="row.primary_member_name" class="primary-member">
             {{ row.primary_member_name }}
           </span>
+          <el-tag
+            v-if="row.lender_mode === 'auto'"
+            size="small"
+            type="warning"
+            class="lender-mode-tag"
+          >
+            自动
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
@@ -150,11 +158,26 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="借出账号" required>
+        <el-form-item label="分配方式">
+          <el-radio-group v-model="loanForm.lender_mode">
+            <el-radio value="manual">手动指定账号</el-radio>
+            <el-radio value="auto">自动选号（打分 + Jev）</el-radio>
+          </el-radio-group>
+          <p class="manual-hint">
+            自动模式下由 Auto Lender 打分选号，并每隔至少 30 分钟重评一次；
+            不再锁定单一出借账号。
+          </p>
+        </el-form-item>
+        <el-form-item label="借出账号" :required="loanForm.lender_mode === 'manual'">
           <el-select
             v-model="loanForm.source_account_id"
             filterable
-            placeholder="选择借出账号（显示在借人数，含已满员）"
+            :disabled="loanForm.lender_mode === 'auto'"
+            :placeholder="
+              loanForm.lender_mode === 'auto'
+                ? '自动选号，无需指定'
+                : '选择借出账号（显示在借人数，含已满员）'
+            "
             style="width: 100%"
           >
             <el-option
@@ -164,9 +187,21 @@
               :value="r.account_id"
             />
           </el-select>
+          <p v-if="loanForm.lender_mode === 'auto' && autoPickHint" class="manual-hint">
+            {{ autoPickHint }}
+          </p>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="目标模型">
+          <el-input
+            v-model="loanForm.model"
+            placeholder="留空按总余量打分；填模型则按其 Quota Pool（auto/api）打分"
+          />
+          <p class="manual-hint">
+            例如 composer-2.5 走 auto 桶，claude-4-sonnet 走 api 桶。
+          </p>
         </el-form-item>
         <el-form-item label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
@@ -342,7 +377,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -448,6 +483,8 @@ interface LoanRow {
   revoked_at: string | null
   borrowed_cents: number
   proxy_cost_cents: number | null
+  lender_mode?: string | null
+  source_bound_at?: string | null
 }
 
 const loading = ref(false)
@@ -465,9 +502,12 @@ const loanSubmitting = ref(false)
 const loanForm = ref({
   borrower_member_id: '',
   source_account_id: '',
+  lender_mode: 'manual' as 'manual' | 'auto',
   note: '',
+  model: '',
   auto_revoke_on_reset: true,
 })
+const autoPickHint = ref('')
 
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
@@ -628,19 +668,22 @@ async function requestSelfLoan() {
 }
 
 async function submitLoan() {
-  if (!loanForm.value.borrower_member_id || !loanForm.value.source_account_id) {
-    ElMessage.warning('请选择借用人和借出账号')
+  const isAuto = loanForm.value.lender_mode === 'auto'
+  if (!loanForm.value.borrower_member_id || (!isAuto && !loanForm.value.source_account_id)) {
+    ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
   loanSubmitting.value = true
   try {
     const res = await client.post(
-      `/api/v2/accounts/${loanForm.value.source_account_id}/loan-key`,
+      `/api/v2/accounts/${loanForm.value.source_account_id || 'auto'}/loan-key`,
       {
         borrower_member_id: loanForm.value.borrower_member_id,
         note: loanForm.value.note || null,
         auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
+        lender_mode: loanForm.value.lender_mode,
+        model: loanForm.value.model.trim() || null,
       },
     )
     loanDialogVisible.value = false
@@ -654,6 +697,34 @@ async function submitLoan() {
     loanSubmitting.value = false
   }
 }
+
+async function previewAutoPick() {
+  autoPickHint.value = ''
+  if (loanForm.value.lender_mode !== 'auto' || !loanForm.value.borrower_member_id) return
+  try {
+    const res = await client.post('/api/v2/loans/auto-pick', {
+      borrower_member_id: loanForm.value.borrower_member_id,
+      model: loanForm.value.model.trim() || null,
+    })
+    const picked = res.data.picked_account_id
+    const row = (res.data.ranked || []).find((r: any) => r.account_id === picked)
+    if (!row) {
+      autoPickHint.value = '当前没有可借出的富余账号'
+      return
+    }
+    const by = res.data.decision?.picked_by === 'jev' ? 'Jev 主判' : '算法分'
+    autoPickHint.value = `预计选中：${row.account_identifier}（${by}，综合分 ${row.score}）`
+  } catch {
+    autoPickHint.value = '自动选号预览失败，仍可直接提交'
+  }
+}
+
+watch(
+  () => [loanForm.value.lender_mode, loanForm.value.borrower_member_id, loanForm.value.model],
+  () => {
+    void previewAutoPick()
+  },
+)
 
 async function openReassignDialog(row: LoanRow) {
   reassignLoan.value = row

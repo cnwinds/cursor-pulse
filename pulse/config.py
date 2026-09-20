@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import os
@@ -96,6 +96,23 @@ class LLMConfig(BaseModel):
     timeout_seconds: float = 60.0
 
 
+class JevConfig(BaseModel):
+    """Jev（TypeSafe System One 决策模型）——Auto Lender 的主判。
+
+    OpenRouter 走独立的 Decisions 端点（``/api/alpha/decisions``），不是
+    chat/completions；模型 id 形如 ``typesafe/jev-1.13``。
+    """
+
+    enabled: bool = False
+    base_url: str = "https://openrouter.ai/api"
+    model: str = "typesafe/jev-1.13"
+    api_key: str = ""
+    timeout_seconds: float = 3.0
+    # 连续失败达到该次数即熔断，冷却期内直接走算法分
+    failure_threshold: int = Field(default=3, ge=1)
+    cooldown_seconds: float = Field(default=300.0, ge=0)
+
+
 class AssistantLlmSettings(BaseModel):
     enabled: bool = False
     base_url: str = "https://api.openai.com/v1"
@@ -182,6 +199,18 @@ class LoanSelectionConfig(BaseModel):
     proxy_weight_headroom: float = Field(default=0.28, ge=0)
     proxy_weight_surplus: float = Field(default=0.17, ge=0)
     proxy_weight_freshness: float = Field(default=0.03, ge=0)
+    # 驻留：账号刚绑定/刚切走时降权，避免借用人在账号间抖动
+    min_switch_minutes: float = Field(default=30.0, ge=0)
+    recency_penalty: float = Field(default=0.25, ge=0)
+    # 主负责人保留量（账号级 proxy_reserve_pct 优先）；0 = 不保留
+    owner_reserve_pct: float = Field(default=0.0, ge=0, le=100)
+    # Auto Lender：Jev 只对存活候选重排，护栏不通过则回落算法分
+    auto_mode: bool = False
+    auto_top_n: int = Field(default=8, ge=1, le=50)
+    auto_min_confidence: float = Field(default=0.5, ge=0, le=1)
+    auto_min_margin: float = Field(default=0.05, ge=0, le=1)
+    auto_cache_seconds: float = Field(default=600.0, ge=0)
+    auto_switch_margin: float = Field(default=0.1, ge=0)
 
     @model_validator(mode="after")
     def _validate_weight_sums(self) -> "LoanSelectionConfig":
@@ -298,6 +327,7 @@ class AppConfig(BaseModel):
     cursor_teams: CursorTeamsConfig = Field(default_factory=CursorTeamsConfig)
     admin: AdminConfig = Field(default_factory=AdminConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    jev: JevConfig = Field(default_factory=JevConfig)
     assistant_llm: AssistantLlmSettings = Field(default_factory=AssistantLlmSettings)
     web: WebConfig = Field(default_factory=WebConfig)
     tenant: TenantConfig = Field(default_factory=TenantConfig)
@@ -330,6 +360,10 @@ class EnvSettings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_enabled: str = ""
+    jev_enabled: str = ""
+    jev_api_key: str = ""
+    jev_base_url: str = ""
+    jev_model: str = ""
     assistant_llm_enabled: str = ""
     assistant_llm_api_key: str = ""
     assistant_llm_base_url: str = ""
@@ -441,6 +475,14 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         cfg.llm.model = env.llm_model
     if env.llm_enabled.lower() in ("1", "true", "yes", "on"):
         cfg.llm.enabled = True
+    if env.jev_api_key:
+        cfg.jev.api_key = env.jev_api_key
+    if env.jev_base_url:
+        cfg.jev.base_url = env.jev_base_url
+    if env.jev_model:
+        cfg.jev.model = env.jev_model
+    if env.jev_enabled.lower() in ("1", "true", "yes", "on"):
+        cfg.jev.enabled = True
     if env.assistant_llm_api_key:
         cfg.assistant_llm.api_key = env.assistant_llm_api_key
     if env.assistant_llm_base_url:

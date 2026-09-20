@@ -50,13 +50,41 @@ def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, i
     return {account_id: count for account_id, count in rows}
 
 
+def last_bound_at_by_account(
+    session: Session, account_ids: list[str]
+) -> dict[str, datetime]:
+    """每个账号最近一次出借绑定时刻（驻留窗口基准）。
+
+    取全部状态的借用记录：账号刚被切走（上一笔已回收）或刚被绑上（进行中）
+    都算「刚动过」，都应进入驻留窗口。
+    """
+    if not account_ids:
+        return {}
+    rows = session.execute(
+        select(KeyLoan.source_account_id, func.max(KeyLoan.source_bound_at))
+        .where(
+            KeyLoan.source_account_id.in_(account_ids),
+            KeyLoan.source_bound_at.is_not(None),
+        )
+        .group_by(KeyLoan.source_account_id)
+    ).all()
+    out: dict[str, datetime] = {}
+    for account_id, bound_at in rows:
+        if bound_at is None:
+            continue
+        if bound_at.tzinfo is None:
+            bound_at = bound_at.replace(tzinfo=timezone.utc)
+        out[account_id] = bound_at
+    return out
+
+
 def build_lender_candidates(
     session: Session,
     team_id: str,
     *,
     exclude_account_ids: set[str] | None = None,
 ) -> list[LenderCandidate]:
-    """组装出借候选：最新快照 + renews_on + 当前在借人数。"""
+    """组装出借候选：最新快照 + renews_on + 当前在借人数 + 人工分 + 驻留。"""
     exclude_account_ids = exclude_account_ids or set()
     repo = ToolCenterRepository(session, team_id)
     accounts = [
@@ -67,6 +95,9 @@ def build_lender_candidates(
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     loan_counts = active_loan_counts_by_account(session, team_id)
     accounts = [account for account in accounts if snapshots.get(account.id)]
+    bound_at_by_account = last_bound_at_by_account(
+        session, [account.id for account in accounts]
+    )
     primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
     if primary_ids:
@@ -88,6 +119,9 @@ def build_lender_candidates(
                 renews_on=account.renews_on,
                 active_loans=loan_counts.get(account.id, 0),
                 primary_member_name=primary_name,
+                score_adjust=account.proxy_score_adjust,
+                reserve_pct=account.proxy_reserve_pct,
+                bound_at=bound_at_by_account.get(account.id),
             )
         )
     return candidates
@@ -100,10 +134,13 @@ def recommend_lender_for_borrower(
     exclude_account_ids: set[str] | None = None,
     today: date | None = None,
     loan_selection: LoanSelectionConfig | None = None,
+    pool: str | None = None,
 ) -> dict | None:
     candidates = build_lender_candidates(
         session, team_id, exclude_account_ids=exclude_account_ids
     )
-    ranked = recommend_lenders(candidates, today, loan_selection=loan_selection)
+    ranked = recommend_lenders(
+        candidates, today, loan_selection=loan_selection, pool=pool
+    )
     return ranked[0] if ranked else None
 

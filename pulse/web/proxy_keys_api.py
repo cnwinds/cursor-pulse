@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.util.datetime_fmt import serialize_datetime
@@ -46,6 +47,10 @@ class ToggleProxyEnabledBody(BaseModel):
 
 class SetProxyScoreAdjustBody(BaseModel):
     score_adjust: float | None = Field(default=None, ge=-10, le=10, allow_inf_nan=False)
+    # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比；None = 不修改
+    reserve_pct: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    # reserve_pct 清空需要与「不修改」区分
+    clear_reserve: bool = False
 
 
 def _active_primary_counts(
@@ -342,6 +347,8 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
                     "pool_ready": ready,
                     "pool_ready_reason": ready_reason,
                     "pool_effective": proxy_enabled and ready,
+                    "score_adjust": a.proxy_score_adjust,
+                    "reserve_pct": a.proxy_reserve_pct,
                     # deprecated: 保留兼容旧客户端
                     "plan_name": plans.get(a.plan_id),
                     "status": a.status,
@@ -355,10 +362,11 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         dependencies=[Depends(require_capability("proxy:read"))],
     )
     def pool_ranking(session: Session = Depends(get_db)):
-        """当前代理池打分表：入选排序 + 硬过滤排除项。"""
+        """当前代理池打分表：入选排序 + 硬过滤排除项 + Auto Lender 决策。"""
         return proxy_service.list_pool_ranking_board(
             session,
             loan_selection=config.tool_center.loan_selection,
+            jev=build_jev_client(config),
         )
 
     @app.post(
@@ -401,18 +409,31 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         vendor = session.get(AiVendor, account.vendor_id)
         if vendor is None or vendor.slug != "cursor":
             raise HTTPException(status_code=404, detail="account 不存在")
-        adjust = (
-            None if body.score_adjust is None else round(float(body.score_adjust), 4)
-        )
-        account.proxy_score_adjust = adjust
+        # 只更新显式传入的字段：score_adjust 与 reserve_pct 互相不能误清
+        fields_set = body.model_fields_set
+        if "score_adjust" in fields_set:
+            account.proxy_score_adjust = (
+                None
+                if body.score_adjust is None
+                else round(float(body.score_adjust), 4)
+            )
+        if body.clear_reserve:
+            account.proxy_reserve_pct = None
+        elif "reserve_pct" in fields_set and body.reserve_pct is not None:
+            account.proxy_reserve_pct = round(float(body.reserve_pct), 4)
+        adjust = account.proxy_score_adjust
+        reserve = account.proxy_reserve_pct
         account.updated_at = proxy_service.utcnow()
         proxy_service.record_event(
             session,
             event_type="pool_score_adjust",
-            detail=f"account_id={account.id} score_adjust={adjust}",
+            detail=(
+                f"account_id={account.id} score_adjust={adjust} "
+                f"reserve_pct={reserve}"
+            ),
         )
         session.commit()
-        return {"id": account.id, "score_adjust": adjust}
+        return {"id": account.id, "score_adjust": adjust, "reserve_pct": reserve}
 
     @app.get(
         "/api/v2/proxy-pool/credentials",

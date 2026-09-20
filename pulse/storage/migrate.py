@@ -29,6 +29,7 @@ _CREDENTIAL_PROXY_COLUMNS: dict[str, str] = {
 _ACCOUNT_PROXY_COLUMNS: dict[str, str] = {
     "proxy_enabled": "BOOLEAN DEFAULT 0",
     "proxy_score_adjust": "FLOAT",
+    "proxy_reserve_pct": "FLOAT",
 }
 
 _PROXY_USAGE_COLUMNS: dict[str, str] = {
@@ -48,6 +49,11 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
     "alias_key_hint": "VARCHAR(32)",
     "alias_encrypted_key": "TEXT",
     "expires_on": "DATE",
+}
+
+_KEY_LOAN_LENDER_COLUMNS: dict[str, str] = {
+    "lender_mode": "VARCHAR(16) DEFAULT 'manual'",
+    "source_bound_at": "TIMESTAMP",
 }
 
 _QUOTA_SNAPSHOT_AT_COLUMNS: dict[str, str] = {
@@ -715,6 +721,23 @@ def migrate_schema(engine: Engine) -> None:
                         text(f"ALTER TABLE key_loans ADD COLUMN {col_name} {col_type}")
                     )
                 logger.info("Added %s column to key_loans", col_name)
+        for col_name, col_type in _KEY_LOAN_LENDER_COLUMNS.items():
+            if col_name not in columns:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(f"ALTER TABLE key_loans ADD COLUMN {col_name} {col_type}")
+                    )
+                logger.info("Added %s column to key_loans", col_name)
+                columns.add(col_name)
+        # 存量借用记录视为人工固定关系，绑定时刻回填为创建时刻（幂等）
+        if "source_bound_at" in columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE key_loans SET source_bound_at = created_at "
+                        "WHERE source_bound_at IS NULL AND created_at IS NOT NULL"
+                    )
+                )
         # 存量库 ADD COLUMN 不会带 unique；补齐与模型一致的唯一索引
         index_names = {idx["name"] for idx in inspector.get_indexes("key_loans")}
         if "ix_key_loans_alias_key_hash" not in index_names:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,6 +45,8 @@ class KeyLoanService(KeyLoanStateMixin):
         alias_key_hash: str | None = None,
         alias_key_hint: str | None = None,
         alias_encrypted_key: str | None = None,
+        lender_mode: str = "manual",
+        source_bound_at: datetime | None = None,
     ) -> KeyLoan:
         loan = KeyLoan(
             source_account_id=source_account_id,
@@ -59,6 +61,8 @@ class KeyLoanService(KeyLoanStateMixin):
             alias_key_hash=alias_key_hash,
             alias_key_hint=alias_key_hint,
             alias_encrypted_key=alias_encrypted_key,
+            lender_mode=lender_mode,
+            source_bound_at=source_bound_at or datetime.now(timezone.utc),
         )
         self.session.add(loan)
         self.session.flush()

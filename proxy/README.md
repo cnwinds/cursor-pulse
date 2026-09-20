@@ -115,6 +115,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | `-pulse-token` | Pulse 内部服务 token | 环境变量 `PULSE_INTERNAL_SERVICE_TOKEN` |
 | `-upstream-proxy` | Cursor 出站上游代理 | 环境变量 `PROXY_UPSTREAM_URL` |
 | `-session-ttl` | 会话重授权间隔 | 环境变量 `PROXY_SESSION_TTL`（默认 120s） |
+| `-sticky-min-dwell` | sticky 最小驻留（Switch dwell） | 环境变量 `PROXY_STICKY_MIN_DWELL`（默认 30m；`0`/`off` 关闭） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |
@@ -130,6 +131,15 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | 每连接读头超时 | 30s | — |
 | 每连接空闲超时 | 120s | — |
 | 池 exhausted 周期清零 | 30m | `PROXY_EXHAUSTED_RESET`（`0`/`off`/`false` 关闭） |
+| sticky 最小驻留 | 30m | `PROXY_STICKY_MIN_DWELL`（`0`/`off`/`false` 关闭） |
+
+## Switch dwell（sticky 最小驻留）
+
+会话的 sticky 凭证绑定后 **30 分钟内**不因「该 Quota Pool 桶耗尽」而轮转——只记日志并继续用当前账号。认证失败（`badUntil` 冷却）与全池耗尽仍立即轮转，避免会话卡在不可用账号上。
+
+- 计时基准是 `SessionBinding.StickySince`，只在**真正切换**账号时重置；同一账号续用不刷新，否则窗口永不失效。
+- 存量绑定没有 `StickySince`（零值）→ 不驻留，行为与旧版一致。
+- Web 侧对应语义见 `loan_selection.min_switch_minutes`（借用换绑驻留窗口），两层独立生效：Go 管请求时刻，Web 管换绑时刻。
 
 ## 池 exhausted 语义
 

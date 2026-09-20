@@ -457,6 +457,49 @@ def test_loan_key_returns_plaintext_once(quota_env):
     assert body["delivery_mode"] == "proxy_alias"
 
 
+def test_loan_key_auto_mode_ignores_url_account(quota_env):
+    """auto 模式不再用 URL 上的 account_id 校验账号：占位 id 也不该 404。
+
+    前端在未预选账号时会发字面量 'auto'，此前会先撞上「账号不存在」。
+    """
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    res = client.post(
+        "/api/v2/accounts/auto/loan-key",
+        headers=_headers(token),
+        json={
+            "borrower_member_id": borrower.id,
+            "lender_mode": "auto",
+        },
+    )
+    # 没有可借账号时是 400 业务错误，而不是 404「账号不存在」
+    assert res.status_code == 400
+    assert res.json()["detail"] != "账号不存在"
+
+
+def test_loan_key_manual_mode_still_validates_url_account(quota_env):
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    res = client.post(
+        "/api/v2/accounts/does-not-exist/loan-key",
+        headers=_headers(token),
+        json={
+            "borrower_member_id": borrower.id,
+            "lender_mode": "manual",
+        },
+    )
+    assert res.status_code == 404
+    assert res.json()["detail"] == "账号不存在"
+
+
 def test_loan_key_rejects_invalid_delivery_mode(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]

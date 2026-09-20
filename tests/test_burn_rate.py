@@ -59,6 +59,8 @@ def _candidate(
     renews_on: date | None = None,
     active_loans: int = 0,
     score_adjust: float | None = None,
+    reserve_pct: float | None = None,
+    bound_at: datetime | None = None,
 ) -> LenderCandidate:
     return LenderCandidate(
         snapshot=snap,
@@ -67,6 +69,8 @@ def _candidate(
         renews_on=renews_on,
         active_loans=active_loans,
         score_adjust=score_adjust,
+        reserve_pct=reserve_pct,
+        bound_at=bound_at,
     )
 
 
@@ -968,4 +972,228 @@ def test_score_adjust_does_not_bypass_hard_filter():
         "full": "exhausted"
     }
     assert board["excluded"][0]["score_adjust"] == 9.0
+
+
+def test_pool_scoped_headroom_uses_that_bucket():
+    """api 桶有余量、auto 桶已满 → 只按 api 打分时仍可入选。"""
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="a",
+        total_pct=20.0,
+        auto_pct=100.0,
+        api_pct=40.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    cand = _candidate(snap, account_id="a")
+
+    api_board = explain_lender_selection([cand], today=TODAY, now=NOW, pool="api")
+    assert [r["account_id"] for r in api_board["ranked"]] == ["a"]
+    row = api_board["ranked"][0]
+    assert row["pool"] == "api"
+    assert row["pool_headroom_pct"] == 60.0
+
+    auto_board = explain_lender_selection([cand], today=TODAY, now=NOW, pool="auto")
+    assert auto_board["ranked"] == []
+    assert auto_board["excluded"][0]["reason"] == "exhausted"
+
+
+def test_unknown_pool_requires_both_buckets():
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="a",
+        total_pct=20.0,
+        auto_pct=100.0,
+        api_pct=40.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    board = explain_lender_selection(
+        [_candidate(snap, account_id="a")], today=TODAY, now=NOW, pool="unknown"
+    )
+    assert board["ranked"] == []
+    assert board["excluded"][0]["reason"] == "exhausted"
+
+
+def test_pool_surplus_prefers_bucket_with_room():
+    """api 桶空闲的账号在 api 池打分下应排在前面。"""
+    tight_api = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="tight",
+        total_pct=20.0,
+        auto_pct=5.0,
+        api_pct=95.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    roomy_api = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="roomy",
+        total_pct=20.0,
+        auto_pct=95.0,
+        api_pct=5.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    ranked = recommend_lenders(
+        [
+            _candidate(tight_api, account_id="tight"),
+            _candidate(roomy_api, account_id="roomy"),
+        ],
+        TODAY,
+        now=NOW,
+        pool="api",
+    )
+    assert [r["account_id"] for r in ranked] == ["roomy", "tight"]
+    roomy_row = next(r for r in ranked if r["account_id"] == "roomy")
+    tight_row = next(r for r in ranked if r["account_id"] == "tight")
+    assert roomy_row["pool_surplus_cents"] > tight_row["pool_surplus_cents"]
+
+
+def test_owner_reserve_excludes_heavy_primary():
+    """主负责人按当前速率会吃掉保留量 → owner_reserve 硬排除。
+
+    取预计期末落在 (100 - reserve, 100) 区间的账号：不会中途耗尽
+    （exhausts_before_reset 不触发），但已侵占主负责人预留。
+    """
+    heavy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="heavy",
+        total_pct=26.0,
+        auto_pct=26.0,
+        api_pct=26.0,
+        used_cents=1820,
+        remaining_cents=5180,
+    )
+    idle = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="idle",
+        total_pct=5.0,
+        auto_pct=5.0,
+        api_pct=5.0,
+        used_cents=350,
+        remaining_cents=6650,
+    )
+    board = explain_lender_selection(
+        [
+            _candidate(heavy, account_id="heavy", reserve_pct=20.0),
+            _candidate(idle, account_id="idle", reserve_pct=20.0),
+        ],
+        today=TODAY,
+        now=NOW,
+        pool="api",
+    )
+    assert [r["account_id"] for r in board["ranked"]] == ["idle"]
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
+        "heavy": "owner_reserve"
+    }
+
+
+def test_owner_reserve_falls_back_to_config_default():
+    heavy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="heavy",
+        total_pct=26.0,
+        auto_pct=26.0,
+        api_pct=26.0,
+        used_cents=1820,
+        remaining_cents=5180,
+    )
+    cfg = LoanSelectionConfig(owner_reserve_pct=20.0)
+    board = explain_lender_selection(
+        [_candidate(heavy, account_id="heavy")],
+        today=TODAY,
+        now=NOW,
+        pool="api",
+        loan_selection=cfg,
+    )
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
+        "heavy": "owner_reserve"
+    }
+
+
+def test_owner_reserve_disabled_by_default():
+    heavy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="heavy",
+        total_pct=26.0,
+        auto_pct=26.0,
+        api_pct=26.0,
+        used_cents=1820,
+        remaining_cents=5180,
+    )
+    ranked = recommend_lenders(
+        [_candidate(heavy, account_id="heavy")], TODAY, now=NOW, pool="api"
+    )
+    assert [r["account_id"] for r in ranked] == ["heavy"]
+
+
+def test_recency_penalty_demotes_just_bound_account():
+    """刚绑定的账号在驻留窗口内降权，让位给久未动过的账号。"""
+    fresh = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="fresh",
+        total_pct=20.0,
+        auto_pct=20.0,
+        api_pct=20.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    stale = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="stale",
+        total_pct=20.0,
+        auto_pct=20.0,
+        api_pct=20.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    cfg = LoanSelectionConfig(recency_penalty=0.25, min_switch_minutes=30.0)
+    ranked = recommend_lenders(
+        [
+            _candidate(fresh, account_id="fresh", bound_at=NOW - timedelta(minutes=5)),
+            _candidate(stale, account_id="stale", bound_at=NOW - timedelta(minutes=90)),
+        ],
+        TODAY,
+        now=NOW,
+        pool="api",
+        loan_selection=cfg,
+    )
+    assert [r["account_id"] for r in ranked] == ["stale", "fresh"]
+    fresh_row = next(r for r in ranked if r["account_id"] == "fresh")
+    stale_row = next(r for r in ranked if r["account_id"] == "stale")
+    assert fresh_row["recency_factor"] == round(5 / 30, 4)
+    assert stale_row["recency_factor"] == 1.0
+    assert fresh_row["minutes_since_switch"] == 5.0
+
+
+def test_recency_penalty_does_not_exclude_last_candidate():
+    """驻留窗口只降权不排除，否则池可能无人可用。"""
+    only = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="only",
+        total_pct=20.0,
+        auto_pct=20.0,
+        api_pct=20.0,
+        used_cents=1400,
+        remaining_cents=5600,
+    )
+    ranked = recommend_lenders(
+        [_candidate(only, account_id="only", bound_at=NOW)],
+        TODAY,
+        now=NOW,
+        pool="api",
+    )
+    assert [r["account_id"] for r in ranked] == ["only"]
 

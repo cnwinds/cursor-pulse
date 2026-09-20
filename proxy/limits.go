@@ -40,3 +40,23 @@ func resolveExhaustedResetInterval() time.Duration {
 	}
 	return defaultExhaustedReset
 }
+
+// parseDurationValue accepts a bare integer (interpreted as seconds) or a Go
+// duration string. ok=false when the value is neither.
+//
+// Shared by the duration env resolvers so the "bare seconds" convention is
+// defined once; each caller keeps its own policy for disable tokens and for
+// whether zero is a valid value.
+func parseDurationValue(raw string) (time.Duration, bool) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(text); err == nil {
+		return time.Duration(secs) * time.Second, true
+	}
+	if d, err := time.ParseDuration(text); err == nil {
+		return d, true
+	}
+	return 0, false
+}
