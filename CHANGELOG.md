@@ -25,7 +25,7 @@
 ### 修复
 
 - **打分表不显示主负责人保留量**：`/proxy-pool/ranking` 的 payload 未回传生效的 `reserve_pct`，前端「主负责人保留」列永远为空。改为随打分结果一并回显（含排除项）。
-- **Auto Lender 决策未落审计**：`on_decision` 钩子此前只有测试使用，生产路径没有接线。管理员发放与定期重评现在都会写 `lender_auto_pick` 事件（含来源、置信度、回落原因、选中账号）。
+- **Auto Lender 决策未落审计**：`on_decision` 钩子此前只有测试使用，生产路径没有接线。管理员发放与自助借用现在都会写 `lender_auto_pick` 事件（含来源、置信度、回落原因、选中账号）。
 - **模型未知时的按池语义**：借用选号在未指定目标模型时改传 Quota Pool `unknown`（要求 auto 与 api 两桶都有余量），与 Go `snapshotQuotaOK` 一致；代理入池仍保持 CONTEXT.md 的「任一桶有余量」规则。
 - **打分表两个微调互相清空**：`/proxy-pool/accounts/{id}/score` 把「未传 `score_adjust`」当成显式清空，保存「主负责人保留」会静默抹掉已有的人工分。改为按 `model_fields_set` 只更新显式传入的字段。
 - **auto 模式选号误报「账号不存在」**：`loan-key` 在解析 `lender_mode` 之前先用 URL 上的 `account_id` 校验账号，前端未预选账号时发出的占位 id 会直接 404。auto 模式跳过该校验。

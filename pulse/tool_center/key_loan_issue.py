@@ -294,7 +294,8 @@ def issue_loan_key(
         primary_member_name = primary.display_name if primary else None
     warning = (
         "此为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。"
-        "可随时发送「我的借用」再次查看。借用消耗为账号用量差值近似，非精确按 Key 统计。"
+        "可随时发送「我的借用」再次查看。消耗以代理账本按本笔借用归因，"
+        "未经代理的部分才回退账号用量差值近似。"
     )
     return {
         "loan_id": loan.id,
@@ -594,7 +595,7 @@ def request_self_service_loan(
         delivery_mode=DELIVERY_PROXY_ALIAS,
         cursor_client=cursor_client,
         loan_selection=loan_selection,
-        # 自助借用走自动模式：发放后仍由 Auto Lender 定期重评
+        # 自助借用走自动分配：起始账号由 Auto Lender 选出，之后由代理在白名单内游走
         lender_mode=LENDER_MODE_AUTO,
         own_account_ids=own_account_ids,
     )

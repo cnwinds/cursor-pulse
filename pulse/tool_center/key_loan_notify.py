@@ -114,7 +114,7 @@ def format_borrower_reclaimed(
             "🔔 临时 Key 已回收",
             f"借用编号：{(loan_id or '')[:8] or '—'}",
             f"原因：{_RECLAIM_REASON_LABEL.get(reason, reason)}",
-            f"近似消耗：${borrowed_cents / 100:.2f}",
+            f"借用消耗：${borrowed_cents / 100:.2f}",
             "该 Key 已失效，请勿继续使用。",
         ]
     )
@@ -133,7 +133,7 @@ def format_admin_reclaimed(
             f"借用人：{borrower_name or '—'}",
             f"借用编号：{(loan_id or '')[:8] or '—'}",
             f"原因：{_RECLAIM_REASON_LABEL.get(reason, reason)}",
-            f"近似消耗：${borrowed_cents / 100:.2f}",
+            f"借用消耗：${borrowed_cents / 100:.2f}",
         ]
     )
 

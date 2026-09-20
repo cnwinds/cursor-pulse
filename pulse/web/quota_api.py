@@ -64,7 +64,6 @@ logger = logging.getLogger(__name__)
 _UNSYNCABLE_STATUSES = SYNC_BLOCKER_STATUSES | {"unknown"}
 
 
-
 class LoanKeyBody(BaseModel):
     """为成员分配 Key 的请求体。"""
 
@@ -780,7 +779,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             payload = loan_payload(loan, session)
             payload["borrowed_cents"] = borrowed_cents
             payload["borrowed_usd"] = round(borrowed_cents / 100.0, 2)
-            payload["attribution_note"] = "借用消耗为账号用量差值近似，非精确按 Key 统计"
+            payload["attribution_note"] = (
+                "借用消耗以代理账本按本笔借用归因"
+                if payload.get("borrowed_basis") == "proxy"
+                else "借用消耗为账号用量差值近似，非精确按 Key 统计"
+            )
             return payload
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

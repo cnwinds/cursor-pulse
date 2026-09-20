@@ -176,7 +176,7 @@ def return_loan(repo: Repository, config, member: Member) -> str:
             logger.exception("key loan reclaim notify failed after return")
         return (
             f"✅ 已归还借用（{loan.id[:8]}），Key 已撤销。\n"
-            f"近似消耗：${borrowed_cents / 100:.2f}"
+            f"借用消耗：${borrowed_cents / 100:.2f}"
         )
     except Exception as exc:
         repo.session.rollback()
@@ -335,7 +335,7 @@ def revoke_loan(
             )
         except Exception:
             logger.exception("key loan reclaim notify failed after admin revoke")
-        return f"✅ 已撤销借用 {loan.id[:8]}，近似消耗 ${borrowed_cents / 100:.2f}"
+        return f"✅ 已撤销借用 {loan.id[:8]}，借用消耗 ${borrowed_cents / 100:.2f}"
     except Exception as exc:
         repo.session.rollback()
         return f"撤销失败：{exc}"

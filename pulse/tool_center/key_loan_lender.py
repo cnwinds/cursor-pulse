@@ -150,7 +150,7 @@ def recommend_lender_for_borrower(
 ) -> dict | None:
     """纯确定性打分选号（不调用 Jev）。
 
-    生产路径（管理员发放 / 自助借用 / 定期重评）走
+    生产路径（管理员发放 / 自助借用）走
     :func:`pulse.tool_center.key_loan_auto.resolve_auto_lender`，它在这之上叠加
     Jev 主判与护栏。本函数保留为「只看算法分」的入口，供回测、对照与工具使用。
     """

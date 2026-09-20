@@ -4,7 +4,7 @@
       <div>
         <h2>借用记录</h2>
         <p class="desc">
-          管理临时 Key 借用。进行中 {{ activeCount }} 条；消耗为借出账号用量差值近似，经 proxy 的部分另有本地估算子计数（非 Cursor 账单）。
+          管理临时 Key 借用。进行中 {{ activeCount }} 条；自动分配借用的消耗按本笔借用归因（代理账本，非 Cursor 账单），指定借用仍为账号用量差值近似。
         </p>
       </div>
       <div class="header-actions">
@@ -79,7 +79,7 @@
           {{ formatLoanDuration(row.created_at, row.revoked_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="近似消耗" width="110">
+      <el-table-column label="借用消耗" width="110">
         <template #default="{ row }">
           ${{ (row.borrowed_cents / 100).toFixed(2) }}
         </template>
@@ -251,7 +251,7 @@
 
     <el-drawer v-model="usagesVisible" :title="`用量详情 - ${usagesTitle}`" size="720px">
       <div class="usage-summary" v-if="usageSummary">
-        <div>近似消耗：${{ (usageSummary.borrowed_cents / 100).toFixed(2) }}</div>
+        <div>借用消耗：${{ (usageSummary.borrowed_cents / 100).toFixed(2) }}</div>
         <div>
           proxy 估算（非账单）：${{ (usageSummary.proxy_cost_cents / 100).toFixed(2) }}（{{ usageSummary.request_count }} 次请求 · {{ formatTokensM(usageSummary.proxy_total_tokens) }}）
           <span v-if="usageByAccount.length" class="usage-summary-sub">
@@ -335,7 +335,7 @@
           已下发代理别名 Key（pka_）。请立即复制；关闭后可用「复制命令」再次获取。用户须配置 HTTPS_PROXY。底层 Cursor Key 仅管理员可通过「底层 Key」查看。
         </template>
         <template v-else>
-          请立即复制保存。关闭后无法再次查看完整 Key。借用消耗为账号用量差值近似；经 proxy 走量的部分另有本地估算子计数（非 Cursor 账单），可复制下方启动命令。
+          请立即复制保存。关闭后无法再次查看完整 Key。消耗以代理账本按本笔借用归因（非 Cursor 账单），可复制下方启动命令。
         </template>
       </el-alert>
       <div class="key-reveal">
@@ -872,7 +872,7 @@ async function revokeLoan(row: LoanRow) {
     const res = await client.post(`/api/v2/loans/${row.id}/revoke`)
     ElMessage.success(
       res.data.borrowed_usd != null
-        ? `已撤销，近似消耗 $${res.data.borrowed_usd.toFixed(2)}`
+        ? `已撤销，借用消耗 $${res.data.borrowed_usd.toFixed(2)}`
         : '已撤销',
     )
     await loadLoans()

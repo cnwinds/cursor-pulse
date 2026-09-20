@@ -17,6 +17,6 @@ when_to_use:
 tool 成功时 `user_message` 为空；只读 `result`（`schema_version=1`）。
 
 1. 私聊须完整展示 `result.api_key`（禁止掩码）；群聊勿输出明文 Key。
-2. 说明借出人 `lender_name`、警告/注意 `warning`（若有）。
+2. 说明借出人 `lender_name`、警告/注意 `warning`（若有）。自动分配借用的账号可能在借用期间切换，`source_account_identifier` 只是起始账号。
 3. 提醒可在不需要时「归还 Key」。
 4. 失败时才向用户说明 error/`user_message`。

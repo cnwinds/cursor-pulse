@@ -179,7 +179,7 @@ CAPABILITY_OPERATIONS: list[dict[str, Any]] = [
     _op(
         "key.loan.self.read",
         "我的借用",
-        "查看本人当前进行中的 Key 借用状态（借出人、近似消耗、Key 内容）。",
+        "查看本人当前进行中的 Key 借用状态（借用消耗、Key 内容）。",
         input_schema={
             "type": "object",
             "properties": {"text": {"type": "string"}},
