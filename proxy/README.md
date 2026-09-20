@@ -139,7 +139,16 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 - 计时基准是 `SessionBinding.StickySince`，只在**真正切换**账号时重置；同一账号续用不刷新，否则窗口永不失效。
 - 存量绑定没有 `StickySince`（零值）→ 不驻留，行为与旧版一致。
-- Web 侧对应语义见 `loan_selection.min_switch_minutes`（借用换绑驻留窗口），两层独立生效：Go 管请求时刻，Web 管换绑时刻。
+- Web 侧对应语义见 `loan_selection.min_switch_minutes`（评分侧降权），两层独立生效。
+
+## 借用候选白名单（自动分配借用）
+
+`loan_alias` 绑定可以带 `AllowedCredentialIDs`——Pulse 在 authorize 响应里下发的候选 primary 凭证白名单（`credential_ids`）。带白名单时借用走**与共享池相同的选择逻辑**：per-session sticky + Switch dwell + 按 Quota Pool，只在白名单内轮转，不会逃到借用人无权使用的账号。
+
+- 白名单为空 → 回退 `passthroughToken`：固定在发放时那把 `key_role=loan` 的 Cursor Key（**指定借用**）。
+- 白名单每次 authorize 都会**整体替换**（不是合并），这样被移出候选的账号下一次请求就不再服务。
+- 借用人自己名下的账号在 Pulse 侧就被排除；当前绑定账号始终保留在白名单首位，避免借用人瞬间失去正在用的账号。
+- 借用流量的用量与轮转事件按**实际服务账号**（`entry.credentialID`）归因，而不是发放时绑定的那把 Key。
 
 ## 池 exhausted 语义
 

@@ -8,9 +8,23 @@ from sqlalchemy.orm import Session
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, KeyLoan
-from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_MANUAL
+from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_AUTO, LENDER_MODE_MANUAL
 from pulse.tool_center.key_loan_state import KeyLoanStateMixin
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
+
+
+def resolve_borrowed_cents(
+    lender_mode: str | None, snapshot_cents: int, proxy_cents: int
+) -> tuple[int, str]:
+    """借用消耗口径 → ``(cents, basis)``。
+
+    自动分配借用的流量会在候选账号间游走，单一账号的快照差值不再代表本笔借用
+    的消耗，此时以代理账本按 ``loan_id`` 汇总为准；manual 或无账本记录时回退
+    快照近似。看板与 IM 列表共用这一份，避免两处口径漂移。
+    """
+    if (lender_mode or "") == LENDER_MODE_AUTO and proxy_cents > 0:
+        return int(proxy_cents), "proxy"
+    return int(snapshot_cents), "quota_approx"
 
 
 class KeyLoanService(KeyLoanStateMixin):
@@ -80,11 +94,31 @@ class KeyLoanService(KeyLoanStateMixin):
     def get_loan(self, loan_id: str) -> KeyLoan | None:
         return self.session.get(KeyLoan, loan_id)
 
-    def approximate_borrowed_cents(self, loan: KeyLoan) -> int:
+    def approximate_borrowed_cents(
+        self, loan: KeyLoan, proxy_cents: int | None = None
+    ) -> int:
+        """借用消耗（cents）。
+
+        自动分配借用的流量会在候选账号间游走，单一账号的快照差值不再代表本笔
+        借用的消耗；此时以代理账本按 ``loan_id`` 汇总为准（manual 保持快照近似）。
+
+        ``proxy_cents`` 由调用方批量传入可避免逐笔查询，见
+        :func:`pulse.proxy.usage_queries.loan_proxy_totals_by_loan`。
+        """
+        if proxy_cents is None:
+            proxy_cents = 0
+            if (getattr(loan, "lender_mode", None) or "") == LENDER_MODE_AUTO:
+                from pulse.proxy.usage_queries import loan_proxy_totals
+
+                _, proxy_cents = loan_proxy_totals(self.session, loan.id)
         snapshot = self.latest_snapshot(loan.source_account_id)
-        if not snapshot:
-            return 0
-        return max(snapshot.used_cents - loan.baseline_used_cents, 0)
+        snapshot_cents = (
+            max(snapshot.used_cents - loan.baseline_used_cents, 0) if snapshot else 0
+        )
+        cents, _ = resolve_borrowed_cents(
+            getattr(loan, "lender_mode", None), snapshot_cents, proxy_cents
+        )
+        return cents
 
     def active_loan_for_borrower(self, borrower_member_id: str) -> KeyLoan | None:
         loans = self.list_active_loans_for_borrower(borrower_member_id)

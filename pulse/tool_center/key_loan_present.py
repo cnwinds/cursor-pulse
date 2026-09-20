@@ -13,6 +13,7 @@ from pulse.tool_center.key_loan_delivery import (
     KeyLoanError,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
+from pulse.tool_center.key_loan_store import resolve_borrowed_cents
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.util.datetime_fmt import tool_datetime
 
@@ -69,10 +70,15 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
             else None
         )
         used_cents = snapshots[loan.source_account_id].used_cents if loan.source_account_id in snapshots else 0
-        borrowed_cents = max(used_cents - loan.baseline_used_cents, 0)
         deadline = loan_display_expires_on(loan, account)
         _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
         delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+        lender_mode = getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL
+        # 自动分配借用在候选账号间游走：单账号快照差值不再代表本笔消耗，
+        # 以代理账本按 loan_id 汇总为准（与近似消耗分开呈现）
+        borrowed_cents, borrowed_basis = resolve_borrowed_cents(
+            lender_mode, max(used_cents - loan.baseline_used_cents, 0), proxy_cost_cents
+        )
         if delivery_mode == DELIVERY_PROXY_ALIAS:
             key_hint = loan.alias_key_hint
         else:
@@ -89,6 +95,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "borrower_name": borrower.display_name if borrower else None,
                 "baseline_used_cents": loan.baseline_used_cents,
                 "borrowed_cents": borrowed_cents,
+                "borrowed_basis": borrowed_basis,
                 "proxy_cost_cents": proxy_cost_cents,
                 "status": loan.status,
                 "auto_revoke_on_reset": loan.auto_revoke_on_reset,
@@ -96,7 +103,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "note": loan.note,
                 "delivery_mode": delivery_mode,
                 "key_hint": key_hint,
-                "lender_mode": getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL,
+                "lender_mode": lender_mode,
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),

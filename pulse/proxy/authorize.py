@@ -22,12 +22,19 @@ def authorize_status(
     *,
     now: datetime | None = None,
     encryption_key: str = "",
+    loan_selection=None,
 ) -> dict:
     plaintext = (plaintext or "").strip()
     if plaintext.startswith("pka_"):
-        return _authorize_loan_alias(session, plaintext, encryption_key=encryption_key)
+        return _authorize_loan_alias(
+            session,
+            plaintext,
+            encryption_key=encryption_key,
+            loan_selection=loan_selection,
+        )
     if plaintext.startswith("pk_"):
         return _authorize_proxy_key(session, plaintext, now=now)
+
     if plaintext.startswith("cr"):
         return _authorize_loan_passthrough(session, plaintext)
     return {
@@ -141,12 +148,27 @@ def _authorize_loan_passthrough(session: Session, plaintext: str) -> dict:
 
 
 def _authorize_loan_alias(
-    session: Session, plaintext: str, *, encryption_key: str = ""
+    session: Session,
+    plaintext: str,
+    *,
+    encryption_key: str = "",
+    loan_selection=None,
 ) -> dict:
-    """pka_ 别名 → 解密绑定的 Cursor Key，供 Go 换 JWT（不进共享池）。"""
+    """pka_ 别名 → 绑定的 Cursor Key + 可游走候选凭证白名单。
+
+    两套机制并存，由 ``loan.lender_mode`` 区分：
+
+    - ``manual``（指定借用）：返回空白名单，Go 固定在发放时那把 Cursor Key 上；
+    - ``auto``（自动分配借用）：返回按打分排序的候选 primary 凭证，Go 在借用
+      路径上按共享池的方式选号（sticky + Switch dwell + 按 Quota Pool）。
+      ``cursor_api_key`` 仍是白名单为空时的回退（排名失败 / 无候选）。
+    """
     from pulse.ingestion.credentials import CredentialService
     from pulse.storage.models import AiAccountCredential, KeyLoan
-    from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+    from pulse.tool_center.key_loan_delivery import (
+        DELIVERY_PROXY_ALIAS,
+        LENDER_MODE_AUTO,
+    )
 
     h = hash_proxy_key(plaintext)
     loan = session.scalar(
@@ -166,8 +188,31 @@ def _authorize_loan_alias(
             "reason": "unknown_key",
         }
 
+    credential_ids = []
+    if (getattr(loan, "lender_mode", None) or "") == LENDER_MODE_AUTO:
+        credential_ids = _loan_candidate_credential_ids(
+            session, loan, loan_selection=loan_selection
+        )
+
     cred = session.get(AiAccountCredential, loan.credential_id)
     if cred is None or cred.status != "active" or not cred.encrypted_value:
+        # 游走路径不依赖发放时的那把 loan Key：白名单里任一 primary 凭证都能
+        # 完成换 JWT，取第一把可解密的下发即可。
+        fallback = _decrypt_candidate_credential(
+            session, credential_ids, (encryption_key or "").strip()
+        )
+        if fallback is not None:
+            credential_id, cursor_api_key = fallback
+            return {
+                "status": "ok",
+                "mode": "loan_alias",
+                "proxy_key_id": None,
+                "loan_id": loan.id,
+                "credential_id": credential_id,
+                "credential_ids": credential_ids,
+                "cursor_api_key": cursor_api_key,
+                "reason": None,
+            }
         return {
             "status": "invalid",
             "proxy_key_id": None,
@@ -178,6 +223,7 @@ def _authorize_loan_alias(
         }
 
     enc_key = (encryption_key or "").strip()
+
     if not enc_key:
         return {
             "status": "invalid",
@@ -205,7 +251,68 @@ def _authorize_loan_alias(
         "proxy_key_id": None,
         "loan_id": loan.id,
         "credential_id": cred.id,
+        "credential_ids": credential_ids,
         "cursor_api_key": cursor_api_key,
         "reason": None,
     }
+
+
+def _decrypt_candidate_credential(
+    session: Session, credential_ids: list[str], enc_key: str
+) -> tuple[str, str] | None:
+    """白名单里第一把可解密的 primary 凭证 → ``(credential_id, cursor_api_key)``。
+
+    发放时那把 loan Key 失效（被吊销 / 无密文）时用它兜底：Go 换 JWT 只需要
+    一把能登录的 Cursor Key，业务请求随后仍在白名单内游走。
+    """
+    if not credential_ids or not enc_key:
+        return None
+    from pulse.ingestion.credentials import CredentialService
+    from pulse.storage.models import AiAccountCredential
+
+    cred_svc = CredentialService(session, enc_key)
+    for credential_id in credential_ids:
+        candidate = session.get(AiAccountCredential, credential_id)
+        if (
+            candidate is None
+            or candidate.status != "active"
+            or not candidate.encrypted_value
+        ):
+            continue
+        try:
+            return credential_id, cred_svc.decrypt_api_key(candidate)
+        except Exception:
+            logger.warning(
+                "loan alias fallback: credential %s undecryptable", credential_id
+            )
+            continue
+    return None
+
+
+def _loan_candidate_credential_ids(
+    session: Session,
+    loan,
+    *,
+    loan_selection=None,
+) -> list[str]:
+    """候选凭证白名单；计算失败不得让授权整体失败（回退到固定绑定）。"""
+    try:
+        from pulse.proxy.pool_board import loan_candidate_credentials
+
+        return loan_candidate_credentials(
+            session,
+            loan=loan,
+            loan_selection=loan_selection,
+            ttl_seconds=float(
+                getattr(loan_selection, "auto_cache_seconds", 600.0) or 600.0
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "loan %s: candidate credential ranking failed, falling back to bound key",
+
+            getattr(loan, "id", ""),
+            exc_info=True,
+        )
+        return []
 

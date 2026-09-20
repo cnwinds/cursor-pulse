@@ -95,6 +95,47 @@ def mock_cursor_key_exchange(mock_client: MagicMock, *, email: str | None = None
     mock_client.resolve_api_key_account_email.side_effect = _resolve
 
 
+def ensure_synced_primary_credential(
+    session: Session,
+    account,
+    *,
+    member_id: str,
+):
+    """确保账号有一把同步正常的 primary 凭证（出借候选的前置条件）。
+
+    ``CredentialService.bind_cursor_api_key`` 只做绑定、不跑同步，凭证会停在
+    ``last_sync_status="never"``，而 ``sync_health`` 判定这属于「未正常同步」，
+    账号因此不进借出候选。需要走借用路径的 fixture 调一次本函数。
+    """
+    from datetime import datetime, timezone
+
+    from pulse.storage.models import AiAccountCredential
+
+    cred = session.scalar(
+        select(AiAccountCredential).where(
+            AiAccountCredential.account_id == account.id,
+            AiAccountCredential.key_role == "primary",
+        )
+    )
+    if cred is None:
+        cred = AiAccountCredential(
+            account_id=account.id,
+            vendor_id=account.vendor_id,
+            credential_type="cursor_api_key",
+            encrypted_value="enc",
+            key_hint="hint",
+            key_role="primary",
+            bound_by_member_id=member_id,
+        )
+        session.add(cred)
+    cred.status = "active"
+    cred.last_sync_status = "success"
+    cred.last_sync_at = datetime.now(timezone.utc)
+    cred.retry_count = 0
+    session.flush()
+    return cred
+
+
 def make_team(session: Session, slug: str = "test") -> Team:
     team = session.scalar(select(Team).where(Team.slug == slug))
     if team is None:

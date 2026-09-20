@@ -18,7 +18,11 @@ from pulse.tool_center.key_loans import KeyLoanError, KeyLoanService, recommend_
 
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from tests.conftest import make_team_repo, mock_cursor_key_exchange
+from tests.conftest import (
+    ensure_synced_primary_credential,
+    make_team_repo,
+    mock_cursor_key_exchange,
+)
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
@@ -79,6 +83,9 @@ def _bind_lender_primary(env, mock_client) -> None:
         account_id=env["lender"].id,
         api_key="crsr_primary_key_for_cap_test_abcdefghij",
         member_id=env["admin"].id,
+    )
+    ensure_synced_primary_credential(
+        env["session"], env["lender"], member_id=env["admin"].id
     )
     env["session"].flush()
 

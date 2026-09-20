@@ -311,6 +311,16 @@ def issue_loan_key(
     }
 
 
+def _forget_loan_candidate_cache(loan_id: str) -> None:
+    """改绑后丢弃该笔借用的游走白名单缓存（失败不影响改绑本身）。"""
+    try:
+        from pulse.proxy.pool_board import forget_loan_candidate_cache
+
+        forget_loan_candidate_cache(loan_id)
+    except Exception:
+        logger.warning("loan %s: candidate cache invalidation failed", loan_id, exc_info=True)
+
+
 def reassign_loan_source(
     session: Session,
     encryption_key: str,
@@ -418,7 +428,9 @@ def reassign_loan_source(
         loan.expires_on = deadline
         # 驻留窗口基准：换绑即重置，Auto Lender 在 min_switch_minutes 内不再动它
         loan.source_bound_at = datetime.now(timezone.utc)
-
+        # 白名单把当前 source 账号插在首位，改绑后必须立即失效，否则 600s 内
+        # 仍会把流量游走回旧账号
+        _forget_loan_candidate_cache(loan_id)
         pending_remote_revoke = None
         old_cred = session.get(AiAccountCredential, old_cred_id)
         if old_cred:

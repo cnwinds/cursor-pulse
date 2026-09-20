@@ -100,6 +100,10 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				if strings.TrimSpace(res.CursorAPIKey) != "" {
 					b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
 				}
+				// Replace (not merge): a candidate dropped from the ranked
+				// allowlist must stop serving on the next request. Empty clears
+				// the scope, which returns the binding to the pinned path.
+				b.AllowedCredentialIDs = res.CredentialIDs
 				s.sessions.Bind(cliTok, b)
 			case "window_limited":
 				b.WindowLimitReason = authWindowReason(res)
@@ -121,12 +125,18 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	}
 
 	loanBound := binding.Mode == "loan_passthrough" || binding.Mode == "loan_alias"
+	// A loan_alias binding carrying a Pulse-issued candidate allowlist selects
+	// among those accounts exactly like the shared pool (sticky + Switch dwell +
+	// per-bucket availability) instead of being pinned to one credential. An
+	// allowlist that collapses to nil (empty, or all-blank entries) keeps the
+	// legacy passthrough path — the same predicate sticky.Select uses.
+	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && binding.allowedSet() != nil
 	quotaPool := resolveQuotaPool(req.Context(), req.URL.Path, reqBodySnap, streamFS)
 	markPool := func() quotaPoolKind {
 		return effectiveMarkQuotaPool(req.URL.Path, reqBodySnap, quotaPool)
 	}
 	transportAttempts := 3
-	if loanBound {
+	if loanBound && !loanPooled {
 		transportAttempts = 1
 	}
 
@@ -135,7 +145,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	for attempt := 0; attempt < transportAttempts; attempt++ {
 		var token string
 		var err error
-		if loanBound {
+		if loanPooled {
+			entry, token, err = s.sticky.Select(req.Context(), cliTok, &binding, quotaPool)
+		} else if loanBound {
 			entry, token, err = s.passthroughToken(req.Context(), binding)
 		} else if s.sticky != nil {
 			entry, token, err = s.sticky.Select(req.Context(), cliTok, &binding, quotaPool)
@@ -196,10 +208,17 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		resp.Body.Close()
 		kind := classifyHTTPError(resp.StatusCode, body)
 		if shouldMarkOnFailure(req.URL.Path, kind) {
-			if loanBound {
+			if loanBound && !loanPooled {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
-				s.mark(entry, kind, binding, "", markPool())
+				// A pooled loan rotates sticky within its allowlist eagerly, like
+				// the streaming path above. Shared-pool keys keep the empty JWT:
+				// they rotate lazily in Select, so Switch dwell still applies.
+				rotateJWT := ""
+				if loanPooled {
+					rotateJWT = cliTok
+				}
+				s.mark(entry, kind, binding, rotateJWT, markPool())
 			}
 			log.Printf("[mitm] %s %s (key %s): HTTP %d classified %s - pool advanced for next request",
 				req.Method, req.URL.Path, entry.masked(), resp.StatusCode, kind)
@@ -238,13 +257,17 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				if binding.LoanID == "" {
 					return
 				}
+				// entry.credentialID is the account that actually served this
+				// turn: identical to binding.CredentialID on the pinned path,
+				// and the pool-selected candidate on the roaming path.
+				servedCredID := entry.credentialID
 				model := coalesceBilledModel(
-					logUsageModelTap(req.URL.Path, "", binding.CredentialID, tc, body),
+					logUsageModelTap(req.URL.Path, "", servedCredID, tc, body),
 					streamProviderModel,
 				)
 				s.pulse.EnqueueUsage(UsageItem{
 					LoanID:       binding.LoanID,
-					CredentialID: binding.CredentialID,
+					CredentialID: servedCredID,
 					Model:        model,
 					Tokens:       tc,
 				})
@@ -265,7 +288,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			})
 		}
 		onFailure := func(kind failKind) {
-			if loanBound {
+			if loanBound && !loanPooled {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
 				s.mark(entry, kind, binding, cliTok, markPool())
@@ -277,7 +300,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		credID := entry.credentialID
 		if loanBound {
 			proxyKeyID = ""
-			credID = binding.CredentialID
+			credID = entry.credentialID
 		}
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(http.StatusOK)
@@ -365,12 +388,13 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		}
 		if s.sessions != nil {
 			s.sessions.Bind(token, SessionBinding{
-				Mode:              res.Mode,
-				LoanID:            res.LoanID,
-				CredentialID:      res.CredentialID,
-				PulseKey:          pulseKey,
-				CursorAPIKey:      exchangeKey,
-				WindowLimitReason: windowLimitReason,
+				Mode:                 res.Mode,
+				LoanID:               res.LoanID,
+				CredentialID:         res.CredentialID,
+				PulseKey:             pulseKey,
+				CursorAPIKey:         exchangeKey,
+				WindowLimitReason:    windowLimitReason,
+				AllowedCredentialIDs: res.CredentialIDs,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

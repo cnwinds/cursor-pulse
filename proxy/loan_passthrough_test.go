@@ -11,9 +11,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
 
 func TestLoanPassthroughExchangeEmptyPool(t *testing.T) {
 	const loanKey = "crsr_test_loan_key_abc"
@@ -467,7 +469,12 @@ func TestLoanPassthroughMITMAuthFailReportsLoan(t *testing.T) {
 	}
 }
 
-func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
+// loanAliasHarness drives one pka_ exchange through the MITM and returns the
+// bound session plus the Authorization header the fake upstream saw. extra is
+// merged into the fake Pulse authorize response (e.g. credential_ids), which is
+// how auto-mode loans receive their candidate allowlist.
+func loanAliasHarness(t *testing.T, extra map[string]any) (SessionBinding, string) {
+	t.Helper()
 	const aliasKey = "pka_test_alias_key_abc"
 	const cursorKey = "crsr_bound_cursor_key_xyz"
 	var upstreamAuth string
@@ -503,7 +510,7 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"status":         "ok",
 			"mode":           "loan_alias",
 			"proxy_key_id":   nil,
@@ -511,7 +518,11 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 			"credential_id":  "cred-alias-1",
 			"cursor_api_key": cursorKey,
 			"reason":         nil,
-		})
+		}
+		for k, v := range extra {
+			resp[k] = v
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(pulse.Close)
 
@@ -570,18 +581,25 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 	if out.AccessToken != "jwt-alias" {
 		t.Fatalf("accessToken=%q want jwt-alias", out.AccessToken)
 	}
-	if upstreamAuth != "Bearer "+cursorKey {
-		t.Fatalf("upstream Authorization=%q want Bearer %s", upstreamAuth, cursorKey)
-	}
 	b, ok := sessions.Lookup("jwt-alias")
 	if !ok {
 		t.Fatal("session not bound")
 	}
+	return b, upstreamAuth
+}
+
+func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
+	const cursorKey = "crsr_bound_cursor_key_xyz"
+	b, upstreamAuth := loanAliasHarness(t, nil)
+
+	if upstreamAuth != "Bearer "+cursorKey {
+		t.Fatalf("upstream Authorization=%q want Bearer %s", upstreamAuth, cursorKey)
+	}
 	if b.Mode != "loan_alias" || b.LoanID != "loan-alias-1" || b.CredentialID != "cred-alias-1" {
 		t.Fatalf("session binding: %+v", b)
 	}
-	if b.PulseKey != aliasKey {
-		t.Fatalf("PulseKey=%q want %s", b.PulseKey, aliasKey)
+	if b.PulseKey != "pka_test_alias_key_abc" {
+		t.Fatalf("PulseKey=%q", b.PulseKey)
 	}
 	if b.CursorAPIKey != cursorKey {
 		t.Fatalf("CursorAPIKey=%q want %s", b.CursorAPIKey, cursorKey)
@@ -589,4 +607,167 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 	if b.ProxyKeyID != "" {
 		t.Fatalf("ProxyKeyID should be empty, got %q", b.ProxyKeyID)
 	}
+	// Designated loan: no candidate allowlist → pinned to the bound key.
+	if b.AllowedCredentialIDs != nil {
+		t.Fatalf("designated loan must stay unscoped, got %v", b.AllowedCredentialIDs)
+	}
 }
+
+func TestLoanAliasExchangeCarriesCandidateAllowlist(t *testing.T) {
+	b, _ := loanAliasHarness(t, map[string]any{
+		"credential_ids": []string{"cred-alias-1", "cred-cand-2"},
+	})
+
+	if len(b.AllowedCredentialIDs) != 2 {
+		t.Fatalf("allowlist not bound: %+v", b.AllowedCredentialIDs)
+	}
+	if b.AllowedCredentialIDs[0] != "cred-alias-1" || b.AllowedCredentialIDs[1] != "cred-cand-2" {
+		t.Fatalf("allowlist order must be preserved: %v", b.AllowedCredentialIDs)
+	}
+	if b.Mode != "loan_alias" || b.LoanID != "loan-alias-1" {
+		t.Fatalf("session binding: %+v", b)
+	}
+}
+
+// TestLoanAliasPooledUnary429RotatesWithinAllowlist covers the roaming
+// (auto-assigned) loan on the non-200 path: the failure must advance the sticky
+// credential inside the allowlist exactly like the shared pool and the
+// streaming path, otherwise every following request retries the same dead
+// account. The pool is keyA(keyA→429)/keyB(keyB→200) and the allowlist is both.
+func TestLoanAliasPooledUnary429RotatesWithinAllowlist(t *testing.T) {
+	const aliasKey = "pka_test_alias_key_abc"
+	var unaryCalls atomic.Int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key != "keyA" && key != "keyB" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  "tok" + key[len(key)-1:],
+			"refreshToken": "r",
+		})
+	})
+	mux.HandleFunc("/aiserver.v1.TestService/Unary", func(w http.ResponseWriter, r *http.Request) {
+		unaryCalls.Add(1)
+		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "tokA" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			io.WriteString(w, `{"code":"resource_exhausted","message":"slow down"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/proto")
+		w.Write([]byte{0x01, 0x02, 0x03})
+	})
+	fuSrv := httptest.NewUnstartedServer(mux)
+	fuSrv.EnableHTTP2 = true
+	fuSrv.StartTLS()
+	t.Cleanup(fuSrv.Close)
+
+	pulse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         "ok",
+			"mode":           "loan_alias",
+			"loan_id":        "loan-pooled-1",
+			"credential_id":  "local-0",
+			"cursor_api_key": "keyA",
+			"credential_ids": []string{"local-0", "local-1"},
+		})
+	}))
+	t.Cleanup(pulse.Close)
+
+	pool := NewPool([]string{"keyA", "keyB"})
+	pool.exchangeBase = fuSrv.URL
+	pool.client = fuSrv.Client()
+
+	ca, caPath, _, err := loadOrCreateCA(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), NewSessionMap())
+	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
+	s.transport = &http.Transport{
+		ForceAttemptHTTP2: true,
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go http.Serve(ln, s)
+	t.Cleanup(func() { ln.Close() })
+
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := connectClient(t, ln.Addr().String(), caPEM)
+	upstreamAddr := strings.TrimPrefix(fuSrv.URL, "https://")
+
+	exReq, err := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+exchangePath, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exReq.Header.Set("Authorization", "Bearer "+aliasKey)
+	exReq.Header.Set("Content-Type", "application/json")
+	exResp, err := client.Do(exReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exOut struct {
+		AccessToken string `json:"accessToken"`
+	}
+	err = json.NewDecoder(exResp.Body).Decode(&exOut)
+	exResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exResp.StatusCode != http.StatusOK || exOut.AccessToken == "" {
+		t.Fatalf("exchange status %d token %q", exResp.StatusCode, exOut.AccessToken)
+	}
+
+	url := "https://" + upstreamAddr + "/aiserver.v1.TestService/Unary"
+	body := []byte{0x0A}
+	post := func() *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+exOut.AccessToken)
+		req.Header.Set("Content-Type", "application/proto")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp1 := post()
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("first status %d want 429", resp1.StatusCode)
+	}
+
+	resp2 := post()
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("second status %d want 200 (sticky must rotate within the allowlist)", resp2.StatusCode)
+	}
+	b, _ := io.ReadAll(resp2.Body)
+	if !bytes.Equal(b, []byte{0x01, 0x02, 0x03}) {
+		t.Fatalf("unexpected body %x", b)
+	}
+	if got := unaryCalls.Load(); got != 2 {
+		t.Fatalf("expected 2 upstream unary calls, got %d", got)
+	}
+}
+
+

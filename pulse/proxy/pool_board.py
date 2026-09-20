@@ -8,6 +8,7 @@ re-implement intake filters.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import date, datetime, timezone
 from typing import NamedTuple
 
@@ -15,8 +16,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.tool_center.burn_rate import LenderCandidate
+from pulse.util.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
+
+LOAN_CANDIDATE_CACHE_MAX = 512
 
 
 class PoolPrimaryContext(NamedTuple):
@@ -192,7 +196,158 @@ def _build_pool_lender_candidates(
     return candidates, excluded_no_snap
 
 
+def loan_candidate_credentials(
+    session: Session,
+    *,
+    loan,
+    loan_selection=None,
+    ttl_seconds: float = 600.0,
+) -> list[str]:
+    """借用可游走的候选 primary 凭证 ID（按打分排序，含当前绑定账号）。
+
+    借用 Key（pka_）不再钉死单一账号：Go 在 Pulse 给出的这份白名单内做
+    sticky + Switch dwell + 按 Quota Pool 的选择。白名单取自 Credential Pool
+    的入池账号，因此必然是 Go 池内已有的凭证。
+
+    结果按 loan_id 缓存 ttl_seconds：Go 对 loan_alias **每个请求**都会调
+    authorize，不能每次都重算排名。
+
+    这里**不问 Jev**：本函数在请求路径上，而 CONTEXT.md「Jev Decision」明确
+    要求 Jev 不进请求路径。Jev 的主判发生在发放与池刷新，白名单顺序由确定性
+    打分给出。
+    """
+    loan_id = getattr(loan, "id", "") or ""
+    if not loan_id:
+        return []
+    cached = _loan_candidates_get(loan_id, ttl_seconds)
+    if cached is not None:
+        return cached
+    # 同一 loan 的并发 authorize 只算一次：先抢到 per-loan 锁的线程负责计算，
+    # 其余线程在锁内二次命中上面的缓存。
+    lock = _loan_inflight_lock(loan_id)
+    try:
+        with lock:
+            cached = _loan_candidates_get(loan_id, ttl_seconds)
+            if cached is not None:
+                return cached
+            ordered = _rank_loan_candidates(
+                session, loan, loan_selection=loan_selection
+            )
+            _loan_candidates_put(loan_id, ordered, ttl_seconds=ttl_seconds)
+            return ordered
+    finally:
+        _release_inflight_lock(loan_id, lock)
+
+
+def _rank_loan_candidates(session: Session, loan, *, loan_selection=None) -> list[str]:
+    """算一次白名单：入池 primary 账号 → 借用侧硬过滤 → 打分排序 → 凭证 ID。"""
+    from pulse.storage.models import AiAccount
+    from pulse.tool_center.auto_lender import rank_lenders
+    from pulse.tool_center.key_loan_auto import own_cursor_account_ids
+    from pulse.tool_center.sync_health import sync_blockers_by_account
+
+    account = session.get(AiAccount, loan.source_account_id)
+    team_id = getattr(account, "team_id", None) if account else None
+    if not team_id:
+        return []
+
+    ctx = _pool_primary_context(session)
+    if not ctx.creds:
+        return []
+    cred_by_account = {cred.account_id: cred.id for cred in ctx.creds}
+
+    candidates, _ = _build_pool_lender_candidates(
+        ctx.accounts,
+        ctx.latest_snaps,
+        ctx.loan_counts,
+        set(cred_by_account),
+        include_no_snap_excluded=False,
+        bound_at_by_account=ctx.bound_at_by_account,
+        member_names=ctx.member_names,
+    )
+    own_accounts = own_cursor_account_ids(session, team_id, loan.borrower_member_id)
+    # 与 build_lender_candidates 同一口径：同步不正常的账号不再被新选中游走
+    blockers = sync_blockers_by_account(session, [c.account_id for c in candidates])
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.account_id not in own_accounts
+        and candidate.account_id not in blockers
+    ]
+
+    today, now = _pool_scoring_clock(ctx.latest_snaps)
+    board = rank_lenders(
+        candidates,
+        loan_selection=loan_selection,
+        pool="unknown",
+        today=today,
+        now=now,
+        # 借用路径的硬过滤，但不在借人数上限上排除：本笔借用自己就可能占满名额，
+        # 否则当前账号会被自己的借用挤出去。
+        enforce_loan_cap=True,
+        exclude_at_loan_cap=False,
+    )
+
+    ordered: list[str] = []
+    for row in board["ranked"]:
+        cred_id = cred_by_account.get(row["account_id"])
+        if cred_id and cred_id not in ordered:
+            ordered.append(cred_id)
+    # 当前绑定账号必须留在白名单里：否则借用人会瞬间失去正在用的账号。
+    # 同步异常也照样保留——它可能正是本笔借用此刻在用的账号，抽掉等于会话中途硬切。
+    current = cred_by_account.get(loan.source_account_id)
+    if current and current not in ordered:
+        ordered.insert(0, current)
+    return ordered
+
+
+_loan_candidates_lock = threading.Lock()
+_loan_candidates = TTLCache(LOAN_CANDIDATE_CACHE_MAX)
+# 同一 loan 的并发 authorize 只算一次：先抢到 per-loan 锁的线程负责计算。
+_loan_candidates_inflight: dict[str, threading.Lock] = {}
+
+
+def _loan_inflight_lock(loan_id: str) -> threading.Lock:
+    """取（或创建）该 loan 的计算锁。"""
+    with _loan_candidates_lock:
+        lock = _loan_candidates_inflight.get(loan_id)
+        if lock is None:
+            lock = threading.Lock()
+            _loan_candidates_inflight[loan_id] = lock
+        return lock
+
+
+def _release_inflight_lock(loan_id: str, lock: threading.Lock) -> None:
+    """回收计算锁引用；仍有等待者持有时留给它自己回收。"""
+    with _loan_candidates_lock:
+        if _loan_candidates_inflight.get(loan_id) is lock and not lock.locked():
+            _loan_candidates_inflight.pop(loan_id, None)
+
+
+def _loan_candidates_get(loan_id: str, ttl_seconds: float) -> list[str] | None:
+    """读白名单缓存（TTL 见 :mod:`pulse.util.ttl_cache`）。"""
+    return _loan_candidates.get(loan_id, ttl_seconds)
+
+
+def _loan_candidates_put(
+    loan_id: str, credential_ids: list[str], *, ttl_seconds: float = 0.0
+) -> None:
+    """写白名单缓存；ttl 只用于超上限时清理过期项。"""
+    _loan_candidates.put(loan_id, credential_ids, ttl_seconds=ttl_seconds)
+
+
+def reset_loan_candidate_cache() -> None:
+    """清空白名单缓存（测试 / 手动改绑后立即生效）。"""
+    _loan_candidates.clear()
+
+
+def forget_loan_candidate_cache(loan_id: str) -> None:
+    """丢弃单笔借用的白名单缓存：改绑出借账号后不必等 TTL。"""
+    _loan_candidates.pop(loan_id)
+
+
 def list_pool_credentials(
+
     session: Session,
     *,
     encryption_key: str,

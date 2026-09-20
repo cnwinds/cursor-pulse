@@ -12,11 +12,7 @@ def test_build_scheduler_only_sync_and_loan_jobs():
     )
     scheduler = build_scheduler(config, MagicMock(), MagicMock(), MagicMock())
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert job_ids == {
-        "cursor_sync_tick",
-        "expire_key_loans",
-        "auto_lender_reevaluate",
-    }
+    assert job_ids == {"cursor_sync_tick", "expire_key_loans"}
 
 
 def test_sync_scheduler_service_runs_without_encryption_key():
@@ -24,4 +20,5 @@ def test_sync_scheduler_service_runs_without_encryption_key():
     service = SyncSchedulerService(config, MagicMock())
     assert service.run_cursor_sync_tick() == 0
     assert service.run_expire_key_loans() == 0
+    # 已退休：换号由代理在会话内完成，定时任务恒为 no-op
     assert service.run_auto_lender_reevaluate() == 0

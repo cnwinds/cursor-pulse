@@ -37,6 +37,7 @@
             size="small"
             type="warning"
             class="lender-mode-tag"
+            title="自动分配借用：借用 Key 会在候选账号的 primary Key 之间游走"
           >
             自动
           </el-tag>
@@ -160,12 +161,13 @@
         </el-form-item>
         <el-form-item label="分配方式">
           <el-radio-group v-model="loanForm.lender_mode">
-            <el-radio value="manual">手动指定账号</el-radio>
-            <el-radio value="auto">自动选号（打分 + Jev）</el-radio>
+            <el-radio value="manual">指定借用</el-radio>
+            <el-radio value="auto">自动分配借用</el-radio>
           </el-radio-group>
           <p class="manual-hint">
-            自动模式下由 Auto Lender 打分选号，并每隔至少 30 分钟重评一次；
-            不再锁定单一出借账号。
+            指定借用：发放时在该账号建一把独立 Cursor Key，绑定后固定不变。
+            自动分配借用：借用 Key 在候选账号的 primary Key 之间按共享池方式游走
+            （同一会话 sticky，切换间隔至少 30 分钟），换号不会新建 Cursor Key。
           </p>
         </el-form-item>
         <el-form-item label="借出账号" :required="loanForm.lender_mode === 'manual'">
@@ -175,7 +177,7 @@
             :disabled="loanForm.lender_mode === 'auto'"
             :placeholder="
               loanForm.lender_mode === 'auto'
-                ? '自动选号，无需指定'
+                ? '自动分配：由打分决定起始账号，之后按需游走'
                 : '选择借出账号（显示在借人数，含已满员）'
             "
             style="width: 100%"
@@ -197,10 +199,10 @@
         <el-form-item label="目标模型">
           <el-input
             v-model="loanForm.model"
-            placeholder="留空按总余量打分；填模型则按其 Quota Pool（auto/api）打分"
+            placeholder="留空按总余量打分；填模型则由系统判定它属于哪个 Quota Pool"
           />
           <p class="manual-hint">
-            例如 composer-2.5 走 auto 桶，claude-4-sonnet 走 api 桶。
+            只需填模型名，auto / api 桶由系统按既有计费口径自动判定，无需人工判断。
           </p>
         </el-form-item>
         <el-form-item label="重置日回收">
@@ -416,6 +418,8 @@ interface QuotaBoardItem {
   status?: string | null
   has_snapshot?: boolean
   active_loans?: number | null
+  /** 同步阻断原因（no_credential/key_revoked/sync_failed/unsynced）；空表示同步正常 */
+  sync_blocker?: string | null
 }
 
 function lenderOptionLabel(r: RecommendItem) {
@@ -437,6 +441,15 @@ function boardToRecommendItem(row: QuotaBoardItem): RecommendItem {
   }
 }
 
+/** 可借出的看板行：同步正常、有快照、未耗尽，且尚未出现在推荐列表里。 */
+function isLendableBoardRow(row: QuotaBoardItem, seen: Set<string>): boolean {
+  if (!row.account_id || seen.has(row.account_id)) return false
+  // 同步不正常的账号不进候选：既打不了分，也统计不到借用量
+  if (row.sync_blocker) return false
+  if (row.has_snapshot === false) return false
+  return row.status !== 'exhausted' && row.status !== 'unknown'
+}
+
 /** 推荐排序优先，再补齐看板中未耗尽账号（含已达在借人数上限）。 */
 function buildLoanSourceOptions(
   ranked: RecommendItem[],
@@ -453,14 +466,7 @@ function buildLoanSourceOptions(
     })
   }
   const fillers = board
-    .filter(
-      (row) =>
-        row.account_id &&
-        !seen.has(row.account_id) &&
-        row.has_snapshot !== false &&
-        row.status !== 'exhausted' &&
-        row.status !== 'unknown',
-    )
+    .filter((row) => isLendableBoardRow(row, seen))
     .sort(
       (a, b) => (b.remaining_headroom_pct ?? -1) - (a.remaining_headroom_pct ?? -1),
     )

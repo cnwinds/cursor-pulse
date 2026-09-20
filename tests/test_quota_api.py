@@ -26,7 +26,12 @@ from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
-from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
+from tests.conftest import (
+    ensure_synced_primary_credential,
+    make_module_web_client,
+    make_team_repo,
+    make_test_session_factory,
+)
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
@@ -704,6 +709,8 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     )
     snap.cycle_start = date.today() - timedelta(days=15)
     snap.cycle_end = date.today() + timedelta(days=15)
+    # 出借候选要求账号同步正常
+    ensure_synced_primary_credential(s, account, member_id=owner.id)
     s.commit()
     s.close()
 
@@ -719,6 +726,7 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     assert "active_loans" in item
     assert "primary_member_name" in item
     assert item["primary_member_name"] == quota_env["borrower"].display_name
+
 
 
 def test_quota_recommend_includes_account_at_loan_cap(quota_env):
@@ -739,6 +747,7 @@ def test_quota_recommend_includes_account_at_loan_cap(quota_env):
     snap.cycle_end = date.today() + timedelta(days=15)
     _make_active_loan(s, account, borrower, owner)
     _make_active_loan(s, account, borrower, owner)
+    ensure_synced_primary_credential(s, account, member_id=owner.id)
     s.commit()
     s.close()
 
@@ -874,6 +883,8 @@ def test_request_self_loan_and_mine_via_web(quota_env):
             api_key="crsr_lender_key_for_self_web_abcdefghijklmn",
             member_id=owner.id,
         )
+        # 出借候选要求出借账号同步正常
+        ensure_synced_primary_credential(s, lender, member_id=owner.id)
         s.add(
             TeamSetting(
                 team_id=owner.team_id,

@@ -20,6 +20,10 @@ type AuthResult struct {
 	CredentialID string  `json:"credential_id"`
 	CursorAPIKey string  `json:"cursor_api_key,omitempty"`
 	Reason       *string `json:"reason"`
+	// CredentialIDs is the ranked candidate allowlist for a loan_alias in auto
+	// mode: the loan roams across these accounts like the shared pool. Empty
+	// means pinned to CredentialID / CursorAPIKey (designated loan).
+	CredentialIDs []string `json:"credential_ids,omitempty"`
 }
 
 type PoolCredential struct {
