@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +19,9 @@ import (
 var errAllExhausted = errors.New("all API keys exhausted")
 
 const (
-	exchangePath    = "/auth/exchange_user_api_key"
-	exchangeTimeout = 15 * time.Second
-	authBadCooldown = 2 * time.Minute
+	exchangePath           = "/auth/exchange_user_api_key"
+	exchangeTimeout        = 15 * time.Second
+	authBadCooldown          = 2 * time.Minute
 )
 
 // exchangeHTTPError is returned for non-2xx responses from Cursor's exchange.
@@ -55,8 +54,6 @@ type keyEntry struct {
 
 	// CredentialQuotaState (embedded): Snapshot Headroom, runtime marks, auth cooldown.
 	credentialQuotaState
-	autoScore float64
-	apiScore  float64
 }
 
 func (e *keyEntry) id() string {
@@ -180,8 +177,6 @@ func NewPoolFromCredentials(creds []PoolCredential) *Pool {
 				autoPct: c.AutoPct,
 				apiPct:  c.ApiPct,
 			},
-			autoScore: c.AutoScore,
-			apiScore:  c.ApiScore,
 		})
 	}
 	return p
@@ -215,8 +210,6 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 			old.clearAuthCooldown() // allow retry after Pulse/pool refresh
 			old.autoPct = c.AutoPct
 			old.apiPct = c.ApiPct
-			old.autoScore = c.AutoScore
-			old.apiScore = c.ApiScore
 			next = append(next, old)
 			continue
 		}
@@ -227,8 +220,6 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 				autoPct: c.AutoPct,
 				apiPct:  c.ApiPct,
 			},
-			autoScore: c.AutoScore,
-			apiScore:  c.ApiScore,
 		})
 	}
 	p.keys = next
@@ -260,31 +251,10 @@ func (p *Pool) tokenSkipping(ctx context.Context, skipCredIDs map[string]bool) (
 	return p.tokenForQuotaPool(ctx, quotaPoolUnknown, skipCredIDs)
 }
 
-func (e *keyEntry) scoreForPool(pool quotaPoolKind) float64 {
-	switch pool {
-	case quotaPoolAuto:
-		return e.autoScore
-	case quotaPoolAPI:
-		return e.apiScore
-	default:
-		if e.autoScore > e.apiScore {
-			return e.autoScore
-		}
-		return e.apiScore
-	}
-}
-
-func sortKeysByPoolScore(keys []*keyEntry, pool quotaPoolKind) []*keyEntry {
-	ordered := append([]*keyEntry(nil), keys...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return ordered[i].scoreForPool(pool) > ordered[j].scoreForPool(pool)
-	})
-	return ordered
-}
-
 func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCredIDs map[string]bool) (*keyEntry, string, error) {
 	p.mu.Lock()
-	keys := sortKeysByPoolScore(p.keys, pool)
+	keys := append([]*keyEntry(nil), p.keys...)
+	start := p.cur
 	p.mu.Unlock()
 
 	n := len(keys)
@@ -297,7 +267,7 @@ func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCr
 			return nil, "", err
 		}
 
-		e := keys[i]
+		e := keys[(start+i)%n]
 
 		p.mu.Lock()
 		skip := e.unavailable() || !e.hasQuotaForPool(pool)
@@ -372,26 +342,24 @@ func (p *Pool) nextAvailableAfter(credentialID string) *keyEntry {
 func (p *Pool) nextAvailableForQuota(credentialID string, pool quotaPoolKind) *keyEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var best *keyEntry
-	bestScore := 0.0
-	bestIdx := -1
-	haveBest := false
+	n := len(p.keys)
+	if n == 0 {
+		return nil
+	}
+	start := 0
 	for i, e := range p.keys {
 		if e.credentialID == credentialID {
-			continue
-		}
-		if e.unavailable() || !e.hasQuotaForPool(pool) {
-			continue
-		}
-		sc := e.scoreForPool(pool)
-		if !haveBest || sc > bestScore || (sc == bestScore && i < bestIdx) {
-			best = e
-			bestScore = sc
-			bestIdx = i
-			haveBest = true
+			start = (i + 1) % n
+			break
 		}
 	}
-	return best
+	for i := 0; i < n; i++ {
+		e := p.keys[(start+i)%n]
+		if !e.unavailable() && e.hasQuotaForPool(pool) {
+			return e
+		}
+	}
+	return nil
 }
 
 func (p *Pool) findEntry(credentialID string) *keyEntry {

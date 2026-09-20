@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +23,7 @@ func main() {
 		pulseToken     = flag.String("pulse-token", "", "Pulse internal service token (env PULSE_INTERNAL_SERVICE_TOKEN)")
 		upstreamProxy  = flag.String("upstream-proxy", "", "HTTP(S) proxy for Cursor upstream (env PROXY_UPSTREAM_URL)")
 		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
+		stickyMinDwell = flag.Duration("sticky-min-dwell", 0, stickyMinDwellUsage)
 	)
 	flag.Parse()
 
@@ -136,6 +136,7 @@ Point agent at this proxy and trust the CA (PowerShell):
 	srv := NewServer(pool, ca, pulse, sessions)
 	if pulseMode {
 		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
+		srv.sticky = NewStickySelectWithDwell(pool, sessions, resolveStickyMinDwell(*stickyMinDwell))
 	}
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))
@@ -189,17 +190,35 @@ func firstNonEmpty(vals ...string) string {
 
 const defaultSessionTTL = 120 * time.Second
 
+// defaultStickyMinDwell is the Switch dwell default: a CLI session keeps its
+// sticky credential for at least this long before quota pressure may rotate it.
+const defaultStickyMinDwell = 30 * time.Minute
+
+// stickyMinDwellUsage is the flag/env help text for Switch dwell.
+const stickyMinDwellUsage = "min time a CLI session keeps its sticky credential " +
+	"(default 30m; env PROXY_STICKY_MIN_DWELL, 0/off disables)"
+
+func resolveStickyMinDwell(flagVal time.Duration) time.Duration {
+	if flagVal > 0 {
+		return flagVal
+	}
+	// 显式 0 / off 关闭驻留（与未配置区分开）
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_STICKY_MIN_DWELL"))) {
+	case "0", "off", "false", "no":
+		return 0
+	}
+	if d, ok := parseDurationValue(os.Getenv("PROXY_STICKY_MIN_DWELL")); ok && d >= 0 {
+		return d
+	}
+	return defaultStickyMinDwell
+}
+
 func resolveSessionTTL(flagVal time.Duration) time.Duration {
 	if flagVal > 0 {
 		return flagVal
 	}
-	if raw := os.Getenv("PROXY_SESSION_TTL"); raw != "" {
-		if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
-			return time.Duration(secs) * time.Second
-		}
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
+	if d, ok := parseDurationValue(os.Getenv("PROXY_SESSION_TTL")); ok && d > 0 {
+		return d
 	}
 	return defaultSessionTTL
 }

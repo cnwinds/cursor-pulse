@@ -10,6 +10,18 @@ from pulse.storage.models import AiAccount, KeyLoan, Member
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import ensure_aware
+
+
+def member_names_by_id(session: Session, member_ids: set[str]) -> dict[str, str]:
+    """成员 id → 显示名；供候选构造填 primary_member_name（借用与代理池共用）。"""
+    ids = {mid for mid in member_ids if mid}
+    if not ids:
+        return {}
+    return {
+        member.id: member.display_name
+        for member in session.scalars(select(Member).where(Member.id.in_(ids)))
+    }
 
 def account_loan_deadline(account: AiAccount) -> date | None:
     """账号上借用 key 的自动回收日：额度重置日与订阅到期日取先到者。
@@ -40,29 +52,6 @@ def loan_display_expires_on(loan: KeyLoan, account: AiAccount | None) -> date | 
     return account_loan_deadline(account)
 
 
-def sticky_assignment_for_borrower(
-    session: Session, borrower_member_id: str | None
-) -> tuple[str | None, datetime | None]:
-    """Most recent active Key Loan for Switch Cooldown.
-
-    Returns ``(source_account_id, created_at)`` or ``(None, None)``.
-    """
-    if not borrower_member_id:
-        return None, None
-    loan = session.scalar(
-        select(KeyLoan)
-        .where(
-            KeyLoan.borrower_member_id == borrower_member_id,
-            KeyLoan.status == "active",
-        )
-        .order_by(KeyLoan.created_at.desc())
-        .limit(1)
-    )
-    if loan is None:
-        return None, None
-    return loan.source_account_id, loan.created_at
-
-
 def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, int]:
     rows = session.execute(
         select(KeyLoan.source_account_id, func.count())
@@ -73,13 +62,39 @@ def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, i
     return {account_id: count for account_id, count in rows}
 
 
+def last_bound_at_by_account(
+    session: Session, account_ids: list[str]
+) -> dict[str, datetime]:
+    """每个账号最近一次出借绑定时刻（驻留窗口基准）。
+
+    取全部状态的借用记录：账号刚被切走（上一笔已回收）或刚被绑上（进行中）
+    都算「刚动过」，都应进入驻留窗口。
+    """
+    if not account_ids:
+        return {}
+    rows = session.execute(
+        select(KeyLoan.source_account_id, func.max(KeyLoan.source_bound_at))
+        .where(
+            KeyLoan.source_account_id.in_(account_ids),
+            KeyLoan.source_bound_at.is_not(None),
+        )
+        .group_by(KeyLoan.source_account_id)
+    ).all()
+    out: dict[str, datetime] = {}
+    for account_id, bound_at in rows:
+        if bound_at is None:
+            continue
+        out[account_id] = ensure_aware(bound_at)  # type: ignore[assignment]
+    return out
+
+
 def build_lender_candidates(
     session: Session,
     team_id: str,
     *,
     exclude_account_ids: set[str] | None = None,
 ) -> list[LenderCandidate]:
-    """组装出借候选：最新快照 + renews_on + 当前在借人数。"""
+    """组装出借候选：最新快照 + renews_on + 当前在借人数 + 人工分 + 驻留。"""
     exclude_account_ids = exclude_account_ids or set()
     repo = ToolCenterRepository(session, team_id)
     accounts = [
@@ -90,13 +105,11 @@ def build_lender_candidates(
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     loan_counts = active_loan_counts_by_account(session, team_id)
     accounts = [account for account in accounts if snapshots.get(account.id)]
+    bound_at_by_account = last_bound_at_by_account(
+        session, [account.id for account in accounts]
+    )
     primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
-    member_names: dict[str, str] = {}
-    if primary_ids:
-        member_names = {
-            m.id: m.display_name
-            for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))
-        }
+    member_names = member_names_by_id(session, primary_ids)
     candidates: list[LenderCandidate] = []
     for account in accounts:
         snap = snapshots[account.id]
@@ -112,76 +125,11 @@ def build_lender_candidates(
                 active_loans=loan_counts.get(account.id, 0),
                 primary_member_name=primary_name,
                 score_adjust=account.proxy_score_adjust,
+                reserve_pct=account.proxy_reserve_pct,
+                bound_at=bound_at_by_account.get(account.id),
             )
         )
     return candidates
-
-
-def _jev_scores_for_ranked(config, ranked: list[dict], quota_pool: str | None) -> dict[str, float]:
-    from pulse.llm.jev import build_jev_client
-    from pulse.tool_center.jev_rank import score_assignment_candidates
-
-    if not ranked or config is None:
-        return {}
-    client = build_jev_client(config)
-    if client is None:
-        return {}
-    selection = getattr(getattr(config, "tool_center", None), "loan_selection", None)
-    min_conf = 0.35 if selection is None else selection.jev_min_confidence
-    scored = score_assignment_candidates(
-        client, ranked, quota_pool=quota_pool, min_confidence=min_conf
-    )
-    return {account_id: item.blend for account_id, item in scored.items()}
-
-
-def rank_lenders_for_assignment(
-    session: Session,
-    team_id: str,
-    *,
-    exclude_account_ids: set[str] | None = None,
-    today: date | None = None,
-    now: datetime | None = None,
-    loan_selection: LoanSelectionConfig | None = None,
-    quota_pool: str | None = None,
-    config=None,
-    sticky_account_id: str | None = None,
-    sticky_since: datetime | None = None,
-    exclude_at_loan_cap: bool | None = False,
-    use_jev: bool = True,
-) -> list[dict]:
-    """Rank lenders for Key Loan assignment (optional Jev blend)."""
-    from pulse.tool_center.snapshot_headroom import normalize_quota_pool
-
-    pool = normalize_quota_pool(quota_pool)
-    candidates = build_lender_candidates(
-        session, team_id, exclude_account_ids=exclude_account_ids
-    )
-    ranked = recommend_lenders(
-        candidates,
-        today,
-        now=now,
-        loan_selection=loan_selection,
-        quota_pool=pool,
-        exclude_at_loan_cap=exclude_at_loan_cap,
-        sticky_account_id=sticky_account_id,
-        sticky_since=sticky_since,
-    )
-    if not use_jev or not ranked:
-        return ranked
-    jev_scores = _jev_scores_for_ranked(config, ranked, pool)
-    if not jev_scores:
-        return ranked
-    return recommend_lenders(
-        candidates,
-        today,
-        now=now,
-        loan_selection=loan_selection,
-        quota_pool=pool,
-        jev_scores=jev_scores,
-        exclude_at_loan_cap=exclude_at_loan_cap,
-        sticky_account_id=sticky_account_id,
-        sticky_since=sticky_since,
-    )
 
 
 def recommend_lender_for_borrower(
@@ -190,27 +138,20 @@ def recommend_lender_for_borrower(
     *,
     exclude_account_ids: set[str] | None = None,
     today: date | None = None,
-    now: datetime | None = None,
     loan_selection: LoanSelectionConfig | None = None,
-    quota_pool: str | None = None,
-    config=None,
-    sticky_account_id: str | None = None,
-    sticky_since: datetime | None = None,
-    exclude_at_loan_cap: bool | None = None,
+    pool: str | None = None,
 ) -> dict | None:
-    ranked = rank_lenders_for_assignment(
-        session,
-        team_id,
-        exclude_account_ids=exclude_account_ids,
-        today=today,
-        now=now,
-        loan_selection=loan_selection,
-        quota_pool=quota_pool,
-        config=config,
-        sticky_account_id=sticky_account_id,
-        sticky_since=sticky_since,
-        exclude_at_loan_cap=exclude_at_loan_cap,
-        use_jev=True,
+    """纯确定性打分选号（不调用 Jev）。
+
+    生产路径（管理员发放 / 自助借用 / 定期重评）走
+    :func:`pulse.tool_center.key_loan_auto.resolve_auto_lender`，它在这之上叠加
+    Jev 主判与护栏。本函数保留为「只看算法分」的入口，供回测、对照与工具使用。
+    """
+    candidates = build_lender_candidates(
+        session, team_id, exclude_account_ids=exclude_account_ids
+    )
+    ranked = recommend_lenders(
+        candidates, today, loan_selection=loan_selection, pool=pool
     )
     return ranked[0] if ranked else None
 

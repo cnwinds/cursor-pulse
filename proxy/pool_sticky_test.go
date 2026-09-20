@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMarkApiQuotaExhaustedKeepsAutoPool(t *testing.T) {
@@ -44,44 +45,6 @@ func TestMarkExhaustedAdvancesOnce(t *testing.T) {
 	if p.cur != 1 {
 		t.Fatalf("duplicate mark should not advance cur again, got %d", p.cur)
 	}
-}
-
-func TestNextAvailableForQuotaPicksHigherPoolScore(t *testing.T) {
-	p := NewPoolFromCredentials([]PoolCredential{
-		{CredentialID: "c1", APIKey: "k1", AutoScore: 0.1, ApiScore: 0.9},
-		{CredentialID: "c2", APIKey: "k2", AutoScore: 0.8, ApiScore: 0.2},
-		{CredentialID: "c3", APIKey: "k3", AutoScore: 0.3, ApiScore: 0.4},
-	})
-	nextAPI := p.nextAvailableForQuota("c1", quotaPoolAPI)
-	if nextAPI == nil || nextAPI.credentialID != "c3" {
-		t.Fatalf("api next want c3, got %v", credID(nextAPI))
-	}
-	nextAuto := p.nextAvailableForQuota("c1", quotaPoolAuto)
-	if nextAuto == nil || nextAuto.credentialID != "c2" {
-		t.Fatalf("auto next want c2, got %v", credID(nextAuto))
-	}
-}
-
-func TestSortKeysByPoolScore(t *testing.T) {
-	p := NewPoolFromCredentials([]PoolCredential{
-		{CredentialID: "c1", APIKey: "k1", AutoScore: 0.1, ApiScore: 0.9},
-		{CredentialID: "c2", APIKey: "k2", AutoScore: 0.8, ApiScore: 0.2},
-	})
-	auto := sortKeysByPoolScore(p.keys, quotaPoolAuto)
-	if auto[0].credentialID != "c2" {
-		t.Fatalf("auto want c2 first, got %s", auto[0].credentialID)
-	}
-	api := sortKeysByPoolScore(p.keys, quotaPoolAPI)
-	if api[0].credentialID != "c1" {
-		t.Fatalf("api want c1 first, got %s", api[0].credentialID)
-	}
-}
-
-func credID(e *keyEntry) string {
-	if e == nil {
-		return "<nil>"
-	}
-	return e.credentialID
 }
 
 func TestNextAvailableAfter(t *testing.T) {
@@ -270,4 +233,157 @@ func TestStickySelectRotateOnExhaustion(t *testing.T) {
 
 func ptrFloat(v float64) *float64 {
 	return &v
+}
+
+// --- Switch dwell -----------------------------------------------------------
+
+func dwellTestPool(t *testing.T) (*Pool, *SessionMap) {
+	t.Helper()
+	fu := newFakeUpstreamSession(t)
+	apiFull := 100.0
+	apiOK := 20.0
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA", AutoPct: ptrFloat(10), ApiPct: &apiFull},
+		{CredentialID: "c2", APIKey: "keyB", AutoPct: ptrFloat(30), ApiPct: &apiOK},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	return p, NewSessionMap()
+}
+
+func TestStickyDwellHoldsOnBucketExhaustion(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        time.Now(),
+	}
+
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || tok == "" {
+		t.Fatalf("dwell hold: err=%v", err)
+	}
+	if entry.credentialID != "c1" {
+		t.Fatalf("dwell should hold c1, got %s", entry.credentialID)
+	}
+	if binding.StickyCredentialID != "c1" {
+		t.Fatalf("sticky should stay c1, got %q", binding.StickyCredentialID)
+	}
+}
+
+func TestStickyDwellExpiredRotates(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        time.Now().Add(-31 * time.Minute),
+	}
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("dwell expired should rotate to c2: err=%v entry=%v", err, entry)
+	}
+	if binding.StickySince.IsZero() || time.Since(binding.StickySince) > time.Minute {
+		t.Fatalf("rotation should reset StickySince, got %v", binding.StickySince)
+	}
+}
+
+func TestStickyDwellZeroSinceRotates(t *testing.T) {
+	// 存量绑定没有 StickySince：不能因此永久卡在无额度账号上
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("zero StickySince should rotate: err=%v entry=%v", err, entry)
+	}
+}
+
+func TestStickyDwellDoesNotBlockAuthCooldownRotation(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        time.Now(),
+	}
+	p.markBad(p.keys[0])
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("auth cooling must rotate inside dwell: err=%v entry=%v", err, entry)
+	}
+}
+
+func TestStickyDwellNotRefreshedOnReuse(t *testing.T) {
+	// 驻留窗口从「上次切换」起算；同一账号续用不能刷新它
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	since := time.Now().Add(-10 * time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        since,
+	}
+	sessions.Bind("jwt1", binding)
+
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || tok == "" || entry.credentialID != "c1" {
+		t.Fatalf("auto pool should reuse c1: err=%v entry=%v", err, entry)
+	}
+	if !binding.StickySince.Equal(since) {
+		t.Fatalf("reuse must not refresh StickySince: %v -> %v", since, binding.StickySince)
+	}
+}
+
+func TestStickyDwellDisabledWhenZero(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 0)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        time.Now(),
+	}
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("dwell=0 should rotate immediately: err=%v entry=%v", err, entry)
+	}
+}
+
+func TestNewStickySelectDefaultsToNoDwell(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelect(p, sessions)
+	if sticky.minDwell != 0 {
+		t.Fatalf("legacy constructor must not impose dwell, got %v", sticky.minDwell)
+	}
+}
+
+func TestResolveStickyMinDwell(t *testing.T) {
+	t.Setenv("PROXY_STICKY_MIN_DWELL", "")
+	if got := resolveStickyMinDwell(0); got != defaultStickyMinDwell {
+		t.Fatalf("default: got %v", got)
+	}
+	if got := resolveStickyMinDwell(5 * time.Minute); got != 5*time.Minute {
+		t.Fatalf("flag wins: got %v", got)
+	}
+	t.Setenv("PROXY_STICKY_MIN_DWELL", "0")
+	if got := resolveStickyMinDwell(0); got != 0 {
+		t.Fatalf("env 0 disables: got %v", got)
+	}
+	t.Setenv("PROXY_STICKY_MIN_DWELL", "off")
+	if got := resolveStickyMinDwell(0); got != 0 {
+		t.Fatalf("env off disables: got %v", got)
+	}
+	t.Setenv("PROXY_STICKY_MIN_DWELL", "90")
+	if got := resolveStickyMinDwell(0); got != 90*time.Second {
+		t.Fatalf("env seconds: got %v", got)
+	}
+	t.Setenv("PROXY_STICKY_MIN_DWELL", "2m")
+	if got := resolveStickyMinDwell(0); got != 2*time.Minute {
+		t.Fatalf("env duration: got %v", got)
+	}
 }

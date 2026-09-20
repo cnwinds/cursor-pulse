@@ -141,6 +141,7 @@ const forms = reactive({
   assistant_llm: {} as Record<string, unknown>,
   chat_memory: {} as Record<string, Record<string, unknown>>,
   web_search: {} as Record<string, unknown>,
+  jev: {} as Record<string, unknown>,
   cursor_sync: {} as Record<string, unknown>,
   dingtalk: {} as Record<string, unknown>,
   feishu: {} as Record<string, unknown>,
@@ -229,6 +230,12 @@ const ITEM_PLANS: Record<string, SavePlan[]> = {
         'fetch_max_bytes',
         'fetch_max_redirects',
       ],
+    },
+  ],
+  jev: [
+    {
+      section: 'jev',
+      keys: ['enabled', 'base_url', 'api_key', 'model', 'timeout_seconds'],
     },
   ],
 }
@@ -401,6 +408,18 @@ const integrationRows = computed<SettingRow[]>(() => [
     id: 'web_search',
     name: '联网搜索（Tavily）',
     summary: webSearchSummary(),
+    process: '团队设置',
+    editable: true,
+  },
+  {
+    id: 'jev',
+    name: 'Jev 决策模型',
+    summary:
+      forms.jev.enabled && (forms.jev.api_key === '***' || forms.jev.api_key)
+        ? `${forms.jev.model || '—'} · Auto Lender 主判`
+        : forms.jev.enabled
+          ? '已启用但未配置 Key'
+          : '未启用（选号走算法分）',
     process: '团队设置',
     editable: true,
   },
@@ -744,6 +763,41 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     min: 0,
     showWhen: (model) => model.enabled === true,
   },
+  jev_enabled: {
+    key: 'enabled',
+    label: '启用 Jev 主判',
+    type: 'switch',
+    hint: '开启后由 Jev 对存活候选重排；调用失败或护栏不通过时自动回落算法分',
+  },
+  jev_base_url: {
+    key: 'base_url',
+    label: 'OpenRouter Base URL',
+    hint: 'Decisions 端点会拼为 {base_url}/alpha/decisions',
+    showWhen: (model) => model.enabled === true,
+  },
+  jev_api_key: {
+    key: 'api_key',
+    label: 'OpenRouter API Key',
+    type: 'secret',
+    secretSection: 'jev',
+    hint: '留空或 *** 表示不修改；Jev 需要 OpenRouter 预充值额度',
+    showWhen: (model) => model.enabled === true,
+  },
+  jev_model: {
+    key: 'model',
+    label: '模型',
+    hint: 'TypeSafe System One 决策模型，如 typesafe/jev-1.13',
+    showWhen: (model) => model.enabled === true,
+  },
+  jev_timeout: {
+    key: 'timeout_seconds',
+    label: '超时（秒）',
+    type: 'number',
+    min: 0.5,
+    step: 0.5,
+    hint: '超过该时间即回落算法分；Jev 端到端通常 70-500ms',
+    showWhen: (model) => model.enabled === true,
+  },
 }
 
 watch(
@@ -784,6 +838,7 @@ function applySettings(data: Record<string, any>) {
   }
   forms.assistant_llm = { ...data.assistant_llm }
   forms.web_search = { ...(data.web_search || {}) }
+  forms.jev = { ...(data.jev || {}) }
   forms.chat_memory = {
     archive: { ...(data.chat_memory?.archive || {}) },
     features: { ...(data.chat_memory?.features || {}) },
@@ -891,6 +946,15 @@ function fieldsForItem(itemId: string): SettingsField[] {
       FIELD_DEFS.web_search_rate_limit,
       FIELD_DEFS.web_search_fetch_max_bytes,
       FIELD_DEFS.web_search_fetch_max_redirects,
+    ]
+  }
+  if (itemId === 'jev') {
+    return [
+      FIELD_DEFS.jev_enabled,
+      FIELD_DEFS.jev_base_url,
+      FIELD_DEFS.jev_api_key,
+      FIELD_DEFS.jev_model,
+      FIELD_DEFS.jev_timeout,
     ]
   }
   const plans = ITEM_PLANS[itemId]

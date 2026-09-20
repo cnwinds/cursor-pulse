@@ -85,15 +85,42 @@
 
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
-          <p class="pool-hint">与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动），同时影响借 Key 出借排序。Auto / API 分用于请求时按模型选号。硬过滤仍生效。</p>
+          <p class="pool-hint">
+            与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。
+            「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动）。
+            「主负责人保留」为账号必须留出的余量百分比，借用会侵占时硬排除（清空取消）。
+            开启 Jev 后由它重排，调用失败或护栏不通过则回落算法分。硬过滤始终生效。
+          </p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>
+        <el-alert
+          v-if="ranking.decision"
+          :type="ranking.decision.picked_by === 'jev' ? 'success' : 'info'"
+          :closable="false"
+          class="ranking-decision"
+        >
+          <template #title>
+            <span v-if="ranking.decision.picked_by === 'jev'">
+              Jev 主判 · {{ ranking.decision.model || 'typesafe/jev' }} · 置信度
+              {{ ranking.decision.confidence ?? '—' }}
+              <el-tag v-if="ranking.decision.cached" size="small" type="info">缓存</el-tag>
+            </span>
+            <span v-else>
+              算法分保底 · {{ decisionFallbackLabel(ranking.decision.fallback_reason) }}
+            </span>
+          </template>
+        </el-alert>
         <h4 class="usage-section-title">入选排序</h4>
         <el-table v-loading="rankingLoading" :data="ranking.ranked" style="width: 100%; margin-bottom: 20px">
           <el-table-column label="#" width="60">
             <template #default="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
-          <el-table-column prop="account_identifier" label="账号" min-width="160" />
+          <el-table-column label="账号" min-width="160">
+            <template #default="{ row }">
+              {{ row.account_identifier }}
+              <el-tag v-if="row.picked" size="small" type="success">选用</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="综合分" width="120">
             <template #default="{ row }">
               <el-tooltip
@@ -104,12 +131,6 @@
               </el-tooltip>
               <span v-else>{{ row.score }}</span>
             </template>
-          </el-table-column>
-          <el-table-column label="Auto 分" width="90">
-            <template #default="{ row }">{{ row.auto_score ?? '—' }}</template>
-          </el-table-column>
-          <el-table-column label="API 分" width="90">
-            <template #default="{ row }">{{ row.api_score ?? '—' }}</template>
           </el-table-column>
           <el-table-column label="人工分" width="180">
             <template #default="{ row }">
@@ -130,6 +151,24 @@
             </template>
           </el-table-column>
           <el-table-column prop="surplus_cents" label="预计余量" width="100" />
+          <el-table-column label="主负责人保留" width="160">
+            <template #default="{ row }">
+              <el-input-number
+                :model-value="row.reserve_pct ?? undefined"
+                :disabled="!canWrite"
+                :min="0"
+                :max="100"
+                :step="5"
+                :precision="0"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="不保留"
+                size="small"
+                class="score-override-input"
+                @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
+              />
+            </template>
+          </el-table-column>
           <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="110" />
           <el-table-column label="额度进度" min-width="200">
             <template #default="{ row }">
@@ -444,8 +483,6 @@ interface RankingRow {
   score?: number
   computed_score?: number
   score_adjust?: number | null
-  auto_score?: number | null
-  api_score?: number | null
   surplus_cents?: number
   urgency_cents_per_day?: number
   remaining_headroom_pct?: number
@@ -459,11 +496,26 @@ interface RankingRow {
   snapshot_freshness?: number
   reason?: string
   status?: string | null
+  reserve_pct?: number | null
+  pool?: string | null
+  pool_headroom_pct?: number | null
+  owner_reserve_ok?: boolean
+  minutes_since_switch?: number | null
+  picked?: boolean
+}
+
+interface RankingDecision {
+  picked_by: string
+  fallback_reason?: string | null
+  model?: string | null
+  confidence?: number | null
+  cached?: boolean
 }
 
 interface RankingBoard {
   ranked: RankingRow[]
   excluded: RankingRow[]
+  decision?: RankingDecision | null
 }
 
 interface UsageRow {
@@ -508,7 +560,7 @@ const saving = ref(false)
 const tab = ref('keys')
 const keys = ref<ProxyKeyRow[]>([])
 const pool = ref<PoolAccount[]>([])
-const ranking = ref<RankingBoard>({ ranked: [], excluded: [] })
+const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null })
 const rankingLoading = ref(false)
 const rankingLoaded = ref(false)
 const members = ref<MemberOption[]>([])
@@ -785,6 +837,26 @@ function onDayRowClick(row: UsageByDayRow, _column: unknown, event: MouseEvent) 
   toggleDayExpand(row)
 }
 
+const DECISION_FALLBACK_LABELS: Record<string, string> = {
+  auto_mode_off: 'Auto Lender 未开启',
+  jev_unavailable: 'Jev 未配置或未启用',
+  insufficient_candidates: '可用候选不足，无需重排',
+  jev_error: 'Jev 调用失败',
+  circuit_open: 'Jev 熔断中（连续失败后冷却）',
+  no_pick_answer: 'Jev 未返回选择',
+  no_choice: 'Jev 选择为空',
+  unknown_account: 'Jev 返回了候选外的账号',
+  low_confidence: 'Jev 置信度不足',
+  narrow_margin: 'Jev 首选与次优差距过小',
+  owner_unsafe: 'Jev 判定会侵占主负责人预留',
+  no_credentials: '池内无可用账号',
+}
+
+function decisionFallbackLabel(reason?: string | null): string {
+  if (!reason) return '—'
+  return DECISION_FALLBACK_LABELS[reason] || reason
+}
+
 function formatDeadline(row: RankingRow): string {
   if (row.deadline_at) return formatChinaTime(row.deadline_at)
   return row.deadline || '—'
@@ -797,6 +869,7 @@ async function loadRanking() {
     ranking.value = {
       ranked: res.data.ranked || [],
       excluded: res.data.excluded || [],
+      decision: res.data.decision || null,
     }
     rankingLoaded.value = true
   } catch {
@@ -816,6 +889,23 @@ async function setScoreAdjust(row: RankingRow, val: number | null) {
     })
     await loadRanking()
     ElMessage.success(val == null ? '已恢复自动打分' : '已保存人工微调')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '设置失败')
+  }
+}
+
+async function setReservePct(row: RankingRow, val: number | null) {
+  if (!row.account_id) return
+  const prev = row.reserve_pct ?? null
+  if (val === prev) return
+  try {
+    await client.post(`/api/v2/proxy-pool/accounts/${row.account_id}/score`, {
+      clear_reserve: val == null,
+      ...(val == null ? {} : { reserve_pct: val }),
+    })
+    await loadRanking()
+    ElMessage.success(val == null ? '已取消主负责人保留' : '已保存主负责人保留')
   } catch (err: any) {
     const detail = err?.response?.data?.detail
     ElMessage.error(typeof detail === 'string' ? detail : '设置失败')
@@ -872,6 +962,10 @@ onMounted(load)
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 4px;
+}
+
+.ranking-decision {
+  margin: 8px 0 12px;
 }
 .ranking-toolbar .pool-hint {
   margin-bottom: 0;

@@ -319,8 +319,6 @@ def test_pool_returns_only_enabled_credentials(env):
     assert creds[0]["api_key"] == "cursor-key-1"
     assert creds[0]["auto_pct"] == 10.0
     assert creds[0]["api_pct"] == 5.0
-    assert isinstance(creds[0].get("auto_score"), (int, float))
-    assert isinstance(creds[0].get("api_score"), (int, float))
 
 
 def test_pool_excludes_loan_credentials(env):
@@ -639,6 +637,73 @@ def test_pool_orders_by_score_adjust(env):
     assert resp.status_code == 200
     creds = resp.json()["credentials"]
     assert [c["api_key"] for c in creds] == ["cursor-key-far", "cursor-key-soon"]
+
+
+def test_pool_ranking_board_carries_owner_and_switch_recency(env):
+    """代理池候选必须与借用路径同源：带上主负责人与驻留基准。
+
+    漏填这两项会让驻留降权恒为 1.0，且 Jev 看到的 owner 退化成 unassigned。
+    """
+    from datetime import datetime, timezone
+
+    from pulse.proxy.pool_board import list_pool_ranking_board
+    from pulse.storage.models import KeyLoan, Member
+
+    s = env["sf"]()
+    owner_member = Member(
+        team_id=env["team_id"],
+        display_name="Owner One",
+        channel_user_id="owner-one",
+        status="active",
+    )
+    s.add(owner_member)
+    s.flush()
+    account = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-owned",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+        primary_member_id=owner_member.id,
+    )
+    s.add(account)
+    s.flush()
+    s.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=env["vendor_id"],
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-owned", TEST_KEY),
+            key_hint="own...xx",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=owner_member.id,
+        )
+    )
+    s.add(_healthy_snap(account.id, cycle_end=TODAY + timedelta(days=25), total_pct=20.0))
+    # 一笔刚绑定的借用：该账号应带上驻留基准
+    s.add(
+        KeyLoan(
+            source_account_id=account.id,
+            credential_id="cred-owned",
+            borrower_member_id=owner_member.id,
+            baseline_used_cents=0,
+            status="active",
+            lender_mode="manual",
+            source_bound_at=datetime.now(timezone.utc),
+        )
+    )
+    default = s.get(AiAccount, env["account_id"])
+    default.proxy_enabled = False
+    s.commit()
+
+    board = list_pool_ranking_board(s)
+    s.close()
+
+    row = next(r for r in board["ranked"] if r["account_identifier"] == "acct-owned")
+    assert row["primary_member_name"] == "Owner One"
+    assert row["minutes_since_switch"] is not None
+    assert row["minutes_since_switch"] < 5.0
 
 
 def test_pool_hard_filters_exhausted_and_no_snapshot(env):

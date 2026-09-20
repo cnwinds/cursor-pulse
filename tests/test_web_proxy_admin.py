@@ -386,7 +386,6 @@ def test_pool_ranking_board(env):
     assert reasons["acct-exhausted"] == "exhausted"
     assert reasons["acct-nosnap"] == "no_snapshot"
     assert all("score" in r for r in body["ranked"])
-    assert all("auto_score" in r and "api_score" in r for r in body["ranked"])
     assert "loan_cap" not in reasons.values()
 
 
@@ -444,6 +443,83 @@ def test_pool_ranking_ignores_loan_cap(env):
     assert all(e["reason"] != "loan_cap" for e in body["excluded"])
     row = next(r for r in body["ranked"] if r["account_identifier"] == "acct-1")
     assert row["active_loans"] == 3
+
+
+def test_reserve_and_score_adjust_do_not_clobber_each_other(env):
+    """保存保留量不能清空人工分，反之亦然（两侧都靠 model_fields_set 判显式传入）。"""
+    from datetime import date, datetime, timedelta, timezone
+
+    today = date.today()
+    now = datetime.now(timezone.utc)
+    s = env["sf"]()
+    default = s.get(AiAccount, env["account_id"])
+    default.proxy_enabled = True
+    vendor_id = default.vendor_id
+    plan_id = default.plan_id
+    account = AiAccount(
+        vendor_id=vendor_id,
+        plan_id=plan_id,
+        account_identifier="acct-reserve",
+        team_id=default.team_id,
+        proxy_enabled=True,
+    )
+    s.add(account)
+    s.flush()
+    s.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=vendor_id,
+            credential_type="api_key",
+            encrypted_value=encrypt_secret("cursor-key-reserve", TEST_KEY),
+            key_hint="res...",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=env["owner"].id,
+        )
+    )
+    s.add(
+        AccountQuotaSnapshot(
+            account_id=account.id,
+            captured_at=now,
+            cycle_start=today - timedelta(days=5),
+            cycle_end=today + timedelta(days=25),
+            limit_cents=20000,
+            used_cents=1000,
+            remaining_cents=19000,
+            total_pct=5.0,
+        )
+    )
+    s.commit()
+    account_id = account.id
+    s.close()
+
+    headers = _admin(env)
+    url = f"/api/v2/proxy-pool/accounts/{account_id}/score"
+
+    # 先设人工分
+    resp = env["client"].post(url, json={"score_adjust": 1.5}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"id": account_id, "score_adjust": 1.5, "reserve_pct": None}
+
+    # 只设保留量：人工分必须保留
+    resp = env["client"].post(url, json={"reserve_pct": 20}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"id": account_id, "score_adjust": 1.5, "reserve_pct": 20.0}
+
+    # 只改人工分：保留量必须保留
+    resp = env["client"].post(url, json={"score_adjust": -0.5}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"id": account_id, "score_adjust": -0.5, "reserve_pct": 20.0}
+
+    # 显式清空人工分：保留量仍在
+    resp = env["client"].post(url, json={"score_adjust": None}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"id": account_id, "score_adjust": None, "reserve_pct": 20.0}
+
+    # 显式清空保留量
+    resp = env["client"].post(url, json={"clear_reserve": True}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"id": account_id, "score_adjust": None, "reserve_pct": None}
 
 
 def test_set_and_clear_pool_score_adjust(env):
@@ -530,7 +606,7 @@ def test_set_and_clear_pool_score_adjust(env):
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json() == {"id": far_id, "score_adjust": 1.0}
+    assert resp.json() == {"id": far_id, "score_adjust": 1.0, "reserve_pct": None}
 
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
     ranked = resp.json()["ranked"]

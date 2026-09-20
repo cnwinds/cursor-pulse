@@ -6,21 +6,41 @@
 
 ### 新增
 
-- **Key Loan 自动打分选号**：出借推荐按 Quota Pool Surplus（Auto / API / 综合）打分；管理员分配默认自动选最高分账号，也可按用量类型（default/Auto vs API）过滤。人工分（`proxy_score_adjust`）同时作用于借 Key 与共享池。
-- **Switch Cooldown**：自动选号对仍合格的当前账号至少保持 30 分钟，耗尽仍立即换号。
-- **可选 Jev 混合分**：配置 TypeSafe Jev 后，借 Key 路径用 waste / 主使用人安全 / 池适配三个原子问题与规则分混合；失败回退规则分。共享池不走 Jev。
-- **MITM 按桶选号**：`/pool` 下发 `auto_score` / `api_score`，Go 在首次绑定与耗尽轮换时选该配额桶得分最高的凭证。
+- **Auto Lender 自动选号**：Key Loan 支持 `lender_mode=auto`，不再在发放时锁死出借账号。由「硬过滤 → 算法分 → Jev 决策 → 护栏」选出账号，并每隔至少 30 分钟重评一次。自助借 Key 默认走自动模式。
+- **Jev 主判（OpenRouter Decisions）**：接入 TypeSafe System One 决策模型 `typesafe/jev-1.13`，用 `choice` 问该借哪个账号、`noul` 逐候选问是否侵占主负责人预留。它只在存活候选上重排，调用失败 / 置信度不足 / 首选与次优间隔过小 / 判定影响主负责人时一律回落算法分；带特征哈希缓存与连续失败熔断。可在「系统设置 → Jev 决策模型」配置，或走 `JEV_*` 环境变量。
+- **按 Quota Pool 打分**：给出目标模型时按该模型所属桶（`auto` / `api`）取余量与空闲额度，`unknown` 退化为两桶都要有余量；新增 `pulse/tool_center/quota_pool.py` 镜像 Go `quotaPoolForModel`。
+- **主负责人保留量**：账号级 `proxy_reserve_pct`（默认取 `loan_selection.owner_reserve_pct`）。号主按当前速率外推到作废日会吃掉保留量时，该账号作为出借方被硬排除（`owner_reserve`）。
+- **Switch dwell 最小驻留**：`loan_selection.min_switch_minutes`（默认 30 分钟）内只降权不排除；Go 代理新增 `PROXY_STICKY_MIN_DWELL`（默认 30m，`0`/`off` 关闭），保证请求时也不因桶耗尽频繁换账号。
+- **借用自动选号预览**：`POST /api/v2/loans/auto-pick` 返回打分排序 + Jev 决策；「为成员分配 Key」弹窗选自动模式时先看预计选中账号再确认。
+
+### 变更
+
+- **人工分统一两条路径**：`proxy_score_adjust` 此前只影响 Credential Pool 顺序、不影响借 Key 出借排序（CONTEXT.md 明确写过），现在两条路径共用同一字段与语义。
+- **借用列表**：新增 `lender_mode` / `source_bound_at` 字段；打分表新增「主负责人保留」列与 Jev 决策提示；额度看板新增「Auto 首选」标记；打分表支持按目标模型（`?model=`）查看该桶下的顺序。
+- **配置**：新增 `LoanSelectionConfig` 的 `min_switch_minutes` / `recency_penalty` / `owner_reserve_pct` / `auto_mode` / `auto_top_n` / `auto_min_confidence` / `auto_min_margin` / `auto_cache_seconds` / `auto_switch_margin`，以及 `JevConfig`。
+- **迁移**：`key_loans` 增 `lender_mode`（默认 `manual`）与 `source_bound_at`（存量记录回填为 `created_at`），`ai_accounts` 增 `proxy_reserve_pct`。
 
 ### 修复
 
+- **打分表不显示主负责人保留量**：`/proxy-pool/ranking` 的 payload 未回传生效的 `reserve_pct`，前端「主负责人保留」列永远为空。改为随打分结果一并回显（含排除项）。
+- **Auto Lender 决策未落审计**：`on_decision` 钩子此前只有测试使用，生产路径没有接线。管理员发放与定期重评现在都会写 `lender_auto_pick` 事件（含来源、置信度、回落原因、选中账号）。
+- **模型未知时的按池语义**：借用选号在未指定目标模型时改传 Quota Pool `unknown`（要求 auto 与 api 两桶都有余量），与 Go `snapshotQuotaOK` 一致；代理入池仍保持 CONTEXT.md 的「任一桶有余量」规则。
+- **打分表两个微调互相清空**：`/proxy-pool/accounts/{id}/score` 把「未传 `score_adjust`」当成显式清空，保存「主负责人保留」会静默抹掉已有的人工分。改为按 `model_fields_set` 只更新显式传入的字段。
+- **auto 模式选号误报「账号不存在」**：`loan-key` 在解析 `lender_mode` 之前先用 URL 上的 `account_id` 校验账号，前端未预选账号时发出的占位 id 会直接 404。auto 模式跳过该校验。
+- **换绑/发放失败残留远端 Key**：远端 Key 已创建但本地事务失败时，只回滚数据库，Cursor 侧那条 Key 因无本地记录而无法回收。改为失败即 best-effort 吊销。
 - **日趋势图例重叠**：ECharts 6 默认把 legend 放在底部，grid 底部留白不够，图例会叠在日期和矮柱上。概览 / 用量分析共用的日趋势改为顶部图例，并加大 `grid.top`。
 - **概览与用量分析日趋势对齐**：两页共用同一套日聚合；日趋势改为堆叠柱（输入/输出/cache，柱高=当日总 Token）+ 花费折线，避免平滑面积图把相邻日「鼓包」。概览改为本账期全日序列，不再截成近 14 天。
 
-### 变更
+### 变更（概览与用量）
 
 - **概览日趋势改为近 30 天**：首页图表窗口与用量分析「近 30 天」对齐（含上月后半段）；本账期花费 / Tokens KPI 仍按当前账期汇总。
 - **额度看板按日明细**：日期改为由近到远（逆序）展示
 - **读路径性能**：额度看板 / 出借推荐 / 总览不再拉全量历史配额快照；同步后每账号只保留最近 48 条快照。总览改用轻量同步计数与 SQL 聚合用量 KPI，集成区块不再加载 chat_memory。看板可一次带上本周期 UsageSummary，避免再打多月 `/usage-summaries`。用量分析 overview 改为 SQL 分组，不再把日聚合整表载入内存。借用列表与 Proxy Key 列表改为批量汇总用量。
+
+### 文档
+
+- 新增 `docs/adr/0001-auto-lender-selection.md`，记录「Jev 主判 + 算法分保底 + 硬过滤权威」的取舍。
+- `CONTEXT.md` 增补 Manual Rank Score（改写）、Pool-scoped Headroom、Owner Reserve、Switch Dwell、Auto Lender Selection、Jev Decision 词条。
 
 ## [0.4.0] - 2026-08-25
 

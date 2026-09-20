@@ -322,6 +322,8 @@ class AiAccount(Base):
     suggest_dedicated: Mapped[bool] = mapped_column(Boolean, default=False)
     proxy_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     proxy_score_adjust: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比（None/0 = 不保留）
+    proxy_reserve_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -489,6 +491,13 @@ class KeyLoan(Base):
     )
     alias_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
     alias_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # manual: 管理员/自助选定的固定出借账号；auto: 由 Auto Lender 选号并定期重评
+    # 取值见 pulse.tool_center.key_loan_delivery；存储层不反向依赖，故内联默认值
+    lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    # 当前出借账号的绑定时刻；auto 模式的 30 分钟驻留窗口以此为基准
+    source_bound_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class UsageDailyAggregate(Base):

@@ -457,6 +457,49 @@ def test_loan_key_returns_plaintext_once(quota_env):
     assert body["delivery_mode"] == "proxy_alias"
 
 
+def test_loan_key_auto_mode_ignores_url_account(quota_env):
+    """auto 模式不再用 URL 上的 account_id 校验账号：占位 id 也不该 404。
+
+    前端在未预选账号时会发字面量 'auto'，此前会先撞上「账号不存在」。
+    """
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    res = client.post(
+        "/api/v2/accounts/auto/loan-key",
+        headers=_headers(token),
+        json={
+            "borrower_member_id": borrower.id,
+            "lender_mode": "auto",
+        },
+    )
+    # 没有可借账号时是 400 业务错误，而不是 404「账号不存在」
+    assert res.status_code == 400
+    assert res.json()["detail"] != "账号不存在"
+
+
+def test_loan_key_manual_mode_still_validates_url_account(quota_env):
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    token = create_access_token(config, owner)
+
+    res = client.post(
+        "/api/v2/accounts/does-not-exist/loan-key",
+        headers=_headers(token),
+        json={
+            "borrower_member_id": borrower.id,
+            "lender_mode": "manual",
+        },
+    )
+    assert res.status_code == 404
+    assert res.json()["detail"] == "账号不存在"
+
+
 def test_loan_key_rejects_invalid_delivery_mode(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]
@@ -709,70 +752,6 @@ def test_quota_recommend_includes_account_at_loan_cap(quota_env):
     by_id = {item["account_id"]: item for item in res.json()}
     assert account.id in by_id
     assert by_id[account.id]["active_loans"] == 2
-
-
-def test_quota_recommend_filters_by_quota_pool(quota_env):
-    client = quota_env["client"]
-    config = quota_env["config"]
-    owner = quota_env["owner"]
-    api_left = quota_env["cursor_account"]
-    token = create_access_token(config, owner)
-
-    s = quota_env["session_factory"]()
-    today = date.today()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(
-            AccountQuotaSnapshot.account_id == api_left.id
-        )
-    )
-    snap.cycle_start = today - timedelta(days=5)
-    snap.cycle_end = today + timedelta(days=20)
-    snap.total_pct = 50.0
-    snap.auto_pct = 90.0
-    snap.api_pct = 10.0
-    snap.limit_cents = 10000
-    snap.used_cents = 5000
-    snap.remaining_cents = 5000
-
-    tool_repo = ToolCenterRepository(s, owner.team_id)
-    other = next(
-        a
-        for a in tool_repo.list_accounts()
-        if a.vendor.slug == "cursor" and a.id != api_left.id
-    )
-    s.add(
-        AccountQuotaSnapshot(
-            account_id=other.id,
-            captured_at=datetime.now(timezone.utc),
-            cycle_start=today - timedelta(days=5),
-            cycle_end=today + timedelta(days=20),
-            limit_cents=10000,
-            used_cents=5000,
-            remaining_cents=5000,
-            total_pct=50.0,
-            auto_pct=10.0,
-            api_pct=90.0,
-        )
-    )
-    s.commit()
-    s.close()
-
-    api_res = client.get(
-        "/api/v2/quota-board/recommend",
-        headers=_headers(token),
-        params={"quota_pool": "api", "limit": 10},
-    )
-    auto_res = client.get(
-        "/api/v2/quota-board/recommend",
-        headers=_headers(token),
-        params={"model": "composer-2", "limit": 10},
-    )
-    assert api_res.status_code == 200
-    assert auto_res.status_code == 200
-    assert api_res.json()[0]["account_id"] == api_left.id
-    assert api_res.json()[0]["quota_pool"] == "api"
-    assert auto_res.json()[0]["account_id"] == other.id
-    assert auto_res.json()[0]["quota_pool"] == "auto"
 
 
 def _make_active_loan(session, account, borrower, bound_by) -> KeyLoan:

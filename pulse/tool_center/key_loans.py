@@ -35,9 +35,7 @@ from pulse.tool_center.key_loan_lender import (
     account_loan_deadline,
     build_lender_candidates,
     loan_display_expires_on,
-    rank_lenders_for_assignment,
     recommend_lender_for_borrower,
-    sticky_assignment_for_borrower,
 )
 from pulse.tool_center.key_loan_present import (
     loan_payload,
@@ -65,10 +63,8 @@ __all__ = [
     "loan_payload",
     "loan_payloads",
     "reassign_loan_source",
-    "rank_lenders_for_assignment",
     "recommend_lender_for_borrower",
     "request_self_service_loan",
-    "sticky_assignment_for_borrower",
     "reveal_loan_cursor_key",
     "reveal_loan_user_key",
 ]

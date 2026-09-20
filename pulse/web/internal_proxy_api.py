@@ -8,6 +8,7 @@ from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
 
 
@@ -81,6 +82,7 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             session,
             encryption_key=enc_key,
             loan_selection=config.tool_center.loan_selection,
+            jev=build_jev_client(config),
         )
         return {"credentials": credentials}
 

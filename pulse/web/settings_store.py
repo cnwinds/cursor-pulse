@@ -19,6 +19,7 @@ REVEALABLE_SETTING_SECRETS: dict[str, frozenset[str]] = {
     "feishu": frozenset({"app_secret"}),
     "assistant_llm": frozenset({"api_key"}),
     "web_search": frozenset({"api_key"}),
+    "jev": frozenset({"api_key"}),
 }
 
 
@@ -41,7 +42,7 @@ def settings_for_api(base: AppConfig, session: Session, team_id: str) -> dict[st
     team = session.get(Team, team_id)
     if team is not None:
         data["chat_memory"] = effective_chat_memory_dict(team_slug=team.slug)
-    for section in ("assistant_llm", "web_search"):
+    for section in ("assistant_llm", "web_search", "jev"):
         section_data = data.get(section, {})
         if section_data.get("api_key"):
             data[section] = {**section_data, "api_key": "***"}

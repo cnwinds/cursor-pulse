@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import select
 
 from pulse.ingestion.credentials import CredentialService
 from pulse.proxy.keys import hash_proxy_key
@@ -243,36 +242,3 @@ def test_reassign_source_api_allows_over_cap(mock_client_cls, quota_env):
         assert reassigned.status_code == 200, reassigned.text
         assert reassigned.json()["source_account_id"] == source_b.id
     session.close()
-
-
-@patch("pulse.tool_center.key_loan_store.CursorApiClient")
-def test_assign_api_auto_picks_when_source_omitted(mock_client_cls, quota_env):
-    env = quota_env
-    session = env["session_factory"]()
-    mock_client = MagicMock()
-    mock_client_cls.return_value = mock_client
-    source_a, source_b = _prepare_two_lenders(session, env, mock_client)
-    today = date.today()
-    for snap in session.scalars(select(AccountQuotaSnapshot)).all():
-        snap.cycle_start = today - timedelta(days=5)
-        snap.cycle_end = today + timedelta(days=20)
-    session.commit()
-    session.close()
-
-    token = create_access_token(env["config"], env["owner"])
-    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
-        res = env["client"].post(
-            "/api/v2/loans/assign",
-            headers=_headers(token),
-            json={
-                "borrower_member_id": env["borrower"].id,
-                "quota_pool": "api",
-                "delivery_mode": "proxy_alias",
-            },
-        )
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["auto_picked"] is True
-    assert body["quota_pool"] == "api"
-    assert body["api_key"].startswith("pka_")
-    assert body["source_account_id"] in {source_a.id, source_b.id}

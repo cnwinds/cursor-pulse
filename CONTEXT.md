@@ -69,21 +69,25 @@ Caller-facing seams carved from the former `pulse.proxy.service` mega-module (`s
 _Avoid_: Putting authorize, usage pricing, and pool ranking in one file again; conflating Usage Ledger with Proxy Usage Rollup
 
 **Manual Rank Score**:
-Optional per-account delta (`proxy_score_adjust`) added to the computed Assignment Score, used to prefer or demote an account for both Credential Pool order and Key Loan lender selection. Hard filters (Snapshot Headroom / coverage / Switch Cooldown) still apply.
-_Avoid_: pin, sticky priority, treating this as a replacement for the computed score or a way to bypass hard filters
+Optional per-account delta (`proxy_score_adjust`) added to the computed ranking score, used to fine-tune Credential Pool order **and** Key Loan lender selection. Hard filters (Snapshot Headroom / coverage / owner reserve) still apply.
+_Avoid_: pin, sticky priority, treating this as a replacement for the computed score
 
-**Assignment Score**:
-Rank used to auto-pick a lender account (Key Loan) or order the Credential Pool. Rule score (urgency / surplus / load / headroom / freshness on the requested Quota Pool) plus optional Jev blend plus Manual Rank Score.
-_Avoid_: treating the linear weights as the only ranking; calling Jev on the MITM hot path
+**Pool-scoped Headroom**:
+Snapshot Headroom read for one Quota Pool (`auto` vs `api`) instead of the included total, used when a target model is known. Resolved by `quota_pool.quota_pool_for_model` on the web side, mirroring Go `quotaPoolForModel`; `unknown` falls back to total and requires both buckets.
+_Avoid_: Per-pool cents as an exact figure (Cursor exposes per-bucket percents only; cents are a monotone share of `limit_cents`)
 
-**Quota Pool Surplus**:
-Projected leftover cents on Auto or API Snapshot Headroom after the primary member’s current burn continues to deadline. The waste-avoidance signal: idle leftover that will vanish at reset ranks up.
-_Avoid_: ranking only on total_pct when the borrower is bound to one Quota Pool; treating remaining cents as a substitute for pool percent
+**Owner Reserve**:
+Per-account percentage (`proxy_reserve_pct`, default from `loan_selection.owner_reserve_pct`) that must stay unused for the account's primary owner. Projected owner burn at the pool deadline above `100 - reserve` hard-excludes the account as a lender (`owner_reserve`).
+_Avoid_: Confusing with Snapshot Headroom (headroom is live state; reserve is a policy floor)
 
-**Switch Cooldown**:
-Minimum time (`min_switch_minutes`, default 30) a still-eligible assignment is kept before auto-re-pick may move the borrower to a higher-scoring account. Exhaustion and other hard-gate failures switch immediately. New Key Loan issuance picks the current top Assignment Score (preview matches auto-assign). Admin manual account pick bypasses the floor.
-_Avoid_: rotating MITM sticky for score reasons; treating the cooldown as a lock when the current account is unusable; applying cooldown when issuing a new loan so the UI top pick and the issued account diverge
+**Switch Dwell**:
+Minimum time (`loan_selection.min_switch_minutes`) an account stays bound before Auto Lender may move away from it — `KeyLoan.source_bound_at` on the loan side, `SessionBinding.StickySince` in Go. Within the window the account is only demoted by `recency_penalty`, not hard-excluded, so a pool never becomes unusable.
+_Avoid_: Treating it as a hard lock (exhaustion and auth failure still rotate)
 
-**Jev Rank**:
-Optional TypeSafe Jev (System One) composite over atomic waste / primary-safety / pool-fit questions, mixed into Key Loan Assignment Score in code. Fail-open to the rule score. Not used for Credential Pool Intake.
-_Avoid_: asking Jev to pick the winner in one question; using chat-completions as a substitute; blocking loan issue when Jev is down
+**Auto Lender Selection**:
+`lender_mode=auto` on a Key Loan: the lending account is scored and chosen instead of fixed at issuance, then re-evaluated at most once per Switch Dwell. Orchestrated by `tool_center.auto_lender` — hard filters, then the deterministic score, then the Jev decision.
+_Avoid_: Manual lender (admin-picked and fixed) — that remains the default
+
+**Jev Decision**:
+The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.
+_Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance/re-evaluation)

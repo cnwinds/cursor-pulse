@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.storage.models import (
@@ -24,14 +25,18 @@ from pulse.tool_center.burn_rate import (
     display_api_remaining_cents,
     display_remaining_cents,
 )
-from pulse.tool_center.key_loan_lender import (
-    active_loan_counts_by_account,
-    rank_lenders_for_assignment,
-    recommend_lender_for_borrower,
+from pulse.tool_center.auto_lender import rank_lenders
+from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
+from pulse.tool_center.key_loan_auto import (
+    record_auto_lender_decision,
+    resolve_auto_lender,
 )
+from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO, LENDER_MODE_MANUAL
+from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
+    build_lender_candidates,
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
     loan_payload,
@@ -41,7 +46,6 @@ from pulse.tool_center.key_loans import (
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
-from pulse.tool_center.snapshot_headroom import resolve_quota_pool
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.usage_summary_pick import attach_board_usage_summaries
@@ -96,11 +100,24 @@ def _sync_blocker(cred: AiAccountCredential | None) -> str | None:
 
 
 class LoanKeyBody(BaseModel):
+    """为成员分配 Key 的请求体。"""
+
     borrower_member_id: str
     note: str | None = None
     auto_revoke_on_reset: bool = True
     key_name: str | None = None
     delivery_mode: Literal["proxy_alias"] = "proxy_alias"
+    # manual: 用 URL 上的 account_id 固定出借账号；auto: 由 Auto Lender 选号
+    lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
+    # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
+    model: str | None = None
+
+
+class AutoPickBody(BaseModel):
+    """Auto Lender 预览请求体：借用人 + 目标模型（可选）。"""
+
+    borrower_member_id: str
+    model: str | None = None
 
 
 class ReassignLoanBody(BaseModel):
@@ -113,17 +130,6 @@ class LoanPatchBody(BaseModel):
 
 class SelfLoanBody(BaseModel):
     note: str | None = None
-
-
-class AssignLoanBody(BaseModel):
-    borrower_member_id: str
-    source_account_id: str | None = None
-    quota_pool: str | None = None
-    model: str | None = None
-    note: str | None = None
-    auto_revoke_on_reset: bool = True
-    key_name: str | None = None
-    delivery_mode: Literal["proxy_alias"] = "proxy_alias"
 
 
 def _encryption_key(config) -> str:
@@ -291,21 +297,25 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     )
     def quota_recommend(
         limit: int = Query(default=10, ge=1, le=50),
-        quota_pool: str | None = Query(default=None),
-        model: str | None = Query(default=None),
+        model: str | None = Query(
+            default=None,
+            description="目标模型；给出时按该模型所属 Quota Pool（auto/api）打分",
+        ),
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        pool = resolve_quota_pool(quota_pool=quota_pool, model=model)
-        ranked = rank_lenders_for_assignment(
-            session,
-            team.id,
+        today = date.today()
+        candidates = build_lender_candidates(session, team.id)
+        board = rank_lenders(
+            candidates,
             loan_selection=config.tool_center.loan_selection,
-            quota_pool=pool,
-            config=config,
+            # 模型未知 → unknown：两桶都要有余量（与 Go snapshotQuotaOK 一致）
+            pool=quota_pool_for_model(model),
+            today=today,
             exclude_at_loan_cap=False,
+            jev=build_jev_client(config),
         )
-        return ranked[:limit]
+        return board["ranked"][:limit]
 
     @app.get(
         "/api/v2/loans",
@@ -398,7 +408,6 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 note=body.note,
                 bound_by_member_id=user.member.id,
                 loan_selection=config.tool_center.loan_selection,
-                config=config,
             )
             log_admin_action(
                 session,
@@ -423,78 +432,30 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post(
-        "/api/v2/loans/assign",
-        dependencies=[Depends(require_capability("accounts:write"))],
+        "/api/v2/loans/auto-pick",
+        dependencies=[Depends(require_capability("accounts:read"))],
     )
-    def assign_loan(
-        body: AssignLoanBody,
-        session: Session = Depends(get_db),
-        user: PortalUser = Depends(require_capability("accounts:write")),
-    ):
-        """Admin Key Loan assignment. Omit source_account_id to auto-pick the top Assignment Score."""
+    def loans_auto_pick(body: AutoPickBody, session: Session = Depends(get_db)):
+        """Auto Lender 预览：打分排序 + Jev 决策，供「为成员分配 Key」先看再确认。"""
         team, _ = team_repo_fn(session)
         borrower = session.get(Member, body.borrower_member_id)
         if not borrower or borrower.team_id != team.id:
             raise HTTPException(status_code=400, detail="借用人不存在")
-
-        pool = resolve_quota_pool(quota_pool=body.quota_pool, model=body.model)
-        source_account_id = (body.source_account_id or "").strip() or None
-        auto_picked = source_account_id is None
-        if source_account_id is None:
-            lender = recommend_lender_for_borrower(
-                session,
-                team.id,
-                loan_selection=config.tool_center.loan_selection,
-                quota_pool=pool,
-                config=config,
-                exclude_at_loan_cap=False,
-            )
-            if not lender:
-                raise HTTPException(status_code=400, detail="当前没有可借出的富余账号")
-            source_account_id = lender["account_id"]
-
-        enc_key = _encryption_key(config)
-        try:
-            result = issue_loan_key(
-                session,
-                enc_key,
-                team_id=team.id,
-                source_account_id=source_account_id,
-                borrower_member_id=body.borrower_member_id,
-                bound_by_member_id=user.member.id,
-                note=body.note,
-                auto_revoke_on_reset=body.auto_revoke_on_reset,
-                key_name=body.key_name,
-                delivery_mode=body.delivery_mode,
-                loan_selection=config.tool_center.loan_selection,
-                enforce_loan_cap=False,
-            )
-            result["auto_picked"] = auto_picked
-            result["quota_pool"] = pool
-            result["source_account_id"] = source_account_id
-            log_admin_action(
-                session,
-                team_id=team.id,
-                member_id=user.member.id,
-                action="quota.assign_loan",
-                capability="accounts:write",
-                detail=f"{source_account_id}->{borrower.display_name}:auto={auto_picked}",
-            )
-            session.commit()
-            try:
-                from pulse.tool_center.key_loan_notify import notify_loan_issued
-
-                notify_loan_issued(session, config, result=result, skip_borrower=False)
-            except Exception:
-                logger.exception("key loan issued notify failed after assign")
-            return result
-        except KeyLoanError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            session.rollback()
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        resolved = resolve_auto_lender(
+            session,
+            team.id,
+            borrower_member_id=body.borrower_member_id,
+            model=body.model,
+            loan_selection=config.tool_center.loan_selection,
+            jev=build_jev_client(config),
+            jev_config=config.jev,
+        )
+        return {
+            "ranked": resolved["ranked"],
+            "excluded": resolved["excluded"],
+            "decision": resolved["decision"],
+            "picked_account_id": (resolved["best"] or {}).get("account_id"),
+        }
 
     @app.post(
         "/api/v2/accounts/{account_id}/loan-key",
@@ -508,11 +469,14 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
-        account = repo.get_account(account_id)
-        if not account or account.team_id != team.id:
-            raise HTTPException(status_code=404, detail="账号不存在")
-        if not account.vendor or account.vendor.slug != "cursor":
-            raise HTTPException(status_code=400, detail="仅 Cursor 账号支持 Key 调配")
+        is_auto = body.lender_mode == LENDER_MODE_AUTO
+        account = None
+        if not is_auto:
+            account = repo.get_account(account_id)
+            if not account or account.team_id != team.id:
+                raise HTTPException(status_code=404, detail="账号不存在")
+            if not account.vendor or account.vendor.slug != "cursor":
+                raise HTTPException(status_code=400, detail="仅 Cursor 账号支持 Key 调配")
 
         borrower = session.get(Member, body.borrower_member_id)
         if not borrower or borrower.team_id != team.id:
@@ -524,7 +488,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 session,
                 enc_key,
                 team_id=team.id,
-                source_account_id=account_id,
+                # auto 模式忽略 URL 上的账号，由 Auto Lender 选号
+                source_account_id=None if is_auto else account_id,
                 borrower_member_id=body.borrower_member_id,
                 bound_by_member_id=user.member.id,
                 note=body.note,
@@ -533,6 +498,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 delivery_mode=body.delivery_mode,
                 loan_selection=config.tool_center.loan_selection,
                 enforce_loan_cap=False,
+                lender_mode=body.lender_mode,
+                model=body.model,
+                jev=build_jev_client(config),
+                jev_config=config.jev,
+                on_decision=lambda result: record_auto_lender_decision(session, result),
             )
             log_admin_action(
                 session,
@@ -540,7 +510,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 member_id=user.member.id,
                 action="quota.loan_key",
                 capability="accounts:write",
-                detail=f"{account_id}->{borrower.display_name}",
+                detail=(
+                    f"{account_id}->{borrower.display_name}"
+                    if not is_auto
+                    else f"auto:{result.get('source_account_identifier')}->{borrower.display_name}"
+                ),
             )
             session.commit()
             try:

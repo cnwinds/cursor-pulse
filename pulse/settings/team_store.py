@@ -19,6 +19,7 @@ EDITABLE_SECTIONS = frozenset(
         "assistant_llm",
         "chat_memory",
         "web_search",
+        "jev",
         "admin",
         "cursor_sync",
         "dingtalk",

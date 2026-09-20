@@ -27,8 +27,6 @@ type PoolCredential struct {
 	APIKey       string   `json:"api_key"`
 	AutoPct      *float64 `json:"auto_pct"`
 	ApiPct       *float64 `json:"api_pct"`
-	AutoScore    float64  `json:"auto_score"`
-	ApiScore     float64  `json:"api_score"`
 }
 
 type TokenCounts struct {
@@ -62,8 +60,8 @@ type PulseClient struct {
 	token   string
 	client  *http.Client
 
-	authTTL   time.Duration
-	authMu    sync.Mutex
+	authTTL time.Duration
+	authMu  sync.Mutex
 	authCache map[string]struct {
 		res    AuthResult
 		expiry time.Time
@@ -86,11 +84,11 @@ func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 		authTTL = 60 * time.Second
 	}
 	return &PulseClient{
-		baseURL: stringsTrimRightSlash(baseURL),
-		token:   token,
-		client:  &http.Client{Timeout: 15 * time.Second},
-		authTTL: authTTL,
-		authCache: map[string]struct {
+		baseURL:         stringsTrimRightSlash(baseURL),
+		token:           token,
+		client:          &http.Client{Timeout: 15 * time.Second},
+		authTTL:         authTTL,
+		authCache:       map[string]struct {
 			res    AuthResult
 			expiry time.Time
 		}{},

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, KeyLoan
-from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_MANUAL
 from pulse.tool_center.key_loan_state import KeyLoanStateMixin
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
@@ -45,6 +45,8 @@ class KeyLoanService(KeyLoanStateMixin):
         alias_key_hash: str | None = None,
         alias_key_hint: str | None = None,
         alias_encrypted_key: str | None = None,
+        lender_mode: str = LENDER_MODE_MANUAL,
+        source_bound_at: datetime | None = None,
     ) -> KeyLoan:
         loan = KeyLoan(
             source_account_id=source_account_id,
@@ -59,6 +61,8 @@ class KeyLoanService(KeyLoanStateMixin):
             alias_key_hash=alias_key_hash,
             alias_key_hint=alias_key_hint,
             alias_encrypted_key=alias_encrypted_key,
+            lender_mode=lender_mode,
+            source_bound_at=source_bound_at or datetime.now(timezone.utc),
         )
         self.session.add(loan)
         self.session.flush()

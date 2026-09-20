@@ -32,6 +32,14 @@
           <span v-if="row.primary_member_name" class="primary-member">
             {{ row.primary_member_name }}
           </span>
+          <el-tag
+            v-if="row.lender_mode === 'auto'"
+            size="small"
+            type="warning"
+            class="lender-mode-tag"
+          >
+            自动
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
@@ -150,29 +158,26 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="用量类型">
-          <el-select v-model="loanForm.quota_pool" placeholder="综合（Auto + API）" style="width: 100%" clearable>
-            <el-option label="综合（不指定模型）" value="" />
-            <el-option label="Auto + Composer（default）" value="auto" />
-            <el-option label="API 高级模型" value="api" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="分配方式">
-          <el-radio-group v-model="loanForm.auto_assign">
-            <el-radio :value="true">自动（最高分）</el-radio>
-            <el-radio :value="false">手动选择</el-radio>
+          <el-radio-group v-model="loanForm.lender_mode">
+            <el-radio value="manual">手动指定账号</el-radio>
+            <el-radio value="auto">自动选号（打分 + Jev）</el-radio>
           </el-radio-group>
+          <p class="manual-hint">
+            自动模式下由 Auto Lender 打分选号，并每隔至少 30 分钟重评一次；
+            不再锁定单一出借账号。
+          </p>
         </el-form-item>
-        <el-form-item v-if="loanForm.auto_assign" label="推荐账号">
-          <div class="manual-hint">
-            {{ topRecommendLabel }}
-          </div>
-        </el-form-item>
-        <el-form-item v-else label="借出账号" required>
+        <el-form-item label="借出账号" :required="loanForm.lender_mode === 'manual'">
           <el-select
             v-model="loanForm.source_account_id"
             filterable
-            placeholder="选择借出账号（按 Assignment Score 排序）"
+            :disabled="loanForm.lender_mode === 'auto'"
+            :placeholder="
+              loanForm.lender_mode === 'auto'
+                ? '自动选号，无需指定'
+                : '选择借出账号（显示在借人数，含已满员）'
+            "
             style="width: 100%"
           >
             <el-option
@@ -182,9 +187,21 @@
               :value="r.account_id"
             />
           </el-select>
+          <p v-if="loanForm.lender_mode === 'auto' && autoPickHint" class="manual-hint">
+            {{ autoPickHint }}
+          </p>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="目标模型">
+          <el-input
+            v-model="loanForm.model"
+            placeholder="留空按总余量打分；填模型则按其 Quota Pool（auto/api）打分"
+          />
+          <p class="manual-hint">
+            例如 composer-2.5 走 auto 桶，claude-4-sonnet 走 api 桶。
+          </p>
         </el-form-item>
         <el-form-item label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
@@ -321,7 +338,6 @@
       </el-alert>
       <div class="key-reveal">
         <div class="muted">借出账号：{{ revealedKey?.source_account_identifier }}</div>
-        <div class="muted" v-if="revealedKey?.auto_picked">已按 Assignment Score 自动分配</div>
         <div class="muted">借用人：{{ revealedKey?.borrower_name }}</div>
         <div class="muted" v-if="revealedKey?.delivery_mode">
           交付模式：{{ revealedKey.delivery_mode === 'proxy_alias' ? '代理别名 Key' : 'Cursor Key' }}
@@ -389,9 +405,6 @@ interface RecommendItem {
   remaining_headroom_pct: number
   days_until_reset: number
   active_loans?: number
-  score?: number
-  jev_score?: number | null
-  sticky_kept?: boolean
 }
 
 interface QuotaBoardItem {
@@ -410,9 +423,7 @@ function lenderOptionLabel(r: RecommendItem) {
   const owner = r.primary_member_name?.trim()
   const head = owner ? `${id} · ${owner}` : id
   const loans = r.active_loans ?? 0
-  const score = r.score != null ? ` · 分 ${r.score.toFixed(2)}` : ''
-  const jev = r.jev_score != null ? ` · Jev ${r.jev_score.toFixed(2)}` : ''
-  return `${head}（在借 ${loans} · 剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天${score}${jev}）`
+  return `${head}（在借 ${loans} · 剩 ${r.remaining_headroom_pct}% · ${r.days_until_reset}天）`
 }
 
 function boardToRecommendItem(row: QuotaBoardItem): RecommendItem {
@@ -458,15 +469,6 @@ function buildLoanSourceOptions(
   return options
 }
 
-interface RevealedKey {
-  loan_id?: string
-  api_key: string
-  borrower_name: string
-  source_account_identifier: string
-  delivery_mode?: string
-  auto_picked?: boolean
-}
-
 interface LoanRow {
   id: string
   borrower_name: string
@@ -481,17 +483,14 @@ interface LoanRow {
   revoked_at: string | null
   borrowed_cents: number
   proxy_cost_cents: number | null
+  lender_mode?: string | null
+  source_bound_at?: string | null
 }
 
 const loading = ref(false)
 const loans = ref<LoanRow[]>([])
 const members = ref<Member[]>([])
 const recommend = ref<RecommendItem[]>([])
-const topRecommendLabel = computed(() => {
-  const top = recommend.value[0]
-  if (!top) return '暂无可用账号'
-  return `将自动分配：${lenderOptionLabel(top)}`
-})
 const activeOnly = ref(true)
 const activeCount = ref(0)
 const total = ref(0)
@@ -503,11 +502,12 @@ const loanSubmitting = ref(false)
 const loanForm = ref({
   borrower_member_id: '',
   source_account_id: '',
-  quota_pool: '' as '' | 'auto' | 'api',
-  auto_assign: true,
+  lender_mode: 'manual' as 'manual' | 'auto',
   note: '',
+  model: '',
   auto_revoke_on_reset: true,
 })
+const autoPickHint = ref('')
 
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
@@ -517,7 +517,13 @@ const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
 
 const keyRevealVisible = ref(false)
-const revealedKey = ref<RevealedKey | null>(null)
+const revealedKey = ref<{
+  loan_id: string
+  api_key: string
+  borrower_name: string
+  source_account_identifier: string
+  delivery_mode?: string
+} | null>(null)
 
 const cursorKeyVisible = ref(false)
 const cursorKeyPlaintext = ref('')
@@ -609,10 +615,7 @@ async function loadLoanDialogData() {
   const [membersRes, recommendRes, boardRes] = await Promise.all([
     client.get('/api/v2/members'),
     client.get('/api/v2/quota-board/recommend', {
-      params: {
-        limit: LOAN_SOURCE_RECOMMEND_LIMIT,
-        quota_pool: loanForm.value.quota_pool || undefined,
-      },
+      params: { limit: LOAN_SOURCE_RECOMMEND_LIMIT },
     }),
     client.get('/api/v2/quota-board'),
   ])
@@ -621,11 +624,8 @@ async function loadLoanDialogData() {
     recommendRes.data as RecommendItem[],
     boardRes.data as QuotaBoardItem[],
   )
-  const stillValid = recommend.value.some(
-    (r) => r.account_id === loanForm.value.source_account_id,
-  )
-  if (loanForm.value.auto_assign || !stillValid) {
-    loanForm.value.source_account_id = recommend.value[0]?.account_id ?? ''
+  if (!loanForm.value.source_account_id && recommend.value.length) {
+    loanForm.value.source_account_id = recommend.value[0].account_id
   }
 }
 
@@ -640,14 +640,6 @@ function onPageSizeChange() {
 }
 
 async function openLoanDialog() {
-  loanForm.value = {
-    borrower_member_id: '',
-    source_account_id: '',
-    quota_pool: '',
-    auto_assign: true,
-    note: '',
-    auto_revoke_on_reset: true,
-  }
   await loadLoanDialogData()
   loanDialogVisible.value = true
 }
@@ -676,26 +668,24 @@ async function requestSelfLoan() {
 }
 
 async function submitLoan() {
-  if (!loanForm.value.borrower_member_id) {
-    ElMessage.warning('请选择借用人')
-    return
-  }
-  if (!loanForm.value.auto_assign && !loanForm.value.source_account_id) {
-    ElMessage.warning('请选择借出账号')
+  const isAuto = loanForm.value.lender_mode === 'auto'
+  if (!loanForm.value.borrower_member_id || (!isAuto && !loanForm.value.source_account_id)) {
+    ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
   loanSubmitting.value = true
   try {
-    const res = await client.post('/api/v2/loans/assign', {
-      borrower_member_id: loanForm.value.borrower_member_id,
-      source_account_id: loanForm.value.auto_assign
-        ? null
-        : loanForm.value.source_account_id,
-      quota_pool: loanForm.value.quota_pool || null,
-      note: loanForm.value.note || null,
-      auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
-      delivery_mode: 'proxy_alias',
-    })
+    const res = await client.post(
+      `/api/v2/accounts/${loanForm.value.source_account_id || 'auto'}/loan-key`,
+      {
+        borrower_member_id: loanForm.value.borrower_member_id,
+        note: loanForm.value.note || null,
+        auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
+        delivery_mode: 'proxy_alias',
+        lender_mode: loanForm.value.lender_mode,
+        model: loanForm.value.model.trim() || null,
+      },
+    )
     loanDialogVisible.value = false
     revealedKey.value = res.data
     keyRevealVisible.value = true
@@ -707,6 +697,34 @@ async function submitLoan() {
     loanSubmitting.value = false
   }
 }
+
+async function previewAutoPick() {
+  autoPickHint.value = ''
+  if (loanForm.value.lender_mode !== 'auto' || !loanForm.value.borrower_member_id) return
+  try {
+    const res = await client.post('/api/v2/loans/auto-pick', {
+      borrower_member_id: loanForm.value.borrower_member_id,
+      model: loanForm.value.model.trim() || null,
+    })
+    const picked = res.data.picked_account_id
+    const row = (res.data.ranked || []).find((r: any) => r.account_id === picked)
+    if (!row) {
+      autoPickHint.value = '当前没有可借出的富余账号'
+      return
+    }
+    const by = res.data.decision?.picked_by === 'jev' ? 'Jev 主判' : '算法分'
+    autoPickHint.value = `预计选中：${row.account_identifier}（${by}，综合分 ${row.score}）`
+  } catch {
+    autoPickHint.value = '自动选号预览失败，仍可直接提交'
+  }
+}
+
+watch(
+  () => [loanForm.value.lender_mode, loanForm.value.borrower_member_id, loanForm.value.model],
+  () => {
+    void previewAutoPick()
+  },
+)
 
 async function openReassignDialog(row: LoanRow) {
   reassignLoan.value = row
@@ -858,15 +876,6 @@ async function revokeLoan(row: LoanRow) {
 }
 
 onMounted(loadLoans)
-
-watch(
-  () => loanForm.value.quota_pool,
-  async () => {
-    if (loanDialogVisible.value) {
-      await loadLoanDialogData()
-    }
-  },
-)
 </script>
 
 <style scoped>

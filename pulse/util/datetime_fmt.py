@@ -8,6 +8,19 @@ from pulse.util.timezone_ctx import DEFAULT_DISPLAY_TIMEZONE, display_zone
 _UTC = ZoneInfo("UTC")
 
 
+def ensure_aware(value: datetime | None) -> datetime | None:
+    """Treat naive datetimes as UTC; None passes through.
+
+    SQLite drops tzinfo, so comparisons against ``datetime.now(timezone.utc)``
+    need this normalization.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=_UTC)
+    return value
+
+
 def _parse_datetime(value: datetime | str) -> datetime | None:
     if value is None:
         return None

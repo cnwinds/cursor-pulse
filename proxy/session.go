@@ -15,6 +15,10 @@ type SessionBinding struct {
 	// Run requests prefer this credential for the model's quota pool (auto vs api)
 	// until that pool is exhausted, then rotate within the pool order.
 	StickyCredentialID string
+	// StickySince is when StickyCredentialID was bound. Switch dwell
+	// (stickyMinDwell) suppresses quota-driven rotation inside this window so a
+	// session does not hop accounts too often. Zero means "no dwell history".
+	StickySince time.Time
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
