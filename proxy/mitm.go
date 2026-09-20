@@ -128,8 +128,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// A loan_alias binding carrying a Pulse-issued candidate allowlist selects
 	// among those accounts exactly like the shared pool (sticky + Switch dwell +
 	// per-bucket availability) instead of being pinned to one credential. An
-	// empty allowlist keeps the legacy passthrough path.
-	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && len(binding.AllowedCredentialIDs) > 0
+	// allowlist that collapses to nil (empty, or all-blank entries) keeps the
+	// legacy passthrough path — the same predicate sticky.Select uses.
+	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && binding.allowedSet() != nil
 	quotaPool := resolveQuotaPool(req.Context(), req.URL.Path, reqBodySnap, streamFS)
 	markPool := func() quotaPoolKind {
 		return effectiveMarkQuotaPool(req.URL.Path, reqBodySnap, quotaPool)
@@ -207,10 +208,17 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		resp.Body.Close()
 		kind := classifyHTTPError(resp.StatusCode, body)
 		if shouldMarkOnFailure(req.URL.Path, kind) {
-			if loanBound {
+			if loanBound && !loanPooled {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
-				s.mark(entry, kind, binding, "", markPool())
+				// A pooled loan rotates sticky within its allowlist eagerly, like
+				// the streaming path above. Shared-pool keys keep the empty JWT:
+				// they rotate lazily in Select, so Switch dwell still applies.
+				rotateJWT := ""
+				if loanPooled {
+					rotateJWT = cliTok
+				}
+				s.mark(entry, kind, binding, rotateJWT, markPool())
 			}
 			log.Printf("[mitm] %s %s (key %s): HTTP %d classified %s - pool advanced for next request",
 				req.Method, req.URL.Path, entry.masked(), resp.StatusCode, kind)

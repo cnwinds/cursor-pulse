@@ -9,11 +9,11 @@ from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_CURSOR_DIRECT,
     DELIVERY_PROXY_ALIAS,
-    LENDER_MODE_AUTO,
     LENDER_MODE_MANUAL,
     KeyLoanError,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
+from pulse.tool_center.key_loan_store import resolve_borrowed_cents
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.util.datetime_fmt import tool_datetime
 
@@ -70,18 +70,15 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
             else None
         )
         used_cents = snapshots[loan.source_account_id].used_cents if loan.source_account_id in snapshots else 0
-        borrowed_cents = max(used_cents - loan.baseline_used_cents, 0)
         deadline = loan_display_expires_on(loan, account)
         _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
         delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
         lender_mode = getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL
         # 自动分配借用在候选账号间游走：单账号快照差值不再代表本笔消耗，
         # 以代理账本按 loan_id 汇总为准（与近似消耗分开呈现）
-        if lender_mode == LENDER_MODE_AUTO and proxy_cost_cents > 0:
-            borrowed_cents = proxy_cost_cents
-            borrowed_basis = "proxy"
-        else:
-            borrowed_basis = "quota_approx"
+        borrowed_cents, borrowed_basis = resolve_borrowed_cents(
+            lender_mode, max(used_cents - loan.baseline_used_cents, 0), proxy_cost_cents
+        )
         if delivery_mode == DELIVERY_PROXY_ALIAS:
             key_hint = loan.alias_key_hint
         else:

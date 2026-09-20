@@ -71,7 +71,6 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             body.pulse_key,
             encryption_key=enc_key,
             loan_selection=config.tool_center.loan_selection,
-            jev=build_jev_client(config),
         )
 
     @app.get(

@@ -212,6 +212,7 @@ def test_auto_loan_borrowed_cents_follows_proxy_ledger(loan_client_env):
 
 
 def test_manual_loan_borrowed_cents_stays_snapshot_based(loan_client_env):
+    """manual 借用仍按快照近似计消耗，不因存在代理账本而改口径。"""
     env = loan_client_env
     loan_id, _ = _issue_loan(env)
     token = create_access_token(env["config"], env["owner"])

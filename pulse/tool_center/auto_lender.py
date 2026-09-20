@@ -25,6 +25,7 @@ from pulse.llm.jev import (
 )
 from pulse.tool_center.burn_rate import LenderCandidate, explain_lender_selection
 from pulse.tool_center.snapshot_headroom import QuotaPoolKind
+from pulse.util.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +65,18 @@ class AutoLenderDecision:
         }
 
 
-# 决策缓存：feature_key -> (存入时刻, account_id, confidence, probabilities, owner_safe)
-_cache_lock = threading.Lock()
-_decision_cache: dict[
-    str, tuple[float, str, float | None, dict[str, float], dict[str, bool]]
-] = {}
+# 决策缓存：feature_key -> (account_id, confidence, probabilities, owner_safe)
 # 键里含 hours_to_deadline / surplus 这类连续变化字段，惰性淘汰几乎不触发，
 # 因此必须有硬上限，否则长驻进程里只增不减。
 CACHE_MAX_ENTRIES = 512
+_decision_cache = TTLCache(CACHE_MAX_ENTRIES)
 _breaker_lock = threading.Lock()
 _breaker_state = {"failures": 0, "open_until": 0.0}
 
 
 def reset_auto_lender_state() -> None:
     """清空决策缓存与熔断状态（测试 / 配置变更后）。"""
-    with _cache_lock:
-        _decision_cache.clear()
+    _decision_cache.clear()
     with _breaker_lock:
         _breaker_state["failures"] = 0
         _breaker_state["open_until"] = 0.0
@@ -108,34 +105,8 @@ def _feature_key(
 
 
 def _cache_get(key: str, ttl_seconds: float):
-    if ttl_seconds <= 0:
-        return None
-    with _cache_lock:
-        entry = _decision_cache.get(key)
-    if entry is None:
-        return None
-    stored_at = entry[0]
-    if time.monotonic() - stored_at > ttl_seconds:
-        with _cache_lock:
-            _decision_cache.pop(key, None)
-        return None
-    return entry[1:]
-
-
-def _sweep_cache_locked(ttl_seconds: float) -> None:
-    """在持锁状态下清过期条目；仍超上限则按存入时间丢弃最旧的一批。"""
-    now = time.monotonic()
-    if ttl_seconds > 0:
-        for stale in [
-            key for key, entry in _decision_cache.items() if now - entry[0] > ttl_seconds
-        ]:
-            _decision_cache.pop(stale, None)
-    overflow = len(_decision_cache) - CACHE_MAX_ENTRIES
-    if overflow <= 0:
-        return
-    oldest = sorted(_decision_cache.items(), key=lambda item: item[1][0])[:overflow]
-    for stale, _ in oldest:
-        _decision_cache.pop(stale, None)
+    """读决策缓存（TTL 见 :mod:`pulse.util.ttl_cache`）。"""
+    return _decision_cache.get(key, ttl_seconds)
 
 
 def _cache_put(
@@ -147,16 +118,12 @@ def _cache_put(
     *,
     ttl_seconds: float = 0.0,
 ) -> None:
-    with _cache_lock:
-        _decision_cache[key] = (
-            time.monotonic(),
-            account_id,
-            confidence,
-            probabilities,
-            owner_safe,
-        )
-        if len(_decision_cache) > CACHE_MAX_ENTRIES:
-            _sweep_cache_locked(ttl_seconds)
+    """写决策缓存；ttl 只用于超上限时清理过期项。"""
+    _decision_cache.put(
+        key,
+        (account_id, confidence, probabilities, owner_safe),
+        ttl_seconds=ttl_seconds,
+    )
 
 
 def _breaker_open() -> bool:

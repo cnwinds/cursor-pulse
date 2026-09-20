@@ -98,4 +98,4 @@ _Avoid_: Treating it as the thing that switches accounts at request time (the pr
 
 **Jev Decision**:
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.
-_Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance/re-evaluation)
+_Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance — the Auto-Assigned Loan candidate allowlist is ordered by the deterministic score alone)

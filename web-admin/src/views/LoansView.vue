@@ -441,6 +441,15 @@ function boardToRecommendItem(row: QuotaBoardItem): RecommendItem {
   }
 }
 
+/** 可借出的看板行：同步正常、有快照、未耗尽，且尚未出现在推荐列表里。 */
+function isLendableBoardRow(row: QuotaBoardItem, seen: Set<string>): boolean {
+  if (!row.account_id || seen.has(row.account_id)) return false
+  // 同步不正常的账号不进候选：既打不了分，也统计不到借用量
+  if (row.sync_blocker) return false
+  if (row.has_snapshot === false) return false
+  return row.status !== 'exhausted' && row.status !== 'unknown'
+}
+
 /** 推荐排序优先，再补齐看板中未耗尽账号（含已达在借人数上限）。 */
 function buildLoanSourceOptions(
   ranked: RecommendItem[],
@@ -456,17 +465,8 @@ function buildLoanSourceOptions(
       active_loans: r.active_loans ?? 0,
     })
   }
-  // 同步不正常的账号不进候选：既打不了分，也统计不到借用量
   const fillers = board
-    .filter(
-      (row) =>
-        row.account_id &&
-        !seen.has(row.account_id) &&
-        !row.sync_blocker &&
-        row.has_snapshot !== false &&
-        row.status !== 'exhausted' &&
-        row.status !== 'unknown',
-    )
+    .filter((row) => isLendableBoardRow(row, seen))
     .sort(
       (a, b) => (b.remaining_headroom_pct ?? -1) - (a.remaining_headroom_pct ?? -1),
     )

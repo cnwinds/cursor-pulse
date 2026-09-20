@@ -285,9 +285,16 @@ def list_active_loans(repo: Repository, config, *, team_id: str) -> str:
     if not loans:
         return "当前没有活跃的 Key 借用。"
     lines = [f"📋 活跃借用（{len(loans)}）："]
-    for loan in loans[:15]:
+    shown = loans[:15]
+    # 一次取回代理账本汇总，避免 auto 借用逐笔查库
+    from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
+
+    proxy_totals = loan_proxy_totals_by_loan(repo.session, [loan.id for loan in shown])
+    for loan in shown:
         payload = loan_payload(loan, repo.session)
-        approx = loan_svc.approximate_borrowed_cents(loan)
+        approx = loan_svc.approximate_borrowed_cents(
+            loan, proxy_cents=proxy_totals.get(loan.id, (0, 0))[1]
+        )
         lines.append(
             f"· {loan.id[:8]} {payload['borrower_name'] or '—'} "
             f"← {payload['source_account_identifier']} "

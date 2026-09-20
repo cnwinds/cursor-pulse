@@ -258,7 +258,12 @@ func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCr
 // tokenForQuotaPoolWithin is tokenForQuotaPool restricted to allowed credential
 // IDs (nil = whole pool). Scoped callers are loan_alias bindings: the loan may
 // only use accounts Pulse ranked as candidates for that borrower.
-func (p *Pool) tokenForQuotaPoolWithin(ctx context.Context, pool quotaPoolKind, skipCredIDs map[string]bool, allowed map[string]bool) (*keyEntry, string, error) {
+func (p *Pool) tokenForQuotaPoolWithin(
+	ctx context.Context,
+	pool quotaPoolKind,
+	skipCredIDs map[string]bool,
+	allowed map[string]bool,
+) (*keyEntry, string, error) {
 	p.mu.Lock()
 	keys := append([]*keyEntry(nil), p.keys...)
 	start := p.cur

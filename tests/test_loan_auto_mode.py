@@ -122,6 +122,7 @@ def test_lender_mode_constants():
 
 
 def test_resolve_auto_lender_prefers_roomier_account(env):
+    """余量更宽的账号应排在最前并被选中。"""
     session = env["session"]
     resolved = resolve_auto_lender(
         session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW
@@ -184,6 +185,7 @@ def test_resolve_auto_lender_requires_both_buckets_when_model_unknown(env):
 
 
 def _picked_result(**decision_overrides) -> dict:
+    """构造一次 Auto Lender 决策结果，便于断言审计事件内容。"""
     decision = {
         "picked_by": "jev",
         "fallback_reason": None,
@@ -208,6 +210,7 @@ def _picked_result(**decision_overrides) -> dict:
 
 
 def test_audit_event_recorded_for_jev_pick(env):
+    """Jev 选中账号时应写入 lender_auto_pick 审计事件。"""
     from pulse.storage.models import ProxyEvent
 
     session = env["session"]
@@ -228,6 +231,7 @@ def test_audit_event_recorded_for_jev_pick(env):
 
 
 def test_audit_event_recorded_for_fallback_reason(env):
+    """出现回落原因时应把 fallback_reason 记进审计事件。"""
     from pulse.storage.models import ProxyEvent
 
     session = env["session"]
@@ -247,6 +251,7 @@ def test_audit_event_recorded_for_fallback_reason(env):
 
 
 def test_audit_event_skipped_when_auto_mode_off(env):
+    """auto 未开启时不写审计事件，避免刷爆事件表。"""
     from pulse.storage.models import ProxyEvent
 
     session = env["session"]
