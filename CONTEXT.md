@@ -81,8 +81,8 @@ Projected leftover cents on Auto or API Snapshot Headroom after the primary memb
 _Avoid_: ranking only on total_pct when the borrower is bound to one Quota Pool; treating remaining cents as a substitute for pool percent
 
 **Switch Cooldown**:
-Minimum time (`min_switch_minutes`, default 30) a still-eligible assignment is kept before auto-pick may move the borrower to a higher-scoring account. Exhaustion and other hard-gate failures switch immediately. Admin manual account pick bypasses the floor.
-_Avoid_: rotating MITM sticky for score reasons; treating the cooldown as a lock when the current account is unusable
+Minimum time (`min_switch_minutes`, default 30) a still-eligible assignment is kept before auto-re-pick may move the borrower to a higher-scoring account. Exhaustion and other hard-gate failures switch immediately. New Key Loan issuance picks the current top Assignment Score (preview matches auto-assign). Admin manual account pick bypasses the floor.
+_Avoid_: rotating MITM sticky for score reasons; treating the cooldown as a lock when the current account is unusable; applying cooldown when issuing a new loan so the UI top pick and the issued account diverge
 
 **Jev Rank**:
 Optional TypeSafe Jev (System One) composite over atomic waste / primary-safety / pool-fit questions, mixed into Key Loan Assignment Score in code. Fail-open to the rule score. Not used for Credential Pool Intake.

@@ -123,6 +123,35 @@ def test_recommend_excludes_account_at_cap(lender_env):
     assert result["active_loans"] == 0
 
 
+def test_admin_recommend_can_include_account_at_loan_cap(lender_env):
+    env = lender_env
+    session = env["session"]
+    a = env["accounts"][0]
+    b1 = env["repo"].add_member("adm-b1", "AdmB1")
+    b2 = env["repo"].add_member("adm-b2", "AdmB2")
+    session.flush()
+    _make_loan(session, env, a, b1)
+    _make_loan(session, env, a, b2)
+    for acc in env["accounts"]:
+        if acc.id == a.id:
+            continue
+        for snap in session.scalars(
+            select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == acc.id)
+        ).all():
+            snap.total_pct = 100.0
+            snap.auto_pct = 100.0
+            snap.api_pct = 100.0
+            snap.remaining_cents = 0
+            snap.used_cents = 7000
+
+    result = recommend_lender_for_borrower(
+        session, env["repo"].team_id, exclude_at_loan_cap=False
+    )
+    assert result is not None
+    assert result["account_id"] == a.id
+    assert result["active_loans"] == 2
+
+
 def test_recommend_keeps_borrower_sticky_assignment(lender_env):
     env = lender_env
     session = env["session"]
@@ -140,7 +169,10 @@ def test_recommend_keeps_borrower_sticky_assignment(lender_env):
     session.flush()
 
     kept = recommend_lender_for_borrower(
-        session, env["repo"].team_id, borrower_member_id=env["member"].id
+        session,
+        env["repo"].team_id,
+        sticky_account_id=sticky_acct.id,
+        sticky_since=loan.created_at,
     )
     assert kept is not None
     assert kept["account_id"] == sticky_acct.id
@@ -149,7 +181,10 @@ def test_recommend_keeps_borrower_sticky_assignment(lender_env):
     loan.created_at = datetime.now(timezone.utc) - timedelta(minutes=45)
     session.flush()
     aged = recommend_lender_for_borrower(
-        session, env["repo"].team_id, borrower_member_id=env["member"].id
+        session,
+        env["repo"].team_id,
+        sticky_account_id=sticky_acct.id,
+        sticky_since=loan.created_at,
     )
     assert aged is not None
     assert aged["account_id"] == urgent.id

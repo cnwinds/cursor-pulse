@@ -480,7 +480,6 @@ def request_self_service_loan(
         loan_selection=loan_selection,
         quota_pool=quota_pool,
         config=config,
-        borrower_member_id=borrower.id,
     )
     if not lender:
         raise KeyLoanError("当前没有可借出的富余账号，请联系管理员")

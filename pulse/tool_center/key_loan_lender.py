@@ -196,12 +196,8 @@ def recommend_lender_for_borrower(
     config=None,
     sticky_account_id: str | None = None,
     sticky_since: datetime | None = None,
-    borrower_member_id: str | None = None,
+    exclude_at_loan_cap: bool | None = None,
 ) -> dict | None:
-    if sticky_account_id is None and borrower_member_id:
-        sticky_account_id, sticky_since = sticky_assignment_for_borrower(
-            session, borrower_member_id
-        )
     ranked = rank_lenders_for_assignment(
         session,
         team_id,
@@ -213,7 +209,7 @@ def recommend_lender_for_borrower(
         config=config,
         sticky_account_id=sticky_account_id,
         sticky_since=sticky_since,
-        exclude_at_loan_cap=None,
+        exclude_at_loan_cap=exclude_at_loan_cap,
         use_jev=True,
     )
     return ranked[0] if ranked else None

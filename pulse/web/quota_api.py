@@ -447,7 +447,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 loan_selection=config.tool_center.loan_selection,
                 quota_pool=pool,
                 config=config,
-                borrower_member_id=body.borrower_member_id,
+                exclude_at_loan_cap=False,
             )
             if not lender:
                 raise HTTPException(status_code=400, detail="当前没有可借出的富余账号")

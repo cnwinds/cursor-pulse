@@ -46,7 +46,6 @@ def _candidate_card(payload: dict) -> dict:
         "active_loans": payload.get("active_loans"),
         "manual_boost": payload.get("score_adjust"),
         "status": payload.get("status"),
-        "primary_member": payload.get("primary_member_name"),
         "quota_pool": payload.get("quota_pool"),
     }
 

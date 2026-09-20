@@ -77,10 +77,13 @@ plane must stay deterministic.
 
 ### Switch Cooldown
 
-Default `min_switch_minutes = 30`. If the borrower already has a usable
-assignment younger than the floor, auto-pick keeps it. Exhaustion / hard-gate
-failure still switches immediately. Admin manual account pick bypasses the
-floor. MITM sticky remains sticky-until-that-Quota-Pool-exhausts; first pick
+Default `min_switch_minutes = 30`. When ranking with an existing sticky
+assignment (re-pick / auto-reassign), a still-eligible account younger than the
+floor stays on top. Exhaustion / hard-gate failure still switches immediately.
+
+New Key Loan issuance always picks the current highest Assignment Score so the
+admin recommend preview matches auto-assign. Admin manual account pick bypasses
+the floor. MITM sticky remains sticky-until-that-Quota-Pool-exhausts; first pick
 and rotation-on-exhaust use per-pool scores.
 
 ### Quota Pool at request time
