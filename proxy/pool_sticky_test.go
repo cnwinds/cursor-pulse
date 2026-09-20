@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -385,5 +386,148 @@ func TestResolveStickyMinDwell(t *testing.T) {
 	t.Setenv("PROXY_STICKY_MIN_DWELL", "2m")
 	if got := resolveStickyMinDwell(0); got != 2*time.Minute {
 		t.Fatalf("env duration: got %v", got)
+	}
+}
+
+// --- Candidate allowlist (loan_alias roaming) --------------------------------
+
+func allowlistPool(t *testing.T) (*Pool, *SessionMap) {
+	t.Helper()
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+		{CredentialID: "c3", APIKey: "keyC"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	return p, NewSessionMap()
+}
+
+func TestAllowedSetCollapsesBlanks(t *testing.T) {
+	if got := (SessionBinding{}).allowedSet(); got != nil {
+		t.Fatalf("empty binding must be unscoped, got %v", got)
+	}
+	if got := (SessionBinding{AllowedCredentialIDs: []string{"", "  "}}).allowedSet(); got != nil {
+		t.Fatalf("blank-only must collapse to nil, got %v", got)
+	}
+	got := (SessionBinding{AllowedCredentialIDs: []string{"c2", "", "c3"}}).allowedSet()
+	if len(got) != 2 || !got["c2"] || !got["c3"] {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestStickySelectStartsInsideAllowlist(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	binding := SessionBinding{
+		ProxyKeyID:           "loan-1",
+		Mode:                 "loan_alias",
+		AllowedCredentialIDs: []string{"c2"},
+	}
+
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if err != nil || tok == "" {
+		t.Fatalf("select: %v", err)
+	}
+	if entry.credentialID != "c2" {
+		t.Fatalf("must start inside the allowlist, got %s", entry.credentialID)
+	}
+	if binding.StickyCredentialID != "c2" {
+		t.Fatalf("sticky=%q", binding.StickyCredentialID)
+	}
+}
+
+func TestStickySelectRotatesWithinAllowlist(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	// c1 exhausted; c3 has quota but is NOT a candidate for this loan.
+	p.keys[0].setFullyQuotaExhausted()
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		StickyCredentialID:   "c1",
+		AllowedCredentialIDs: []string{"c1", "c2"},
+	}
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("must rotate to c2 (not c3): err=%v entry=%v", err, entry)
+	}
+}
+
+func TestStickySelectDropsCredentialLeavingAllowlist(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	// c1 still has quota but is no longer a candidate → must not keep serving.
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		StickyCredentialID:   "c1",
+		AllowedCredentialIDs: []string{"c2"},
+	}
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("stale sticky outside allowlist must rotate: err=%v entry=%v", err, entry)
+	}
+}
+
+func TestStickySelectAllowlistExhaustedDoesNotEscape(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	p.keys[0].setFullyQuotaExhausted()
+	// Only c1 is a candidate and it is exhausted; c2/c3 must not be used.
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		StickyCredentialID:   "c1",
+		AllowedCredentialIDs: []string{"c1"},
+	}
+
+	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if !errors.Is(err, errAllExhausted) {
+		t.Fatalf("want errAllExhausted, got %v", err)
+	}
+}
+
+func TestRotateOnExhaustionStaysInsideAllowlist(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		StickyCredentialID:   "c1",
+		AllowedCredentialIDs: []string{"c1", "c3"},
+	}
+	sessions.Bind("jwt1", binding)
+	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
+
+	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
+	if binding.StickyCredentialID != "c3" {
+		t.Fatalf("must advance to c3, got %q", binding.StickyCredentialID)
+	}
+}
+
+func TestRotateOnExhaustionNoCandidateLeft(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		StickyCredentialID:   "c1",
+		AllowedCredentialIDs: []string{"c1"},
+	}
+	sessions.Bind("jwt1", binding)
+	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
+
+	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
+	if binding.StickyCredentialID != "c1" {
+		t.Fatalf("must not escape the allowlist, got %q", binding.StickyCredentialID)
+	}
+}
+
+func TestUnscopedBindingStillWalksWholePool(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	// No allowlist → shared-pool behaviour, may pick any credential.
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &SessionBinding{}, quotaPoolUnknown)
+	if err != nil || entry == nil {
+		t.Fatalf("unscoped select: %v", err)
 	}
 }

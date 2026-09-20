@@ -8,6 +8,8 @@ re-implement intake filters.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import date, datetime, timezone
 from typing import NamedTuple
 
@@ -190,6 +192,121 @@ def _build_pool_lender_candidates(
             )
         )
     return candidates, excluded_no_snap
+
+
+def loan_candidate_credentials(
+    session: Session,
+    *,
+    loan,
+    loan_selection=None,
+    jev=None,
+    ttl_seconds: float = 600.0,
+) -> list[str]:
+    """借用可游走的候选 primary 凭证 ID（按打分排序，含当前绑定账号）。
+
+    借用 Key（pka_）不再钉死单一账号：Go 在 Pulse 给出的这份白名单内做
+    sticky + Switch dwell + 按 Quota Pool 的选择。白名单取自 Credential Pool
+    的入池账号，因此必然是 Go 池内已有的凭证。
+
+    结果按 loan_id 缓存 ttl_seconds：Go 对 loan_alias **每个请求**都会调
+    authorize，不能每次都重算排名（更不能再问一次 Jev）。
+    """
+    loan_id = getattr(loan, "id", "") or ""
+    if not loan_id:
+        return []
+    cached = _loan_candidates_get(loan_id, ttl_seconds)
+    if cached is not None:
+        return cached
+
+    from pulse.storage.models import AiAccount
+    from pulse.tool_center.auto_lender import rank_lenders
+    from pulse.tool_center.key_loan_auto import own_cursor_account_ids
+
+    account = session.get(AiAccount, loan.source_account_id)
+    team_id = getattr(account, "team_id", None) if account else None
+    if not team_id:
+        return []
+
+    ctx = _pool_primary_context(session)
+    if not ctx.creds:
+        return []
+    cred_by_account = {cred.account_id: cred.id for cred in ctx.creds}
+
+    candidates, _ = _build_pool_lender_candidates(
+        ctx.accounts,
+        ctx.latest_snaps,
+        ctx.loan_counts,
+        set(cred_by_account),
+        include_no_snap_excluded=False,
+        bound_at_by_account=ctx.bound_at_by_account,
+        member_names=ctx.member_names,
+    )
+    own_accounts = own_cursor_account_ids(session, team_id, loan.borrower_member_id)
+    candidates = [c for c in candidates if c.account_id not in own_accounts]
+
+    today, now = _pool_scoring_clock(ctx.latest_snaps)
+    board = rank_lenders(
+        candidates,
+        loan_selection=loan_selection,
+        pool="unknown",
+        today=today,
+        now=now,
+        # 借用路径的硬过滤，但不在借人数上限上排除：本笔借用自己就可能占满名额，
+        # 否则当前账号会被自己的借用挤出去。
+        enforce_loan_cap=True,
+        exclude_at_loan_cap=False,
+        jev=jev,
+    )
+
+    ordered: list[str] = []
+    for row in board["ranked"]:
+        cred_id = cred_by_account.get(row["account_id"])
+        if cred_id and cred_id not in ordered:
+            ordered.append(cred_id)
+    # 当前绑定账号必须留在白名单里：否则借用人会瞬间失去正在用的账号
+    current = cred_by_account.get(loan.source_account_id)
+    if current and current not in ordered:
+        ordered.insert(0, current)
+
+    _loan_candidates_put(loan_id, ordered)
+    return ordered
+
+
+_loan_candidates_lock = threading.Lock()
+_loan_candidates: dict[str, tuple[float, list[str]]] = {}
+LOAN_CANDIDATE_CACHE_MAX = 512
+
+
+def _loan_candidates_get(loan_id: str, ttl_seconds: float) -> list[str] | None:
+    if ttl_seconds <= 0:
+        return None
+    with _loan_candidates_lock:
+        entry = _loan_candidates.get(loan_id)
+    if entry is None:
+        return None
+    if time.monotonic() - entry[0] > ttl_seconds:
+        with _loan_candidates_lock:
+            _loan_candidates.pop(loan_id, None)
+        return None
+    return entry[1]
+
+
+def _loan_candidates_put(loan_id: str, credential_ids: list[str]) -> None:
+    with _loan_candidates_lock:
+        _loan_candidates[loan_id] = (time.monotonic(), credential_ids)
+        overflow = len(_loan_candidates) - LOAN_CANDIDATE_CACHE_MAX
+        if overflow > 0:
+            oldest = sorted(
+                _loan_candidates.items(), key=lambda item: item[1][0]
+            )[:overflow]
+            for stale, _ in oldest:
+                _loan_candidates.pop(stale, None)
+
+
+def reset_loan_candidate_cache() -> None:
+    """清空白名单缓存（测试 / 手动改绑后立即生效）。"""
+    with _loan_candidates_lock:
+        _loan_candidates.clear()
 
 
 def list_pool_credentials(

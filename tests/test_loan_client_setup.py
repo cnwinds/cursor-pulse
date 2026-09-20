@@ -183,6 +183,58 @@ def test_loan_payload_includes_proxy_cost(loan_client_env):
     assert loan["proxy_cost_cents"] == 50
 
 
+def test_auto_loan_borrowed_cents_follows_proxy_ledger(loan_client_env):
+    """自动分配借用的流量会在账号间游走，消耗口径改为按 loan_id 归因。"""
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    loan = s.get(KeyLoan, loan_id)
+    loan.lender_mode = "auto"
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=100,
+            cost_cents=37,
+        )
+    )
+    s.commit()
+    s.close()
+
+    res = env["client"].get("/api/v2/loans", headers=_headers(token))
+    assert res.status_code == 200
+    row = next(item for item in res.json()["items"] if item["id"] == loan_id)
+    assert row["borrowed_basis"] == "proxy"
+    assert row["borrowed_cents"] == 37
+
+
+def test_manual_loan_borrowed_cents_stays_snapshot_based(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=100,
+            cost_cents=37,
+        )
+    )
+    s.commit()
+    s.close()
+
+    res = env["client"].get("/api/v2/loans", headers=_headers(token))
+    row = next(item for item in res.json()["items"] if item["id"] == loan_id)
+    assert row["borrowed_basis"] == "quota_approx"
+    assert row["proxy_cost_cents"] == 37
+
+
 def test_loan_usages_detail(loan_client_env):
     env = loan_client_env
     loan_id, _ = _issue_loan(env)

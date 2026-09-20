@@ -81,12 +81,20 @@ Per-account percentage (`proxy_reserve_pct`, default from `loan_selection.owner_
 _Avoid_: Confusing with Snapshot Headroom (headroom is live state; reserve is a policy floor)
 
 **Switch Dwell**:
-Minimum time (`loan_selection.min_switch_minutes`) an account stays bound before Auto Lender may move away from it — `KeyLoan.source_bound_at` on the loan side, `SessionBinding.StickySince` in Go. Within the window the account is only demoted by `recency_penalty`, not hard-excluded, so a pool never becomes unusable.
+Minimum time (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) a credential stays bound before quota pressure may rotate it. `SessionBinding.StickySince` is the clock; within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
 _Avoid_: Treating it as a hard lock (exhaustion and auth failure still rotate)
 
+**Designated Loan** (`lender_mode=manual`):
+A Key Loan pinned to one lending account: issuance creates a dedicated Cursor key (`key_role=loan`) there, and the proxy serves that loan through it. `reassign_loan_source` re-pins it. Authorization returns no candidate list.
+_Avoid_: Confusing the loan key with the account's primary key
+
+**Auto-Assigned Loan** (`lender_mode=auto`):
+A Key Loan whose key roams across candidate accounts during use. Authorization returns a ranked allowlist of candidate **primary** credentials (`pool_board.loan_candidate_credentials`); Go selects within it exactly like the Credential Pool — per-session sticky, Switch Dwell, per-Quota-Pool availability. Switching needs no new Cursor key.
+_Avoid_: Reassigning at the DB level to change accounts (that was retired — it needed a new remote key per switch and could only move on a timer)
+
 **Auto Lender Selection**:
-`lender_mode=auto` on a Key Loan: the lending account is scored and chosen instead of fixed at issuance, then re-evaluated at most once per Switch Dwell. Orchestrated by `tool_center.auto_lender` — hard filters, then the deterministic score, then the Jev decision.
-_Avoid_: Manual lender (admin-picked and fixed) — that remains the default
+The ranking behind both loan modes: hard filters, then the deterministic score, then the optional Jev decision (`tool_center.auto_lender`). Used at issuance to pick the starting account and, for auto-assigned loans, to build the proxy's candidate allowlist.
+_Avoid_: Treating it as the thing that switches accounts at request time (the proxy does that)
 
 **Jev Decision**:
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.

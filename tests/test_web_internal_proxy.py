@@ -195,7 +195,7 @@ ALIAS_PLAINTEXT = "pka_test_alias_key_for_authorize_xx"
 CURSOR_UNDER_ALIAS = "crsr_bound_under_alias_key_yy"
 
 
-def _seed_loan_alias(env, *, loan_status: str = "active"):
+def _seed_loan_alias(env, *, loan_status: str = "active", lender_mode: str = "manual"):
     from pulse.tool_center.key_loans import DELIVERY_PROXY_ALIAS
 
     s = env["sf"]()
@@ -216,6 +216,7 @@ def _seed_loan_alias(env, *, loan_status: str = "active"):
         source_account_id=env["account_id"],
         credential_id=cred.id,
         status=loan_status,
+        lender_mode=lender_mode,
         delivery_mode=DELIVERY_PROXY_ALIAS,
         alias_key_hash=hash_proxy_key(ALIAS_PLAINTEXT),
         alias_key_hint=ALIAS_PLAINTEXT[:12],
@@ -242,6 +243,115 @@ def test_authorize_loan_alias_ok(env):
     assert body["credential_id"] == cred_id
     assert body["cursor_api_key"] == CURSOR_UNDER_ALIAS
     assert body["reason"] is None
+
+
+def test_authorize_loan_alias_manual_keeps_fixed_key(env):
+    """指定借用（manual）：不下发候选白名单，仍固定在发放时那把 Cursor Key。"""
+    cred_id, loan_id = _seed_loan_alias(env, lender_mode="manual")
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": ALIAS_PLAINTEXT},
+        headers=_h(),
+    )
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["credential_id"] == cred_id
+    assert body["cursor_api_key"] == CURSOR_UNDER_ALIAS
+    assert body.get("credential_ids") in (None, [])
+    assert body["loan_id"] == loan_id
+
+
+def test_authorize_loan_alias_auto_lists_primary_credentials(env):
+    """自动分配借用（auto）：下发候选账号的 primary 凭证，供 Go 游走选号。"""
+    _seed_loan_alias(env, lender_mode="auto")
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": ALIAS_PLAINTEXT},
+        headers=_h(),
+    )
+    body = resp.json()
+    assert body["status"] == "ok"
+    # 白名单里是账号 primary 凭证，不是发放时那把 loan Key
+    assert body["credential_ids"] == [env["cred_id"]]
+    assert env["cred_id"] != body["credential_id"]
+
+
+def test_loan_candidate_credentials_excludes_borrower_own_accounts(env):
+    """借用人自己名下账号不得进入候选白名单。
+
+    构造：借用人拥有 acct-1，本笔借用落在 acct-2 → 白名单里不应出现 acct-1
+    （它不是当前绑定账号，因此不会被兜底逻辑加回来）。
+    """
+    from pulse.proxy.pool_board import loan_candidate_credentials, reset_loan_candidate_cache
+    from pulse.storage.models import AiAccount, Member
+
+    reset_loan_candidate_cache()
+    _seed_loan_alias(env, lender_mode="auto")
+    s = env["sf"]()
+    borrower = Member(
+        team_id=env["team_id"],
+        display_name="Borrower",
+        channel_user_id="borrower-cand",
+        status="active",
+    )
+    s.add(borrower)
+    s.flush()
+    own_account = s.get(AiAccount, env["account_id"])
+    own_account.primary_member_id = borrower.id
+
+    other = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-cand-2",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+    )
+    s.add(other)
+    s.flush()
+    other_cred = AiAccountCredential(
+        account_id=other.id,
+        vendor_id=env["vendor_id"],
+        credential_type="api_key",
+        encrypted_value=encrypt_secret("cursor-key-cand-2", TEST_KEY),
+        key_hint="can...d2",
+        key_role="primary",
+        status="active",
+        bound_by_member_id=borrower.id,
+    )
+    s.add(other_cred)
+    s.add(_healthy_snap(other.id, cycle_end=TODAY + timedelta(days=25), total_pct=20.0))
+    s.flush()
+
+    loan = s.query(KeyLoan).order_by(KeyLoan.created_at.desc()).first()
+    loan.borrower_member_id = borrower.id
+    loan.source_account_id = other.id
+    s.commit()
+
+    ids = loan_candidate_credentials(s, loan=loan)
+    s.close()
+
+    assert ids == [other_cred.id]
+    assert env["cred_id"] not in ids
+
+
+def test_loan_candidate_credentials_cached(env):
+    from pulse.proxy.pool_board import (
+        _loan_candidates,
+        loan_candidate_credentials,
+        reset_loan_candidate_cache,
+    )
+
+    reset_loan_candidate_cache()
+    _seed_loan_alias(env, lender_mode="auto")
+    s = env["sf"]()
+    loan = s.query(KeyLoan).order_by(KeyLoan.created_at.desc()).first()
+    first = loan_candidate_credentials(s, loan=loan)
+    assert _loan_candidates  # 已写入缓存
+    second = loan_candidate_credentials(s, loan=loan)
+    assert first == second
+    s.close()
+    reset_loan_candidate_cache()
+    assert not _loan_candidates
 
 
 def test_authorize_loan_alias_does_not_hit_pk_pool(env):

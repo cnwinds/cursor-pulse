@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +20,12 @@ type SessionBinding struct {
 	// (stickyMinDwell) suppresses quota-driven rotation inside this window so a
 	// session does not hop accounts too often. Zero means "no dwell history".
 	StickySince time.Time
+	// AllowedCredentialIDs scopes pool selection to a ranked candidate set. A
+	// loan_alias binding gets this from Pulse (the accounts eligible to lend to
+	// that borrower), so the loan key roams across candidate accounts like the
+	// shared pool instead of being pinned to one credential. Empty means
+	// unscoped: shared-pool keys, or a loan that fell back to its bound key.
+	AllowedCredentialIDs []string
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
@@ -58,4 +65,23 @@ func (m *SessionMap) Delete(jwt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byJWT, jwt)
+}
+
+// allowedSet returns AllowedCredentialIDs as a lookup set, or nil when the
+// binding is unscoped. Empty/blank entries collapse to nil so callers can use
+// a simple `allowed != nil` test.
+func (b SessionBinding) allowedSet() map[string]bool {
+	if len(b.AllowedCredentialIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(b.AllowedCredentialIDs))
+	for _, id := range b.AllowedCredentialIDs {
+		if strings.TrimSpace(id) != "" {
+			out[id] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

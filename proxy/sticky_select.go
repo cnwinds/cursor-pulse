@@ -60,9 +60,16 @@ func (s *StickySelect) bindSticky(sessionJWT string, binding *SessionBinding, cr
 // sessionJWT is the CLI session JWT used as the SessionMap key (not a Proxy Key).
 func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *SessionBinding, pool quotaPoolKind) (*keyEntry, string, error) {
 	now := time.Now()
+	// nil for shared-pool keys; a ranked candidate set for loan_alias bindings.
+	allowed := binding.allowedSet()
 	if binding.StickyCredentialID != "" {
 		stickyID := binding.StickyCredentialID
 		entry := s.pool.findEntry(stickyID)
+		// A credential dropped from the candidate set must not keep serving.
+		if entry != nil && allowed != nil && !allowed[stickyID] {
+			log.Printf("[pool] sticky credential %s left the candidate set — rotating", stickyID)
+			entry = nil
+		}
 		if entry != nil && !entry.authCooling(now) && entry.availableFor(pool) {
 			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
 			if err == nil {
@@ -103,7 +110,7 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		} else if entry != nil && entry.authCooling(now) {
 			log.Printf("[pool] sticky credential %s auth cooling — rotating", stickyID)
 		}
-		next := s.pool.nextAvailableForQuota(stickyID, pool)
+		next := s.pool.nextAvailableForQuotaWithin(stickyID, pool, allowed)
 		if next == nil {
 			return nil, "", errAllExhausted
 		}
@@ -111,7 +118,7 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		log.Printf("[pool] session sticky rotated to credential %s for pool %s", next.credentialID, pool)
 		return s.pool.tokenForCredential(ctx, next.credentialID)
 	}
-	entry, tok, err := s.pool.tokenForQuotaPool(ctx, pool, nil)
+	entry, tok, err := s.pool.tokenForQuotaPoolWithin(ctx, pool, nil, allowed)
 	if err != nil {
 		return nil, "", err
 	}
@@ -127,7 +134,7 @@ func (s *StickySelect) RotateOnExhaustion(sessionJWT string, binding *SessionBin
 	if s == nil || sessionJWT == "" || binding == nil {
 		return
 	}
-	next := s.pool.nextAvailableForQuota(exhaustedCredID, pool)
+	next := s.pool.nextAvailableForQuotaWithin(exhaustedCredID, pool, binding.allowedSet())
 	if next == nil {
 		log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
 		return

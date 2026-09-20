@@ -24,13 +24,22 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
 4. **人工基础分与主负责人保留量都是账号级字段，两条路径共用。**
    `proxy_score_adjust`（人工分）加在算法综合分上；`proxy_reserve_pct`（保留量）参与硬过滤。此前人工分只影响 Credential Pool 顺序、不影响借用选号，本次统一。
 
-5. **Switch dwell 分两层。**
-   Python 侧 `loan_selection.min_switch_minutes`（默认 30 分钟）以 `KeyLoan.source_bound_at` 为基准，窗口内只降权（`recency_penalty`）不排除；Go 侧 `SessionBinding.StickySince` + `stickyMinDwell` 保证请求时也不会因桶耗尽而频繁换账号。只有 Go 能真正约束请求时刻的行为，因此两层都需要。
+5. **两套借用机制并存，由 `KeyLoan.lender_mode` 区分。**
+   - **指定借用（`manual`）**：发放时在选定账号上建一把独立 Cursor key（`key_role=loan`），借用 Key 固定绑定它；授权不下发候选白名单，Go 走 `passthroughToken`。管理员可用 `reassign_loan_source` 手动改绑。
+   - **自动分配借用（`auto`）**：授权下发按分数排序的候选**主凭证**白名单（`pool_board.loan_candidate_credentials`），Go 在 `loan_alias` 上按 Credential Pool 的方式选号——per-session sticky + Switch Dwell + 按 Quota Pool。换号不新建 Cursor key。
+
+6. **换号由代理在会话内完成，不在 DB 层做。**
+   早期实现是「定时任务 + `reassign_loan_source`」，每次换号都要在 Cursor 侧新建一把 Key 并吊销旧 Key，且粒度只能是分钟级，做不到「使用过程中灵活更换」。该路径已退休（`reevaluate_auto_loans` 与 `auto_lender_reevaluate` 作业移除）；`reassign_loan_source` 保留为管理员手动改绑。
+
+7. **Switch dwell 分两层，作用不同。**
+   评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickySince` + `stickyMinDwell` 保证同一会话在窗口内不因桶耗尽换账号。自动分配借用真正生效的是后者。
 
 ## 后果
 
 - 算法分始终计算：既是保底，也是 UI 对照与回测基线。UI 同时展示算法分、人工分与 Jev 决策，便于判断该相信谁。
 - Jev 明确选出别的账号时，重评不再要求「算法分增益」。算法分是保底而非否决权，否则等于废掉主判。
 - 按池打分需要目标模型。借用选号在模型未知时退化为 `unknown`，要求 auto 与 api 两个桶都还有 Snapshot Headroom，与 Go `snapshotQuotaOK` 一致；代理入池不适用该退化，仍走 CONTEXT.md 的 Credential Pool Intake「任一桶有余量即可入池」。
+- **自动分配借用消耗候选账号的 primary 凭证**，与共享池共用同一批凭证：好处是不再为换号产生临时 Key，代价是 Cursor 侧不再按 Key 区分「借出去的」与「池里的」，只能靠 Pulse 的 `loan_id` 归因。因此自动分配的借用消耗以代理账本按 `loan_id` 汇总为准（`borrowed_basis=proxy`），不再用单账号快照差值。
+- **`KeyLoan.source_account_id` 语义变化**：自动分配借用下它是「起始 / 当前偏好账号」，不是唯一来源。UI 显示的借出账号可能与实际服务账号不同，实际账号看借用用量明细。
 - 每桶额度只有百分比、没有绝对额度，`pool_surplus_cents` 是按 `limit_cents` 折算的近似值。候选之间比较时是单调变换，不改变排序；绝对值仅供展示。
 - Jev 的 `state` 按 OpenRouter 参考文档序列化为字符串。若上游改为接受对象，只需调整 `pulse/llm/jev.py::_encode_state`。

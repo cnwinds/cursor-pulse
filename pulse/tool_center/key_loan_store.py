@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, KeyLoan
-from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_MANUAL
+from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_AUTO, LENDER_MODE_MANUAL
 from pulse.tool_center.key_loan_state import KeyLoanStateMixin
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
@@ -81,6 +81,17 @@ class KeyLoanService(KeyLoanStateMixin):
         return self.session.get(KeyLoan, loan_id)
 
     def approximate_borrowed_cents(self, loan: KeyLoan) -> int:
+        """借用消耗（cents）。
+
+        自动分配借用的流量会在候选账号间游走，单一账号的快照差值不再代表本笔
+        借用的消耗；此时以代理账本按 ``loan_id`` 汇总为准（manual 保持快照近似）。
+        """
+        if (getattr(loan, "lender_mode", None) or "") == LENDER_MODE_AUTO:
+            from pulse.proxy.usage_queries import loan_proxy_totals
+
+            _, proxy_cents = loan_proxy_totals(self.session, loan.id)
+            if proxy_cents > 0:
+                return int(proxy_cents)
         snapshot = self.latest_snapshot(loan.source_account_id)
         if not snapshot:
             return 0

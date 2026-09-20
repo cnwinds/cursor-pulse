@@ -252,6 +252,13 @@ func (p *Pool) tokenSkipping(ctx context.Context, skipCredIDs map[string]bool) (
 }
 
 func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCredIDs map[string]bool) (*keyEntry, string, error) {
+	return p.tokenForQuotaPoolWithin(ctx, pool, skipCredIDs, nil)
+}
+
+// tokenForQuotaPoolWithin is tokenForQuotaPool restricted to allowed credential
+// IDs (nil = whole pool). Scoped callers are loan_alias bindings: the loan may
+// only use accounts Pulse ranked as candidates for that borrower.
+func (p *Pool) tokenForQuotaPoolWithin(ctx context.Context, pool quotaPoolKind, skipCredIDs map[string]bool, allowed map[string]bool) (*keyEntry, string, error) {
 	p.mu.Lock()
 	keys := append([]*keyEntry(nil), p.keys...)
 	start := p.cur
@@ -268,6 +275,9 @@ func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCr
 		}
 
 		e := keys[(start+i)%n]
+		if allowed != nil && !allowed[e.credentialID] {
+			continue
+		}
 
 		p.mu.Lock()
 		skip := e.unavailable() || !e.hasQuotaForPool(pool)
@@ -340,6 +350,12 @@ func (p *Pool) nextAvailableAfter(credentialID string) *keyEntry {
 }
 
 func (p *Pool) nextAvailableForQuota(credentialID string, pool quotaPoolKind) *keyEntry {
+	return p.nextAvailableForQuotaWithin(credentialID, pool, nil)
+}
+
+// nextAvailableForQuotaWithin is nextAvailableForQuota restricted to allowed
+// credential IDs (nil = whole pool), used by whitelist-scoped loan bindings.
+func (p *Pool) nextAvailableForQuotaWithin(credentialID string, pool quotaPoolKind, allowed map[string]bool) *keyEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := len(p.keys)
@@ -355,6 +371,9 @@ func (p *Pool) nextAvailableForQuota(credentialID string, pool quotaPoolKind) *k
 	}
 	for i := 0; i < n; i++ {
 		e := p.keys[(start+i)%n]
+		if allowed != nil && !allowed[e.credentialID] {
+			continue
+		}
 		if !e.unavailable() && e.hasQuotaForPool(pool) {
 			return e
 		}

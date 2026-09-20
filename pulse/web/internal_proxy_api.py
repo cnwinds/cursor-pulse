@@ -67,7 +67,11 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
     def proxy_authorize(body: AuthorizeBody, session: Session = Depends(get_db)):
         enc_key = (config.credentials.encryption_key or "").strip()
         return proxy_service.authorize_status(
-            session, body.pulse_key, encryption_key=enc_key
+            session,
+            body.pulse_key,
+            encryption_key=enc_key,
+            loan_selection=config.tool_center.loan_selection,
+            jev=build_jev_client(config),
         )
 
     @app.get(

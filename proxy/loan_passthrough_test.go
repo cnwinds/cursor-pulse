@@ -467,7 +467,12 @@ func TestLoanPassthroughMITMAuthFailReportsLoan(t *testing.T) {
 	}
 }
 
-func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
+// loanAliasHarness drives one pka_ exchange through the MITM and returns the
+// bound session plus the Authorization header the fake upstream saw. extra is
+// merged into the fake Pulse authorize response (e.g. credential_ids), which is
+// how auto-mode loans receive their candidate allowlist.
+func loanAliasHarness(t *testing.T, extra map[string]any) (SessionBinding, string) {
+	t.Helper()
 	const aliasKey = "pka_test_alias_key_abc"
 	const cursorKey = "crsr_bound_cursor_key_xyz"
 	var upstreamAuth string
@@ -503,7 +508,7 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"status":         "ok",
 			"mode":           "loan_alias",
 			"proxy_key_id":   nil,
@@ -511,7 +516,11 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 			"credential_id":  "cred-alias-1",
 			"cursor_api_key": cursorKey,
 			"reason":         nil,
-		})
+		}
+		for k, v := range extra {
+			resp[k] = v
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(pulse.Close)
 
@@ -570,23 +579,50 @@ func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
 	if out.AccessToken != "jwt-alias" {
 		t.Fatalf("accessToken=%q want jwt-alias", out.AccessToken)
 	}
-	if upstreamAuth != "Bearer "+cursorKey {
-		t.Fatalf("upstream Authorization=%q want Bearer %s", upstreamAuth, cursorKey)
-	}
 	b, ok := sessions.Lookup("jwt-alias")
 	if !ok {
 		t.Fatal("session not bound")
 	}
+	return b, upstreamAuth
+}
+
+func TestLoanAliasExchangeUsesServerCursorKey(t *testing.T) {
+	const cursorKey = "crsr_bound_cursor_key_xyz"
+	b, upstreamAuth := loanAliasHarness(t, nil)
+
+	if upstreamAuth != "Bearer "+cursorKey {
+		t.Fatalf("upstream Authorization=%q want Bearer %s", upstreamAuth, cursorKey)
+	}
 	if b.Mode != "loan_alias" || b.LoanID != "loan-alias-1" || b.CredentialID != "cred-alias-1" {
 		t.Fatalf("session binding: %+v", b)
 	}
-	if b.PulseKey != aliasKey {
-		t.Fatalf("PulseKey=%q want %s", b.PulseKey, aliasKey)
+	if b.PulseKey != "pka_test_alias_key_abc" {
+		t.Fatalf("PulseKey=%q", b.PulseKey)
 	}
 	if b.CursorAPIKey != cursorKey {
 		t.Fatalf("CursorAPIKey=%q want %s", b.CursorAPIKey, cursorKey)
 	}
 	if b.ProxyKeyID != "" {
 		t.Fatalf("ProxyKeyID should be empty, got %q", b.ProxyKeyID)
+	}
+	// Designated loan: no candidate allowlist → pinned to the bound key.
+	if b.AllowedCredentialIDs != nil {
+		t.Fatalf("designated loan must stay unscoped, got %v", b.AllowedCredentialIDs)
+	}
+}
+
+func TestLoanAliasExchangeCarriesCandidateAllowlist(t *testing.T) {
+	b, _ := loanAliasHarness(t, map[string]any{
+		"credential_ids": []string{"cred-alias-1", "cred-cand-2"},
+	})
+
+	if len(b.AllowedCredentialIDs) != 2 {
+		t.Fatalf("allowlist not bound: %+v", b.AllowedCredentialIDs)
+	}
+	if b.AllowedCredentialIDs[0] != "cred-alias-1" || b.AllowedCredentialIDs[1] != "cred-cand-2" {
+		t.Fatalf("allowlist order must be preserved: %v", b.AllowedCredentialIDs)
+	}
+	if b.Mode != "loan_alias" || b.LoanID != "loan-alias-1" {
+		t.Fatalf("session binding: %+v", b)
 	}
 }

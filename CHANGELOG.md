@@ -6,17 +6,19 @@
 
 ### 新增
 
-- **Auto Lender 自动选号**：Key Loan 支持 `lender_mode=auto`，不再在发放时锁死出借账号。由「硬过滤 → 算法分 → Jev 决策 → 护栏」选出账号，并每隔至少 30 分钟重评一次。自助借 Key 默认走自动模式。
+- **借用两种分配方式**：`lender_mode=manual`（指定借用）在选定账号上建一把独立 Cursor Key 并固定绑定；`lender_mode=auto`（自动分配借用）由 Auto Lender 打分决定起始账号，之后借用 Key 在候选账号的 **primary** Key 之间按共享池方式游走（per-session sticky + 30 分钟驻留 + 按 Quota Pool），换号不新建 Cursor Key。自助借 Key 默认走自动分配。
 - **Jev 主判（OpenRouter Decisions）**：接入 TypeSafe System One 决策模型 `typesafe/jev-1.13`，用 `choice` 问该借哪个账号、`noul` 逐候选问是否侵占主负责人预留。它只在存活候选上重排，调用失败 / 置信度不足 / 首选与次优间隔过小 / 判定影响主负责人时一律回落算法分；带特征哈希缓存与连续失败熔断。可在「系统设置 → Jev 决策模型」配置，或走 `JEV_*` 环境变量。
-- **按 Quota Pool 打分**：给出目标模型时按该模型所属桶（`auto` / `api`）取余量与空闲额度，`unknown` 退化为两桶都要有余量；新增 `pulse/tool_center/quota_pool.py` 镜像 Go `quotaPoolForModel`。
+- **按 Quota Pool 打分**：给出目标模型时按该模型所属桶（`auto` / `api`）取余量与空闲额度；桶由既有计费口径 `pulse/pricing/billing_scope.py` 自动判定，无需人工指定；`unknown` 退化为两桶都要有余量。
 - **主负责人保留量**：账号级 `proxy_reserve_pct`（默认取 `loan_selection.owner_reserve_pct`）。号主按当前速率外推到作废日会吃掉保留量时，该账号作为出借方被硬排除（`owner_reserve`）。
-- **Switch dwell 最小驻留**：`loan_selection.min_switch_minutes`（默认 30 分钟）内只降权不排除；Go 代理新增 `PROXY_STICKY_MIN_DWELL`（默认 30m，`0`/`off` 关闭），保证请求时也不因桶耗尽频繁换账号。
-- **借用自动选号预览**：`POST /api/v2/loans/auto-pick` 返回打分排序 + Jev 决策；「为成员分配 Key」弹窗选自动模式时先看预计选中账号再确认。
+- **Switch dwell 最小驻留**：`loan_selection.min_switch_minutes`（默认 30 分钟，评分侧降权）与 Go `PROXY_STICKY_MIN_DWELL`（默认 30m，请求侧不轮转；`0`/`off` 关闭）。
+- **借用自动选号预览**：`POST /api/v2/loans/auto-pick` 返回打分排序 + Jev 决策；「为成员分配 Key」弹窗选自动分配时先看预计起始账号再确认。
 
 ### 变更
 
+- **换号不再走 DB 层定时重评**：自动分配借用的换号改由代理在会话内完成（授权下发候选 primary 凭证白名单，Go 在白名单内 sticky 轮转），`reevaluate_auto_loans` 与 `auto_lender_reevaluate` 作业已移除。此前每次换号都要新建/吊销一把 Cursor Key 且粒度只能到分钟级。`reassign_loan_source` 保留为管理员手动改绑。
+- **自动分配借用的消耗口径改为按 `loan_id` 归因**（`borrowed_basis=proxy`）：流量会在账号间游走，单账号快照差值不再代表本笔消耗；manual 仍是快照近似。
 - **人工分统一两条路径**：`proxy_score_adjust` 此前只影响 Credential Pool 顺序、不影响借 Key 出借排序（CONTEXT.md 明确写过），现在两条路径共用同一字段与语义。
-- **借用列表**：新增 `lender_mode` / `source_bound_at` 字段；打分表新增「主负责人保留」列与 Jev 决策提示；额度看板新增「Auto 首选」标记；打分表支持按目标模型（`?model=`）查看该桶下的顺序。
+- **借用列表**：新增 `lender_mode` / `source_bound_at` / `borrowed_basis` 字段；打分表新增「主负责人保留」列与 Jev 决策提示；额度看板新增「Auto 首选」标记；打分表支持按目标模型（`?model=`）查看该桶下的顺序。
 - **配置**：新增 `LoanSelectionConfig` 的 `min_switch_minutes` / `recency_penalty` / `owner_reserve_pct` / `auto_mode` / `auto_top_n` / `auto_min_confidence` / `auto_min_margin` / `auto_cache_seconds` / `auto_switch_margin`，以及 `JevConfig`。
 - **迁移**：`key_loans` 增 `lender_mode`（默认 `manual`）与 `source_bound_at`（存量记录回填为 `created_at`），`ai_accounts` 增 `proxy_reserve_pct`。
 
