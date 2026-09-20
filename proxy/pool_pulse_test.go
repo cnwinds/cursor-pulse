@@ -20,8 +20,11 @@ func TestPoolReplaceFromPulseKeepsExhaustion(t *testing.T) {
 		t.Fatalf("len=%d", len(p.keys))
 	}
 	if p.keys[0].credentialID != "c1" || !p.keys[0].quotaFullyExhausted() || p.keys[0].jwt != "oldjwt" || p.keys[0].apiKey != "k1-new" {
-		t.Fatalf("c1 not preserved: %+v", *p.keys[0])
+		// keyEntry embeds sync.Mutex, so it must never be copied into a verb (go vet).
+		t.Fatalf("c1 not preserved: id=%q exhausted=%v jwt=%q apiKey=%q",
+			p.keys[0].credentialID, p.keys[0].quotaFullyExhausted(), p.keys[0].jwt, p.keys[0].apiKey)
 	}
+
 	if p.keys[1].credentialID != "c3" {
 		t.Fatalf("expected c3, got %s", p.keys[1].credentialID)
 	}
