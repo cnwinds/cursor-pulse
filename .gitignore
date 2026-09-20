@@ -24,6 +24,9 @@ pulse/web/static/
 .superpowers/
 docs/superpowers/
 
+# IDE log / chat-session exports (diagnostics, not project content)
+logs-*.zip
+
 # Secrets / TLS material (MITM CA, etc.)
 *.pem
 *.key
