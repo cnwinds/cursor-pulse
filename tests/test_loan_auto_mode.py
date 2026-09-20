@@ -499,10 +499,12 @@ def test_resolve_auto_lender_requires_both_buckets_when_model_unknown(env):
     from pulse.storage.models import AccountQuotaSnapshot
 
     session = env["session"]
+    # captured_at 必须严格晚于 fixture 的快照：latest_snapshots_for_accounts
+    # 按 MAX(captured_at) 取最新，同刻会命中两行、结果不确定
     session.add(
         AccountQuotaSnapshot(
             account_id="acc-a",
-            captured_at=NOW,
+            captured_at=NOW + timedelta(minutes=1),
             cycle_start=date(2026, 7, 1),
             cycle_end=date(2026, 8, 1),
             limit_cents=7000,
