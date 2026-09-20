@@ -52,6 +52,8 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
 }
 
 _KEY_LOAN_LENDER_COLUMNS: dict[str, str] = {
+    # 字面量与 pulse.tool_center.key_loan_delivery.LENDER_MODE_MANUAL 一致；
+    # 存储层不反向依赖 tool_center，故按 DDL 惯例内联
     "lender_mode": "VARCHAR(16) DEFAULT 'manual'",
     "source_bound_at": "TIMESTAMP",
 }
@@ -714,14 +716,10 @@ def migrate_schema(engine: Engine) -> None:
 
     if "key_loans" in tables:
         columns = {col["name"] for col in inspector.get_columns("key_loans")}
-        for col_name, col_type in _KEY_LOAN_ALIAS_COLUMNS.items():
-            if col_name not in columns:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE key_loans ADD COLUMN {col_name} {col_type}")
-                    )
-                logger.info("Added %s column to key_loans", col_name)
-        for col_name, col_type in _KEY_LOAN_LENDER_COLUMNS.items():
+        for col_name, col_type in {
+            **_KEY_LOAN_ALIAS_COLUMNS,
+            **_KEY_LOAN_LENDER_COLUMNS,
+        }.items():
             if col_name not in columns:
                 with engine.begin() as conn:
                     conn.execute(

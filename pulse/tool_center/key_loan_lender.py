@@ -10,6 +10,18 @@ from pulse.storage.models import AiAccount, KeyLoan, Member
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.util.datetime_fmt import ensure_aware
+
+
+def member_names_by_id(session: Session, member_ids: set[str]) -> dict[str, str]:
+    """成员 id → 显示名；供候选构造填 primary_member_name（借用与代理池共用）。"""
+    ids = {mid for mid in member_ids if mid}
+    if not ids:
+        return {}
+    return {
+        member.id: member.display_name
+        for member in session.scalars(select(Member).where(Member.id.in_(ids)))
+    }
 
 def account_loan_deadline(account: AiAccount) -> date | None:
     """账号上借用 key 的自动回收日：额度重置日与订阅到期日取先到者。
@@ -72,9 +84,7 @@ def last_bound_at_by_account(
     for account_id, bound_at in rows:
         if bound_at is None:
             continue
-        if bound_at.tzinfo is None:
-            bound_at = bound_at.replace(tzinfo=timezone.utc)
-        out[account_id] = bound_at
+        out[account_id] = ensure_aware(bound_at)  # type: ignore[assignment]
     return out
 
 
@@ -99,12 +109,7 @@ def build_lender_candidates(
         session, [account.id for account in accounts]
     )
     primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
-    member_names: dict[str, str] = {}
-    if primary_ids:
-        member_names = {
-            m.id: m.display_name
-            for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))
-        }
+    member_names = member_names_by_id(session, primary_ids)
     candidates: list[LenderCandidate] = []
     for account in accounts:
         snap = snapshots[account.id]
@@ -136,6 +141,12 @@ def recommend_lender_for_borrower(
     loan_selection: LoanSelectionConfig | None = None,
     pool: str | None = None,
 ) -> dict | None:
+    """纯确定性打分选号（不调用 Jev）。
+
+    生产路径（管理员发放 / 自助借用 / 定期重评）走
+    :func:`pulse.tool_center.key_loan_auto.resolve_auto_lender`，它在这之上叠加
+    Jev 主判与护栏。本函数保留为「只看算法分」的入口，供回测、对照与工具使用。
+    """
     candidates = build_lender_candidates(
         session, team_id, exclude_account_ids=exclude_account_ids
     )

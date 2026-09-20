@@ -10,7 +10,6 @@ from pulse.llm.jev import (
     build_choice_question,
     build_jev_client,
     build_noul_question,
-    build_score_question,
 )
 
 
@@ -172,8 +171,6 @@ def test_question_builders_shape():
     assert noul["type"] == "noul"
     # OpenRouter 要求 noul criteria 两侧都给
     assert set(noul["criteria"]) == {"true", "false"}
-    score = build_score_question("urgency", ["low", "high"])
-    assert score == {"type": "score", "instructions": "urgency", "criteria": ["low", "high"]}
 
 
 def test_build_jev_client_requires_enabled_and_key():

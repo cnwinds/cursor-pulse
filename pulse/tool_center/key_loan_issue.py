@@ -19,16 +19,14 @@ from pulse.tool_center.key_loan_borrower import (
 )
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_PROXY_ALIAS,
+    LENDER_MODE_AUTO,
+    LENDER_MODE_MANUAL,
     VALID_DELIVERY_MODES,
+    VALID_LENDER_MODES,
     KeyLoanError,
 )
 from pulse.tool_center.key_loan_lender import account_loan_deadline
-from pulse.tool_center.key_loan_auto import (
-    LENDER_MODE_AUTO,
-    LENDER_MODE_MANUAL,
-    VALID_LENDER_MODES,
-    resolve_auto_lender,
-)
+from pulse.tool_center.key_loan_auto import resolve_auto_lender
 from pulse.tool_center.key_loan_store import KeyLoanService
 from pulse.tool_center.quota_reads import latest_snapshots_for_team
 from pulse.tool_center.repository import ToolCenterRepository
@@ -160,6 +158,7 @@ def issue_loan_key(
     jev_config=None,
     on_decision=None,
     exclude_account_ids: set[str] | None = None,
+    own_account_ids: set[str] | None = None,
 ) -> dict:
     mode = (delivery_mode or DELIVERY_PROXY_ALIAS).strip()
     if mode != DELIVERY_PROXY_ALIAS:
@@ -183,6 +182,7 @@ def issue_loan_key(
             jev_config=jev_config,
             on_decision=on_decision,
             exclude_account_ids=exclude_account_ids,
+            own_account_ids=own_account_ids,
         )
         best = resolved["best"]
         if not best:
@@ -551,6 +551,7 @@ def request_self_service_loan(
 
     # 选号（可能含一次 Jev 外呼）放在取成员行锁之前：行锁是 SELECT ... FOR UPDATE，
     # 不该被最长 timeout_seconds 的外部调用一直占着。
+    own_account_ids = {account.id for account in own_accounts}
     lender = resolve_auto_lender(
         session,
         team_id,
@@ -559,7 +560,7 @@ def request_self_service_loan(
         jev=jev,
         jev_config=jev_config,
         on_decision=on_decision,
-        exclude_account_ids={account.id for account in own_accounts},
+        own_account_ids=own_account_ids,
     )["best"]
     if not lender:
         raise KeyLoanError("当前没有可借出的富余账号，请联系管理员")
@@ -583,6 +584,6 @@ def request_self_service_loan(
         loan_selection=loan_selection,
         # 自助借用走自动模式：发放后仍由 Auto Lender 定期重评
         lender_mode=LENDER_MODE_AUTO,
-        exclude_account_ids={account.id for account in own_accounts},
+        own_account_ids=own_account_ids,
     )
 

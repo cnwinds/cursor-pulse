@@ -164,7 +164,7 @@ def _breaker_open() -> bool:
         return time.monotonic() < _breaker_state["open_until"]
 
 
-def _record_failure(cfg: LoanSelectionConfig, jev_config=None) -> None:
+def _record_failure(jev_config=None) -> None:
     threshold = getattr(jev_config, "failure_threshold", 3)
     cooldown = getattr(jev_config, "cooldown_seconds", 300.0)
     with _breaker_lock:
@@ -444,7 +444,7 @@ def rank_lenders(
             questions=_build_questions(top),
         )
     except JevError as exc:
-        _record_failure(cfg, jev_config)
+        _record_failure(jev_config)
         logger.warning("auto lender: jev call failed: %s", exc)
         return _result(
             ranked,

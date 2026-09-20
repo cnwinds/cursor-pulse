@@ -10,6 +10,7 @@ from pulse.tool_center.snapshot_headroom import (
     snapshot_has_any_pool_headroom,
     snapshot_quota_ok_for_pool,
 )
+from pulse.util.datetime_fmt import ensure_aware
 
 
 @dataclass
@@ -143,6 +144,8 @@ def analyze_burn_rate(
 
 @dataclass
 class LenderCandidate:
+    """一个出借候选：最新配额快照 + 账号侧调参 + 驻留基准。"""
+
     snapshot: AccountQuotaSnapshot
     account_id: str
     account_identifier: str
@@ -169,9 +172,8 @@ def lender_deadline(cycle_end: date, renews_on: date | None) -> date:
 
 
 def _ensure_aware(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+    """Naive → UTC（复用共享实现；本模块调用点保证非 None）。"""
+    return ensure_aware(dt)  # type: ignore[return-value]
 
 
 def lender_deadline_at(
@@ -307,6 +309,13 @@ def owner_reserve_ok(
     return projected_pct <= (100.0 - reserve_pct)
 
 
+def effective_reserve_pct(
+    cand: "LenderCandidate", cfg: LoanSelectionConfig
+) -> float | None:
+    """生效的主负责人保留量：账号级设置优先，否则用配置默认值。"""
+    return cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
+
+
 def switch_recency_factor(
     bound_at: datetime | None,
     min_switch_minutes: float,
@@ -402,6 +411,7 @@ def _hard_filter_reason(
     enforce_loan_cap: bool = True,
     exclude_at_loan_cap: bool | None = None,
     pool: QuotaPoolKind | None = None,
+    reserve_ok: bool | None = None,
 ) -> str | None:
     """返回排除原因码；通过硬过滤则 None。
 
@@ -412,6 +422,7 @@ def _hard_filter_reason(
     可传 False，只放开人数上限、仍走借用路径打分。
     pool 非空时额外要求该 Quota Pool 仍有 Snapshot Headroom（与 Go
     snapshotQuotaOK 一致），并按池判断主负责人保留量。
+    reserve_ok 由调用方预先算好时传入，避免同一候选重复求值。
     """
     analysis = analyze_burn_rate(cand.snapshot, today)
     if enforce_loan_cap:
@@ -446,12 +457,11 @@ def _hard_filter_reason(
     hours = hours_until_deadline(deadline_at, now)
     if hours <= cfg.min_coverage_hours:
         return "coverage_too_short"
-    reserve_pct = (
-        cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
-    )
-    if not owner_reserve_ok(
-        cand.snapshot, pool, reserve_pct, hours / 24.0, today
-    ):
+    if reserve_ok is None:
+        reserve_ok = owner_reserve_ok(
+            cand.snapshot, pool, effective_reserve_pct(cand, cfg), hours / 24.0, today
+        )
+    if not reserve_ok:
         return "owner_reserve"
     return None
 
@@ -463,6 +473,7 @@ def _pool_view(
     headroom: float,
     surplus: float,
     reserve_ok: bool,
+    reserve_pct: float | None,
     recency_factor: float,
     bound_at: datetime | None,
     now: datetime,
@@ -471,13 +482,14 @@ def _pool_view(
     minutes_since_switch = None
     if bound_at is not None:
         minutes_since_switch = round(
-            max((now - _ensure_aware(bound_at)).total_seconds() / 60.0, 0.0), 1
+            max((now - ensure_aware(bound_at)).total_seconds() / 60.0, 0.0), 1
         )
     return {
         "pool": pool,
         "pool_headroom_pct": headroom,
         "pool_surplus_cents": surplus,
         "owner_reserve_ok": reserve_ok,
+        "reserve_pct": None if reserve_pct is None else round(reserve_pct, 4),
         "minutes_since_switch": minutes_since_switch,
         "recency_factor": recency_factor,
     }
@@ -554,6 +566,20 @@ def _rank_passing_candidates(
     profile = _scoring_profile(cfg, enforce_loan_cap=enforce_loan_cap)
 
     for cand in candidates:
+        deadline_at = lender_deadline_at(
+            cand.snapshot.cycle_end,
+            cand.renews_on,
+            cycle_end_at=cand.snapshot.cycle_end_at,
+        )
+        # 保留量只算一次：硬过滤与打分行共用同一结果
+        reserve_pct = effective_reserve_pct(cand, cfg)
+        reserve_ok = owner_reserve_ok(
+            cand.snapshot,
+            pool,
+            reserve_pct,
+            hours_until_deadline(deadline_at, now) / 24.0,
+            today,
+        )
         reason = _hard_filter_reason(
             cand,
             cfg,
@@ -562,15 +588,11 @@ def _rank_passing_candidates(
             enforce_loan_cap=enforce_loan_cap,
             exclude_at_loan_cap=exclude_at_loan_cap,
             pool=pool,
+            reserve_ok=reserve_ok,
         )
         if reason is not None:
             analysis = analyze_burn_rate(cand.snapshot, today)
             deadline = lender_deadline(cand.snapshot.cycle_end, cand.renews_on)
-            deadline_at = lender_deadline_at(
-                cand.snapshot.cycle_end,
-                cand.renews_on,
-                cycle_end_at=cand.snapshot.cycle_end_at,
-            )
             adjust = cand.score_adjust
             excluded.append(
                 {
@@ -588,6 +610,8 @@ def _rank_passing_candidates(
                     "auto_pct": cand.snapshot.auto_pct,
                     "api_pct": cand.snapshot.api_pct,
                     "score_adjust": None if adjust is None else round(adjust, 4),
+                    "reserve_pct": None if reserve_pct is None else round(reserve_pct, 4),
+                    "owner_reserve_ok": reserve_ok,
                     "pool": pool,
                 }
             )
@@ -595,11 +619,6 @@ def _rank_passing_candidates(
         snapshot = cand.snapshot
         analysis = analyze_burn_rate(snapshot, today)
         deadline = lender_deadline(snapshot.cycle_end, cand.renews_on)
-        deadline_at = lender_deadline_at(
-            snapshot.cycle_end,
-            cand.renews_on,
-            cycle_end_at=snapshot.cycle_end_at,
-        )
         days = (deadline - today).days
         hours = round(hours_until_deadline(deadline_at, now), 1)
         surplus = pool_surplus_cents(snapshot, pool, hours / 24.0, today)
@@ -609,9 +628,6 @@ def _rank_passing_candidates(
             )
         else:
             load_factor = 1.0
-        reserve_pct = (
-            cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
-        )
         rows.append(
             {
                 "candidate": cand,
@@ -635,9 +651,8 @@ def _rank_passing_candidates(
                 "recency": switch_recency_factor(
                     cand.bound_at, cfg.min_switch_minutes, now
                 ),
-                "reserve_ok": owner_reserve_ok(
-                    snapshot, pool, reserve_pct, hours / 24.0, today
-                ),
+                "reserve_pct": reserve_pct,
+                "reserve_ok": reserve_ok,
             }
         )
 
@@ -668,6 +683,7 @@ def _rank_passing_candidates(
             headroom=row["headroom"],
             surplus=row["surplus"],
             reserve_ok=row["reserve_ok"],
+            reserve_pct=row["reserve_pct"],
             recency_factor=row["recency"],
             bound_at=cand.bound_at,
             now=now,

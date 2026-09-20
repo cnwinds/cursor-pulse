@@ -1177,6 +1177,80 @@ def test_recency_penalty_demotes_just_bound_account():
     assert fresh_row["minutes_since_switch"] == 5.0
 
 
+def test_payload_echoes_effective_reserve_pct():
+    """打分 payload 必须回显生效保留量，否则 UI 无法显示已存值。"""
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="a",
+        total_pct=5.0,
+        auto_pct=5.0,
+        api_pct=5.0,
+        used_cents=350,
+        remaining_cents=6650,
+    )
+    ranked = recommend_lenders(
+        [_candidate(snap, account_id="a", reserve_pct=15.0)],
+        TODAY,
+        now=NOW,
+        pool="api",
+    )
+    assert ranked[0]["reserve_pct"] == 15.0
+    assert ranked[0]["owner_reserve_ok"] is True
+
+    # 账号未设置时回显配置默认值
+    cfg = LoanSelectionConfig(owner_reserve_pct=25.0)
+    ranked = recommend_lenders(
+        [_candidate(snap, account_id="a")],
+        TODAY,
+        now=NOW,
+        pool="api",
+        loan_selection=cfg,
+    )
+    assert ranked[0]["reserve_pct"] == 25.0
+
+
+def test_excluded_payload_echoes_reserve_state():
+    heavy = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 1),
+        account_id="heavy",
+        total_pct=26.0,
+        auto_pct=26.0,
+        api_pct=26.0,
+        used_cents=1820,
+        remaining_cents=5180,
+    )
+    board = explain_lender_selection(
+        [_candidate(heavy, account_id="heavy", reserve_pct=20.0)],
+        today=TODAY,
+        now=NOW,
+        pool="api",
+    )
+    excluded = board["excluded"][0]
+    assert excluded["reason"] == "owner_reserve"
+    assert excluded["reserve_pct"] == 20.0
+    assert excluded["owner_reserve_ok"] is False
+
+
+def test_effective_reserve_pct_prefers_account_value():
+    from pulse.tool_center.burn_rate import effective_reserve_pct
+
+    snap = _snapshot(
+        cycle_start=date(2026, 7, 1), cycle_end=date(2026, 8, 1), account_id="a"
+    )
+    cfg = LoanSelectionConfig(owner_reserve_pct=10.0)
+    assert effective_reserve_pct(_candidate(snap, account_id="a"), cfg) == 10.0
+    assert (
+        effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=0.0), cfg)
+        == 0.0
+    )
+    assert (
+        effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=30.0), cfg)
+        == 30.0
+    )
+
+
 def test_recency_penalty_does_not_exclude_last_candidate():
     """驻留窗口只降权不排除，否则池可能无人可用。"""
     only = _snapshot(

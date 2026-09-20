@@ -44,9 +44,11 @@ func resolveExhaustedResetInterval() time.Duration {
 // parseDurationValue accepts a bare integer (interpreted as seconds) or a Go
 // duration string. ok=false when the value is neither.
 //
-// Shared by the duration env resolvers so the "bare seconds" convention is
-// defined once; each caller keeps its own policy for disable tokens and for
-// whether zero is a valid value.
+// Shared by the resolvers that accept the "bare seconds" convention
+// (resolveStickyMinDwell / resolveSessionTTL). resolveExhaustedResetInterval
+// deliberately keeps its own ParseDuration-only parsing: it predates this
+// helper and accepting bare seconds there would silently change
+// PROXY_EXHAUSTED_RESET=30 from "invalid → default 30m" to "30s".
 func parseDurationValue(raw string) (time.Duration, bool) {
 	text := strings.TrimSpace(raw)
 	if text == "" {

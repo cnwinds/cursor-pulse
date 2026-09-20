@@ -134,11 +134,6 @@ def build_noul_question(instructions: str, *, yes: str, no: str) -> dict:
     }
 
 
-def build_score_question(instructions: str, legend: list[str]) -> dict:
-    """``score``：按 legend 定义的刻度打分。"""
-    return {"type": "score", "instructions": instructions, "criteria": legend}
-
-
 class JevClient:
     """OpenRouter Decisions 端点客户端。"""
 

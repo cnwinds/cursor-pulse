@@ -32,6 +32,15 @@
               </div>
               <div class="muted">{{ item.plan_name }} · {{ item.vendor_name }}</div>
             </div>
+            <el-tag
+              v-if="autoPick && autoPick.accountId === item.account_id"
+              size="small"
+              type="warning"
+              class="auto-pick-tag"
+              :title="`Auto Lender 当前首选（${autoPick.byJev ? 'Jev 主判' : '算法分'}，综合分 ${autoPick.score}）`"
+            >
+              Auto 首选
+            </el-tag>
             <el-tag :type="statusTagType(item.status)" size="small">
               {{ statusLabel(item.status) }}
             </el-tag>
@@ -329,6 +338,12 @@ const board = ref<BoardItem[]>([])
 const summaryMap = ref<Record<string, UsageSummary>>({})
 const syncingId = ref<string | null>(null)
 const spendExpanded = ref<Record<string, boolean>>({})
+const autoPick = ref<{
+  accountId: string
+  accountIdentifier: string
+  byJev: boolean
+  score: number
+} | null>(null)
 
 function toggleSpendExpand(accountId: string) {
   spendExpanded.value[accountId] = !spendExpanded.value[accountId]
@@ -493,6 +508,30 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+  void loadAutoPick()
+}
+
+/**
+ * Auto Lender 当前会选中的账号（含 Jev / 算法分来源）。
+ * 与借用发放同源，便于判断「这个号会不会被借出去」。
+ */
+async function loadAutoPick() {
+  try {
+    const res = await client.get('/api/v2/quota-board/recommend', {
+      params: { limit: 1 },
+    })
+    const top = (res.data || [])[0]
+    autoPick.value = top
+      ? {
+          accountId: top.account_id,
+          accountIdentifier: top.account_identifier,
+          byJev: top.picked_by === 'jev',
+          score: top.score,
+        }
+      : null
+  } catch {
+    autoPick.value = null
+  }
 }
 
 function openDailyUsage(item: BoardItem) {
@@ -596,6 +635,10 @@ onMounted(loadAll)
   font-weight: 500;
   color: var(--el-text-color-regular);
   font-size: 14px;
+}
+
+.auto-pick-tag {
+  margin-right: 6px;
 }
 .muted {
   color: var(--el-text-color-secondary);

@@ -19,6 +19,8 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
 3. **Jev 不进请求链路。**
    它跑在 web 侧「计算有序凭证列表」这一既有接缝（`/api/internal/v1/proxy/pool`，Go 每 60s 拉取）以及借用发放 / 定期重评上。候选特征哈希 + TTL 缓存（默认 600s）防抖动并省调用；连续失败触发熔断，冷却期内直接走算法分。
 
+   每次「有决策价值」的决策（Jev 选中了账号，或出现回落原因）都会写一条 `lender_auto_pick` 审计事件，含来源、置信度、回落原因与选中账号。池轮询与预览不写，避免事件表被 60s 轮询刷爆。
+
 4. **人工基础分与主负责人保留量都是账号级字段，两条路径共用。**
    `proxy_score_adjust`（人工分）加在算法综合分上；`proxy_reserve_pct`（保留量）参与硬过滤。此前人工分只影响 Credential Pool 顺序、不影响借用选号，本次统一。
 
@@ -29,6 +31,6 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
 
 - 算法分始终计算：既是保底，也是 UI 对照与回测基线。UI 同时展示算法分、人工分与 Jev 决策，便于判断该相信谁。
 - Jev 明确选出别的账号时，重评不再要求「算法分增益」。算法分是保底而非否决权，否则等于废掉主判。
-- 按池打分需要目标模型。模型未知时退化为 `unknown`，要求 auto 与 api 两个桶都还有 Snapshot Headroom，与 Go `snapshotQuotaOK` 一致。
+- 按池打分需要目标模型。借用选号在模型未知时退化为 `unknown`，要求 auto 与 api 两个桶都还有 Snapshot Headroom，与 Go `snapshotQuotaOK` 一致；代理入池不适用该退化，仍走 CONTEXT.md 的 Credential Pool Intake「任一桶有余量即可入池」。
 - 每桶额度只有百分比、没有绝对额度，`pool_surplus_cents` 是按 `limit_cents` 折算的近似值。候选之间比较时是单调变换，不改变排序；绝对值仅供展示。
 - Jev 的 `state` 按 OpenRouter 参考文档序列化为字符串。若上游改为接受对象，只需调整 `pulse/llm/jev.py::_encode_state`。

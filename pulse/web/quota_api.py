@@ -27,7 +27,11 @@ from pulse.tool_center.burn_rate import (
 )
 from pulse.tool_center.auto_lender import rank_lenders
 from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
-from pulse.tool_center.key_loan_auto import resolve_auto_lender
+from pulse.tool_center.key_loan_auto import (
+    record_auto_lender_decision,
+    resolve_auto_lender,
+)
+from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO, LENDER_MODE_MANUAL
 from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.tool_center.key_loans import (
     KeyLoanError,
@@ -104,7 +108,7 @@ class LoanKeyBody(BaseModel):
     key_name: str | None = None
     delivery_mode: Literal["proxy_alias"] = "proxy_alias"
     # manual: 用 URL 上的 account_id 固定出借账号；auto: 由 Auto Lender 选号
-    lender_mode: Literal["manual", "auto"] = "manual"
+    lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
     model: str | None = None
 
@@ -305,7 +309,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         board = rank_lenders(
             candidates,
             loan_selection=config.tool_center.loan_selection,
-            pool=quota_pool_for_model(model) if model else None,
+            # 模型未知 → unknown：两桶都要有余量（与 Go snapshotQuotaOK 一致）
+            pool=quota_pool_for_model(model),
             today=today,
             exclude_at_loan_cap=False,
             jev=build_jev_client(config),
@@ -464,7 +469,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
-        is_auto = body.lender_mode == "auto"
+        is_auto = body.lender_mode == LENDER_MODE_AUTO
         account = None
         if not is_auto:
             account = repo.get_account(account_id)
@@ -497,6 +502,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 model=body.model,
                 jev=build_jev_client(config),
                 jev_config=config.jev,
+                on_decision=lambda result: record_auto_lender_decision(session, result),
             )
             log_admin_action(
                 session,

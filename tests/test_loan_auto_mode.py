@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from pulse.config import LoanSelectionConfig
 from pulse.llm.jev import JevAnswer, JevDecision
@@ -13,10 +15,13 @@ from pulse.tool_center.auto_lender import (
     reset_auto_lender_state,
 )
 from pulse.tool_center.key_loan_auto import (
+    record_auto_lender_decision,
+    reevaluate_auto_loans,
+)
+from pulse.tool_center.key_loan_delivery import (
     LENDER_MODE_AUTO,
     LENDER_MODE_MANUAL,
     VALID_LENDER_MODES,
-    reevaluate_auto_loans,
 )
 from pulse.tool_center.key_loan_store import KeyLoanService
 from tests.conftest import make_team_repo, make_test_session_factory
@@ -174,7 +179,7 @@ def _no_reassign(*args, **kwargs):
 def test_lender_mode_constants():
     assert LENDER_MODE_MANUAL == "manual"
     assert LENDER_MODE_AUTO == "auto"
-    assert VALID_LENDER_MODES == ("manual", "auto")
+    assert VALID_LENDER_MODES == frozenset({"manual", "auto"})
 
 
 def test_reevaluate_skips_when_auto_mode_off(env):
@@ -415,6 +420,120 @@ def test_reevaluate_groups_by_borrower_without_losing_switches(env, monkeypatch)
     assert sorted(switched) == sorted([first.id, second.id])
     # 两笔同借用人 → 候选只构建一次（分组复用）
     assert build_calls["n"] == 1
+
+
+def test_audit_event_recorded_for_jev_pick(env, monkeypatch):
+    """Auto Lender 决策必须落审计事件（lender_auto_pick）。"""
+    from pulse.storage.models import ProxyEvent
+
+    session = env["session"]
+    loan = _make_loan(
+        session, env, source_account_id="acc-a", bound_at=NOW - timedelta(hours=2)
+    )
+    session.commit()
+
+    monkeypatch.setattr(
+        "pulse.tool_center.key_loan_issue.reassign_loan_source",
+        lambda session_, encryption_key, **kwargs: {
+            "loan_id": loan.id,
+            "old_source_account_identifier": "acc-a@x.com",
+            "source_account_identifier": "acc-b@x.com",
+            "old_remote_revoked": False,
+        },
+    )
+    monkeypatch.setattr(
+        "pulse.tool_center.key_loan_issue.finalize_reassign_old_remote_revoke",
+        lambda *a, **k: False,
+    )
+
+    jev = FakeJev(decision=_pick("acc-b"))
+    stats = reevaluate_auto_loans(
+        session,
+        "enc-key",
+        team_id=env["team"].id,
+        loan_selection=_auto_cfg(auto_switch_margin=0.0),
+        jev=jev,
+        on_decision=lambda result: record_auto_lender_decision(session, result),
+        now=NOW,
+    )
+    assert stats["switched"] == 1
+
+    events = list(
+        session.scalars(
+            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
+        )
+    )
+    assert len(events) == 1
+    detail = json.loads(events[0].detail)
+    assert detail["picked_by"] == "jev"
+    assert detail["account_id"] == "acc-b"
+    assert detail["fallback_reason"] is None
+
+
+def test_audit_event_skipped_when_auto_mode_off(env):
+    from pulse.storage.models import ProxyEvent
+
+    session = env["session"]
+    _make_loan(session, env, source_account_id="acc-a", bound_at=NOW - timedelta(hours=3))
+    session.commit()
+
+    reevaluate_auto_loans(
+        session,
+        "enc-key",
+        team_id=env["team"].id,
+        loan_selection=LoanSelectionConfig(auto_mode=False),
+        on_decision=lambda result: record_auto_lender_decision(session, result),
+        now=NOW,
+    )
+    session.commit()
+    events = list(
+        session.scalars(
+            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
+        )
+    )
+    assert events == []
+
+
+def test_resolve_auto_lender_requires_both_buckets_when_model_unknown(env):
+    """模型未知 → Quota Pool unknown：只有一桶有余量的账号不能借。"""
+    from pulse.storage.models import AccountQuotaSnapshot
+
+    session = env["session"]
+    session.add(
+        AccountQuotaSnapshot(
+            account_id="acc-a",
+            captured_at=NOW,
+            cycle_start=date(2026, 7, 1),
+            cycle_end=date(2026, 8, 1),
+            limit_cents=7000,
+            used_cents=1400,
+            remaining_cents=5600,
+            total_pct=20.0,
+            auto_pct=100.0,  # auto 桶已满
+            api_pct=20.0,
+        )
+    )
+    session.commit()
+
+    from pulse.tool_center.key_loan_auto import resolve_auto_lender
+
+    resolved = resolve_auto_lender(
+        session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW
+    )
+    assert [row["account_id"] for row in resolved["ranked"]] == ["acc-b"]
+    assert {e["account_id"]: e["reason"] for e in resolved["excluded"]} == {
+        "acc-a": "exhausted"
+    }
+
+    # 明确指定 api 桶时该账号可用
+    resolved_api = resolve_auto_lender(
+        session,
+        env["team"].id,
+        borrower_member_id=env["borrower"].id,
+        model="claude-4-sonnet",
+        now=NOW,
+    )
+    assert "acc-a" in [row["account_id"] for row in resolved_api["ranked"]]
 
 
 def test_reevaluate_uses_jev_pick_for_auto_loans(env, monkeypatch):

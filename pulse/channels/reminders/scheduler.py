@@ -81,7 +81,10 @@ class SyncSchedulerService:
 
             from pulse.llm.jev import build_jev_client
             from pulse.tenant.service import resolve_team
-            from pulse.tool_center.key_loan_auto import reevaluate_auto_loans
+            from pulse.tool_center.key_loan_auto import (
+                record_auto_lender_decision,
+                reevaluate_auto_loans,
+            )
 
             team = resolve_team(session, runtime_config)
             stats = reevaluate_auto_loans(
@@ -91,6 +94,7 @@ class SyncSchedulerService:
                 loan_selection=loan_selection,
                 jev=build_jev_client(runtime_config),
                 jev_config=runtime_config.jev,
+                on_decision=lambda result: record_auto_lender_decision(session, result),
             )
             return stats["switched"]
         except Exception:

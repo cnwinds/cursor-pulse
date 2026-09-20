@@ -9,6 +9,7 @@ from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_CURSOR_DIRECT,
     DELIVERY_PROXY_ALIAS,
+    LENDER_MODE_MANUAL,
     KeyLoanError,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
@@ -95,7 +96,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "note": loan.note,
                 "delivery_mode": delivery_mode,
                 "key_hint": key_hint,
-                "lender_mode": getattr(loan, "lender_mode", None) or "manual",
+                "lender_mode": getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL,
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),

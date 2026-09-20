@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
+from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.util.datetime_fmt import serialize_datetime
 from pulse.storage.models import (
@@ -45,7 +46,12 @@ class ToggleProxyEnabledBody(BaseModel):
     proxy_enabled: bool
 
 
-class SetProxyScoreAdjustBody(BaseModel):
+class SetProxyRankingTuningBody(BaseModel):
+    """账号在 Credential Pool 排名中的手工调参（人工分 + 主负责人保留量）。
+
+    只更新显式传入的字段：`score_adjust` 与 `reserve_pct` 互不覆盖。
+    """
+
     score_adjust: float | None = Field(default=None, ge=-10, le=10, allow_inf_nan=False)
     # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比；None = 不修改
     reserve_pct: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
@@ -361,12 +367,19 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         "/api/v2/proxy-pool/ranking",
         dependencies=[Depends(require_capability("proxy:read"))],
     )
-    def pool_ranking(session: Session = Depends(get_db)):
+    def pool_ranking(
+        model: str | None = Query(
+            default=None,
+            description="目标模型；给出时按该模型所属 Quota Pool（auto/api）打分",
+        ),
+        session: Session = Depends(get_db),
+    ):
         """当前代理池打分表：入选排序 + 硬过滤排除项 + Auto Lender 决策。"""
         return proxy_service.list_pool_ranking_board(
             session,
             loan_selection=config.tool_center.loan_selection,
             jev=build_jev_client(config),
+            quota_pool=quota_pool_for_model(model) if model else None,
         )
 
     @app.post(
@@ -400,9 +413,10 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
     )
     def set_pool_account_score(
         account_id: str,
-        body: SetProxyScoreAdjustBody,
+        body: SetProxyRankingTuningBody,
         session: Session = Depends(get_db),
     ):
+        """调整账号在 Credential Pool 排名中的手工参数（人工分 / 主负责人保留量）。"""
         account = session.get(AiAccount, account_id)
         if account is None or account.deleted_at is not None:
             raise HTTPException(status_code=404, detail="account 不存在")

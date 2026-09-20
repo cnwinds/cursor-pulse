@@ -5,6 +5,12 @@ DELIVERY_CURSOR_DIRECT = "cursor_direct"
 DELIVERY_PROXY_ALIAS = "proxy_alias"
 VALID_DELIVERY_MODES = frozenset({DELIVERY_CURSOR_DIRECT, DELIVERY_PROXY_ALIAS})
 
+# 出借账号选择方式。manual = 发放时固定；auto = 由 Auto Lender 选号并定期重评。
+# 单一真相来源；DDL 默认值（models.py / migrate.py）按存储层惯例内联字面量。
+LENDER_MODE_MANUAL = "manual"
+LENDER_MODE_AUTO = "auto"
+VALID_LENDER_MODES = frozenset({LENDER_MODE_MANUAL, LENDER_MODE_AUTO})
+
 
 class KeyLoanError(ValueError):
     pass

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, KeyLoan
-from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_MANUAL
 from pulse.tool_center.key_loan_state import KeyLoanStateMixin
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
@@ -45,7 +45,7 @@ class KeyLoanService(KeyLoanStateMixin):
         alias_key_hash: str | None = None,
         alias_key_hint: str | None = None,
         alias_encrypted_key: str | None = None,
-        lender_mode: str = "manual",
+        lender_mode: str = LENDER_MODE_MANUAL,
         source_bound_at: datetime | None = None,
     ) -> KeyLoan:
         loan = KeyLoan(

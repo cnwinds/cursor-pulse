@@ -492,6 +492,7 @@ class KeyLoan(Base):
     alias_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
     alias_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # manual: 管理员/自助选定的固定出借账号；auto: 由 Auto Lender 选号并定期重评
+    # 取值见 pulse.tool_center.key_loan_delivery；存储层不反向依赖，故内联默认值
     lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 当前出借账号的绑定时刻；auto 模式的 30 分钟驻留窗口以此为基准
     source_bound_at: Mapped[datetime | None] = mapped_column(

@@ -16,12 +16,15 @@
 ### 变更
 
 - **人工分统一两条路径**：`proxy_score_adjust` 此前只影响 Credential Pool 顺序、不影响借 Key 出借排序（CONTEXT.md 明确写过），现在两条路径共用同一字段与语义。
-- **借用列表**：新增 `lender_mode` / `source_bound_at` 字段；打分表新增「主负责人保留」列与 Jev 决策提示。
+- **借用列表**：新增 `lender_mode` / `source_bound_at` 字段；打分表新增「主负责人保留」列与 Jev 决策提示；额度看板新增「Auto 首选」标记；打分表支持按目标模型（`?model=`）查看该桶下的顺序。
 - **配置**：新增 `LoanSelectionConfig` 的 `min_switch_minutes` / `recency_penalty` / `owner_reserve_pct` / `auto_mode` / `auto_top_n` / `auto_min_confidence` / `auto_min_margin` / `auto_cache_seconds` / `auto_switch_margin`，以及 `JevConfig`。
 - **迁移**：`key_loans` 增 `lender_mode`（默认 `manual`）与 `source_bound_at`（存量记录回填为 `created_at`），`ai_accounts` 增 `proxy_reserve_pct`。
 
 ### 修复
 
+- **打分表不显示主负责人保留量**：`/proxy-pool/ranking` 的 payload 未回传生效的 `reserve_pct`，前端「主负责人保留」列永远为空。改为随打分结果一并回显（含排除项）。
+- **Auto Lender 决策未落审计**：`on_decision` 钩子此前只有测试使用，生产路径没有接线。管理员发放与定期重评现在都会写 `lender_auto_pick` 事件（含来源、置信度、回落原因、选中账号）。
+- **模型未知时的按池语义**：借用选号在未指定目标模型时改传 Quota Pool `unknown`（要求 auto 与 api 两桶都有余量），与 Go `snapshotQuotaOK` 一致；代理入池仍保持 CONTEXT.md 的「任一桶有余量」规则。
 - **打分表两个微调互相清空**：`/proxy-pool/accounts/{id}/score` 把「未传 `score_adjust`」当成显式清空，保存「主负责人保留」会静默抹掉已有的人工分。改为按 `model_fields_set` 只更新显式传入的字段。
 - **auto 模式选号误报「账号不存在」**：`loan-key` 在解析 `lender_mode` 之前先用 URL 上的 `account_id` 校验账号，前端未预选账号时发出的占位 id 会直接 404。auto 模式跳过该校验。
 - **换绑/发放失败残留远端 Key**：远端 Key 已创建但本地事务失败时，只回滚数据库，Cursor 侧那条 Key 因无本地记录而无法回收。改为失败即 best-effort 吊销。
