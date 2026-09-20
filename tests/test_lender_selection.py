@@ -26,7 +26,11 @@ from pulse.tool_center.key_loans import (
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from tests.conftest import make_team_repo, mock_cursor_key_exchange
+from tests.conftest import (
+    ensure_synced_primary_credential,
+    make_team_repo,
+    mock_cursor_key_exchange,
+)
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
@@ -55,6 +59,8 @@ def lender_env():
                 total_pct=14.0,
             )
         )
+        # 出借候选要求账号同步正常
+        ensure_synced_primary_credential(session, acc, member_id=member.id)
     repo.commit()
     yield {
         "session": session,
@@ -133,6 +139,53 @@ def test_recommend_respects_excluded_account_ids(lender_env):
     )
     assert result is not None
     assert result["account_id"] == a.id
+
+
+def test_build_candidates_excludes_accounts_not_syncing_normally(lender_env):
+    """出借候选只收同步正常的账号：没有正常同步的账号不能放进借出列表。"""
+    from pulse.storage.models import AiAccountCredential
+
+    env = lender_env
+    session = env["session"]
+    creds = {
+        cred.account_id: cred
+        for cred in session.scalars(select(AiAccountCredential)).all()
+        if cred.key_role == "primary"
+    }
+    blocked, healthy = env["accounts"][0], env["accounts"][1]
+
+    # 1) 同步失败
+    creds[blocked.id].last_sync_status = "failed"
+    session.flush()
+    ids = {c.account_id for c in build_lender_candidates(session, env["repo"].team_id)}
+    assert blocked.id not in ids
+    assert healthy.id in ids
+
+    # 2) 从未同步成功（never / unsynced）
+    creds[blocked.id].last_sync_status = "never"
+    session.flush()
+    ids = {c.account_id for c in build_lender_candidates(session, env["repo"].team_id)}
+    assert blocked.id not in ids
+
+    # 3) 连续重试达到阈值
+    creds[blocked.id].last_sync_status = "success"
+    creds[blocked.id].retry_count = 3
+    session.flush()
+    ids = {c.account_id for c in build_lender_candidates(session, env["repo"].team_id)}
+    assert blocked.id not in ids
+
+    # 4) Key 被吊销
+    creds[blocked.id].retry_count = 0
+    creds[blocked.id].status = "revoked"
+    session.flush()
+    ids = {c.account_id for c in build_lender_candidates(session, env["repo"].team_id)}
+    assert blocked.id not in ids
+
+    # 5) 恢复同步后重新入列
+    creds[blocked.id].status = "active"
+    session.flush()
+    ids = {c.account_id for c in build_lender_candidates(session, env["repo"].team_id)}
+    assert blocked.id in ids
 
 
 def test_recommend_returns_none_when_all_accounts_full(lender_env):

@@ -418,6 +418,8 @@ interface QuotaBoardItem {
   status?: string | null
   has_snapshot?: boolean
   active_loans?: number | null
+  /** 同步阻断原因（no_credential/key_revoked/sync_failed/unsynced）；空表示同步正常 */
+  sync_blocker?: string | null
 }
 
 function lenderOptionLabel(r: RecommendItem) {
@@ -454,11 +456,13 @@ function buildLoanSourceOptions(
       active_loans: r.active_loans ?? 0,
     })
   }
+  // 同步不正常的账号不进候选：既打不了分，也统计不到借用量
   const fillers = board
     .filter(
       (row) =>
         row.account_id &&
         !seen.has(row.account_id) &&
+        !row.sync_blocker &&
         row.has_snapshot !== false &&
         row.status !== 'exhausted' &&
         row.status !== 'unknown',

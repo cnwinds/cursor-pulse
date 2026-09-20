@@ -48,6 +48,11 @@ from pulse.tool_center.key_loans import (
 )
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.tool_center.sync_health import (
+    SYNC_BLOCKER_STATUSES,
+    credential_sync_blocker,
+    primary_credentials_by_account,
+)
 from pulse.tool_center.usage_summary_pick import attach_board_usage_summaries
 from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
@@ -56,47 +61,8 @@ from pulse.web.permissions import has_permission
 
 logger = logging.getLogger(__name__)
 
-ABNORMAL_SYNC_RETRY_COUNT = 3
-_UNSYNCABLE_STATUSES = frozenset(
-    {
-        "no_credential",
-        "key_revoked",
-        "sync_failed",
-        "unsynced",
-        "unknown",
-    }
-)
+_UNSYNCABLE_STATUSES = SYNC_BLOCKER_STATUSES | {"unknown"}
 
-
-def _board_primary_credentials(
-    session: Session, account_ids: list[str]
-) -> dict[str, AiAccountCredential]:
-    if not account_ids:
-        return {}
-    rows = session.scalars(
-        select(AiAccountCredential).where(
-            AiAccountCredential.account_id.in_(account_ids),
-            AiAccountCredential.key_role == "primary",
-        )
-    ).all()
-    picked: dict[str, AiAccountCredential] = {}
-    for row in rows:
-        existing = picked.get(row.account_id)
-        if existing is None or (existing.status != "active" and row.status == "active"):
-            picked[row.account_id] = row
-    return picked
-
-
-def _sync_blocker(cred: AiAccountCredential | None) -> str | None:
-    if cred is None:
-        return "no_credential"
-    if cred.status != "active":
-        return "key_revoked"
-    if cred.last_sync_status == "failed" or int(cred.retry_count or 0) >= ABNORMAL_SYNC_RETRY_COUNT:
-        return "sync_failed"
-    if cred.last_sync_status != "success":
-        return "unsynced"
-    return None
 
 
 class LoanKeyBody(BaseModel):
@@ -165,6 +131,7 @@ def _board_item(
         "resets_on_source": account.resets_on_source,
         "has_snapshot": snapshot is not None,
         "active_loans": active_loans,
+        "sync_blocker": sync_blocker,
     }
     if not snapshot:
         item = {
@@ -245,7 +212,7 @@ def build_quota_board_items(
         ).all()
         member_names = {m.id: m.display_name for m in members}
     loan_counts = active_loan_counts_by_account(session, team_id)
-    creds = _board_primary_credentials(session, [account.id for account in accounts])
+    creds = primary_credentials_by_account(session, [account.id for account in accounts])
     items = []
     for account in accounts:
         snapshot = snapshots.get(account.id)
@@ -256,7 +223,7 @@ def build_quota_board_items(
                 today,
                 member_names=member_names,
                 active_loans=loan_counts.get(account.id, 0),
-                sync_blocker=_sync_blocker(creds.get(account.id)),
+                sync_blocker=credential_sync_blocker(creds.get(account.id)),
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))

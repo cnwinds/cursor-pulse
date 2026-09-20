@@ -96,6 +96,9 @@ def env():
                 credential_type="api_key",
                 encrypted_value="x",
                 key_hint="x",
+                key_role="primary",
+                # 出借候选要求账号同步正常
+                last_sync_status="success",
                 bound_by_member_id=borrower.id,
             )
         )

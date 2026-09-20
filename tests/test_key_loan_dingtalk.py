@@ -23,7 +23,11 @@ from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.key_loans import KeyLoanError, KeyLoanService, issue_loan_key, request_self_service_loan
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from tests.conftest import make_team_repo, mock_cursor_key_exchange
+from tests.conftest import (
+    ensure_synced_primary_credential,
+    make_team_repo,
+    mock_cursor_key_exchange,
+)
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 
@@ -120,6 +124,10 @@ def test_request_self_service_loan_success(mock_client_cls, loan_bot_env):
         account_id=env["lender_account"].id,
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
+    )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
     )
     session.flush()
 
@@ -239,6 +247,10 @@ def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
     )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
+    )
     session.flush()
 
     result = _invoke(
@@ -280,6 +292,10 @@ def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
     )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
+    )
     session.flush()
 
     result = _invoke(
@@ -318,6 +334,10 @@ def test_dingtalk_self_loan_read_includes_key(mock_client_cls, loan_bot_env):
         account_id=env["lender_account"].id,
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
+    )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
     )
     session.flush()
 
@@ -374,6 +394,10 @@ def test_dingtalk_return_key_command(mock_client_cls, loan_bot_env):
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
     )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
+    )
     session.flush()
 
     request_self_service_loan(
@@ -418,6 +442,10 @@ def test_self_service_recommend_respects_configured_cap(mock_client_cls, loan_bo
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
     )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
+    )
     session.flush()
 
     # 先占掉出借账号在 cap=1 下的唯一名额
@@ -461,6 +489,10 @@ def test_self_service_rejects_second_active_loan(mock_client_cls, loan_bot_env):
         account_id=env["lender_account"].id,
         api_key="crsr_primary_key_for_lender_test_abcdefghij",
         member_id=env["admin"].id,
+    )
+    # 出借候选要求出借账号同步正常
+    ensure_synced_primary_credential(
+        session, env["lender_account"], member_id=env["admin"].id
     )
     session.flush()
 

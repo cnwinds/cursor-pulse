@@ -10,6 +10,7 @@ from pulse.storage.models import AiAccount, KeyLoan, Member
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
+from pulse.tool_center.sync_health import sync_blockers_by_account
 from pulse.util.datetime_fmt import ensure_aware
 
 
@@ -94,7 +95,11 @@ def build_lender_candidates(
     *,
     exclude_account_ids: set[str] | None = None,
 ) -> list[LenderCandidate]:
-    """组装出借候选：最新快照 + renews_on + 当前在借人数 + 人工分 + 驻留。"""
+    """组装出借候选：最新快照 + renews_on + 当前在借人数 + 人工分 + 驻留。
+
+    同步不正常的账号不进候选（见 :mod:`pulse.tool_center.sync_health`）：这类账号
+    打不了分、也统计不到借用量，配额看板已把它们标成对应的 status，这里整条剔除。
+    """
     exclude_account_ids = exclude_account_ids or set()
     repo = ToolCenterRepository(session, team_id)
     accounts = [
@@ -105,6 +110,8 @@ def build_lender_candidates(
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     loan_counts = active_loan_counts_by_account(session, team_id)
     accounts = [account for account in accounts if snapshots.get(account.id)]
+    sync_blockers = sync_blockers_by_account(session, [account.id for account in accounts])
+    accounts = [account for account in accounts if account.id not in sync_blockers]
     bound_at_by_account = last_bound_at_by_account(
         session, [account.id for account in accounts]
     )
