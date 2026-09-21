@@ -3,10 +3,19 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import yaml
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 
 from assistant_platform.skills.models import SkillCard
 from assistant_platform.skills.registry import SkillRegistry
+from assistant_platform.util.git_file import (
+    GitFileError,
+    find_repo_root,
+    list_file_history,
+    merge_base,
+    read_file_at_ref,
+    read_worktree_file,
+)
+from assistant_platform.util.three_way_merge import build_three_way_merge_view, merge_view_to_json
 
 _REGISTRY_ERRORS = (OSError, yaml.YAMLError, ValueError, KeyError)
 _DOCS_PREFIX = "assistant_platform/skills/docs/"
@@ -21,6 +30,22 @@ def _get_registry() -> SkillRegistry:
 
 def _rel_path(skill_id: str) -> str:
     return f"{_DOCS_PREFIX}{skill_id}.md"
+
+
+def _repo_for_skills() -> Path:
+    registry = _get_registry()
+    root = find_repo_root(registry._root)
+    if root is None:
+        raise HTTPException(status_code=503, detail="未找到 git 仓库，无法读取历史版本")
+    return root
+
+
+def _ensure_skill(skill_id: str) -> SkillCard:
+    registry = _get_registry()
+    card = next((item for item in registry.list_all_cards() if item.skill_id == skill_id), None)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return card
 
 
 def _card_json(card: SkillCard) -> dict[str, Any]:
@@ -69,6 +94,89 @@ def register_skills_admin_routes(
             return {"topics": _load_help_topics(registry)}
         except _REGISTRY_ERRORS as exc:
             raise HTTPException(status_code=500, detail=f"无法读取帮助主题: {exc}") from exc
+
+    @app.get(
+        "/api/assistant/v1/skills/{skill_id:path}/file-history",
+        dependencies=[Depends(require_service_token)],
+    )
+    def skill_file_history(skill_id: str, limit: int = Query(default=40, ge=1, le=200)):
+        _ensure_skill(skill_id)
+        rel = _rel_path(skill_id)
+        repo_root = _repo_for_skills()
+        try:
+            revisions = list_file_history(repo_root, rel, limit=limit)
+        except GitFileError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        working_label = "工作区（当前）"
+        items = [
+            {
+                "ref": "WORKING",
+                "label": working_label,
+                "committed_at": None,
+                "subject": working_label,
+            }
+        ]
+        for row in revisions:
+            short = row.commit[:8]
+            items.append(
+                {
+                    "ref": row.commit,
+                    "label": f"{short} · {row.subject}",
+                    "committed_at": row.committed_at,
+                    "subject": row.subject,
+                }
+            )
+        return {"rel_path": rel, "items": items}
+
+    @app.get(
+        "/api/assistant/v1/skills/{skill_id:path}/file-compare",
+        dependencies=[Depends(require_service_token)],
+    )
+    def skill_file_compare(
+        skill_id: str,
+        left_ref: str = Query(..., min_length=1),
+        right_ref: str = Query(..., min_length=1),
+    ):
+        _ensure_skill(skill_id)
+        rel = _rel_path(skill_id)
+        repo_root = _repo_for_skills()
+
+        def _read_ref(ref: str) -> str:
+            if ref == "WORKING":
+                return read_worktree_file(repo_root, rel)
+            return read_file_at_ref(repo_root, rel, ref)
+
+        try:
+            left_text = _read_ref(left_ref)
+            right_text = _read_ref(right_ref)
+            if left_ref == "WORKING" or right_ref == "WORKING":
+                base_ref = merge_base(
+                    repo_root,
+                    left_ref if left_ref != "WORKING" else "HEAD",
+                    right_ref if right_ref != "WORKING" else "HEAD",
+                )
+            else:
+                base_ref = merge_base(repo_root, left_ref, right_ref)
+            base_text = read_file_at_ref(repo_root, rel, base_ref)
+        except GitFileError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def _label(ref: str) -> str:
+            if ref == "WORKING":
+                return "工作区（当前）"
+            return f"{ref[:8]}…"
+
+        view = build_three_way_merge_view(
+            left_text=left_text,
+            base_text=base_text,
+            right_text=right_text,
+            left_label=_label(left_ref),
+            right_label=_label(right_ref),
+        )
+        payload = merge_view_to_json(view)
+        payload["rel_path"] = rel
+        payload["base_ref"] = base_ref
+        return payload
 
     @app.get(
         "/api/assistant/v1/skills/{skill_id:path}",

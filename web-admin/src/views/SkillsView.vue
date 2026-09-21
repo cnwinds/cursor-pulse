@@ -53,6 +53,7 @@
             <div class="file-content">
               <div class="file-content-header">
                 <code>{{ selectedSkill.rel_path }}</code>
+                <el-button size="small" @click="openHistoryDialog">历史版本</el-button>
               </div>
 
               <div v-if="parsedDoc.meta.audience?.length || parsedDoc.meta.when_to_use?.length" class="file-meta">
@@ -80,6 +81,57 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="historyDialogOpen" title="历史版本" width="720px" @open="loadFileHistory">
+      <p class="history-hint">选择两个版本进行对比；可合并处标绿并自动填入结果，冲突标红可手工编辑。</p>
+      <el-table
+        v-loading="historyLoading"
+        :data="historyItems"
+        stripe
+        max-height="360"
+        @selection-change="onHistorySelectionChange"
+      >
+        <el-table-column type="selection" width="48" />
+        <el-table-column prop="label" label="版本" min-width="280" />
+        <el-table-column prop="committed_at" label="时间" width="200">
+          <template #default="{ row }">
+            {{ row.committed_at ? formatChinaTime(row.committed_at) : '—' }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="historyDialogOpen = false">关闭</el-button>
+        <el-button
+          type="primary"
+          :disabled="historySelection.length !== 2"
+          :loading="compareLoading"
+          @click="openCompareDialog"
+        >
+          对比文件
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="compareDialogOpen"
+      :title="`对比 · ${selectedSkill?.skill_id || ''}`"
+      width="min(96vw, 1280px)"
+      class="compare-dialog"
+      destroy-on-close
+    >
+      <ThreeWayMergeView
+        v-if="comparePayload"
+        :left-label="comparePayload.left_label"
+        :right-label="comparePayload.right_label"
+        :left-lines="comparePayload.left_lines"
+        :right-lines="comparePayload.right_lines"
+        :result-text="comparePayload.result_text"
+        :change-count="comparePayload.change_count"
+        :conflict-count="comparePayload.conflict_count"
+        @cancel="compareDialogOpen = false"
+        @apply="onCompareApply"
+      />
+    </el-dialog>
   </div>
 </template>
 
@@ -87,6 +139,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import client from '@/api/client'
+import ThreeWayMergeView, { type MergeLineDto } from '@/components/ThreeWayMergeView.vue'
+import { formatChinaTime } from '@/utils/time'
 import { renderMarkdown } from '@/utils/markdown'
 
 interface SkillCard {
@@ -116,6 +170,31 @@ const loading = ref(false)
 const skills = ref<SkillCard[]>([])
 const selectedSkillId = ref('')
 const selectedSkill = ref<SkillDetail | null>(null)
+
+interface HistoryItem {
+  ref: string
+  label: string
+  committed_at: string | null
+  subject: string
+}
+
+interface ComparePayload {
+  left_label: string
+  right_label: string
+  left_lines: MergeLineDto[]
+  right_lines: MergeLineDto[]
+  result_text: string
+  change_count: number
+  conflict_count: number
+}
+
+const historyDialogOpen = ref(false)
+const compareDialogOpen = ref(false)
+const historyLoading = ref(false)
+const compareLoading = ref(false)
+const historyItems = ref<HistoryItem[]>([])
+const historySelection = ref<HistoryItem[]>([])
+const comparePayload = ref<ComparePayload | null>(null)
 
 const parsedDoc = computed(() => parseSkillMarkdown(selectedSkill.value?.markdown || ''))
 
@@ -190,6 +269,60 @@ async function selectSkill(skill: SkillCard | undefined) {
   }
 }
 
+function openHistoryDialog() {
+  if (!selectedSkill.value) return
+  historySelection.value = []
+  historyDialogOpen.value = true
+}
+
+function onHistorySelectionChange(rows: HistoryItem[]) {
+  historySelection.value = rows.slice(-2)
+}
+
+async function loadFileHistory() {
+  if (!selectedSkill.value) return
+  historyLoading.value = true
+  try {
+    const { data } = await client.get<{ items: HistoryItem[] }>(
+      `/api/v2/assistant/skills/${selectedSkill.value.skill_id}/file-history`,
+    )
+    historyItems.value = data.items || []
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '加载历史版本失败'))
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function openCompareDialog() {
+  if (!selectedSkill.value || historySelection.value.length !== 2) return
+  const [left, right] = historySelection.value
+  compareLoading.value = true
+  try {
+    const { data } = await client.get<ComparePayload>(
+      `/api/v2/assistant/skills/${selectedSkill.value.skill_id}/file-compare`,
+      { params: { left_ref: left.ref, right_ref: right.ref } },
+    )
+    comparePayload.value = data
+    historyDialogOpen.value = false
+    compareDialogOpen.value = true
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '对比失败'))
+  } finally {
+    compareLoading.value = false
+  }
+}
+
+async function onCompareApply(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('合并结果已复制到剪贴板（请在仓库中保存）')
+  } catch {
+    ElMessage.warning('无法写入剪贴板，请从结果区手工复制')
+  }
+  compareDialogOpen.value = false
+}
+
 async function loadSkills() {
   loading.value = true
   try {
@@ -245,7 +378,17 @@ onMounted(loadSkills)
   min-width: 0;
 }
 .file-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
+}
+.history-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
 }
 .file-content-header code {
   color: #64748b;

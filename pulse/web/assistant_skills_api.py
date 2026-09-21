@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query
 
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client
@@ -46,6 +46,7 @@ def _proxy_assistant(
     *,
     user: PortalUser,
     path: str,
+    params: dict[str, Any] | None = None,
 ) -> Any:
     _ensure_mirror_config(config)
     mirror = config.assistant_mirror
@@ -56,6 +57,7 @@ def _proxy_assistant(
                 "GET",
                 url,
                 headers=_assistant_headers(config, user),
+                params=params,
             )
     except httpx.RequestError as exc:
         raise HTTPException(
@@ -127,4 +129,35 @@ def register_assistant_skills_routes(
             config,
             user=user,
             path=f"/api/assistant/v1/skills/{skill_id}",
+        )
+
+    @app.get(
+        "/api/v2/assistant/skills/{skill_id:path}/file-history",
+        dependencies=[Depends(require_capability("assistant:skills:read"))],
+    )
+    def assistant_skills_file_history(
+        skill_id: str,
+        user: PortalUser = Depends(require_capability("assistant:skills:read")),
+    ):
+        return _proxy_assistant(
+            config,
+            user=user,
+            path=f"/api/assistant/v1/skills/{skill_id}/file-history",
+        )
+
+    @app.get(
+        "/api/v2/assistant/skills/{skill_id:path}/file-compare",
+        dependencies=[Depends(require_capability("assistant:skills:read"))],
+    )
+    def assistant_skills_file_compare(
+        skill_id: str,
+        left_ref: str = Query(..., min_length=1),
+        right_ref: str = Query(..., min_length=1),
+        user: PortalUser = Depends(require_capability("assistant:skills:read")),
+    ):
+        return _proxy_assistant(
+            config,
+            user=user,
+            path=f"/api/assistant/v1/skills/{skill_id}/file-compare",
+            params={"left_ref": left_ref, "right_ref": right_ref},
         )
