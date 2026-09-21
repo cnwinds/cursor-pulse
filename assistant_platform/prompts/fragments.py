@@ -16,7 +16,6 @@ LEGACY_PRECEPTS_MARKERS: tuple[str, ...] = (
 
 # v2-style precepts that duplicated platform business rules (should not appear in Studio).
 BUSINESS_RULE_PRECEPTS_MARKERS: tuple[str, ...] = (
-    "戒律：",
     "usage_query",
     "usage_self_read",
     "knowledge_tip_create",
