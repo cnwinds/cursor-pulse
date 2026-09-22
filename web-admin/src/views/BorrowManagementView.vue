@@ -4,7 +4,7 @@
       <div>
         <h2>借用管理</h2>
         <p class="desc">
-          统一管理 Key 借用、账号入池与选号打分。成员通过「自动分配」获得池轮换 Key（pka_）；指定账号则锁定单号。
+          统一管理 Key 借用、账号入池、选号打分与 Jev 决策。成员通过「自动分配」获得池轮换 Key（pka_）；指定账号则锁定单号。
         </p>
       </div>
     </header>
@@ -22,6 +22,9 @@
       <el-tab-pane v-if="canRules" label="选号规则" name="rules" lazy>
         <PoolSelectionRulesPanel />
       </el-tab-pane>
+      <el-tab-pane v-if="canRules" label="Jev 决策" name="jev" lazy>
+        <PoolJevSettingsPanel />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -34,6 +37,7 @@ import LoansView from '@/views/LoansView.vue'
 import PoolAccountsPanel from '@/components/borrow/PoolAccountsPanel.vue'
 import PoolRankingPanel from '@/components/borrow/PoolRankingPanel.vue'
 import PoolSelectionRulesPanel from '@/components/borrow/PoolSelectionRulesPanel.vue'
+import PoolJevSettingsPanel from '@/components/borrow/PoolJevSettingsPanel.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -46,7 +50,7 @@ const canRules = computed(
 )
 
 const tab = ref('loans')
-const VALID_TABS = new Set(['loans', 'pool', 'ranking', 'rules'])
+const VALID_TABS = new Set(['loans', 'pool', 'ranking', 'rules', 'jev'])
 
 function defaultTab(): string {
   if (canLoans.value) return 'loans'
@@ -65,7 +69,7 @@ function syncTabFromRoute() {
       tab.value = defaultTab()
       return
     }
-    if (q === 'rules' && !canRules.value) {
+    if ((q === 'rules' || q === 'jev') && !canRules.value) {
       tab.value = defaultTab()
       return
     }

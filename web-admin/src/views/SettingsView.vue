@@ -412,18 +412,6 @@ const integrationRows = computed<SettingRow[]>(() => [
     process: '团队设置',
     editable: true,
   },
-  {
-    id: 'jev',
-    name: 'Jev 决策模型',
-    summary:
-      forms.jev.enabled && (forms.jev.api_key === '***' || forms.jev.api_key)
-        ? `${forms.jev.model || '—'} · Auto Lender 主判`
-        : forms.jev.enabled
-          ? '已启用但未配置 Key'
-          : '未启用（选号走算法分）',
-    process: '团队设置',
-    editable: true,
-  },
 ])
 
 const FIELD_DEFS: Record<string, SettingsField> = {
@@ -807,6 +795,10 @@ watch(
     if (typeof value === 'string' && value) {
       if (value === 'loan_selection') {
         router.replace({ path: '/borrow-management', query: { tab: 'rules' } })
+        return
+      }
+      if (value === 'jev') {
+        router.replace({ path: '/borrow-management', query: { tab: 'jev' } })
         return
       }
       tab.value = value

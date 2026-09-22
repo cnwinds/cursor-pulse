@@ -14,6 +14,10 @@
             <router-link :to="{ path: '/borrow-management', query: { tab: 'rules' } }">
               选号规则
             </router-link>
+            ·
+            <router-link :to="{ path: '/borrow-management', query: { tab: 'jev' } }">
+              Jev 决策
+            </router-link>
           </p>
         </div>
         <el-button type="primary" plain :loading="rankingLoading" @click="loadRanking">
