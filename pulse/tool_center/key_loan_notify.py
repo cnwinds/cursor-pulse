@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from pulse.channels.base import normalize_platform, outbound_messenger_or_none
 from pulse.channels.outbound_ledger import send_oto_and_ledger
 from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
+from pulse.config import ProxyAddress
 from pulse.proxy.key_crud import build_client_command
 from pulse.storage.models import KeyLoan, Member
 from pulse.tenant.context import team_repository
@@ -25,17 +26,33 @@ _RECLAIM_REASON_LABEL = {
 }
 
 
-def proxy_public_url(config: Any) -> str:
-    """返回第一个代理地址用于通知消息（向后兼容）。
+def resolve_proxy_addresses(session: Session | None, config: Any) -> list[ProxyAddress]:
+    """团队系统设置中的全部有效代理地址；无则回退 config / 默认 public_url。"""
+    if session is not None:
+        try:
+            from pulse.settings import configured_proxy_addresses
 
-    优先使用系统设置中的第一个代理地址，否则使用 config.proxy.public_url 默认值。
-    """
-    proxy_addresses = getattr(getattr(config, "proxy_addresses", None), "addresses", None)
-    if proxy_addresses and len(proxy_addresses) > 0:
-        return proxy_addresses[0].url.rstrip("/")
-    return (getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317").rstrip(
-        "/"
-    )
+            team, _ = team_repository(session, config)
+            team_addrs = configured_proxy_addresses(session, team.id)
+            if team_addrs:
+                return team_addrs
+        except Exception:
+            logger.debug("resolve_proxy_addresses: team settings unavailable", exc_info=True)
+
+    cfg_addrs = getattr(getattr(config, "proxy_addresses", None), "addresses", None) or []
+    if cfg_addrs:
+        return list(cfg_addrs)
+
+    fallback = (
+        getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317"
+    ).rstrip("/")
+    return [ProxyAddress(url=fallback, display_name=fallback)]
+
+
+def proxy_public_url(config: Any, session: Session | None = None) -> str:
+    """返回第一个代理地址（向后兼容）。"""
+    addrs = resolve_proxy_addresses(session, config)
+    return addrs[0].url.rstrip("/")
 
 
 def build_setup_commands(*, api_key: str, proxy_url: str) -> dict[str, str]:
@@ -49,16 +66,47 @@ def build_setup_commands(*, api_key: str, proxy_url: str) -> dict[str, str]:
     }
 
 
+def _shell_command_blocks(*, api_key: str, addresses: list[ProxyAddress]) -> tuple[str, str]:
+    """按代理地址生成 PowerShell / bash 命令块（多地址时带展示名）。"""
+    ps_parts: list[str] = []
+    bash_parts: list[str] = []
+    multi = len(addresses) > 1
+    for addr in addresses:
+        url = addr.url.rstrip("/")
+        label = (addr.display_name or url).strip()
+        ps_cmd = build_client_command(shell="powershell", proxy_url=url, plaintext_key=api_key)
+        bash_cmd = build_client_command(shell="bash", proxy_url=url, plaintext_key=api_key)
+        if multi:
+            ps_parts.extend([label, ps_cmd, ""])
+            bash_parts.extend([label, bash_cmd, ""])
+        else:
+            ps_parts.append(ps_cmd)
+            bash_parts.append(bash_cmd)
+    while ps_parts and ps_parts[-1] == "":
+        ps_parts.pop()
+    while bash_parts and bash_parts[-1] == "":
+        bash_parts.pop()
+    return "\n".join(ps_parts), "\n".join(bash_parts)
+
+
 def format_borrower_issued(
     *,
     api_key: str,
     loan_id: str,
     loan_expires_on: str | None,
     warning: str | None = None,
-    proxy_url: str,
+    proxy_url: str | None = None,
+    addresses: list[ProxyAddress] | None = None,
     delivery_mode: str | None = None,
 ) -> str:
-    commands = build_setup_commands(api_key=api_key, proxy_url=proxy_url)
+    if addresses:
+        resolved = addresses
+    elif proxy_url:
+        resolved = [ProxyAddress(url=proxy_url.rstrip("/"), display_name=proxy_url.rstrip("/"))]
+    else:
+        resolved = [ProxyAddress(url="http://127.0.0.1:8317", display_name="http://127.0.0.1:8317")]
+
+    ps_block, bash_block = _shell_command_blocks(api_key=api_key, addresses=resolved)
     lines = [
         "✅ 临时 Key 已生效",
         "",
@@ -74,10 +122,10 @@ def format_borrower_issued(
         [
             "",
             "【Windows PowerShell】",
-            commands["powershell"],
+            ps_block,
             "",
             "【Linux / macOS】",
-            commands["bash"],
+            bash_block,
             "",
             "归还请发送：归还 Key",
         ]
@@ -209,7 +257,8 @@ def notify_loan_issued(
     delivery_mode = result.get("delivery_mode")
     warning = result.get("warning")
     borrower_name = result.get("borrower_name")
-    proxy_url = proxy_public_url(config)
+    addresses = resolve_proxy_addresses(session, config)
+    proxy_url = addresses[0].url.rstrip("/")
 
     if not skip_borrower and api_key:
         borrower_id = result.get("borrower_member_id")
@@ -226,7 +275,7 @@ def notify_loan_issued(
                     loan_id=loan_id,
                     loan_expires_on=expires_s,
                     warning=str(warning) if warning else None,
-                    proxy_url=proxy_url,
+                    addresses=addresses,
                     delivery_mode=str(delivery_mode) if delivery_mode else None,
                 )
                 _send_oto(

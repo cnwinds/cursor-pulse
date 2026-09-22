@@ -5,9 +5,57 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from pulse.config import AdminConfig, AppConfig, BotPlatformConfig, ProxyConfig, TenantConfig
+from pulse.config import (
+    AdminConfig,
+    AppConfig,
+    BotPlatformConfig,
+    ProxyAddress,
+    ProxyConfig,
+    TenantConfig,
+)
 from pulse.tool_center import key_loan_notify as notify
 from pulse.tool_center.key_loan_ops import request_loan
+
+
+def test_format_borrower_issued_includes_every_configured_proxy_address():
+    addresses = [
+        ProxyAddress(url="http://127.0.0.1:8317", display_name="本机代理"),
+        ProxyAddress(url="http://192.168.11.39:8317", display_name="内网代理"),
+    ]
+    text = notify.format_borrower_issued(
+        api_key="pka_testkey",
+        loan_id="ae727a27-xxxx",
+        loan_expires_on=None,
+        delivery_mode="proxy_alias",
+        addresses=addresses,
+    )
+    assert "本机代理" in text
+    assert "内网代理" in text
+    assert 'set HTTPS_PROXY=http://127.0.0.1:8317&&' in text
+    assert 'set HTTPS_PROXY=http://192.168.11.39:8317&&' in text
+    assert 'HTTPS_PROXY="http://127.0.0.1:8317"' in text
+    assert 'HTTPS_PROXY="http://192.168.11.39:8317"' in text
+
+
+def test_resolve_proxy_addresses_uses_team_settings_when_present(monkeypatch):
+    team_addrs = [
+        ProxyAddress(url="http://team-proxy:8317", display_name="团队代理"),
+    ]
+    monkeypatch.setattr(
+        "pulse.settings.configured_proxy_addresses",
+        lambda _session, _team_id: team_addrs,
+    )
+    monkeypatch.setattr(
+        "pulse.tenant.context.team_repository",
+        lambda _session, _config: (SimpleNamespace(id="team-1"), None),
+    )
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        proxy=ProxyConfig(public_url="http://fallback:8317"),
+    )
+    addrs = notify.resolve_proxy_addresses(MagicMock(), config)
+    assert len(addrs) == 1
+    assert addrs[0].url == "http://team-proxy:8317"
 
 
 def test_format_borrower_issued_hides_lender_and_includes_shell_commands():

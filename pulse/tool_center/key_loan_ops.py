@@ -191,7 +191,7 @@ def request_loan(
     *,
     note: str | None = None,
 ) -> str:
-    from pulse.tool_center.key_loan_notify import format_borrower_issued, proxy_public_url
+    from pulse.tool_center.key_loan_notify import format_borrower_issued, resolve_proxy_addresses
 
     payload = request_loan_payload(repo, config, member, note=note)
     if payload.get("ok"):
@@ -200,7 +200,7 @@ def request_loan(
             loan_id=str(payload.get("loan_id") or ""),
             loan_expires_on=payload.get("loan_expires_on"),
             warning=payload.get("warning"),
-            proxy_url=proxy_public_url(config),
+            addresses=resolve_proxy_addresses(repo.session, config),
             delivery_mode=payload.get("delivery_mode"),
         )
     return str(payload.get("error") or "借 Key 失败")
@@ -215,10 +215,11 @@ def request_loan_payload(
     notify: bool = True,
     skip_borrower_notify: bool = True,
 ) -> dict:
+    from pulse.proxy.key_crud import build_client_setup_commands
     from pulse.tool_center.key_loan_notify import (
         build_setup_commands,
         notify_loan_issued,
-        proxy_public_url,
+        resolve_proxy_addresses,
     )
     from pulse.tool_center.key_loans import KeyLoanError, request_self_service_loan
 
@@ -236,10 +237,16 @@ def request_loan_payload(
             loan_selection=effective_loan_selection(repo.session, config, repo.team_id),
         )
         repo.session.flush()
-        proxy_url = proxy_public_url(config)
+        addresses = resolve_proxy_addresses(repo.session, config)
+        proxy_url = addresses[0].url.rstrip("/")
         api_key = result.get("api_key") or ""
         setup_commands = (
             build_setup_commands(api_key=api_key, proxy_url=proxy_url) if api_key else {}
+        )
+        setup_command_items = (
+            build_client_setup_commands(plaintext_key=api_key, addresses=addresses)
+            if api_key
+            else []
         )
         payload = {
             "ok": True,
@@ -252,7 +259,11 @@ def request_loan_payload(
             "borrower_member_id": result.get("borrower_member_id") or member.id,
             "borrower_name": result.get("borrower_name") or member.display_name,
             "setup_commands": setup_commands,
+            "setup_command_items": setup_command_items,
             "proxy_url": proxy_url,
+            "proxy_addresses": [
+                {"url": a.url, "display_name": a.display_name} for a in addresses
+            ],
         }
         if notify:
             try:
