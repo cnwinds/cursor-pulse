@@ -598,6 +598,7 @@ def _rank_passing_candidates(
                 {
                     "account_id": cand.account_id,
                     "account_identifier": cand.account_identifier,
+                    "primary_member_name": cand.primary_member_name,
                     "reason": reason,
                     "active_loans": cand.active_loans,
                     "status": analysis.status,

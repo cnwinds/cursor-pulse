@@ -162,6 +162,11 @@ def _build_pool_lender_candidates(
                     {
                         "account_id": aid,
                         "account_identifier": account.account_identifier,
+                        "primary_member_name": (
+                            member_names.get(account.primary_member_id)
+                            if account.primary_member_id
+                            else None
+                        ),
                         "reason": "no_snapshot",
                         "active_loans": active_loans,
                         "status": None,
