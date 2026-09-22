@@ -1,20 +1,10 @@
 <template>
   <div class="jev-panel" v-loading="loading">
     <div class="panel-card">
-      <header class="panel-head">
-        <div>
-          <p class="eyebrow">Auto Lender · Jev</p>
-          <p class="lead">
-            开启后，Jev 对通过硬过滤的池内候选重排（见「选号规则」中的 Top-N 与护栏）。
-            调用失败、置信度不足或护栏不通过时自动回落算法分；不在每次代理请求上调用。
-          </p>
-        </div>
-      </header>
       <SettingsSectionForm
         v-if="loaded"
         :model="jevModel"
         :fields="fields"
-        notice="保存后下一次打分表刷新与自动分配选号即生效。需 OpenRouter 预充值额度。"
         save-label="保存 Jev 配置"
         @save="onSave"
       />
@@ -115,22 +105,5 @@ onMounted(load)
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 40px rgba(15, 23, 42, 0.06);
   max-width: 640px;
-}
-.panel-head {
-  margin-bottom: 8px;
-}
-.eyebrow {
-  margin: 0 0 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--jev-accent);
-}
-.lead {
-  margin: 0 0 16px;
-  font-size: 14px;
-  line-height: 1.6;
-  color: #334155;
 }
 </style>
