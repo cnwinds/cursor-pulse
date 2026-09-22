@@ -174,9 +174,6 @@
             </template>
           </el-table-column>
           <el-table-column prop="hours_to_deadline" label="距作废(h)" width="88" align="right" />
-          <el-table-column label="作废时刻" min-width="158">
-            <template #default="{ row }">{{ formatDeadline(row) }}</template>
-          </el-table-column>
           <el-table-column prop="snapshot_freshness" label="快照" width="64" align="center" />
         </el-table>
       </section>
@@ -220,7 +217,6 @@ import { ElMessage, ElTooltip } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
-import { formatChinaTime } from '@/utils/time'
 
 const ColHeader = defineComponent({
   name: 'ColHeader',
@@ -327,11 +323,6 @@ function exclusionReasonLabel(reason: string | undefined) {
       coverage_too_short: '距作废过短',
     }[reason || ''] ?? (reason || '—')
   )
-}
-
-function formatDeadline(row: RankingRow): string {
-  if (row.deadline_at) return formatChinaTime(row.deadline_at)
-  return row.deadline || '—'
 }
 
 function formatProxySeats(row: RankingRow): string {
