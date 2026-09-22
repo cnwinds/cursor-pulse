@@ -108,7 +108,7 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
     reason = decision.get("fallback_reason")
     if picked_by != PICKED_BY_JEV and not reason:
         return
-    if reason == "auto_mode_off":
+    if reason in ("auto_mode_off", "jev_unavailable"):
         return
     picked = next(
         (row for row in (result.get("ranked") or []) if row.get("picked")), None

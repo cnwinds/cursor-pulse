@@ -250,14 +250,14 @@ def test_audit_event_recorded_for_fallback_reason(env):
     assert json.loads(events[0].detail)["fallback_reason"] == "low_confidence"
 
 
-def test_audit_event_skipped_when_auto_mode_off(env):
-    """auto 未开启时不写审计事件，避免刷爆事件表。"""
+def test_audit_event_skipped_when_jev_unavailable(env):
+    """Jev 未启用时不写审计事件，避免刷爆事件表。"""
     from pulse.storage.models import ProxyEvent
 
     session = env["session"]
     record_auto_lender_decision(
         session,
-        _picked_result(picked_by="algorithm", fallback_reason="auto_mode_off"),
+        _picked_result(picked_by="algorithm", fallback_reason="jev_unavailable"),
     )
     session.commit()
 

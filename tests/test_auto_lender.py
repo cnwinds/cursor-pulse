@@ -97,24 +97,9 @@ def _clean_state():
 
 
 def _auto_cfg(**kwargs) -> LoanSelectionConfig:
-    base = {"auto_mode": True, "auto_cache_seconds": 600.0}
+    base = {"auto_cache_seconds": 600.0}
     base.update(kwargs)
     return LoanSelectionConfig(**base)
-
-
-def test_auto_mode_off_keeps_algorithm_order():
-    jev = FakeJev(decision=_decision("acc-b"))
-    board = rank_lenders(
-        _two_candidates(),
-        loan_selection=LoanSelectionConfig(auto_mode=False),
-        today=TODAY,
-        now=NOW,
-        jev=jev,
-    )
-    assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
-    assert board["decision"]["picked_by"] == "algorithm"
-    assert board["decision"]["fallback_reason"] == "auto_mode_off"
-    assert jev.calls == 0
 
 
 def test_jev_unavailable_falls_back():
