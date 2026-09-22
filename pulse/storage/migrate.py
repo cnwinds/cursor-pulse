@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -49,6 +50,7 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
     "alias_key_hint": "VARCHAR(32)",
     "alias_encrypted_key": "TEXT",
     "expires_on": "DATE",
+    "routing_mode": "VARCHAR(16) DEFAULT 'pinned'",
 }
 
 _KEY_LOAN_LENDER_COLUMNS: dict[str, str] = {
@@ -429,6 +431,66 @@ def _migrate_member_channel_identity(engine: Engine) -> None:
             _sqlite_drop_column(engine, "reminder_logs", "dingtalk_msg_id")
 
 
+def _relax_key_loan_account_nulls(engine: Engine) -> None:
+    """Allow pool-routed loans to omit source account and credential.
+
+    Fresh databases already create those columns nullable. Existing SQLite
+    tables need a rebuild; Postgres can drop NOT NULL in place.
+    """
+    inspector = inspect(engine)
+    if "key_loans" not in inspector.get_table_names():
+        return
+    columns = {col["name"]: col for col in inspector.get_columns("key_loans")}
+    targets = ("source_account_id", "credential_id")
+    if not any(name in columns and not columns[name].get("nullable", True) for name in targets):
+        return
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        with engine.begin() as conn:
+            for name in targets:
+                if name in columns and not columns[name].get("nullable", True):
+                    conn.execute(text(f"ALTER TABLE key_loans ALTER COLUMN {name} DROP NOT NULL"))
+        logger.info("key_loans source/credential columns are nullable")
+        return
+    if dialect != "sqlite":
+        logger.warning("key_loans NOT NULL relax skipped for dialect %s", dialect)
+        return
+    with engine.begin() as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        row = conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='key_loans'")
+        ).one()
+        create_sql = row[0]
+        for name in targets:
+            create_sql, n = re.subn(
+                rf"({re.escape(name)}\s+\w+(?:\(\d+\))?)\s+NOT NULL",
+                r"\1",
+                create_sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if n != 1:
+                logger.warning("key_loans rebuild: NOT NULL not removed for %s", name)
+        create_sql = create_sql.replace("CREATE TABLE key_loans", "CREATE TABLE key_loans__pool_null", 1)
+        indexes = conn.execute(
+            text(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='key_loans' "
+                "AND sql IS NOT NULL"
+            )
+        ).fetchall()
+        conn.execute(text(create_sql))
+        col_names = [col["name"] for col in columns.values()]
+        # inspector order is not guaranteed; copy by name.
+        listed = ", ".join(col_names)
+        conn.execute(text(f"INSERT INTO key_loans__pool_null ({listed}) SELECT {listed} FROM key_loans"))
+        conn.execute(text("DROP TABLE key_loans"))
+        conn.execute(text("ALTER TABLE key_loans__pool_null RENAME TO key_loans"))
+        for (index_sql,) in indexes:
+            conn.execute(text(index_sql))
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+    logger.info("Rebuilt key_loans so pool loans can omit source account")
+
+
 def migrate_schema(engine: Engine) -> None:
     """轻量迁移：为已有 SQLite 库补齐表与列。"""
     inspector = inspect(engine)
@@ -747,6 +809,7 @@ def migrate_schema(engine: Engine) -> None:
                     )
                 )
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
+        _relax_key_loan_account_nulls(engine)
 
     if "account_quota_snapshots" in tables:
         columns = {col["name"] for col in inspector.get_columns("account_quota_snapshots")}

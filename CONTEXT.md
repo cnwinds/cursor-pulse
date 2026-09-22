@@ -89,8 +89,12 @@ A Key Loan pinned to one lending account: issuance creates a dedicated Cursor ke
 _Avoid_: Confusing the loan key with the account's primary key
 
 **Auto-Assigned Loan** (`lender_mode=auto`):
-A Key Loan whose key roams across candidate accounts during use. Authorization returns a ranked allowlist of candidate **primary** credentials (`pool_board.loan_candidate_credentials`); Go selects within it exactly like the Credential Pool — per-session sticky, Switch Dwell, per-Quota-Pool availability. Switching needs no new Cursor key.
+Self-service Key Loan whose key roams across candidate accounts during use. Authorization returns a ranked allowlist of candidate **primary** credentials (`pool_board.loan_candidate_credentials`); Go selects within it exactly like the Credential Pool — per-session sticky, Switch Dwell, per-Quota-Pool availability. Switching needs no new Cursor key.
 _Avoid_: Reassigning at the DB level to change accounts (that was retired — it needed a new remote key per switch and could only move on a timer)
+
+**Pool-Routed Loan** (`routing_mode=pool`):
+Admin auto-assign. The pka_ has no source account and no Cursor key. Authorization returns `mode=loan_pool`; the proxy selects from the Credential Pool (accounts toggled into the pool, ordered by the ranking board) the same way a legacy `pk_` key does. Usage is attributed to `loan_id`. New members should get this instead of a `pk_`.
+_Avoid_: Treating it as a Designated Loan, or as the self-service allowlist loan
 
 **Auto Lender Selection**:
 The ranking behind both loan modes: hard filters, then the deterministic score, then the optional Jev decision (`tool_center.auto_lender`). Used at issuance to pick the starting account and, for auto-assigned loans, to build the proxy's candidate allowlist.

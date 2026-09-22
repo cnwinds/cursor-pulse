@@ -26,12 +26,16 @@ from pulse.tool_center.burn_rate import (
     display_remaining_cents,
 )
 from pulse.tool_center.auto_lender import rank_lenders
-from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
+from pulse.tool_center.key_loan_lender import active_loan_counts_by_account, select_team_loans
 from pulse.tool_center.key_loan_auto import (
     record_auto_lender_decision,
     resolve_auto_lender,
 )
-from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO, LENDER_MODE_MANUAL
+from pulse.tool_center.key_loan_delivery import (
+    LENDER_MODE_AUTO,
+    LENDER_MODE_MANUAL,
+    ROUTING_POOL,
+)
 from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.tool_center.key_loans import (
     KeyLoanError,
@@ -39,6 +43,7 @@ from pulse.tool_center.key_loans import (
     build_lender_candidates,
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
+    issue_pool_loan,
     loan_payload,
     loan_payloads,
     reassign_loan_source,
@@ -72,7 +77,7 @@ class LoanKeyBody(BaseModel):
     auto_revoke_on_reset: bool = True
     key_name: str | None = None
     delivery_mode: Literal["proxy_alias"] = "proxy_alias"
-    # manual: 用 URL 上的 account_id 固定出借账号；auto: 由 Auto Lender 选号
+    # manual: 用 URL 上的 account_id 固定出借账号；auto: 走账号池轮换，不锁定账号
     lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
     model: str | None = None
@@ -232,15 +237,12 @@ def build_quota_board_items(
 
 
 def count_active_loans(session: Session, team_id: str) -> int:
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
-        )
-        or 0
-    )
+    active = select_team_loans(team_id).where(KeyLoan.status == "active")
+    return session.scalar(select(func.count()).select_from(active.subquery())) or 0
+
+
+def loan_in_team(session: Session, team_id: str, loan_id: str) -> KeyLoan | None:
+    return session.scalar(select_team_loans(team_id).where(KeyLoan.id == loan_id))
 
 
 def register_quota_routes(app, get_db, require_capability, team_repo_fn, config):
@@ -294,11 +296,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        base = (
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(AiAccount.team_id == team.id)
-        )
+        base = select_team_loans(team.id)
         if status:
             base = base.where(KeyLoan.status == status)
 
@@ -324,27 +322,17 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
-        base = (
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(
-                AiAccount.team_id == team.id,
-                KeyLoan.borrower_member_id == user.member.id,
-            )
-        )
+        base = select_team_loans(team.id).where(KeyLoan.borrower_member_id == user.member.id)
         if status:
             base = base.where(KeyLoan.status == status)
         total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
-        active_count = session.scalar(
-            select(func.count())
-            .select_from(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(
-                AiAccount.team_id == team.id,
-                KeyLoan.borrower_member_id == user.member.id,
-                KeyLoan.status == "active",
-            )
-        ) or 0
+        mine_active = select_team_loans(team.id).where(
+            KeyLoan.borrower_member_id == user.member.id,
+            KeyLoan.status == "active",
+        )
+        active_count = (
+            session.scalar(select(func.count()).select_from(mine_active.subquery())) or 0
+        )
         loans = session.scalars(
             base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
         ).all()
@@ -450,26 +438,37 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
 
         enc_key = _encryption_key(config)
         try:
-            result = issue_loan_key(
-                session,
-                enc_key,
-                team_id=team.id,
-                # auto 模式忽略 URL 上的账号，由 Auto Lender 选号
-                source_account_id=None if is_auto else account_id,
-                borrower_member_id=body.borrower_member_id,
-                bound_by_member_id=user.member.id,
-                note=body.note,
-                auto_revoke_on_reset=body.auto_revoke_on_reset,
-                key_name=body.key_name,
-                delivery_mode=body.delivery_mode,
-                loan_selection=config.tool_center.loan_selection,
-                enforce_loan_cap=False,
-                lender_mode=body.lender_mode,
-                model=body.model,
-                jev=build_jev_client(config),
-                jev_config=config.jev,
-                on_decision=lambda result: record_auto_lender_decision(session, result),
-            )
+            if is_auto:
+                # 管理员自动分配 = 账号池轮换，确认时不选号、不建 Cursor Key。
+                result = issue_pool_loan(
+                    session,
+                    enc_key,
+                    team_id=team.id,
+                    borrower_member_id=body.borrower_member_id,
+                    note=body.note,
+                    loan_selection=config.tool_center.loan_selection,
+                    jev=build_jev_client(config),
+                )
+            else:
+                result = issue_loan_key(
+                    session,
+                    enc_key,
+                    team_id=team.id,
+                    source_account_id=account_id,
+                    borrower_member_id=body.borrower_member_id,
+                    bound_by_member_id=user.member.id,
+                    note=body.note,
+                    auto_revoke_on_reset=body.auto_revoke_on_reset,
+                    key_name=body.key_name,
+                    delivery_mode=body.delivery_mode,
+                    loan_selection=config.tool_center.loan_selection,
+                    enforce_loan_cap=False,
+                    lender_mode=body.lender_mode,
+                    model=body.model,
+                    jev=build_jev_client(config),
+                    jev_config=config.jev,
+                    on_decision=lambda result: record_auto_lender_decision(session, result),
+                )
             log_admin_action(
                 session,
                 team_id=team.id,
@@ -479,7 +478,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 detail=(
                     f"{account_id}->{borrower.display_name}"
                     if not is_auto
-                    else f"auto:{result.get('source_account_identifier')}->{borrower.display_name}"
+                    else f"pool->{borrower.display_name}"
                 ),
             )
             session.commit()
@@ -508,11 +507,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
 
@@ -549,11 +544,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
 
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         is_admin = has_permission(user.member, "accounts:write")
@@ -599,15 +590,13 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         """管理员应急查看底层 Cursor Key（借用人不可见）。"""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         if loan.status != "active":
             raise HTTPException(status_code=410, detail="借用已结束，无法查看底层 Key")
+        if loan.routing_mode == ROUTING_POOL:
+            raise HTTPException(status_code=400, detail="账号池轮换借用没有单一底层 Key")
 
         enc_key = _encryption_key(config)
         try:
@@ -644,15 +633,16 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         """Update mutable loan flags. Does not change expires_on."""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         if loan.status != "active":
             raise HTTPException(status_code=400, detail="仅进行中的借用可修改")
+        if loan.routing_mode == ROUTING_POOL:
+            raise HTTPException(
+                status_code=400,
+                detail="账号池轮换借用没有单一重置日，不能按重置日回收",
+            )
 
         prev = bool(loan.auto_revoke_on_reset)
         loan.auto_revoke_on_reset = bool(body.auto_revoke_on_reset)
@@ -679,13 +669,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         """更换出借账号，保持同一 pka_ 不变。"""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
+        if loan.routing_mode == ROUTING_POOL:
+            raise HTTPException(status_code=400, detail="账号池轮换借用没有单一出借账号，不能换号")
 
         enc_key = _encryption_key(config)
         try:
@@ -739,11 +727,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         is_admin = has_permission(user.member, "accounts:write")

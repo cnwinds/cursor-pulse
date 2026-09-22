@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 )
+
+var errPoolSessionCollision = errors.New("pool session collision")
 
 var hopHeaders = map[string]bool{
 	"Connection":          true,
@@ -125,6 +128,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	}
 
 	loanBound := binding.Mode == "loan_passthrough" || binding.Mode == "loan_alias"
+	tracksLoan := attributesUsageToLoan(binding)
 	// A loan_alias binding carrying a Pulse-issued candidate allowlist selects
 	// among those accounts exactly like the shared pool (sticky + Switch dwell +
 	// per-bucket availability) instead of being pinned to one credential. An
@@ -158,7 +162,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			log.Printf("[mitm] %s %s: %v", req.Method, req.URL.Path, err)
 			if s.pulse != nil {
 				ev := EventItem{EventType: "exhausted", Detail: err.Error()}
-				if loanBound {
+				if tracksLoan {
 					ev.LoanID = binding.LoanID
 					ev.CredentialID = binding.CredentialID
 				} else {
@@ -167,7 +171,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				s.pulse.ReportEvent(ev)
 			}
 			msg := "cursor-quota-proxy: all API keys exhausted"
-			if loanBound {
+			if loanBound || binding.Mode == "loan_pool" {
 				msg = "cursor-pulse-proxy: loan key unavailable"
 			}
 			http.Error(w, msg, http.StatusServiceUnavailable)
@@ -253,7 +257,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			if reqBodySnap != nil {
 				body = reqBodySnap()
 			}
-			if loanBound {
+			if tracksLoan {
 				if binding.LoanID == "" {
 					return
 				}
@@ -406,46 +410,58 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if res.Mode == "loan_pool" {
+		if res.LoanID == "" {
+			log.Printf("[mitm] loan_pool missing loan_id")
+			http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
+			return
+		}
+		entry, token, err := s.exchangeFromPool(req.Context(), res)
+		if err != nil {
+			if errors.Is(err, errPoolSessionCollision) {
+				http.Error(w, "cursor-pulse-proxy: unable to mint unique session token", http.StatusServiceUnavailable)
+				return
+			}
+			s.reportPoolExhausted(res, err.Error())
+			http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
+			return
+		}
+		if s.sessions != nil {
+			s.sessions.Bind(token, SessionBinding{
+				Mode:               res.Mode,
+				LoanID:             res.LoanID,
+				PulseKey:           pulseKey,
+				StickyCredentialID: entry.credentialID,
+				WindowLimitReason:  windowLimitReason,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  token,
+			"refreshToken": "pulse",
+		})
+		log.Printf("[mitm] exchange ok loan_pool loan_id=%s credential=%s", res.LoanID, entry.credentialID)
+		return
+	}
+
 	if res.ProxyKeyID == "" {
 		log.Printf("[mitm] authorize ok but missing proxy_key_id mode=%q — refuse pool path", res.Mode)
 		http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
 		return
 	}
 
-	entry, token, err := s.pool.token(req.Context())
+	entry, token, err := s.exchangeFromPool(req.Context(), res)
 	if err != nil {
-		s.pulse.ReportEvent(EventItem{EventType: "exhausted", ProxyKeyID: res.ProxyKeyID, Detail: err.Error()})
-		http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
-		return
-	}
-	// Pool may return a JWT already bound to a different pulse key.
-	// Skip that credential and try other pool keys (same ProxyKeyID may re-bind).
-	if s.sessions != nil {
-		skip := map[string]bool{}
-		maxTries := s.pool.size()
-		if maxTries < 1 {
-			maxTries = 1
-		}
-		for tries := 0; tries < maxTries; tries++ {
-			if b, ok := s.sessions.Lookup(token); ok && b.ProxyKeyID != "" && b.ProxyKeyID != res.ProxyKeyID {
-				skip[entry.credentialID] = true
-				log.Printf("[mitm] exchange jwt collision proxy_key=%s held_by=%s skip_credential=%s",
-					res.ProxyKeyID, b.ProxyKeyID, entry.credentialID)
-				entry, token, err = s.pool.tokenSkipping(req.Context(), skip)
-				if err != nil {
-					s.pulse.ReportEvent(EventItem{EventType: "exhausted", ProxyKeyID: res.ProxyKeyID, Detail: err.Error()})
-					http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
-					return
-				}
-				continue
-			}
-			break
-		}
-		if b, ok := s.sessions.Lookup(token); ok && b.ProxyKeyID != "" && b.ProxyKeyID != res.ProxyKeyID {
-			log.Printf("[mitm] exchange jwt collision unresolved proxy_key=%s held_by=%s", res.ProxyKeyID, b.ProxyKeyID)
+		if errors.Is(err, errPoolSessionCollision) {
+			log.Printf("[mitm] exchange jwt collision unresolved proxy_key=%s", res.ProxyKeyID)
 			http.Error(w, "cursor-pulse-proxy: unable to mint unique session token", http.StatusServiceUnavailable)
 			return
 		}
+		s.reportPoolExhausted(res, err.Error())
+		http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
+		return
+	}
+	if s.sessions != nil {
 		s.sessions.Bind(token, SessionBinding{
 			ProxyKeyID:         res.ProxyKeyID,
 			PulseKey:           pulseKey,
@@ -459,6 +475,78 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
+}
+
+func attributesUsageToLoan(b SessionBinding) bool {
+	switch b.Mode {
+	case "loan_passthrough", "loan_alias", "loan_pool":
+		return b.LoanID != ""
+	default:
+		return false
+	}
+}
+
+// exchangeConflicts reports whether an existing session JWT cannot be reused
+// for this authorize result. loan_pool borrowers share an empty ProxyKeyID, so
+// identity is the loan id; a pk_ holder and a different loan both conflict.
+func exchangeConflicts(existing SessionBinding, mode, proxyKeyID, loanID string) bool {
+	if existing.ProxyKeyID == "" && existing.LoanID == "" {
+		return false
+	}
+	if mode == "loan_pool" {
+		return existing.LoanID != loanID || existing.ProxyKeyID != ""
+	}
+	if proxyKeyID != "" && existing.ProxyKeyID == proxyKeyID && existing.LoanID == "" {
+		return false
+	}
+	return existing.ProxyKeyID != "" || existing.LoanID != ""
+}
+
+func (s *Server) reportPoolExhausted(res AuthResult, detail string) {
+	if s.pulse == nil {
+		return
+	}
+	ev := EventItem{EventType: "exhausted", Detail: detail}
+	if res.Mode == "loan_pool" {
+		ev.LoanID = res.LoanID
+	} else {
+		ev.ProxyKeyID = res.ProxyKeyID
+	}
+	s.pulse.ReportEvent(ev)
+}
+
+// exchangeFromPool mints a pool JWT that is not already bound to a different
+// borrower or proxy key. Same loan / same proxy key may re-bind.
+func (s *Server) exchangeFromPool(ctx context.Context, res AuthResult) (*keyEntry, string, error) {
+	entry, token, err := s.pool.token(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if s.sessions == nil {
+		return entry, token, nil
+	}
+	skip := map[string]bool{}
+	maxTries := s.pool.size()
+	if maxTries < 1 {
+		maxTries = 1
+	}
+	for tries := 0; tries < maxTries; tries++ {
+		b, ok := s.sessions.Lookup(token)
+		if !ok || !exchangeConflicts(b, res.Mode, res.ProxyKeyID, res.LoanID) {
+			return entry, token, nil
+		}
+		skip[entry.credentialID] = true
+		log.Printf("[mitm] exchange jwt collision mode=%s proxy_key=%s loan_id=%s held_proxy=%s held_loan=%s skip_credential=%s",
+			res.Mode, res.ProxyKeyID, res.LoanID, b.ProxyKeyID, b.LoanID, entry.credentialID)
+		entry, token, err = s.pool.tokenSkipping(ctx, skip)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if b, ok := s.sessions.Lookup(token); ok && exchangeConflicts(b, res.Mode, res.ProxyKeyID, res.LoanID) {
+		return nil, "", errPoolSessionCollision
+	}
+	return entry, token, nil
 }
 
 func authWindowReason(res AuthResult) string {
@@ -519,6 +607,7 @@ func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cl
 		s.pulse.ReportEvent(EventItem{
 			EventType:    "rotation",
 			ProxyKeyID:   binding.ProxyKeyID,
+			LoanID:       binding.LoanID,
 			CredentialID: entry.credentialID,
 			Detail:       kind.String(),
 		})

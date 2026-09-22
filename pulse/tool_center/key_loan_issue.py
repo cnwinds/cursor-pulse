@@ -21,6 +21,7 @@ from pulse.tool_center.key_loan_delivery import (
     DELIVERY_PROXY_ALIAS,
     LENDER_MODE_AUTO,
     LENDER_MODE_MANUAL,
+    ROUTING_POOL,
     VALID_DELIVERY_MODES,
     VALID_LENDER_MODES,
     KeyLoanError,
@@ -308,6 +309,79 @@ def issue_loan_key(
         "primary_member_name": primary_member_name,
         "loan_expires_on": deadline.isoformat() if deadline else None,
         "lender_mode": loan.lender_mode,
+        "routing_mode": getattr(loan, "routing_mode", None) or "pinned",
+        "warning": warning,
+    }
+
+
+def issue_pool_loan(
+    session: Session,
+    encryption_key: str,
+    *,
+    team_id: str,
+    borrower_member_id: str,
+    note: str | None = None,
+    loan_selection: LoanSelectionConfig | None = None,
+    jev=None,
+) -> dict:
+    """管理员自动分配：签发走账号池轮换的 pka_，不锁定出借账号、不建 Cursor Key。
+
+    请求时由 Go 与历史 pk_ 共用 Credential Pool（已入池账号、打分表、sticky）。
+    """
+    from pulse.ingestion.crypto import encrypt_secret
+    from pulse.proxy.keys import generate_alias_key
+    from pulse.proxy.pool_board import list_pool_credentials
+
+    borrower = session.get(Member, borrower_member_id)
+    if not borrower or borrower.team_id != team_id:
+        raise KeyLoanError("借用人不存在")
+    if not (encryption_key or "").strip():
+        raise KeyLoanError("未配置凭证加密密钥，无法签发代理别名 Key")
+
+    pooled = list_pool_credentials(
+        session,
+        encryption_key=encryption_key,
+        loan_selection=loan_selection,
+        jev=jev,
+    )
+    if not pooled:
+        raise KeyLoanError("账号池里没有可轮换的账号，请先在账号池开启入池")
+
+    alias_plaintext, alias_key_hash, alias_key_hint = generate_alias_key()
+    alias_encrypted_key = encrypt_secret(alias_plaintext, encryption_key.strip())
+    loan_svc = KeyLoanService(session, encryption_key)
+    loan = loan_svc.create_loan_record(
+        source_account_id=None,
+        credential_id=None,
+        borrower_member_id=borrower_member_id,
+        baseline_used_cents=0,
+        auto_revoke_on_reset=False,
+        expires_on=None,
+        note=note,
+        delivery_mode=DELIVERY_PROXY_ALIAS,
+        routing_mode=ROUTING_POOL,
+        alias_key_hash=alias_key_hash,
+        alias_key_hint=alias_key_hint,
+        alias_encrypted_key=alias_encrypted_key,
+        lender_mode=LENDER_MODE_AUTO,
+    )
+    warning = (
+        "此为账号池轮换 Key（pka_），须配置 HTTPS_PROXY 后使用。"
+        "使用过程中按账号池排名在已入池账号之间切换，确认时不锁定某一个账号。"
+        "消耗按本笔借用在代理账本归因。"
+    )
+    return {
+        "loan_id": loan.id,
+        "api_key": alias_plaintext,
+        "key_hint": alias_key_hint,
+        "delivery_mode": DELIVERY_PROXY_ALIAS,
+        "routing_mode": ROUTING_POOL,
+        "borrower_member_id": borrower.id,
+        "borrower_name": borrower.display_name,
+        "source_account_identifier": None,
+        "primary_member_name": None,
+        "loan_expires_on": None,
+        "lender_mode": loan.lender_mode,
         "warning": warning,
     }
 
@@ -347,6 +421,8 @@ def reassign_loan_source(
         raise KeyLoanError("借用记录不存在")
     if loan.status != "active":
         raise KeyLoanError("仅进行中的借用可更换出借账号")
+    if getattr(loan, "routing_mode", None) == ROUTING_POOL:
+        raise KeyLoanError("账号池轮换借用没有单一出借账号，不能换号")
     mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
     if mode != DELIVERY_PROXY_ALIAS:
         raise KeyLoanError("仅代理别名 Key 支持更换出借账号")

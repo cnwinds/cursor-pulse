@@ -57,7 +57,7 @@ $env:PROXY_UPSTREAM_URL = "http://127.0.0.1:7890"
 
 1. **Admin**：在凭证上开启 `proxy_enabled`。
 2. **池非空**：代理日志出现 `[pool] hot-updated: N credential(s)`（N > 0）。
-3. **创建接入密钥**：在 web-admin「共享池代理」创建 `pk_…` 接入密钥。借贷 alias 为 `pka_…`，走独立 authorize 路径，**不能**当作 `pk_` 使用。
+3. **成员用 Key**：在 web-admin「借用记录」用自动分配签发 `pka_…`，它与账号池共用轮换。历史 `pk_…` 在「账号池 → 历史接入密钥」。指定借用的 `pka_…` 绑定单一账号，**不能**当作整池 `pk_` 使用。
 4. **Authorize 冒烟**：`POST /api/internal/v1/proxy/authorize`（Bearer `PULSE_INTERNAL_SERVICE_TOKEN`）对 `pk_...` 返回 200。
 5. **Agent 跑一条**：agent 经代理完成一次对话。
 6. **用量可见**：web-admin 用量抽屉出现对应记录。

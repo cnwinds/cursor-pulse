@@ -2,16 +2,49 @@
   <div class="proxy-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>共享池代理</h2>
-        <p class="desc">多账号入池、按额度与到期智能轮换。成员须先创建接入密钥（pk_…）并经 HTTPS 代理使用 Cursor Agent；可按 5 小时 / 7 天费用窗口限额，留空不限</p>
-      </div>
-      <div class="header-actions">
-        <el-button v-if="canWrite" type="primary" @click="openCreate">新建接入密钥</el-button>
+        <h2>账号池</h2>
+        <p class="desc">决定哪些账号参与轮换，以及当前优先顺序。成员使用请到「借用记录」选自动分配，不再需要单独的接入密钥。已有 pk_ 仍可用，放在「历史接入密钥」。</p>
       </div>
     </header>
 
     <el-tabs v-model="tab">
-      <el-tab-pane label="接入密钥" name="keys">
+      <el-tab-pane label="账号池" name="pool">
+        <p class="pool-hint">开启入池后，该账号主 Key 参与轮换。自动分配的借用和仍在使用的历史接入密钥都按这份成员关系选号。额度与排序见「打分表」。</p>
+        <el-table :data="pool" style="width: 100%">
+          <el-table-column label="账号" min-width="200">
+            <template #default="{ row }">
+              <div>{{ row.account_identifier }}</div>
+              <div v-if="row.primary_member_name" class="account-sub">{{ row.primary_member_name }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="就绪" width="160">
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="poolReadyTooltip(row)"
+                :content="poolReadyTooltip(row)!"
+              >
+                <el-tag :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
+              </el-tooltip>
+              <el-tag v-else :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="入池" width="100">
+            <template #default="{ row }">
+              <el-switch
+                :model-value="row.proxy_enabled"
+                :disabled="!canWrite || (!row.proxy_enabled && !row.pool_ready)"
+                @change="(val: boolean) => toggleAccount(row, val)"
+              />
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="历史接入密钥" name="keys">
+        <div class="ranking-toolbar">
+          <p class="pool-hint">这些 pk_ 仍走同一套账号池轮换。新成员请用借用记录里的自动分配，不必再新建。</p>
+          <el-button v-if="canWrite" type="primary" size="small" @click="openCreate">新建接入密钥</el-button>
+        </div>
         <el-table :data="keys" style="width: 100%">
           <el-table-column prop="name" label="使用人" min-width="120" />
           <el-table-column label="用量 / 额度" min-width="220">
@@ -51,44 +84,13 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="账号池" name="pool">
-        <p class="pool-hint">开启入池后，该账号主 Key 参与共享池轮换；额度与排序见「打分表」</p>
-        <el-table :data="pool" style="width: 100%">
-          <el-table-column label="账号" min-width="200">
-            <template #default="{ row }">
-              <div>{{ row.account_identifier }}</div>
-              <div v-if="row.primary_member_name" class="account-sub">{{ row.primary_member_name }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column label="就绪" width="160">
-            <template #default="{ row }">
-              <el-tooltip
-                v-if="poolReadyTooltip(row)"
-                :content="poolReadyTooltip(row)!"
-              >
-                <el-tag :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
-              </el-tooltip>
-              <el-tag v-else :type="poolReadyType(row)" size="small">{{ poolReadyLabel(row) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="入池" width="100">
-            <template #default="{ row }">
-              <el-switch
-                :model-value="row.proxy_enabled"
-                :disabled="!canWrite || (!row.proxy_enabled && !row.pool_ready)"
-                @change="(val: boolean) => toggleAccount(row, val)"
-              />
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
       <el-tab-pane label="打分表" name="ranking">
         <div class="ranking-toolbar">
           <p class="pool-hint">
-            与 Go 代理下发顺序同源：快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。
+            这份排序同时驱动「借用记录 → 自动分配」和仍在使用的历史接入密钥。使用过程中按额度桶耗尽再换号，这里的名次会变，不是锁定。
+            快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。
             「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动）。
-            「主负责人保留」为账号必须留出的余量百分比，借用会侵占时硬排除（清空取消）。
+            「主负责人保留」为账号必须留出的余量百分比，会侵占时硬排除（清空取消）。
             开启 Jev 后由它重排，调用失败或护栏不通过则回落算法分。硬过滤始终生效。
           </p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
@@ -557,7 +559,7 @@ const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const loading = ref(false)
 const saving = ref(false)
-const tab = ref('keys')
+const tab = ref('pool')
 const keys = ref<ProxyKeyRow[]>([])
 const pool = ref<PoolAccount[]>([])
 const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null })

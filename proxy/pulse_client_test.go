@@ -83,6 +83,55 @@ func TestPulseClientAuthorizeLoanAliasNotCached(t *testing.T) {
 	}
 }
 
+func TestPulseClientAuthorizeLoanPoolNotCached(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "ok",
+			"mode":    "loan_pool",
+			"loan_id": "loan-pool-1",
+			"reason":  nil,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewPulseClient(srv.URL, "tok", time.Minute)
+	if _, err := c.Authorize("pka_pool"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Authorize("pka_pool"); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("loan_pool must not cache: hits=%d", hits.Load())
+	}
+}
+
+func TestExchangeConflicts(t *testing.T) {
+	sameLoan := SessionBinding{Mode: "loan_pool", LoanID: "loan-a"}
+	if exchangeConflicts(sameLoan, "loan_pool", "", "loan-a") {
+		t.Fatal("same loan_pool may rebind")
+	}
+	otherLoan := SessionBinding{Mode: "loan_pool", LoanID: "loan-b"}
+	if !exchangeConflicts(otherLoan, "loan_pool", "", "loan-a") {
+		t.Fatal("different loan_pool must conflict")
+	}
+	pk := SessionBinding{ProxyKeyID: "pk1"}
+	if !exchangeConflicts(pk, "loan_pool", "", "loan-a") {
+		t.Fatal("pk_ holder must conflict with loan_pool")
+	}
+	if exchangeConflicts(pk, "quota", "pk1", "") {
+		t.Fatal("same proxy key may rebind")
+	}
+	if !exchangeConflicts(sameLoan, "quota", "pk1", "") {
+		t.Fatal("loan_pool holder must conflict with pk_")
+	}
+	if exchangeConflicts(SessionBinding{}, "loan_pool", "", "loan-a") {
+		t.Fatal("empty binding does not conflict")
+	}
+}
+
 func TestPulseClientFetchPool(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

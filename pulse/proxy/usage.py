@@ -322,9 +322,14 @@ def _pricing_table_for_usage_row(
     elif row.loan_id:
         loan = session.get(KeyLoan, row.loan_id)
         if loan:
-            account = session.get(AiAccount, loan.source_account_id)
-            if account:
-                team_id = account.team_id
+            if loan.source_account_id:
+                account = session.get(AiAccount, loan.source_account_id)
+                if account:
+                    team_id = account.team_id
+            if team_id is None and loan.borrower_member_id:
+                borrower = session.get(Member, loan.borrower_member_id)
+                if borrower:
+                    team_id = borrower.team_id
     if not team_id:
         return None
     table = pricing_by_team.get(team_id)
@@ -407,12 +412,20 @@ def record_usages(
                 if dup is not None:
                     continue
             table = None
-            account = session.get(AiAccount, loan.source_account_id)
-            if account and account.team_id:
-                table = pricing_by_team.get(account.team_id)
+            team_id = None
+            if loan.source_account_id:
+                account = session.get(AiAccount, loan.source_account_id)
+                if account and account.team_id:
+                    team_id = account.team_id
+            if team_id is None and loan.borrower_member_id:
+                borrower = session.get(Member, loan.borrower_member_id)
+                if borrower and borrower.team_id:
+                    team_id = borrower.team_id
+            if team_id:
+                table = pricing_by_team.get(team_id)
                 if table is None:
-                    table = get_cursor_pricing_table(session=session, team_id=account.team_id)
-                    pricing_by_team[account.team_id] = table
+                    table = get_cursor_pricing_table(session=session, team_id=team_id)
+                    pricing_by_team[team_id] = table
             session.add(
                 ProxyKeyUsage(
                     proxy_key_id=None,

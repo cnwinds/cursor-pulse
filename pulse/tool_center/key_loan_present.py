@@ -22,7 +22,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     if not loans:
         return []
     borrower_ids = {loan.borrower_member_id for loan in loans if loan.borrower_member_id}
-    account_ids = {loan.source_account_id for loan in loans}
+    account_ids = {loan.source_account_id for loan in loans if loan.source_account_id}
     accounts = {
         account.id: account
         for account in session.scalars(select(AiAccount).where(AiAccount.id.in_(account_ids)))
@@ -69,15 +69,22 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
             if account and account.primary_member_id
             else None
         )
-        used_cents = snapshots[loan.source_account_id].used_cents if loan.source_account_id in snapshots else 0
+        used_cents = (
+            snapshots[loan.source_account_id].used_cents
+            if loan.source_account_id and loan.source_account_id in snapshots
+            else 0
+        )
         deadline = loan_display_expires_on(loan, account)
         _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
         delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
         lender_mode = getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL
-        # 自动分配借用在候选账号间游走：单账号快照差值不再代表本笔消耗，
-        # 以代理账本按 loan_id 汇总为准（与近似消耗分开呈现）
+        routing_mode = getattr(loan, "routing_mode", None) or "pinned"
+        # 游走 / 账号池轮换没有单一账号差值；以代理账本按 loan_id 汇总为准。
         borrowed_cents, borrowed_basis = resolve_borrowed_cents(
-            lender_mode, max(used_cents - loan.baseline_used_cents, 0), proxy_cost_cents
+            lender_mode,
+            max(used_cents - loan.baseline_used_cents, 0),
+            proxy_cost_cents,
+            routing_mode=routing_mode,
         )
         if delivery_mode == DELIVERY_PROXY_ALIAS:
             key_hint = loan.alias_key_hint
@@ -104,6 +111,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "delivery_mode": delivery_mode,
                 "key_hint": key_hint,
                 "lender_mode": lender_mode,
+                "routing_mode": routing_mode,
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),

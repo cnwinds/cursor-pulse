@@ -470,8 +470,14 @@ class KeyLoan(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    source_account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
-    credential_id: Mapped[str] = mapped_column(ForeignKey("ai_account_credentials.id"), index=True)
+    source_account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_accounts.id"), nullable=True, index=True
+    )
+    credential_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_account_credentials.id"), nullable=True, index=True
+    )
+    # pinned | pool. Pool loans have no single source account.
+    routing_mode: Mapped[str] = mapped_column(String(16), default="pinned")
     borrower_member_id: Mapped[str | None] = mapped_column(
         ForeignKey("members.id"), nullable=True, index=True
     )
@@ -491,7 +497,7 @@ class KeyLoan(Base):
     )
     alias_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
     alias_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # manual: 管理员/自助选定的固定出借账号；auto: Auto Lender 选起始账号，代理在白名单内游走
+    # manual: 固定出借账号；auto: 自助白名单游走，或配合 routing_mode=pool 的账号池轮换
     # 取值见 pulse.tool_center.key_loan_delivery；存储层不反向依赖，故内联默认值
     lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 当前出借账号的绑定时刻；auto 模式的 30 分钟驻留窗口以此为基准

@@ -34,6 +34,9 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
 7. **Switch dwell 分两层，作用不同。**
    评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickySince` + `stickyMinDwell` 保证同一会话在窗口内不因桶耗尽换账号。自动分配借用真正生效的是后者。
 
+8. **管理员「自动分配」改为账号池路由（`routing_mode=pool`）。**
+   发放的 pka_ 不选定起始账号，也不新建 Cursor Key。授权返回 `mode=loan_pool`，Go 与历史 `pk_` 共用同一 Credential Pool（入池账号、打分表、sticky）。指定账号仍是固定借用。自助借 Key 仍走上面的候选白名单，不改成整池。`pk_` 发放留在「账号池 → 历史接入密钥」；新成员走借用记录的自动分配。入池开关和打分表保留。
+
 ## 后果
 
 - 算法分始终计算：既是保底，也是 UI 对照与回测基线。UI 同时展示算法分、人工分与 Jev 决策，便于判断该相信谁。

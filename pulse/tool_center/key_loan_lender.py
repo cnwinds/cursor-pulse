@@ -2,16 +2,35 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AiAccount, KeyLoan, Member
+from pulse.tool_center.key_loan_delivery import ROUTING_POOL
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.sync_health import sync_blockers_by_account
 from pulse.util.datetime_fmt import ensure_aware
+
+
+def select_team_loans(team_id: str):
+    """本团队的借用，含没有出借账号的账号池轮换借用。
+
+    指定借用靠出借账号归属团队；账号池借用没有 source account，改靠借用人归属。
+    """
+    return (
+        select(KeyLoan)
+        .outerjoin(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+        .outerjoin(Member, KeyLoan.borrower_member_id == Member.id)
+        .where(
+            or_(
+                AiAccount.team_id == team_id,
+                and_(KeyLoan.routing_mode == ROUTING_POOL, Member.team_id == team_id),
+            )
+        )
+    )
 
 
 def member_names_by_id(session: Session, member_ids: set[str]) -> dict[str, str]:

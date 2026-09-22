@@ -297,7 +297,7 @@ def list_active_loans(repo: Repository, config, *, team_id: str) -> str:
         )
         lines.append(
             f"· {loan.id[:8]} {payload['borrower_name'] or '—'} "
-            f"← {payload['source_account_identifier']} "
+            f"← {payload['source_account_identifier'] or '账号池'} "
             f"(${approx / 100:.2f})"
         )
     lines.append("撤销：撤销借用 ID前8位")

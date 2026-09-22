@@ -486,6 +486,77 @@ def test_loan_key_auto_mode_ignores_url_account(quota_env):
     assert res.json()["detail"] != "账号不存在"
 
 
+def test_loan_key_auto_issues_pool_route(quota_env):
+    """管理员自动分配签发账号池轮换 pka_，不锁定账号、不调用 CreateUserApiKey。"""
+    from pulse.ingestion.crypto import encrypt_secret
+
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    account = quota_env["cursor_account"]
+    token = create_access_token(config, owner)
+
+    s = quota_env["session_factory"]()
+    stored = s.get(AiAccount, account.id)
+    stored.proxy_enabled = True
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
+    snap.cycle_end = date(2026, 12, 31)
+    snap.auto_pct = 10.0
+    snap.api_pct = 10.0
+    snap.used_cents = 100
+    snap.remaining_cents = 6900
+    s.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=account.vendor_id,
+            credential_type="cursor_api_key",
+            encrypted_value=encrypt_secret("crsr_pool_primary_for_auto", TEST_KEY),
+            key_hint="crsr...uto",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=owner.id,
+        )
+    )
+    s.commit()
+    s.close()
+
+    mock_client = MagicMock()
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
+        res = client.post(
+            "/api/v2/accounts/auto/loan-key",
+            headers=_headers(token),
+            json={
+                "borrower_member_id": borrower.id,
+                "lender_mode": "auto",
+                "auto_revoke_on_reset": True,
+            },
+        )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["api_key"].startswith("pka_")
+    assert body["routing_mode"] == "pool"
+    assert body["source_account_identifier"] is None
+    assert body["lender_mode"] == "auto"
+    mock_client.create_user_api_key.assert_not_called()
+
+    s = quota_env["session_factory"]()
+    loan = s.scalar(select(KeyLoan).where(KeyLoan.borrower_member_id == borrower.id))
+    assert loan is not None
+    assert loan.routing_mode == "pool"
+    assert loan.source_account_id is None
+    assert loan.credential_id is None
+    assert loan.auto_revoke_on_reset is False
+    listed = client.get("/api/v2/loans", headers=_headers(token))
+    assert listed.status_code == 200
+    item = next(row for row in listed.json()["items"] if row["id"] == loan.id)
+    assert item["routing_mode"] == "pool"
+    assert item["borrowed_basis"] == "proxy"
+    cursor = client.get(f"/api/v2/loans/{loan.id}/cursor-key", headers=_headers(token))
+    assert cursor.status_code == 400
+    s.close()
+
+
 def test_loan_key_manual_mode_still_validates_url_account(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]

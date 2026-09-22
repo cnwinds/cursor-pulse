@@ -28,6 +28,7 @@ from pulse.tool_center.key_loan_delivery import (
 from pulse.tool_center.key_loan_issue import (
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
+    issue_pool_loan,
     reassign_loan_source,
     request_self_service_loan,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "ensure_borrower_has_cursor_key",
     "finalize_reassign_old_remote_revoke",
     "issue_loan_key",
+    "issue_pool_loan",
     "loan_display_expires_on",
     "loan_payload",
     "loan_payloads",

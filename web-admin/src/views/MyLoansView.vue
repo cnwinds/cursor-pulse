@@ -16,7 +16,11 @@
     </header>
 
     <el-table :data="loans" stripe>
-      <el-table-column label="借出账号" min-width="220" prop="source_account_identifier" />
+      <el-table-column label="借出账号" min-width="220">
+        <template #default="{ row }">
+          {{ row.routing_mode === 'pool' ? '账号池（使用中轮换）' : row.source_account_identifier }}
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
@@ -54,7 +58,9 @@
         已下发代理别名 Key（pka_）。请立即复制；关闭后可用「复制命令」再次获取。须配置 HTTPS_PROXY。
       </el-alert>
       <div class="key-reveal">
-        <div class="muted">借出账号：{{ revealedKey?.source_account_identifier }}</div>
+        <div class="muted">
+          借出账号：{{ revealedKey?.routing_mode === 'pool' ? '账号池（使用中轮换）' : revealedKey?.source_account_identifier }}
+        </div>
         <el-input :model-value="revealedKey?.api_key" readonly>
           <template #append>
             <el-button @click="copyKey">复制 Key</el-button>
@@ -86,6 +92,7 @@ import { formatChinaTime } from '@/utils/time'
 interface LoanRow {
   id: string
   source_account_identifier: string
+  routing_mode?: string | null
   delivery_mode: string | null
   status: string
   created_at: string
@@ -100,6 +107,7 @@ const revealedKey = ref<{
   loan_id: string
   api_key: string
   source_account_identifier: string
+  routing_mode?: string
 } | null>(null)
 
 function loanStatusType(status: string) {

@@ -4,7 +4,7 @@
       <div>
         <h2>借用记录</h2>
         <p class="desc">
-          管理临时 Key 借用。进行中 {{ activeCount }} 条；自动分配借用的消耗按本笔借用归因（代理账本，非 Cursor 账单），指定借用仍为账号用量差值近似。
+          管理临时 Key 借用。进行中 {{ activeCount }} 条。自动分配走账号池，使用中轮换，消耗按本笔借用归因；指定账号锁定一把 Key，消耗仍为账号用量差值近似。
         </p>
       </div>
       <div class="header-actions">
@@ -28,19 +28,27 @@
       <el-table-column label="借出人" prop="borrower_name" width="120" />
       <el-table-column label="借出账号" min-width="240">
         <template #default="{ row }">
-          <span>{{ row.source_account_identifier }}</span>
-          <span v-if="row.primary_member_name" class="primary-member">
-            {{ row.primary_member_name }}
-          </span>
-          <el-tag
-            v-if="row.lender_mode === 'auto'"
-            size="small"
-            type="warning"
-            class="lender-mode-tag"
-            title="自动分配借用：借用 Key 会在候选账号的 primary Key 之间游走"
-          >
-            自动
-          </el-tag>
+          <template v-if="row.routing_mode === 'pool'">
+            <span>账号池</span>
+            <el-tag size="small" type="warning" class="lender-mode-tag" title="使用过程中按打分表轮换，不锁定账号">
+              使用中轮换
+            </el-tag>
+          </template>
+          <template v-else>
+            <span>{{ row.source_account_identifier }}</span>
+            <span v-if="row.primary_member_name" class="primary-member">
+              {{ row.primary_member_name }}
+            </span>
+            <el-tag
+              v-if="row.lender_mode === 'auto'"
+              size="small"
+              type="warning"
+              class="lender-mode-tag"
+              title="自助自动分配：借用 Key 会在候选账号的 primary Key 之间游走"
+            >
+              自动
+            </el-tag>
+          </template>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
@@ -60,8 +68,9 @@
       </el-table-column>
       <el-table-column label="到期自动归还" width="120" align="center">
         <template #default="{ row }">
+          <span v-if="row.routing_mode === 'pool'" class="muted">—</span>
           <el-switch
-            v-if="canWrite && row.status === 'active'"
+            v-else-if="canWrite && row.status === 'active'"
             :model-value="row.auto_revoke_on_reset"
             :loading="autoRevokeSavingId === row.id"
             @change="(val: boolean) => setAutoRevoke(row, val)"
@@ -107,7 +116,7 @@
             :setup-url="`/api/v2/loans/${row.id}/client-setup`"
           />
           <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
             size="small"
             plain
             @click="openReassignDialog(row)"
@@ -115,7 +124,7 @@
             换出借账号
           </el-button>
           <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
             size="small"
             plain
             @click="revealCursorKey(row)"
@@ -161,25 +170,32 @@
         </el-form-item>
         <el-form-item label="分配方式">
           <el-radio-group v-model="loanForm.lender_mode">
-            <el-radio value="manual">指定借用</el-radio>
-            <el-radio value="auto">自动分配借用</el-radio>
+            <el-radio value="manual">指定账号</el-radio>
+            <el-radio value="auto">自动（账号池轮换）</el-radio>
           </el-radio-group>
-          <p class="manual-hint">
-            指定借用：发放时在该账号建一把独立 Cursor Key，绑定后固定不变。
-            自动分配借用：借用 Key 在候选账号的 primary Key 之间按共享池方式游走
-            （同一会话 sticky，切换间隔至少 30 分钟），换号不会新建 Cursor Key。
+          <p v-if="loanForm.lender_mode === 'manual'" class="manual-hint">
+            指定账号：发放时在该账号建一把独立 Cursor Key，使用过程中不换号。
           </p>
+          <div v-else class="manual-hint">
+            <p>
+              自动分配使用账号池：成员拿到的 Key 会在已入池账号之间轮换（同一会话先用尽当前额度桶，再换下一个高分账号，间隔至少 30 分钟）。确认时不锁定账号。
+            </p>
+            <p v-if="poolPreview.length">当前优先（会变，不是锁定）：</p>
+            <ol v-if="poolPreview.length" class="pool-preview">
+              <li v-for="(row, index) in poolPreview" :key="row.account_id">
+                {{ index + 1 }}. {{ row.account_identifier }}
+                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+              </li>
+            </ol>
+            <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先开启入池。</p>
+            <router-link to="/proxy-keys">打开账号池，管理入池和打分表</router-link>
+          </div>
         </el-form-item>
-        <el-form-item label="借出账号" :required="loanForm.lender_mode === 'manual'">
+        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="借出账号" required>
           <el-select
             v-model="loanForm.source_account_id"
             filterable
-            :disabled="loanForm.lender_mode === 'auto'"
-            :placeholder="
-              loanForm.lender_mode === 'auto'
-                ? '自动分配：由打分决定起始账号，之后按需游走'
-                : '选择借出账号（显示在借人数，含已满员）'
-            "
+            placeholder="选择借出账号（显示在借人数，含已满员）"
             style="width: 100%"
           >
             <el-option
@@ -189,14 +205,11 @@
               :value="r.account_id"
             />
           </el-select>
-          <p v-if="loanForm.lender_mode === 'auto' && autoPickHint" class="manual-hint">
-            {{ autoPickHint }}
-          </p>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="目标模型">
+        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="目标模型">
           <el-input
             v-model="loanForm.model"
             placeholder="留空按总余量打分；填模型则由系统判定它属于哪个 Quota Pool"
@@ -205,7 +218,7 @@
             只需填模型名，auto / api 桶由系统按既有计费口径自动判定，无需人工判断。
           </p>
         </el-form-item>
-        <el-form-item label="重置日回收">
+        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
         <p class="manual-hint">交付为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。</p>
@@ -331,7 +344,10 @@
 
     <el-dialog v-model="keyRevealVisible" title="Key 已生成（仅显示一次）" width="560px" :close-on-click-modal="false">
       <el-alert type="warning" :closable="false" show-icon class="mb">
-        <template v-if="revealedKey?.delivery_mode === 'proxy_alias'">
+        <template v-if="revealedKey?.routing_mode === 'pool'">
+          已下发账号池轮换 Key（pka_）。使用过程中会在已入池账号之间切换，没有单一底层 Key。请立即复制；关闭后可用「复制命令」再次获取。须配置 HTTPS_PROXY。
+        </template>
+        <template v-else-if="revealedKey?.delivery_mode === 'proxy_alias'">
           已下发代理别名 Key（pka_）。请立即复制；关闭后可用「复制命令」再次获取。用户须配置 HTTPS_PROXY。底层 Cursor Key 仅管理员可通过「底层 Key」查看。
         </template>
         <template v-else>
@@ -339,7 +355,9 @@
         </template>
       </el-alert>
       <div class="key-reveal">
-        <div class="muted">借出账号：{{ revealedKey?.source_account_identifier }}</div>
+        <div class="muted">
+          借出账号：{{ revealedKey?.routing_mode === 'pool' ? '账号池（使用中轮换）' : revealedKey?.source_account_identifier }}
+        </div>
         <div class="muted">借用人：{{ revealedKey?.borrower_name }}</div>
         <div class="muted" v-if="revealedKey?.delivery_mode">
           交付模式：{{ revealedKey.delivery_mode === 'proxy_alias' ? '代理别名 Key' : 'Cursor Key' }}
@@ -490,6 +508,7 @@ interface LoanRow {
   borrowed_cents: number
   proxy_cost_cents: number | null
   lender_mode?: string | null
+  routing_mode?: string | null
   source_bound_at?: string | null
 }
 
@@ -513,7 +532,8 @@ const loanForm = ref({
   model: '',
   auto_revoke_on_reset: true,
 })
-const autoPickHint = ref('')
+const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>([])
+const poolPreviewLoaded = ref(false)
 
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
@@ -529,6 +549,7 @@ const revealedKey = ref<{
   borrower_name: string
   source_account_identifier: string
   delivery_mode?: string
+  routing_mode?: string
 } | null>(null)
 
 const cursorKeyVisible = ref(false)
@@ -686,10 +707,10 @@ async function submitLoan() {
       {
         borrower_member_id: loanForm.value.borrower_member_id,
         note: loanForm.value.note || null,
-        auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
+        auto_revoke_on_reset: isAuto ? false : loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
-        model: loanForm.value.model.trim() || null,
+        model: isAuto ? null : loanForm.value.model.trim() || null,
       },
     )
     loanDialogVisible.value = false
@@ -704,31 +725,23 @@ async function submitLoan() {
   }
 }
 
-async function previewAutoPick() {
-  autoPickHint.value = ''
-  if (loanForm.value.lender_mode !== 'auto' || !loanForm.value.borrower_member_id) return
+async function loadPoolPreview() {
+  if (loanForm.value.lender_mode !== 'auto') return
+  poolPreviewLoaded.value = false
   try {
-    const res = await client.post('/api/v2/loans/auto-pick', {
-      borrower_member_id: loanForm.value.borrower_member_id,
-      model: loanForm.value.model.trim() || null,
-    })
-    const picked = res.data.picked_account_id
-    const row = (res.data.ranked || []).find((r: any) => r.account_id === picked)
-    if (!row) {
-      autoPickHint.value = '当前没有可借出的富余账号'
-      return
-    }
-    const by = res.data.decision?.picked_by === 'jev' ? 'Jev 主判' : '算法分'
-    autoPickHint.value = `预计选中：${row.account_identifier}（${by}，综合分 ${row.score}）`
+    const res = await client.get('/api/v2/proxy-pool/ranking')
+    poolPreview.value = (res.data.ranked || []).slice(0, 3)
   } catch {
-    autoPickHint.value = '自动选号预览失败，仍可直接提交'
+    poolPreview.value = []
+  } finally {
+    poolPreviewLoaded.value = true
   }
 }
 
 watch(
-  () => [loanForm.value.lender_mode, loanForm.value.borrower_member_id, loanForm.value.model],
-  () => {
-    void previewAutoPick()
+  () => loanForm.value.lender_mode,
+  (mode) => {
+    if (mode === 'auto') void loadPoolPreview()
   },
 )
 
@@ -994,5 +1007,9 @@ onMounted(loadLoans)
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.5;
+}
+.pool-preview {
+  margin: 4px 0 8px;
+  padding-left: 1.2em;
 }
 </style>

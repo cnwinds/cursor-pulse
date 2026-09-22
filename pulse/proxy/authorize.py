@@ -154,14 +154,13 @@ def _authorize_loan_alias(
     encryption_key: str = "",
     loan_selection=None,
 ) -> dict:
-    """pka_ 别名 → 绑定的 Cursor Key + 可游走候选凭证白名单。
+    """pka_ 别名 → 固定 Key、候选白名单，或账号池轮换。
 
-    两套机制并存，由 ``loan.lender_mode`` 区分：
-
+    - ``routing_mode=pool``（管理员自动分配）：``mode=loan_pool``，没有 Cursor Key，
+      Go 与 pk_ 共用 Credential Pool；
     - ``manual``（指定借用）：返回空白名单，Go 固定在发放时那把 Cursor Key 上；
-    - ``auto``（自动分配借用）：返回按打分排序的候选 primary 凭证，Go 在借用
-      路径上按共享池的方式选号（sticky + Switch dwell + 按 Quota Pool）。
-      ``cursor_api_key`` 仍是白名单为空时的回退（排名失败 / 无候选）。
+    - ``auto`` 且仍绑定出借账号（自助借 Key）：返回按打分排序的候选 primary 凭证，
+      Go 在白名单内游走。``cursor_api_key`` 是白名单为空时的回退。
     """
     from pulse.ingestion.credentials import CredentialService
     from pulse.storage.models import AiAccountCredential, KeyLoan
@@ -186,6 +185,18 @@ def _authorize_loan_alias(
             "loan_id": None,
             "credential_id": None,
             "reason": "unknown_key",
+        }
+
+    if getattr(loan, "routing_mode", None) == "pool":
+        # 管理员自动分配：与 pk_ 共用 Credential Pool，不绑定某一把 Cursor Key。
+        # 不进授权缓存，撤销后下一次换票即失效。
+        return {
+            "status": "ok",
+            "mode": "loan_pool",
+            "proxy_key_id": None,
+            "loan_id": loan.id,
+            "credential_id": None,
+            "reason": None,
         }
 
     credential_ids = []

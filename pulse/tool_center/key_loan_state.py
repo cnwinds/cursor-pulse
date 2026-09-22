@@ -126,6 +126,8 @@ class KeyLoanStateMixin:
            - snapshot cycle rolled past loan creation, or
            - live account deadline <= today
         """
+        if getattr(loan, "routing_mode", None) == "pool":
+            return False
         if not loan.auto_revoke_on_reset or loan.status != "active":
             return False
         today = today or date.today()

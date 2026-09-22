@@ -6,6 +6,7 @@
 
 ### 新增
 
+- **管理员自动分配走账号池轮换**：借用记录里选「自动（账号池轮换）」会签发没有单一出借账号的 `pka_`（`routing_mode=pool`）。使用过程中与历史接入密钥共用已入池账号和打分表，确认时不锁定账号，也不新建 Cursor Key。指定账号仍固定绑定。自助申请 Key 仍是候选账号白名单游走。导航「共享池代理」改为「账号池」：默认是入池开关，打分表保留，原接入密钥收到「历史接入密钥」。
 - **借用两种分配方式**：`lender_mode=manual`（指定借用）在选定账号上建一把独立 Cursor Key 并固定绑定；`lender_mode=auto`（自动分配借用）由 Auto Lender 打分决定起始账号，之后借用 Key 在候选账号的 **primary** Key 之间按共享池方式游走（per-session sticky + 30 分钟驻留 + 按 Quota Pool），换号不新建 Cursor Key。自助借 Key 默认走自动分配。
 - **Jev 主判（OpenRouter Decisions）**：接入 TypeSafe System One 决策模型 `typesafe/jev-1.13`，用 `choice` 问该借哪个账号、`noul` 逐候选问是否侵占主负责人预留。它只在存活候选上重排，调用失败 / 置信度不足 / 首选与次优间隔过小 / 判定影响主负责人时一律回落算法分；带特征哈希缓存与连续失败熔断。可在「系统设置 → Jev 决策模型」配置，或走 `JEV_*` 环境变量。
 - **按 Quota Pool 打分**：给出目标模型时按该模型所属桶（`auto` / `api`）取余量与空闲额度；桶由既有计费口径 `pulse/pricing/billing_scope.py` 自动判定，无需人工指定；`unknown` 退化为两桶都要有余量。

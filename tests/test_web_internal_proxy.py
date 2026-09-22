@@ -230,6 +230,43 @@ def _seed_loan_alias(env, *, loan_status: str = "active", lender_mode: str = "ma
     return cred.id, loan.id
 
 
+def test_authorize_loan_pool_skips_cursor_key(env):
+    from pulse.tool_center.key_loans import DELIVERY_PROXY_ALIAS
+
+    pool_key = "pka_pool_route_test_key"
+    s = env["sf"]()
+    loan = KeyLoan(
+        source_account_id=None,
+        credential_id=None,
+        routing_mode="pool",
+        lender_mode="auto",
+        status="active",
+        delivery_mode=DELIVERY_PROXY_ALIAS,
+        alias_key_hash=hash_proxy_key(pool_key),
+        alias_key_hint=pool_key[:12],
+        alias_encrypted_key=encrypt_secret(pool_key, TEST_KEY),
+        borrower_member_id=None,
+    )
+    s.add(loan)
+    s.commit()
+    loan_id = loan.id
+    s.close()
+
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": pool_key},
+        headers=_h(),
+    )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["status"] == "ok"
+    assert body["mode"] == "loan_pool"
+    assert body["loan_id"] == loan_id
+    assert body["proxy_key_id"] is None
+    assert body.get("cursor_api_key") in (None, "")
+    assert body["credential_id"] is None
+
+
 def test_authorize_loan_alias_ok(env):
     cred_id, loan_id = _seed_loan_alias(env)
     resp = env["client"].post(

@@ -14,14 +14,20 @@ from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 
 
 def resolve_borrowed_cents(
-    lender_mode: str | None, snapshot_cents: int, proxy_cents: int
+    lender_mode: str | None,
+    snapshot_cents: int,
+    proxy_cents: int,
+    *,
+    routing_mode: str | None = None,
 ) -> tuple[int, str]:
     """借用消耗口径 → ``(cents, basis)``。
 
-    自动分配借用的流量会在候选账号间游走，单一账号的快照差值不再代表本笔借用
-    的消耗，此时以代理账本按 ``loan_id`` 汇总为准；manual 或无账本记录时回退
-    快照近似。看板与 IM 列表共用这一份，避免两处口径漂移。
+    账号池轮换没有单一出借账号，消耗只按 ``loan_id`` 记代理账本。
+    自助自动分配会在候选账号间游走，有账本时同样以账本为准；
+    manual 或无账本记录时回退快照近似。看板与 IM 列表共用这一份。
     """
+    if (routing_mode or "") == "pool":
+        return int(proxy_cents), "proxy"
     if (lender_mode or "") == LENDER_MODE_AUTO and proxy_cents > 0:
         return int(proxy_cents), "proxy"
     return int(snapshot_cents), "quota_approx"
@@ -48,14 +54,15 @@ class KeyLoanService(KeyLoanStateMixin):
     def create_loan_record(
         self,
         *,
-        source_account_id: str,
-        credential_id: str,
+        source_account_id: str | None,
+        credential_id: str | None,
         borrower_member_id: str,
         baseline_used_cents: int,
         auto_revoke_on_reset: bool = True,
         expires_on: date | None = None,
         note: str | None = None,
         delivery_mode: str = DELIVERY_PROXY_ALIAS,
+        routing_mode: str = "pinned",
         alias_key_hash: str | None = None,
         alias_key_hint: str | None = None,
         alias_encrypted_key: str | None = None,
@@ -72,6 +79,7 @@ class KeyLoanService(KeyLoanStateMixin):
             note=note,
             status="active",
             delivery_mode=delivery_mode,
+            routing_mode=routing_mode,
             alias_key_hash=alias_key_hash,
             alias_key_hint=alias_key_hint,
             alias_encrypted_key=alias_encrypted_key,
@@ -105,18 +113,23 @@ class KeyLoanService(KeyLoanStateMixin):
         ``proxy_cents`` 由调用方批量传入可避免逐笔查询，见
         :func:`pulse.proxy.usage_queries.loan_proxy_totals_by_loan`。
         """
+        routing_mode = getattr(loan, "routing_mode", None)
         if proxy_cents is None:
             proxy_cents = 0
-            if (getattr(loan, "lender_mode", None) or "") == LENDER_MODE_AUTO:
+            if (getattr(loan, "lender_mode", None) or "") == LENDER_MODE_AUTO or routing_mode == "pool":
                 from pulse.proxy.usage_queries import loan_proxy_totals
 
                 _, proxy_cents = loan_proxy_totals(self.session, loan.id)
-        snapshot = self.latest_snapshot(loan.source_account_id)
-        snapshot_cents = (
-            max(snapshot.used_cents - loan.baseline_used_cents, 0) if snapshot else 0
-        )
+        snapshot_cents = 0
+        if loan.source_account_id:
+            snapshot = self.latest_snapshot(loan.source_account_id)
+            if snapshot:
+                snapshot_cents = max(snapshot.used_cents - loan.baseline_used_cents, 0)
         cents, _ = resolve_borrowed_cents(
-            getattr(loan, "lender_mode", None), snapshot_cents, proxy_cents
+            getattr(loan, "lender_mode", None),
+            snapshot_cents,
+            proxy_cents,
+            routing_mode=routing_mode,
         )
         return cents
 
@@ -137,11 +150,12 @@ class KeyLoanService(KeyLoanStateMixin):
         )
 
     def list_active_loans_for_team(self, team_id: str) -> list[KeyLoan]:
+        from pulse.tool_center.key_loan_lender import select_team_loans
+
         return list(
             self.session.scalars(
-                select(KeyLoan)
-                .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-                .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
+                select_team_loans(team_id)
+                .where(KeyLoan.status == "active")
                 .order_by(KeyLoan.created_at.desc())
             ).all()
         )

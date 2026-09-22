@@ -190,8 +190,9 @@ func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return AuthResult{}, err
 	}
-	// loan_alias carries cursor_api_key and must re-check loan status — never cache.
-	if res.Mode == "loan_alias" {
+	// loan_alias carries cursor_api_key; loan_pool must see revoke immediately.
+	// Neither is cached.
+	if res.Mode == "loan_alias" || res.Mode == "loan_pool" {
 		return res, nil
 	}
 	cached := res
