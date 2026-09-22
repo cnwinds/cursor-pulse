@@ -258,7 +258,6 @@ def notify_loan_issued(
     warning = result.get("warning")
     borrower_name = result.get("borrower_name")
     addresses = resolve_proxy_addresses(session, config)
-    proxy_url = addresses[0].url.rstrip("/")
 
     if not skip_borrower and api_key:
         borrower_id = result.get("borrower_member_id")

@@ -46,7 +46,8 @@ def test_resolve_proxy_addresses_uses_team_settings_when_present(monkeypatch):
         lambda _session, _team_id: team_addrs,
     )
     monkeypatch.setattr(
-        "pulse.tenant.context.team_repository",
+        notify,
+        "team_repository",
         lambda _session, _config: (SimpleNamespace(id="team-1"), None),
     )
     config = AppConfig(
