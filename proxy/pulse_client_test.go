@@ -108,6 +108,50 @@ func TestPulseClientAuthorizeLoanPoolNotCached(t *testing.T) {
 	}
 }
 
+func TestAuthorizeReportSendsCurrentAndBypassesCache(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		var body struct {
+			PulseKey            string `json:"pulse_key"`
+			CurrentCredentialID string `json:"current_credential_id"`
+			ReleaseCurrent      bool   `json:"release_current"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if hits.Load() == 1 && (body.CurrentCredentialID != "" || body.ReleaseCurrent) {
+			t.Fatalf("plain authorize should omit seat fields: %+v", body)
+		}
+		if hits.Load() == 2 && body.CurrentCredentialID != "cred-9" {
+			t.Fatalf("current=%q", body.CurrentCredentialID)
+		}
+		if hits.Load() == 3 && !body.ReleaseCurrent {
+			t.Fatal("expected release_current")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "proxy_key_id": "pk1", "mode": "quota", "reason": nil,
+			"seat_advised": true, "assigned_credential_id": "cred-9",
+		})
+	}))
+	defer srv.Close()
+
+	c := NewPulseClient(srv.URL, "tok", time.Minute)
+	if _, err := c.Authorize("pk_abc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Authorize("pk_abc"); err != nil || hits.Load() != 1 {
+		t.Fatalf("cache hits=%d", hits.Load())
+	}
+	res, err := c.AuthorizeReport("pk_abc", "cred-9", false)
+	if err != nil || !res.SeatAdvised || res.AssignedCredentialID != "cred-9" || hits.Load() != 2 {
+		t.Fatalf("report res=%+v hits=%d err=%v", res, hits.Load(), err)
+	}
+	if _, err := c.AuthorizeReport("pk_abc", "cred-9", true); err != nil || hits.Load() != 3 {
+		t.Fatalf("release hits=%d err=%v", hits.Load(), err)
+	}
+}
+
 func TestExchangeConflicts(t *testing.T) {
 	sameLoan := SessionBinding{Mode: "loan_pool", LoanID: "loan-a"}
 	if exchangeConflicts(sameLoan, "loan_pool", "", "loan-a") {

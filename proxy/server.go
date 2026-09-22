@@ -35,7 +35,7 @@ type Server struct {
 }
 
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
-	return &Server{
+	s := &Server{
 		pool:             pool,
 		ca:               ca,
 		pulse:            pulse,
@@ -45,6 +45,24 @@ func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Se
 		shouldMITM:       defaultShouldMITM,
 		connectAllowlist: resolveConnectAllowlist(),
 	}
+	s.useSeatAdvisor()
+	return s
+}
+
+func (s *Server) useSeatAdvisor() {
+	if s == nil || s.sticky == nil || s.pulse == nil {
+		return
+	}
+	s.sticky.SetAdvisor(func(binding *SessionBinding, current string, release bool) (string, []string, bool, error) {
+		if binding == nil || strings.TrimSpace(binding.PulseKey) == "" {
+			return "", nil, false, nil
+		}
+		res, err := s.pulse.AuthorizeReport(binding.PulseKey, current, release)
+		if err != nil {
+			return "", nil, false, err
+		}
+		return res.AssignedCredentialID, res.BlockedCredentialIDs, res.SeatAdvised, nil
+	})
 }
 
 // SetUpstreamProxy routes MITM upstream (Cursor) traffic via the given proxy.
@@ -178,7 +196,7 @@ func (s *Server) passthroughToken(ctx context.Context, binding SessionBinding) (
 		if s.pulse == nil || strings.TrimSpace(binding.PulseKey) == "" {
 			return nil, "", fmt.Errorf("loan_alias re-authorize unavailable")
 		}
-		res, err := s.pulse.Authorize(binding.PulseKey)
+		res, err := s.pulse.AuthorizeReport(binding.PulseKey, binding.CredentialID, false)
 		if err != nil {
 			return nil, "", err
 		}

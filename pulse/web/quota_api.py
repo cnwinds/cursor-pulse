@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
+from pulse.settings.team_store import effective_loan_selection
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.storage.models import (
@@ -276,7 +277,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         candidates = build_lender_candidates(session, team.id)
         board = rank_lenders(
             candidates,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(session, config, team.id),
             # 模型未知 → unknown：两桶都要有余量（与 Go snapshotQuotaOK 一致）
             pool=quota_pool_for_model(model),
             today=today,
@@ -361,7 +362,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 borrower=user.member,
                 note=body.note,
                 bound_by_member_id=user.member.id,
-                loan_selection=config.tool_center.loan_selection,
+                loan_selection=effective_loan_selection(session, config, team.id),
             )
             log_admin_action(
                 session,
@@ -400,7 +401,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             team.id,
             borrower_member_id=body.borrower_member_id,
             model=body.model,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(session, config, team.id),
             jev=build_jev_client(config),
             jev_config=config.jev,
         )
@@ -446,7 +447,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     team_id=team.id,
                     borrower_member_id=body.borrower_member_id,
                     note=body.note,
-                    loan_selection=config.tool_center.loan_selection,
+                    loan_selection=effective_loan_selection(session, config, team.id),
                     jev=build_jev_client(config),
                 )
             else:
@@ -461,7 +462,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     auto_revoke_on_reset=body.auto_revoke_on_reset,
                     key_name=body.key_name,
                     delivery_mode=body.delivery_mode,
-                    loan_selection=config.tool_center.loan_selection,
+                    loan_selection=effective_loan_selection(session, config, team.id),
                     enforce_loan_cap=False,
                     lender_mode=body.lender_mode,
                     model=body.model,
@@ -684,7 +685,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 loan_id=loan_id,
                 new_source_account_id=body.source_account_id,
                 bound_by_member_id=user.member.id,
-                loan_selection=config.tool_center.loan_selection,
+                loan_selection=effective_loan_selection(session, config, team.id),
                 enforce_loan_cap=False,
             )
             # Commit loan→new credential before remote-revoking the old Cursor key,

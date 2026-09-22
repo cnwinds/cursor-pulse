@@ -14,6 +14,10 @@ from pulse.proxy import service as proxy_service
 
 class AuthorizeBody(BaseModel):
     pulse_key: str
+    # Go 当前粘住的凭证。空表示这次还没有连接上的账号（首次换票）。
+    current_credential_id: str | None = None
+    # 当前凭证已不可用（额度耗尽、要换号）。不要把这个凭证再分回去。
+    release_current: bool = False
 
 
 class UsageItem(BaseModel):
@@ -65,12 +69,22 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         dependencies=[Depends(require_internal_service)],
     )
     def proxy_authorize(body: AuthorizeBody, session: Session = Depends(get_db)):
+        from pulse.proxy.seat_assignment import apply_seat, selection_for_pulse_key
+
         enc_key = (config.credentials.encryption_key or "").strip()
-        return proxy_service.authorize_status(
+        selection = selection_for_pulse_key(session, config, body.pulse_key)
+        result = proxy_service.authorize_status(
             session,
             body.pulse_key,
             encryption_key=enc_key,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=selection,
+        )
+        return apply_seat(
+            session,
+            result,
+            current_credential_id=body.current_credential_id,
+            release_current=body.release_current,
+            config=config,
         )
 
     @app.get(
@@ -81,11 +95,14 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         enc_key = (config.credentials.encryption_key or "").strip()
         if not enc_key:
             raise HTTPException(status_code=503, detail="Credential encryption key not configured")
+        from pulse.settings.team_store import effective_config_for_tenant
+
+        runtime = effective_config_for_tenant(session, config)
         credentials = proxy_service.list_pool_credentials(
             session,
             encryption_key=enc_key,
-            loan_selection=config.tool_center.loan_selection,
-            jev=build_jev_client(config),
+            loan_selection=runtime.tool_center.loan_selection,
+            jev=build_jev_client(runtime),
         )
         return {"credentials": credentials}
 

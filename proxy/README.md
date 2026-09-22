@@ -150,6 +150,16 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 - 借用人自己名下的账号在 Pulse 侧就被排除；当前绑定账号始终保留在白名单首位，避免借用人瞬间失去正在用的账号。
 - 借用流量的用量与轮转事件按**实际服务账号**（`entry.credentialID`）归因，而不是发放时绑定的那把 Key。
 
+## 同时在线人数
+
+换票、会话续期，以及 sticky 因为额度耗尽要换号时，代理把当前凭证报给 `POST /api/internal/v1/proxy/authorize`（`current_credential_id`，离开时再带 `release_current: true`）。Web 按人计座，默认同一账号不超过 3 个经代理的同时使用者（`max_concurrent_users`，0 为不限制）。心跳超过 `concurrent_ttl_seconds`（默认 180s，长于会话 TTL）视为离开。
+
+- 响应里 `seat_advised=true` 且 `assigned_credential_id` 有值：用这个凭证，不要在每次心跳时改选全局第一名。
+- `seat_advised=true` 且分配为空：账号都已满，换号或新加入时返回耗尽，不要再塞进满员账号。
+- 顾问请求失败：沿用本地选号，并跳过上次返回的 `blocked_credential_ids`。
+- 指定借用仍固定在原 Key 上，只是占一个座位。
+- 参数在 web-admin「系统设置 → 选号规则」。
+
 ## 池 exhausted 语义
 
 - 配额按 Cursor **Auto+Composer** 与 **API** 两桶分别标记（`autoQuotaExhausted` / `apiQuotaExhausted`）；仅当两桶都耗尽时凭证才视为 fully unavailable。

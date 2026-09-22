@@ -92,6 +92,8 @@
             「人工分」加在算法综合分上微调（算法分通常 0～1；正数提前、负数延后；清空恢复自动）。
             「主负责人保留」为账号必须留出的余量百分比，会侵占时硬排除（清空取消）。
             开启 Jev 后由它重排，调用失败或护栏不通过则回落算法分。硬过滤始终生效。
+            同时在线人数、切换间隔等参数在
+            <router-link :to="{ path: '/settings', query: { tab: 'loan_selection' } }">系统设置 → 选号规则</router-link>。
           </p>
           <el-button size="small" @click="loadRanking">刷新</el-button>
         </div>

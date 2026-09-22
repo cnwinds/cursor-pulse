@@ -49,6 +49,10 @@
         <CursorPricingSettings />
       </el-tab-pane>
 
+      <el-tab-pane label="选号规则" name="loan_selection" lazy>
+        <LoanSelectionRules :selection="forms.loan_selection" @saved="applySettings" />
+      </el-tab-pane>
+
       <el-tab-pane label="代理地址" name="proxy_addresses">
         <el-table :data="proxyAddressRows" stripe class="settings-table">
           <el-table-column prop="display_name" label="显示名称" min-width="140" />
@@ -99,6 +103,7 @@ import client from '@/api/client'
 import { useSettingsStore } from '@/stores/settings'
 import SettingEditDialog from '@/components/SettingEditDialog.vue'
 import CursorPricingSettings from '@/components/CursorPricingSettings.vue'
+import LoanSelectionRules from '@/components/LoanSelectionRules.vue'
 import type { SettingsField } from '@/components/SettingsSectionForm.vue'
 
 type SettingRow = {
@@ -148,6 +153,7 @@ const forms = reactive({
   bot: {} as Record<string, unknown>,
   admin: {} as Record<string, unknown>,
   proxy_addresses: { addresses: [] as Array<{ url: string; display_name: string }> },
+  loan_selection: {} as Record<string, unknown>,
 })
 
 const memberSelectOptions = computed(() =>
@@ -852,6 +858,7 @@ function applySettings(data: Record<string, any>) {
   forms.bot = { name: data.bot?.name || 'none', ...(data.bot || {}) }
   forms.admin = { ...(data.admin || {}) }
   forms.proxy_addresses = { addresses: data.proxy_addresses?.addresses || [] }
+  forms.loan_selection = { ...(data.tool_center?.loan_selection || {}) }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
     cursorSync.default_interval_minutes = Number(cursorSync.default_interval_hours) * 60

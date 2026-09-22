@@ -26,6 +26,9 @@ type SessionBinding struct {
 	// shared pool instead of being pinned to one credential. Empty means
 	// unscoped: shared-pool keys, or a loan that fell back to its bound key.
 	AllowedCredentialIDs []string
+	// BlockedCredentialIDs are accounts already at the concurrent-user cap for
+	// this holder. Local selection skips them when Pulse seat advice fails open.
+	BlockedCredentialIDs []string
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
@@ -76,6 +79,22 @@ func (b SessionBinding) allowedSet() map[string]bool {
 	}
 	out := make(map[string]bool, len(b.AllowedCredentialIDs))
 	for _, id := range b.AllowedCredentialIDs {
+		if strings.TrimSpace(id) != "" {
+			out[id] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (b SessionBinding) blockedSet() map[string]bool {
+	if len(b.BlockedCredentialIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(b.BlockedCredentialIDs))
+	for _, id := range b.BlockedCredentialIDs {
 		if strings.TrimSpace(id) != "" {
 			out[id] = true
 		}

@@ -416,6 +416,51 @@ def list_pool_credentials(
     return out
 
 
+def ranked_pool_credential_pairs(
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    quota_pool=None,
+) -> list[tuple[str, str]]:
+    """账号池打分顺序的 ``(primary credential_id, account_id)``，不含密钥明文。
+
+    与打分表、``list_pool_credentials`` 同一套 ``rank_lenders``（含 Jev 缓存）。
+    同时在线选座用它，避免为了顺序去解密 Cursor Key。
+    """
+    from pulse.tool_center.auto_lender import rank_lenders
+
+    ctx = _pool_primary_context(session)
+    if not ctx.creds:
+        return []
+    candidates, _excluded = _build_pool_lender_candidates(
+        ctx.accounts,
+        ctx.latest_snaps,
+        ctx.loan_counts,
+        {c.account_id for c in ctx.creds},
+        include_no_snap_excluded=False,
+        bound_at_by_account=ctx.bound_at_by_account,
+        member_names=ctx.member_names,
+    )
+    today, now = _pool_scoring_clock(ctx.latest_snaps)
+    board = rank_lenders(
+        candidates,
+        loan_selection=loan_selection,
+        pool=quota_pool,
+        today=today,
+        now=now,
+        enforce_loan_cap=False,
+        jev=jev,
+    )
+    by_account = {cred.account_id: cred.id for cred in ctx.creds}
+    pairs: list[tuple[str, str]] = []
+    for row in board["ranked"]:
+        cred_id = by_account.get(row["account_id"])
+        if cred_id:
+            pairs.append((cred_id, row["account_id"]))
+    return pairs
+
+
 def list_pool_ranking_board(
     session: Session, *, loan_selection=None, jev=None, quota_pool=None
 ) -> dict:

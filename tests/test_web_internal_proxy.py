@@ -1077,3 +1077,124 @@ def test_pool_keeps_total_exhausted_when_one_bucket_has_headroom(env):
     mixed_row = next(c for c in resp.json()["credentials"] if c["api_key"] == "cursor-key-mixed")
     assert mixed_row["auto_pct"] == 100.0
     assert mixed_row["api_pct"] == 40.0
+
+
+def _seat_keys(env, n: int, *, same_member: bool = False) -> list[str]:
+    from pulse.storage.models import Member
+
+    s = env["sf"]()
+    plains = []
+    shared = None
+    for i in range(n):
+        if same_member and shared is not None:
+            member_id = shared
+        else:
+            member = Member(
+                team_id=env["team_id"],
+                display_name=f"Seat {i}",
+                channel_user_id=f"seat-{i}-{n}",
+                status="active",
+            )
+            s.add(member)
+            s.flush()
+            member_id = member.id
+            shared = member_id
+        _key, plain = proxy_service.create_key(s, name=f"seat-{i}", member_id=member_id)
+        plains.append(plain)
+    s.commit()
+    s.close()
+    return plains
+
+
+def _authorize(env, pulse_key: str, **extra) -> dict:
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": pulse_key, **extra},
+        headers=_h(),
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_authorize_reports_current_credential_and_caps_seats(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+
+    first, second = _seat_keys(env, 2)
+    one = _authorize(env, first)
+    assert one["status"] == "ok"
+    assert one["seat_advised"] is True
+    assert one["max_concurrent_users"] == 1
+    assert one["assigned_credential_id"] == env["cred_id"]
+
+    kept = _authorize(env, first, current_credential_id=env["cred_id"])
+    assert kept["assigned_credential_id"] == env["cred_id"]
+
+    other = _authorize(env, second)
+    assert other["assigned_credential_id"] in (None, "")
+    assert env["cred_id"] in other["blocked_credential_ids"]
+
+    released = _authorize(
+        env, first, current_credential_id=env["cred_id"], release_current=True
+    )
+    assert released["assigned_credential_id"] in (None, "")
+    took = _authorize(env, second)
+    assert took["assigned_credential_id"] == env["cred_id"]
+
+
+def test_authorize_same_member_is_one_seat(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    first, second = _seat_keys(env, 2, same_member=True)
+    assert _authorize(env, first)["assigned_credential_id"] == env["cred_id"]
+    assert _authorize(env, second)["assigned_credential_id"] == env["cred_id"]
+
+
+def test_authorize_pinned_loan_keeps_seat_when_account_is_full(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    (plain,) = _seat_keys(env, 1)
+    assert _authorize(env, plain)["assigned_credential_id"] == env["cred_id"]
+
+    loan_cred, _loan_id = _seed_loan_credential(env)
+    body = _authorize(env, LOAN_PLAINTEXT, current_credential_id=loan_cred)
+    assert body["status"] == "ok"
+    assert body["mode"] == "loan_passthrough"
+    assert body["seat_advised"] is True
+    assert body["assigned_credential_id"] == loan_cred

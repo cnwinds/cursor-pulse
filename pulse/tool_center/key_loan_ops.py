@@ -6,6 +6,7 @@ import logging
 from datetime import date
 
 from pulse.channels.commands_common import encryption_key
+from pulse.settings.team_store import effective_loan_selection
 from pulse.proxy.usage import loan_proxy_usage_summary
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
@@ -232,7 +233,7 @@ def request_loan_payload(
             team_id=repo.team_id,
             borrower=member,
             note=note,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(repo.session, config, repo.team_id),
         )
         repo.session.flush()
         proxy_url = proxy_public_url(config)

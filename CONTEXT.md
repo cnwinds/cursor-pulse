@@ -84,6 +84,10 @@ _Avoid_: Confusing with Snapshot Headroom (headroom is live state; reserve is a 
 Minimum time (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) a credential stays bound before quota pressure may rotate it. `SessionBinding.StickySince` is the clock; within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
 _Avoid_: Treating it as a hard lock (exhaustion and auth failure still rotate)
 
+**Concurrent Seat**:
+Live occupancy of one account by distinct proxy users. The Go proxy reports its current credential when it authorizes (exchange, session reauth) and when sticky rotation leaves that credential. Web counts one seat per member (else per loan or proxy key), expires it after `loan_selection.concurrent_ttl_seconds` (default 180), and refuses a new pool joiner once `loan_selection.max_concurrent_users` (default 3, 0 = unlimited) other holders are already on that account. A holder already seated is not evicted. A designated loan keeps its credential and still occupies a seat. The count is proxy-mediated only and process-local.
+_Avoid_: Confusing it with `max_active_loans_per_account` (open loans, not live users) or with the primary owner using Cursor outside the proxy
+
 **Designated Loan** (`lender_mode=manual`):
 A Key Loan pinned to one lending account: issuance creates a dedicated Cursor key (`key_role=loan`) there, and the proxy serves that loan through it. `reassign_loan_source` re-pins it. Authorization returns no candidate list.
 _Avoid_: Confusing the loan key with the account's primary key

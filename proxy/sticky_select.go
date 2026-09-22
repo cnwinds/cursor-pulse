@@ -4,8 +4,14 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"time"
 )
+
+// SeatAdvisor asks Pulse which credential to move to. release is true when
+// current is being left (quota exhaustion). advised false or a non-nil error
+// means fail open. advised true with an empty assignment means fail closed.
+type SeatAdvisor func(binding *SessionBinding, current string, release bool) (assigned string, blocked []string, advised bool, err error)
 
 // StickySelect picks and rotates the sticky credential for a CLI session JWT
 // within a known quota pool. Callers resolve the pool kind (auto vs api)
@@ -17,6 +23,7 @@ type StickySelect struct {
 	// bound less than this long ago. Auth failure and pool-wide exhaustion still
 	// rotate: a session must never get stuck on an unusable account.
 	minDwell time.Duration
+	advisor  SeatAdvisor
 }
 
 func NewStickySelect(pool *Pool, sessions *SessionMap) *StickySelect {
@@ -31,6 +38,13 @@ func NewStickySelectWithDwell(pool *Pool, sessions *SessionMap, minDwell time.Du
 		minDwell = 0
 	}
 	return &StickySelect{pool: pool, sessions: sessions, minDwell: minDwell}
+}
+
+func (s *StickySelect) SetAdvisor(fn SeatAdvisor) {
+	if s == nil {
+		return
+	}
+	s.advisor = fn
 }
 
 // dwellActive reports whether binding was refreshed inside the dwell window.
@@ -110,7 +124,15 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		} else if entry != nil && entry.authCooling(now) {
 			log.Printf("[pool] sticky credential %s auth cooling — rotating", stickyID)
 		}
-		next := s.pool.nextAvailableForQuotaWithin(stickyID, pool, allowed)
+		if id, handled, err := s.chooseAssigned(binding, stickyID, true, pool, allowed); handled {
+			if err != nil {
+				return nil, "", err
+			}
+			s.bindSticky(sessionJWT, binding, id, now)
+			log.Printf("[pool] session sticky rotated to credential %s for pool %s (seat)", id, pool)
+			return s.pool.tokenForCredential(ctx, id)
+		}
+		next := s.pool.nextAvailableForQuotaWithin(stickyID, pool, allowed, binding.blockedSet())
 		if next == nil {
 			return nil, "", errAllExhausted
 		}
@@ -118,7 +140,7 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		log.Printf("[pool] session sticky rotated to credential %s for pool %s", next.credentialID, pool)
 		return s.pool.tokenForCredential(ctx, next.credentialID)
 	}
-	entry, tok, err := s.pool.tokenForQuotaPoolWithin(ctx, pool, nil, allowed)
+	entry, tok, err := s.pool.tokenForQuotaPoolWithin(ctx, pool, binding.blockedSet(), allowed)
 	if err != nil {
 		return nil, "", err
 	}
@@ -134,7 +156,16 @@ func (s *StickySelect) RotateOnExhaustion(sessionJWT string, binding *SessionBin
 	if s == nil || sessionJWT == "" || binding == nil {
 		return
 	}
-	next := s.pool.nextAvailableForQuotaWithin(exhaustedCredID, pool, binding.allowedSet())
+	if id, handled, err := s.chooseAssigned(binding, exhaustedCredID, true, pool, binding.allowedSet()); handled {
+		if err != nil || id == "" || id == binding.StickyCredentialID {
+			log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
+			return
+		}
+		s.bindSticky(sessionJWT, binding, id, time.Now())
+		log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s, seat)", id, pool)
+		return
+	}
+	next := s.pool.nextAvailableForQuotaWithin(exhaustedCredID, pool, binding.allowedSet(), binding.blockedSet())
 	if next == nil {
 		log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
 		return
@@ -144,4 +175,48 @@ func (s *StickySelect) RotateOnExhaustion(sessionJWT string, binding *SessionBin
 	}
 	s.bindSticky(sessionJWT, binding, next.credentialID, time.Now())
 	log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s)", next.credentialID, pool)
+}
+
+// chooseAssigned asks Pulse for a credential that is in the pool, in the
+// allowlist, and still has quota. handled means the caller must not fall
+// through to a local pick: either use id, or treat err as exhaustion.
+func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, release bool, pool quotaPoolKind, allowed map[string]bool) (string, bool, error) {
+	if s == nil || s.advisor == nil || binding == nil || strings.TrimSpace(binding.PulseKey) == "" {
+		return "", false, nil
+	}
+	released := strings.TrimSpace(current)
+	askRelease := release
+	seen := map[string]bool{}
+	limit := s.pool.size()
+	if limit < 1 {
+		limit = 1
+	}
+	for i := 0; i < limit; i++ {
+		assigned, blocked, advised, err := s.advisor(binding, released, askRelease)
+		if advised {
+			binding.BlockedCredentialIDs = blocked
+		}
+		if err != nil || !advised {
+			log.Printf("[pool] seat advice unavailable: %v", err)
+			return "", false, nil
+		}
+		assigned = strings.TrimSpace(assigned)
+		if assigned == "" || seen[assigned] {
+			return "", true, errAllExhausted
+		}
+		seen[assigned] = true
+		if allowed != nil && !allowed[assigned] {
+			released = assigned
+			askRelease = true
+			continue
+		}
+		got := s.pool.findEntry(assigned)
+		if got == nil || !got.availableFor(pool) {
+			released = assigned
+			askRelease = true
+			continue
+		}
+		return assigned, true, nil
+	}
+	return "", true, errAllExhausted
 }

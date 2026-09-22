@@ -19,9 +19,9 @@ import (
 var errAllExhausted = errors.New("all API keys exhausted")
 
 const (
-	exchangePath           = "/auth/exchange_user_api_key"
-	exchangeTimeout        = 15 * time.Second
-	authBadCooldown          = 2 * time.Minute
+	exchangePath    = "/auth/exchange_user_api_key"
+	exchangeTimeout = 15 * time.Second
+	authBadCooldown = 2 * time.Minute
 )
 
 // exchangeHTTPError is returned for non-2xx responses from Cursor's exchange.
@@ -355,12 +355,13 @@ func (p *Pool) nextAvailableAfter(credentialID string) *keyEntry {
 }
 
 func (p *Pool) nextAvailableForQuota(credentialID string, pool quotaPoolKind) *keyEntry {
-	return p.nextAvailableForQuotaWithin(credentialID, pool, nil)
+	return p.nextAvailableForQuotaWithin(credentialID, pool, nil, nil)
 }
 
 // nextAvailableForQuotaWithin is nextAvailableForQuota restricted to allowed
-// credential IDs (nil = whole pool), used by whitelist-scoped loan bindings.
-func (p *Pool) nextAvailableForQuotaWithin(credentialID string, pool quotaPoolKind, allowed map[string]bool) *keyEntry {
+// credential IDs (nil = whole pool) and skipping blocked IDs (accounts at the
+// concurrent-user cap). Nil allowed means the whole pool.
+func (p *Pool) nextAvailableForQuotaWithin(credentialID string, pool quotaPoolKind, allowed, blocked map[string]bool) *keyEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := len(p.keys)
@@ -377,6 +378,9 @@ func (p *Pool) nextAvailableForQuotaWithin(credentialID string, pool quotaPoolKi
 	for i := 0; i < n; i++ {
 		e := p.keys[(start+i)%n]
 		if allowed != nil && !allowed[e.credentialID] {
+			continue
+		}
+		if blocked != nil && blocked[e.credentialID] {
 			continue
 		}
 		if !e.unavailable() && e.hasQuotaForPool(pool) {

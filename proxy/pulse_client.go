@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +25,13 @@ type AuthResult struct {
 	// mode: the loan roams across these accounts like the shared pool. Empty
 	// means pinned to CredentialID / CursorAPIKey (designated loan).
 	CredentialIDs []string `json:"credential_ids,omitempty"`
+	// Seat advice from Pulse. SeatAdvised false means the web did not judge
+	// concurrency (fail open to local select). An empty AssignedCredentialID
+	// with SeatAdvised true means every candidate account is at the cap.
+	AssignedCredentialID string   `json:"assigned_credential_id,omitempty"`
+	BlockedCredentialIDs []string `json:"blocked_credential_ids,omitempty"`
+	MaxConcurrentUsers   int      `json:"max_concurrent_users,omitempty"`
+	SeatAdvised          bool     `json:"seat_advised,omitempty"`
 }
 
 type PoolCredential struct {
@@ -64,8 +72,8 @@ type PulseClient struct {
 	token   string
 	client  *http.Client
 
-	authTTL time.Duration
-	authMu  sync.Mutex
+	authTTL   time.Duration
+	authMu    sync.Mutex
 	authCache map[string]struct {
 		res    AuthResult
 		expiry time.Time
@@ -88,11 +96,11 @@ func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 		authTTL = 60 * time.Second
 	}
 	return &PulseClient{
-		baseURL:         stringsTrimRightSlash(baseURL),
-		token:           token,
-		client:          &http.Client{Timeout: 15 * time.Second},
-		authTTL:         authTTL,
-		authCache:       map[string]struct {
+		baseURL: stringsTrimRightSlash(baseURL),
+		token:   token,
+		client:  &http.Client{Timeout: 15 * time.Second},
+		authTTL: authTTL,
+		authCache: map[string]struct {
 			res    AuthResult
 			expiry time.Time
 		}{},
@@ -162,15 +170,36 @@ func (c *PulseClient) Stop() {
 }
 
 func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
-	c.authMu.Lock()
-	if e, ok := c.authCache[pulseKey]; ok && time.Now().Before(e.expiry) {
-		res := e.res
-		c.authMu.Unlock()
-		return res, nil
-	}
-	c.authMu.Unlock()
+	return c.authorize(pulseKey, "", false)
+}
 
-	body, _ := json.Marshal(map[string]string{"pulse_key": pulseKey})
+// AuthorizeReport is Authorize plus the credential this session is on.
+// A non-empty current credential or release=true bypasses the auth cache:
+// session reauth and rotation must refresh the occupancy seat.
+func (c *PulseClient) AuthorizeReport(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
+	return c.authorize(pulseKey, strings.TrimSpace(currentCredentialID), releaseCurrent)
+}
+
+func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
+	report := currentCredentialID != "" || releaseCurrent
+	if !report {
+		c.authMu.Lock()
+		if e, ok := c.authCache[pulseKey]; ok && time.Now().Before(e.expiry) {
+			res := e.res
+			c.authMu.Unlock()
+			return res, nil
+		}
+		c.authMu.Unlock()
+	}
+
+	payload := map[string]any{"pulse_key": pulseKey}
+	if currentCredentialID != "" {
+		payload["current_credential_id"] = currentCredentialID
+	}
+	if releaseCurrent {
+		payload["release_current"] = true
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/authorize", bytes.NewReader(body))
 	if err != nil {
 		return AuthResult{}, err
@@ -191,8 +220,9 @@ func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
 		return AuthResult{}, err
 	}
 	// loan_alias carries cursor_api_key; loan_pool must see revoke immediately.
+	// Seat reports must not be cached or the occupancy heartbeat dies.
 	// Neither is cached.
-	if res.Mode == "loan_alias" || res.Mode == "loan_pool" {
+	if report || res.Mode == "loan_alias" || res.Mode == "loan_pool" {
 		return res, nil
 	}
 	cached := res

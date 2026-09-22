@@ -211,6 +211,11 @@ class LoanSelectionConfig(BaseModel):
     auto_min_margin: float = Field(default=0.05, ge=0, le=1)
     auto_cache_seconds: float = Field(default=600.0, ge=0)
     auto_switch_margin: float = Field(default=0.1, ge=0)
+    # 同一账号经本代理同时在线的不同使用人上限。0 = 不限制。
+    # 只计代理连接，不计主负责人在 Cursor 客户端的直接使用。
+    max_concurrent_users: int = Field(default=3, ge=0, le=100)
+    # 座位心跳超时。应长于 Go 会话续期间隔（默认 120s）。
+    concurrent_ttl_seconds: int = Field(default=180, ge=30, le=3600)
 
     @model_validator(mode="after")
     def _validate_weight_sums(self) -> "LoanSelectionConfig":

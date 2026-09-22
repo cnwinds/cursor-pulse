@@ -137,6 +137,7 @@ Point agent at this proxy and trust the CA (PowerShell):
 	if pulseMode {
 		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
 		srv.sticky = NewStickySelectWithDwell(pool, sessions, resolveStickyMinDwell(*stickyMinDwell))
+		srv.useSeatAdvisor()
 	}
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))

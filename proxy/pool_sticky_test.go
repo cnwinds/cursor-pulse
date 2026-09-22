@@ -48,6 +48,18 @@ func TestMarkExhaustedAdvancesOnce(t *testing.T) {
 	}
 }
 
+func TestNextAvailableSkipsBlocked(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1"},
+		{CredentialID: "c2", APIKey: "k2"},
+		{CredentialID: "c3", APIKey: "k3"},
+	})
+	next := p.nextAvailableForQuotaWithin("c1", quotaPoolUnknown, nil, map[string]bool{"c2": true})
+	if next == nil || next.credentialID != "c3" {
+		t.Fatalf("want c3, got %#v", next)
+	}
+}
+
 func TestNextAvailableAfter(t *testing.T) {
 	p := NewPoolFromCredentials([]PoolCredential{
 		{CredentialID: "c1", APIKey: "k1"},
@@ -519,6 +531,88 @@ func TestRotateOnExhaustionNoCandidateLeft(t *testing.T) {
 	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
 	if binding.StickyCredentialID != "c1" {
 		t.Fatalf("must not escape the allowlist, got %q", binding.StickyCredentialID)
+	}
+}
+
+func TestStickyAdvisorAssignsOnRotation(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	var current string
+	var release bool
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+		current = cur
+		release = rel
+		return "c2", []string{"c1"}, true, nil
+	})
+	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok", StickyCredentialID: "c1"}
+	sessions.Bind("jwt1", binding)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if err != nil || tok == "" || entry.credentialID != "c2" {
+		t.Fatalf("want c2: err=%v entry=%v", err, entry)
+	}
+	if current != "c1" || !release {
+		t.Fatalf("advisor current=%q release=%v", current, release)
+	}
+	if len(binding.BlockedCredentialIDs) != 1 || binding.BlockedCredentialIDs[0] != "c1" {
+		t.Fatalf("blocked=%v", binding.BlockedCredentialIDs)
+	}
+}
+
+func TestStickyAdvisorFailClosedDoesNotPickLocal(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+		return "", []string{"c2"}, true, nil
+	})
+	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok", StickyCredentialID: "c1"}
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if !errors.Is(err, errAllExhausted) || entry != nil {
+		t.Fatalf("want exhausted, err=%v entry=%v", err, entry)
+	}
+	if binding.StickyCredentialID != "c1" {
+		t.Fatalf("sticky moved to %q", binding.StickyCredentialID)
+	}
+}
+
+func TestStickyAdvisorFailOpenSkipsBlocked(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+		return "", nil, false, errors.New("web down")
+	})
+	binding := SessionBinding{
+		ProxyKeyID:           "pk1",
+		PulseKey:             "pk_ok",
+		StickyCredentialID:   "c1",
+		BlockedCredentialIDs: []string{"c2"},
+	}
+	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	if !errors.Is(err, errAllExhausted) {
+		t.Fatalf("blocked account must stay skipped, err=%v", err)
+	}
+	if binding.StickyCredentialID != "c1" {
+		t.Fatalf("sticky=%q", binding.StickyCredentialID)
 	}
 }
 
