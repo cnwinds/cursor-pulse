@@ -131,6 +131,28 @@ export function formatResetCountdown(
   return `${Math.max(totalMinutes, 1)}分钟后重置`
 }
 
+/** 距额度作废的小时数 → 自适应「N天 / N小时 / N分钟」（不含「距作废」前缀）。 */
+export function formatHoursUntilDeadline(hours: number | null | undefined): string {
+  if (hours == null || !Number.isFinite(hours)) return '—'
+  const totalMinutes = Math.round(Math.max(0, hours) * 60)
+  if (totalMinutes <= 0) return '0分钟'
+
+  const days = Math.floor(totalMinutes / (24 * 60))
+  let rem = totalMinutes - days * 24 * 60
+  const hrs = Math.floor(rem / 60)
+  const mins = rem % 60
+
+  if (days >= 1) {
+    if (hrs > 0) return `${days}天${hrs}小时`
+    return `${days}天`
+  }
+  if (hrs >= 1) {
+    if (mins > 0) return `${hrs}小时${mins}分钟`
+    return `${hrs}小时`
+  }
+  return `${mins}分钟`
+}
+
 /** 借用时长：未归还时计至当前时刻 */
 export function formatLoanDuration(
   createdAt: string | null | undefined,

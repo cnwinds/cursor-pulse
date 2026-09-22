@@ -257,6 +257,7 @@ import { ElMessage, ElTooltip } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
+import { formatHoursUntilDeadline } from '@/utils/time'
 
 const ColHeader = defineComponent({
   name: 'ColHeader',
