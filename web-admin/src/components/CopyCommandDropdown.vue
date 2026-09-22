@@ -4,7 +4,12 @@
     @visible-change="onVisible"
     @command="copyItem"
   >
-    <el-button :size="size" type="primary" plain>复制命令</el-button>
+    <el-tooltip v-if="iconOnly" content="复制命令" placement="top">
+      <el-button :size="size" link type="primary" aria-label="复制命令">
+        <el-icon><DocumentCopy /></el-icon>
+      </el-button>
+    </el-tooltip>
+    <el-button v-else :size="size" type="primary" plain>复制命令</el-button>
     <template #dropdown>
       <el-dropdown-menu>
         <el-dropdown-item
@@ -42,6 +47,7 @@ export interface ProxyCommandMenuItem {
 const props = defineProps<{
   setupUrl: string
   size?: 'small' | 'default' | 'large'
+  iconOnly?: boolean
 }>()
 
 const router = useRouter()

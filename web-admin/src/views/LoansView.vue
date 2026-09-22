@@ -69,26 +69,23 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="到期自动归还" width="120" align="center">
+      <el-table-column label="自动回收日" width="120" align="center">
         <template #default="{ row }">
-          <span v-if="row.routing_mode === 'pool'" class="muted">—</span>
-          <el-switch
-            v-else-if="canWrite && row.status === 'active'"
-            :model-value="row.auto_revoke_on_reset"
-            :loading="autoRevokeSavingId === row.id"
-            @change="(val: boolean) => setAutoRevoke(row, val)"
-          />
-          <span v-else class="muted">{{ row.auto_revoke_on_reset ? '是' : '否' }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="自动回收日" width="120">
-        <template #default="{ row }">
-          {{ row.loan_expires_on || '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="借用时长" width="120">
-        <template #default="{ row }">
-          {{ formatLoanDuration(row.created_at, row.revoked_at) }}
+          <el-tooltip
+            v-if="canToggleAutoRevoke(row)"
+            :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
+            placement="top"
+          >
+            <button
+              type="button"
+              class="recycle-date"
+              :disabled="autoRevokeSavingId === row.id"
+              @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+            >
+              {{ recycleDateText(row) }}
+            </button>
+          </el-tooltip>
+          <span v-else>{{ recycleDateText(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="借用消耗" width="110">
@@ -96,7 +93,7 @@
           ${{ (row.borrowed_cents / 100).toFixed(2) }}
         </template>
       </el-table-column>
-      <el-table-column label="proxy 统计" width="120">
+      <el-table-column label="proxy消耗" width="120">
         <template #default="{ row }">
           <el-button link type="primary" @click="openUsages(row)">
             ${{ ((row.proxy_cost_cents ?? 0) / 100).toFixed(2) }}
@@ -111,37 +108,39 @@
           {{ row.revoked_at ? formatChinaTime(row.revoked_at) : '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="340" fixed="right">
+      <el-table-column label="操作" width="148" fixed="right" align="center">
         <template #default="{ row }">
-          <CopyCommandDropdown
-            v-if="row.status === 'active'"
-            size="small"
-            :setup-url="`/api/v2/loans/${row.id}/client-setup`"
-          />
-          <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
-            size="small"
-            plain
-            @click="openReassignDialog(row)"
-          >
-            换出借账号
-          </el-button>
-          <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
-            size="small"
-            plain
-            @click="revealCursorKey(row)"
-          >
-            底层 Key
-          </el-button>
-          <el-button
-            v-if="row.status === 'active'"
-            link
-            type="danger"
-            @click="revokeLoan(row)"
-          >
-            撤销
-          </el-button>
+          <div class="loan-actions">
+            <CopyCommandDropdown
+              v-if="row.status === 'active'"
+              icon-only
+              size="small"
+              :setup-url="`/api/v2/loans/${row.id}/client-setup`"
+            />
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
+              content="换出借账号"
+              placement="top"
+            >
+              <el-button link type="primary" aria-label="换出借账号" @click="openReassignDialog(row)">
+                <el-icon><Switch /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
+              content="底层 Key"
+              placement="top"
+            >
+              <el-button link aria-label="底层 Key" @click="revealCursorKey(row)">
+                <el-icon><Key /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip v-if="row.status === 'active'" content="撤销" placement="top">
+              <el-button link type="danger" aria-label="撤销" @click="revokeLoan(row)">
+                <el-icon><CircleClose /></el-icon>
+              </el-button>
+            </el-tooltip>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -410,7 +409,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
-import { formatChinaTime, formatLoanDuration } from '@/utils/time'
+import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 
@@ -794,6 +793,15 @@ async function submitReassign() {
   }
 }
 
+function recycleDateText(row: LoanRow) {
+  if (!row.auto_revoke_on_reset) return '-'
+  return row.loan_expires_on || '-'
+}
+
+function canToggleAutoRevoke(row: LoanRow) {
+  return canWrite.value && row.status === 'active' && row.routing_mode !== 'pool'
+}
+
 async function setAutoRevoke(row: LoanRow, enabled: boolean) {
   if (row.auto_revoke_on_reset === enabled) return
   autoRevokeSavingId.value = row.id
@@ -942,6 +950,32 @@ onMounted(loadLoans)
   margin: 0;
   color: var(--el-text-color-secondary);
   font-size: 14px;
+}
+.loan-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.loan-actions :deep(.el-button) {
+  padding: 4px;
+  margin: 0;
+}
+.recycle-date {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.recycle-date:hover {
+  color: var(--el-color-primary);
+}
+.recycle-date:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 .header-actions {
   display: flex;
