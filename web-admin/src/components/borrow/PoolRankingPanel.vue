@@ -535,6 +535,20 @@ onMounted(loadRanking)
 .score-input {
   width: 120px;
 }
+.pct-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.reserve-input {
+  width: 108px;
+}
+.pct-unit {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  user-select: none;
+}
 .metric-pill,
 .seat-pill {
   display: inline-block;

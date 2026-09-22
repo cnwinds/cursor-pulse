@@ -333,6 +333,16 @@ async function onSave() {
   margin-left: 0;
   line-height: 1.45;
 }
+.pct-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pct-unit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+}
 .loan-rules--sidebar :deep(.el-form-item) {
   margin-bottom: 14px;
 }
