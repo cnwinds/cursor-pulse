@@ -1,29 +1,11 @@
 <template>
   <div class="ranking-panel">
     <div class="panel-card">
-      <header class="ranking-head">
-        <div class="head-copy">
-          <p class="eyebrow">Credential Pool · 实时快照</p>
-          <p class="lead">
-            驱动自动分配与池轮换的优先顺序。名次随额度消耗变化；人工分与主负责人保留可在本表直接微调。
-          </p>
-          <p v-if="seatSnapshot" class="seat-meta">
-            代理占座上限
-            <strong>{{ seatLimitLabel }}</strong>
-            · {{ seatSnapshot.ttl_seconds }}s 无上报视为离开
-            <router-link :to="{ path: '/borrow-management', query: { tab: 'rules' } }">
-              选号规则
-            </router-link>
-            ·
-            <router-link :to="{ path: '/borrow-management', query: { tab: 'jev' } }">
-              Jev 决策
-            </router-link>
-          </p>
-        </div>
+      <div class="ranking-toolbar">
         <el-button type="primary" plain :loading="rankingLoading" @click="loadRanking">
-          刷新打分
+          刷新
         </el-button>
-      </header>
+      </div>
 
       <el-alert
         v-if="ranking.decision"
@@ -61,7 +43,13 @@
               <span class="rank-index">{{ $index + 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="账号" min-width="152" fixed>
+          <el-table-column min-width="152" fixed>
+            <template #header>
+              <ColHeader
+                label="账号"
+                tip="已入池账号。绿色「选用」为当前排序首选（Jev 通过时为 Jev 选择，否则为算法第一名）。"
+              />
+            </template>
             <template #default="{ row }">
               <div class="account-cell">
                 <span class="account-id">{{ row.account_identifier }}</span>
@@ -137,8 +125,21 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="urgency_cents_per_day" label="消化/日" width="80" align="right" />
-          <el-table-column label="额度进度" min-width="176">
+          <el-table-column prop="urgency_cents_per_day" width="80" align="right">
+            <template #header>
+              <ColHeader
+                label="消化/日"
+                tip="距额度作废越近、余量消化压力越大，数值越高；排序时会优先「快到期要先用完」的账号。"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column min-width="176">
+            <template #header>
+              <ColHeader
+                label="额度进度"
+                tip="同步快照中的 Total / Auto / API 用量占本周期上限比例。"
+              />
+            </template>
             <template #default="{ row }">
               <QuotaProgressBars
                 :total_pct="row.total_pct"
@@ -161,10 +162,7 @@
           </el-table-column>
           <el-table-column width="88" align="center">
             <template #header>
-              <ColHeader
-                label="代理在用"
-                tip="经本代理上报、当前仍占座的并发人数（按成员去重：同人在同号多会话算 1）。主负责人直连 Cursor 不计入。超时未上报的座位已剔除。"
-              />
+              <ColHeader label="代理在用" :tip="proxySeatsTip" />
             </template>
             <template #default="{ row }">
               <span class="seat-pill" :class="seatPillClass(row)">
@@ -172,8 +170,22 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="88" align="right" />
-          <el-table-column prop="snapshot_freshness" label="快照" width="64" align="center" />
+          <el-table-column prop="hours_to_deadline" width="88" align="right">
+            <template #header>
+              <ColHeader
+                label="距作废(h)"
+                tip="距离本周期额度作废（重置）的小时数；越近越优先消化剩余额度。"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="snapshot_freshness" width="64" align="center">
+            <template #header>
+              <ColHeader
+                label="快照"
+                tip="额度快照新鲜度 0–1：越接近 1 表示越刚同步；过久未同步会在算法分中被降权（非硬过滤）。"
+              />
+            </template>
+          </el-table-column>
         </el-table>
       </section>
 
@@ -195,13 +207,25 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="原因" min-width="140">
+          <el-table-column min-width="140">
+            <template #header>
+              <ColHeader label="原因" tip="未进入入选排序的硬过滤原因。" />
+            </template>
             <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
           </el-table-column>
-          <el-table-column width="72" align="center" label="固定借用">
+          <el-table-column width="72" align="center">
+            <template #header>
+              <ColHeader
+                label="固定借用"
+                tip="锁定出借账号、尚未结束的借用笔数（指定账号 / 非池轮换）。"
+              />
+            </template>
             <template #default="{ row }">{{ row.active_loans ?? 0 }}</template>
           </el-table-column>
-          <el-table-column width="88" align="center" label="代理在用">
+          <el-table-column width="88" align="center">
+            <template #header>
+              <ColHeader label="代理在用" :tip="proxySeatsTip" />
+            </template>
             <template #default="{ row }">{{ row.proxy_active_seats ?? 0 }}</template>
           </el-table-column>
         </el-table>
@@ -287,9 +311,15 @@ const rankingLoading = ref(false)
 const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null, seat_snapshot: null })
 
 const seatSnapshot = computed(() => ranking.value.seat_snapshot)
-const seatLimitLabel = computed(() => {
+
+const proxySeatsTip = computed(() => {
   const max = seatSnapshot.value?.max_concurrent_users ?? 0
-  return max <= 0 ? '不限制' : `${max} 人/账号`
+  const ttl = seatSnapshot.value?.ttl_seconds ?? 180
+  const limit = max <= 0 ? '不限制人数' : `同一账号最多 ${max} 人`
+  return (
+    `经本代理上报、当前仍占座的并发人数（按成员去重：同人在同号多会话算 1）。` +
+    `主负责人直连 Cursor 不计入。${limit}；${ttl} 秒无上报视为离开。上限与超时在「选号规则」页签配置。`
+  )
 })
 
 const DECISION_FALLBACK_LABELS: Record<string, string> = {
@@ -414,48 +444,10 @@ onMounted(loadRanking)
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 40px rgba(15, 23, 42, 0.06);
 }
-.ranking-head {
+.ranking-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-.head-copy {
-  flex: 1;
-  min-width: 0;
-}
-.eyebrow {
-  margin: 0 0 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--rank-accent);
-}
-.lead {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
-  color: #334155;
-  max-width: 52rem;
-}
-.seat-meta {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--rank-muted);
-}
-.seat-meta strong {
-  color: #0f172a;
-  font-weight: 600;
-}
-.seat-meta a {
-  margin-left: 8px;
-  color: var(--rank-accent);
-  text-decoration: none;
-}
-.seat-meta a:hover {
-  text-decoration: underline;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 .ranking-decision {
   margin-bottom: 16px;
