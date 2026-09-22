@@ -69,15 +69,18 @@
         <span class="hint">小时。离重置太近的账号不新借出。</span>
       </el-form-item>
       <el-form-item label="主负责人保留">
-        <el-input-number
-          v-model="draft.owner_reserve_pct"
-          :min="0"
-          :max="100"
-          :step="5"
-          :precision="0"
-          :disabled="!canWrite"
-        />
-        <span class="hint">%。账号未单独设置时用这个默认值。0 为不保留。</span>
+        <div class="pct-field">
+          <el-input-number
+            v-model="draft.owner_reserve_pct"
+            :min="0"
+            :max="100"
+            :step="5"
+            :precision="0"
+            :disabled="!canWrite"
+          />
+          <span class="pct-unit">%</span>
+        </div>
+        <span class="hint">账号未单独设置时用这个默认值。0 为不保留。</span>
       </el-form-item>
       <el-form-item :class="{ 'form-actions--sidebar': layout === 'sidebar' }">
         <el-button v-if="canWrite" type="primary" :loading="saving" @click="onSave">

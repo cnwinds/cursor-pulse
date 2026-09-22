@@ -111,28 +111,31 @@
             </template>
           </el-table-column>
           <el-table-column prop="surplus_cents" label="预计余量" width="88" align="right" />
-          <el-table-column width="138">
+          <el-table-column width="152">
             <template #header>
               <ColHeader
-                label="主负责人保留"
-                tip="该账号 Quota 池必须为号主留出的余量百分比。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空表示用选号规则里的默认百分比；0 表示不单独保留。"
+                label="主负责人保留 %"
+                tip="该账号 Quota 池必须为号主留出的余量百分比（%）。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空表示用选号规则里的默认百分比；0 表示不单独保留。"
               />
             </template>
             <template #default="{ row }">
-              <el-input-number
-                :model-value="row.reserve_pct ?? undefined"
-                :disabled="!canWrite"
-                :min="0"
-                :max="100"
-                :step="5"
-                :precision="0"
-                :value-on-clear="null"
-                controls-position="right"
-                placeholder="默认"
-                size="small"
-                class="score-input"
-                @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
-              />
+              <div class="pct-input-wrap">
+                <el-input-number
+                  :model-value="row.reserve_pct ?? undefined"
+                  :disabled="!canWrite"
+                  :min="0"
+                  :max="100"
+                  :step="5"
+                  :precision="0"
+                  :value-on-clear="null"
+                  controls-position="right"
+                  placeholder="默认"
+                  size="small"
+                  class="score-input reserve-input"
+                  @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
+                />
+                <span class="pct-unit">%</span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column prop="urgency_cents_per_day" label="消化/日" width="80" align="right" />
