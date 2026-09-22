@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
-from pulse.settings.team_store import effective_config_for_tenant
+from pulse.settings.team_store import effective_config_for_saved_tenant
 from pulse.proxy import service as proxy_service
 from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.proxy.usage_rollup import rollup_proxy_usages
@@ -376,7 +376,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         session: Session = Depends(get_db),
     ):
         """当前代理池打分表：入选排序 + 硬过滤排除项 + Auto Lender 决策。"""
-        runtime = effective_config_for_tenant(session, config)
+        runtime = effective_config_for_saved_tenant(session, config)
         return proxy_service.list_pool_ranking_board(
             session,
             loan_selection=runtime.tool_center.loan_selection,

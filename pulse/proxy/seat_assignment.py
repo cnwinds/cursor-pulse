@@ -11,7 +11,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.proxy.occupancy import get_occupancy, seat_holder_id
+from pulse.proxy.occupancy import SeatChoice, get_occupancy, seat_holder_id
 from pulse.storage.models import AiAccountCredential, KeyLoan, Member, ProxyKey
 
 logger = logging.getLogger(__name__)
@@ -138,12 +138,40 @@ def _advise(
         ttl_seconds=float(selection.concurrent_ttl_seconds),
         now=now,
     )
+    return _advice_fields(
+        choice,
+        pinned=pinned,
+        release_current=release_current,
+        max_concurrent=int(selection.max_concurrent_users),
+    )
+
+
+def _advice_fields(
+    choice: SeatChoice,
+    *,
+    pinned: bool,
+    release_current: bool,
+    max_concurrent: int,
+) -> dict:
+    """没有候选、也不是正在离开时，不要把空池说成人满。
+
+    正在离开且没有可去的账号，仍要 advised，这样 Go 不会把刚释放的凭证再选回来。
+    """
+    advised = include_seat_advice(choice, pinned=pinned, release_current=release_current)
     return {
         "assigned_credential_id": choice.assigned_credential_id,
         "blocked_credential_ids": choice.blocked_credential_ids,
-        "max_concurrent_users": int(selection.max_concurrent_users),
-        "seat_advised": True,
+        "max_concurrent_users": max_concurrent,
+        "seat_advised": advised,
     }
+
+
+def include_seat_advice(choice: SeatChoice, *, pinned: bool, release_current: bool) -> bool:
+    if pinned or release_current:
+        return True
+    if choice.assigned_credential_id or choice.blocked_credential_ids:
+        return True
+    return False
 
 
 def _member_id(session: Session, auth: dict) -> str | None:

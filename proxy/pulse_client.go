@@ -26,8 +26,10 @@ type AuthResult struct {
 	// means pinned to CredentialID / CursorAPIKey (designated loan).
 	CredentialIDs []string `json:"credential_ids,omitempty"`
 	// Seat advice from Pulse. SeatAdvised false means the web did not judge
-	// concurrency (fail open to local select). An empty AssignedCredentialID
-	// with SeatAdvised true means every candidate account is at the cap.
+	// concurrency (no candidates, or the advisor failed): fail open to local
+	// select. An empty AssignedCredentialID with SeatAdvised true means there
+	// is nowhere to put this holder without passing the cap, including when
+	// the credential just released cannot be chosen again.
 	AssignedCredentialID string   `json:"assigned_credential_id,omitempty"`
 	BlockedCredentialIDs []string `json:"blocked_credential_ids,omitempty"`
 	MaxConcurrentUsers   int      `json:"max_concurrent_users,omitempty"`

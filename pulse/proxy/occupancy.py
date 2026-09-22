@@ -1,8 +1,8 @@
 """同时在线座位。
 
 进程内内存计座：一个 Web 进程一份账。多进程部署时各进程各自计数。
-「一个人」是能解析到的成员；同一成员的多个会话只占一个座位。
-主负责人直接使用 Cursor 客户端不经过本代理，不计入。
+「一个人」是能解析到的成员。同一成员在同一个账号上的多个会话只占一个座位；
+同时用两个账号则各占一席。主负责人直接使用 Cursor 客户端不经过本代理，不计入。
 """
 
 from __future__ import annotations
@@ -46,11 +46,12 @@ def seat_holder_id(
 class OccupancyBook:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._by_holder: dict[str, Seat] = {}
+        # (holder_id, account_id) → seat. 一人在一个账号上只有一席。
+        self._seats: dict[tuple[str, str], Seat] = {}
 
     def reset(self) -> None:
         with self._lock:
-            self._by_holder.clear()
+            self._seats.clear()
 
     def choose(
         self,
@@ -82,15 +83,14 @@ class OccupancyBook:
                 accounts.setdefault(cred, account_id)
 
             def holder_on(account_id: str) -> bool:
-                seat = self._by_holder.get(holder_id)
-                return seat is not None and seat.account_id == account_id
+                return (holder_id, account_id) in self._seats
 
             def full(account_id: str) -> bool:
                 if max_concurrent <= 0 or not account_id:
                     return False
                 others = 0
-                for seat in self._by_holder.values():
-                    if seat.holder_id == holder_id or seat.account_id != account_id:
+                for (seat_holder, seat_account), _seat in self._seats.items():
+                    if seat_holder == holder_id or seat_account != account_id:
                         continue
                     others += 1
                     if others >= max_concurrent:
@@ -119,14 +119,22 @@ class OccupancyBook:
             def occupy(credential_id: str) -> None:
                 account_id = accounts.get(credential_id)
                 if not account_id:
-                    self._by_holder.pop(holder_id, None)
                     return
-                self._by_holder[holder_id] = Seat(
+                self._seats[(holder_id, account_id)] = Seat(
                     holder_id=holder_id,
                     account_id=account_id,
                     credential_id=credential_id,
                     seen_at=now,
                 )
+
+            def drop_account(credential_id: str) -> None:
+                account_id = accounts.get(credential_id)
+                if account_id:
+                    self._seats.pop((holder_id, account_id), None)
+                    return
+                for key, seat in list(self._seats.items()):
+                    if key[0] == holder_id and seat.credential_id == credential_id:
+                        self._seats.pop(key, None)
 
             if pinned:
                 cred = (pinned_credential_id or current or "").strip() or None
@@ -135,8 +143,8 @@ class OccupancyBook:
                 return SeatChoice(cred, blocked_ids())
 
             released = (current_credential_id or "").strip() if release_current else ""
-            if release_current:
-                self._by_holder.pop(holder_id, None)
+            if release_current and released:
+                drop_account(released)
                 current = None
 
             if max_concurrent <= 0:
@@ -148,8 +156,6 @@ class OccupancyBook:
                             break
                 if keep:
                     occupy(keep)
-                else:
-                    self._by_holder.pop(holder_id, None)
                 return SeatChoice(keep, [])
 
             if current and accounts.get(current) and (
@@ -165,19 +171,18 @@ class OccupancyBook:
                     occupy(cred)
                     return SeatChoice(cred, blocked_ids())
 
-            self._by_holder.pop(holder_id, None)
             return SeatChoice(None, blocked_ids())
 
     def _expire_unlocked(self, now: float, ttl_seconds: float) -> None:
         if ttl_seconds <= 0:
             return
         stale = [
-            holder
-            for holder, seat in self._by_holder.items()
+            key
+            for key, seat in self._seats.items()
             if now - seat.seen_at >= ttl_seconds
         ]
-        for holder in stale:
-            self._by_holder.pop(holder, None)
+        for key in stale:
+            self._seats.pop(key, None)
 
 
 _book = OccupancyBook()

@@ -95,9 +95,9 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         enc_key = (config.credentials.encryption_key or "").strip()
         if not enc_key:
             raise HTTPException(status_code=503, detail="Credential encryption key not configured")
-        from pulse.settings.team_store import effective_config_for_tenant
+        from pulse.settings.team_store import effective_config_for_saved_tenant
 
-        runtime = effective_config_for_tenant(session, config)
+        runtime = effective_config_for_saved_tenant(session, config)
         credentials = proxy_service.list_pool_credentials(
             session,
             encryption_key=enc_key,

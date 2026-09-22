@@ -114,6 +114,23 @@ def effective_config_for_tenant(session: Session, base: AppConfig) -> AppConfig:
     return effective_config(base, session, team.id)
 
 
+def effective_config_for_saved_tenant(session: Session, base: AppConfig) -> AppConfig:
+    """已存在团队的覆盖配置。不创建团队，不回填成员，不提升门户所有者。
+
+    代理池轮询大约每分钟一次，不能走 ``resolve_team``：那条路径会 flush
+    成员回填，而内部只读接口在请求结束时回滚，等于周期性写事务。
+    """
+    from pulse.storage.models import Team
+
+    slug = (base.tenant.slug or "").strip()
+    if not slug:
+        return base
+    team = session.scalar(select(Team).where(Team.slug == slug))
+    if team is None:
+        return base
+    return effective_config(base, session, team.id)
+
+
 def patch_team_setting(
     session: Session,
     *,

@@ -1,6 +1,7 @@
 """同时在线座位：按人计、满员不挤走、指定账号不拒绝。"""
 
-from pulse.proxy.occupancy import OccupancyBook, seat_holder_id
+from pulse.proxy.occupancy import OccupancyBook, SeatChoice, seat_holder_id
+from pulse.proxy.seat_assignment import include_seat_advice
 
 
 def _accounts():
@@ -120,6 +121,42 @@ def test_pinned_keeps_credential_when_account_is_full():
     steered = _choose(book, holder_id="member:4")
     assert steered.assigned_credential_id == "c2"
     assert "c1" in steered.blocked_credential_ids
+
+
+def test_same_holder_on_two_accounts_counts_on_each():
+    book = OccupancyBook()
+    _choose(book, holder_id="member:1", current_credential_id="c1")
+    _choose(book, holder_id="member:1", current_credential_id="c2", now=1)
+    assert _choose(book, holder_id="member:2", now=2).assigned_credential_id == "c1"
+    assert _choose(book, holder_id="member:3", now=2).assigned_credential_id == "c1"
+    assert _choose(book, holder_id="member:4", now=2).assigned_credential_id == "c2"
+    assert _choose(book, holder_id="member:5", now=2).assigned_credential_id == "c2"
+    assert _choose(book, holder_id="member:6", now=2).assigned_credential_id is None
+
+
+def test_release_one_account_keeps_the_other_seat():
+    book = OccupancyBook()
+    _choose(book, holder_id="member:1", current_credential_id="c1")
+    _choose(book, holder_id="member:1", current_credential_id="c2", now=1)
+    _choose(book, holder_id="member:2", now=2)
+    _choose(book, holder_id="member:3", now=2)
+    stayed = _choose(
+        book,
+        holder_id="member:1",
+        current_credential_id="c2",
+        release_current=True,
+        now=3,
+    )
+    assert stayed.assigned_credential_id == "c1"
+    assert _choose(book, holder_id="member:4", now=3).assigned_credential_id == "c2"
+
+
+def test_empty_pool_is_not_a_concurrency_rejection():
+    choice = SeatChoice(None, [])
+    assert include_seat_advice(choice, pinned=False, release_current=False) is False
+    assert include_seat_advice(choice, pinned=False, release_current=True) is True
+    assert include_seat_advice(SeatChoice(None, ["c1"]), pinned=False, release_current=False) is True
+    assert include_seat_advice(SeatChoice("c1", []), pinned=False, release_current=False) is True
 
 
 def test_zero_cap_is_unlimited():

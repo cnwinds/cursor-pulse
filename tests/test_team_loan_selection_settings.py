@@ -70,6 +70,45 @@ def test_patch_loan_selection_updates_effective_config(settings_client):
     assert sel.owner_reserve_pct == 20
 
 
+def test_saved_tenant_config_does_not_create_or_backfill(tmp_path):
+    from sqlalchemy import select
+
+    from pulse.settings.team_store import effective_config_for_saved_tenant
+    from pulse.storage.models import Member, Team
+
+    db_url = f"sqlite:///{(tmp_path / 'tenant.db').as_posix()}"
+    sf = make_test_session_factory(db_url)
+    config = AppConfig(
+        tenant=TenantConfig(slug="fresh", name="Fresh"),
+        admin={"channel_user_ids": ["owner-1"]},
+    )
+    session = sf()
+    loaded = effective_config_for_saved_tenant(session, config)
+    assert loaded.tool_center.loan_selection.max_concurrent_users == 3
+    assert session.scalar(select(Team).where(Team.slug == "fresh")) is None
+    assert session.scalars(select(Member)).all() == []
+    assert not session.new
+    assert not session.dirty
+
+    team = Team(slug="fresh", name="Fresh")
+    session.add(team)
+    session.flush()
+    from pulse.settings.team_store import patch_team_setting
+
+    patch_team_setting(
+        session,
+        team_id=team.id,
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 4}},
+        member_id=None,
+    )
+    session.commit()
+    loaded = effective_config_for_saved_tenant(session, config)
+    assert loaded.tool_center.loan_selection.max_concurrent_users == 4
+    assert session.scalars(select(Member)).all() == []
+    session.close()
+
+
 def test_patch_loan_selection_rejects_over_cap(settings_client):
     client, config, owner, _team_id, _sf = settings_client
     res = client.patch(
