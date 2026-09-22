@@ -131,14 +131,6 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="urgency_cents_per_day" width="72" align="right">
-            <template #header>
-              <ColHeader
-                label="消化"
-                tip="消化压力（估算美元/日）：距额度作废越近、余量越紧，数值越高；排序时优先快到期需先用完的账号。"
-              />
-            </template>
-          </el-table-column>
           <el-table-column min-width="176">
             <template #header>
               <ColHeader
