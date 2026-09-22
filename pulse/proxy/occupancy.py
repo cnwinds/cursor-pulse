@@ -173,6 +173,16 @@ class OccupancyBook:
 
             return SeatChoice(None, blocked_ids())
 
+    def count_by_account(self, *, ttl_seconds: float, now: float | None = None) -> dict[str, int]:
+        """各账号上经代理上报的当前占座人数（已按 TTL 过期清理）。"""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._expire_unlocked(now, ttl_seconds)
+            counts: dict[str, int] = {}
+            for (_holder, account_id), _seat in self._seats.items():
+                counts[account_id] = counts.get(account_id, 0) + 1
+            return counts
+
     def _expire_unlocked(self, now: float, ttl_seconds: float) -> None:
         if ttl_seconds <= 0:
             return

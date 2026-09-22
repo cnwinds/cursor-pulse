@@ -24,6 +24,14 @@ def _choose(book, **kwargs):
     return book.choose(**params)
 
 
+def test_count_by_account_respects_ttl():
+    book = OccupancyBook()
+    _choose(book, holder_id="member:1", now=0)
+    _choose(book, holder_id="member:2", now=0)
+    assert book.count_by_account(ttl_seconds=180, now=0) == {"a1": 2}
+    assert book.count_by_account(ttl_seconds=180, now=200) == {}
+
+
 def test_holder_id_collapses_sessions_of_one_member():
     assert seat_holder_id(member_id="m1", loan_id="l1", proxy_key_id="pk") == "member:m1"
     assert seat_holder_id(loan_id="l1") == "loan:l1"

@@ -469,10 +469,17 @@ def list_pool_ranking_board(
 
     ctx = _pool_primary_context(session)
     if not ctx.creds:
+        selection = loan_selection
+        ttl = float(getattr(selection, "concurrent_ttl_seconds", 180) or 180)
+        max_seats = int(getattr(selection, "max_concurrent_users", 3) or 0)
         return {
             "ranked": [],
             "excluded": [],
             "decision": {"picked_by": "algorithm", "fallback_reason": "no_credentials"},
+            "seat_snapshot": {
+                "max_concurrent_users": max_seats,
+                "ttl_seconds": int(ttl),
+            },
         }
 
     candidates, excluded_no_snap = _build_pool_lender_candidates(
@@ -494,8 +501,27 @@ def list_pool_ranking_board(
         enforce_loan_cap=False,
         jev=jev,
     )
+    from pulse.proxy.occupancy import get_occupancy
+
+    selection = loan_selection
+    ttl = float(getattr(selection, "concurrent_ttl_seconds", 180) or 180)
+    max_seats = int(getattr(selection, "max_concurrent_users", 3) or 0)
+    seat_counts = get_occupancy().count_by_account(ttl_seconds=ttl)
+
+    def _with_proxy_seats(row: dict) -> dict:
+        aid = row.get("account_id") or ""
+        out = dict(row)
+        out["proxy_active_seats"] = int(seat_counts.get(aid, 0))
+        return out
+
+    ranked = [_with_proxy_seats(r) for r in board["ranked"]]
+    excluded = [_with_proxy_seats(r) for r in excluded_no_snap + board["excluded"]]
     return {
-        "ranked": board["ranked"],
-        "excluded": excluded_no_snap + board["excluded"],
+        "ranked": ranked,
+        "excluded": excluded,
         "decision": board["decision"],
+        "seat_snapshot": {
+            "max_concurrent_users": max_seats,
+            "ttl_seconds": int(ttl),
+        },
     }

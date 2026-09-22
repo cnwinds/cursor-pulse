@@ -1,155 +1,240 @@
 <template>
   <div class="ranking-panel">
-    <div class="ranking-toolbar">
-      <p class="hint">
-        排序驱动「自动分配」与池轮换借用。使用过程中按额度桶耗尽再换号，名次会变，不是锁定。
-        快到期优先消化（urgency），剩余额度多者优先（surplus + headroom）。
-        人工分加在算法综合分上微调；主负责人保留会硬排除侵占账号。
-        同时在线、切换间隔等参数在「选号规则」页签中配置。
-      </p>
-      <el-button size="small" @click="loadRanking">刷新</el-button>
+    <div class="panel-card">
+      <header class="ranking-head">
+        <div class="head-copy">
+          <p class="eyebrow">Credential Pool · 实时快照</p>
+          <p class="lead">
+            驱动自动分配与池轮换的优先顺序。名次随额度消耗变化；人工分与主负责人保留可在本表直接微调。
+          </p>
+          <p v-if="seatSnapshot" class="seat-meta">
+            代理占座上限
+            <strong>{{ seatLimitLabel }}</strong>
+            · {{ seatSnapshot.ttl_seconds }}s 无上报视为离开
+            <router-link :to="{ path: '/borrow-management', query: { tab: 'rules' } }">
+              选号规则
+            </router-link>
+          </p>
+        </div>
+        <el-button type="primary" plain :loading="rankingLoading" @click="loadRanking">
+          刷新打分
+        </el-button>
+      </header>
+
+      <el-alert
+        v-if="ranking.decision"
+        :type="ranking.decision.picked_by === 'jev' ? 'success' : 'info'"
+        :closable="false"
+        class="ranking-decision"
+      >
+        <template #title>
+          <span v-if="ranking.decision.picked_by === 'jev'">
+            Jev 主判 · {{ ranking.decision.model || 'typesafe/jev' }} · 置信度
+            {{ ranking.decision.confidence ?? '—' }}
+            <el-tag v-if="ranking.decision.cached" size="small" type="info">缓存</el-tag>
+          </span>
+          <span v-else>
+            算法分保底 · {{ decisionFallbackLabel(ranking.decision.fallback_reason) }}
+          </span>
+        </template>
+      </el-alert>
+
+      <section class="table-block">
+        <h4 class="section-title">
+          <span class="title-mark" />
+          入选排序
+          <span class="title-count">{{ ranking.ranked.length }} 个账号</span>
+        </h4>
+        <el-table
+          v-loading="rankingLoading"
+          :data="ranking.ranked"
+          stripe
+          class="rank-table"
+          :row-class-name="rankedRowClass"
+        >
+          <el-table-column label="#" width="48" fixed align="center">
+            <template #default="{ $index }">
+              <span class="rank-index">{{ $index + 1 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="账号" min-width="152" fixed>
+            <template #default="{ row }">
+              <div class="account-cell">
+                <span class="account-id">{{ row.account_identifier }}</span>
+                <el-tag v-if="row.picked" size="small" type="success" effect="dark">选用</el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column width="100" align="right">
+            <template #header>
+              <ColHeader
+                label="综合分"
+                tip="硬过滤后的算法综合分；有人工微分时为算法分 + 人工分。"
+              />
+            </template>
+            <template #default="{ row }">
+              <el-tooltip
+                v-if="row.score_adjust != null"
+                :content="`算法 ${row.computed_score} · 人工 ${row.score_adjust >= 0 ? '+' : ''}${row.score_adjust}`"
+              >
+                <span class="score-cell">
+                  {{ row.score }}
+                  <el-tag size="small" type="warning" effect="plain">调</el-tag>
+                </span>
+              </el-tooltip>
+              <span v-else class="score-cell">{{ row.score }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column width="138">
+            <template #header>
+              <ColHeader label="人工分" tip="加在算法分上，正数提前、负数延后；清空恢复自动。" />
+            </template>
+            <template #default="{ row }">
+              <el-input-number
+                :model-value="row.score_adjust ?? undefined"
+                :disabled="!canWrite"
+                :min="-10"
+                :max="10"
+                :step="0.05"
+                :precision="4"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="—"
+                size="small"
+                class="score-input"
+                @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="surplus_cents" label="预计余量" width="88" align="right" />
+          <el-table-column width="138">
+            <template #header>
+              <ColHeader
+                label="主负责人保留"
+                tip="该账号 Quota 池必须为号主留出的余量百分比。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空表示用选号规则里的默认百分比；0 表示不单独保留。"
+              />
+            </template>
+            <template #default="{ row }">
+              <el-input-number
+                :model-value="row.reserve_pct ?? undefined"
+                :disabled="!canWrite"
+                :min="0"
+                :max="100"
+                :step="5"
+                :precision="0"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="默认"
+                size="small"
+                class="score-input"
+                @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column prop="urgency_cents_per_day" label="消化/日" width="80" align="right" />
+          <el-table-column label="额度进度" min-width="176">
+            <template #default="{ row }">
+              <QuotaProgressBars
+                :total_pct="row.total_pct"
+                :auto_pct="row.auto_pct"
+                :api_pct="row.api_pct"
+                :status="row.status"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column width="72" align="center">
+            <template #header>
+              <ColHeader
+                label="固定借用"
+                tip="锁定出借账号、尚未结束的借用笔数（指定账号 / 非池轮换）。受「同时在借上限」约束，与右侧「代理在用」不是同一指标。"
+              />
+            </template>
+            <template #default="{ row }">
+              <span class="metric-pill">{{ row.active_loans ?? 0 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column width="88" align="center">
+            <template #header>
+              <ColHeader
+                label="代理在用"
+                tip="经本代理上报、当前仍占座的并发人数（按成员去重：同人在同号多会话算 1）。主负责人直连 Cursor 不计入。超时未上报的座位已剔除。"
+              />
+            </template>
+            <template #default="{ row }">
+              <span class="seat-pill" :class="seatPillClass(row)">
+                {{ formatProxySeats(row) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="hours_to_deadline" label="距作废(h)" width="88" align="right" />
+          <el-table-column label="作废时刻" min-width="158">
+            <template #default="{ row }">{{ formatDeadline(row) }}</template>
+          </el-table-column>
+          <el-table-column prop="snapshot_freshness" label="快照" width="64" align="center" />
+        </el-table>
+      </section>
+
+      <section v-if="ranking.excluded.length" class="table-block table-block--muted">
+        <h4 class="section-title">
+          <span class="title-mark title-mark--muted" />
+          已排除
+          <span class="title-count">{{ ranking.excluded.length }} 个账号</span>
+        </h4>
+        <el-table v-loading="rankingLoading" :data="ranking.excluded" stripe class="rank-table">
+          <el-table-column prop="account_identifier" label="账号" min-width="140" />
+          <el-table-column label="额度进度" min-width="176">
+            <template #default="{ row }">
+              <QuotaProgressBars
+                :total_pct="row.total_pct"
+                :auto_pct="row.auto_pct"
+                :api_pct="row.api_pct"
+                :status="row.status"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="原因" min-width="140">
+            <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
+          </el-table-column>
+          <el-table-column width="72" align="center" label="固定借用">
+            <template #default="{ row }">{{ row.active_loans ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column width="88" align="center" label="代理在用">
+            <template #default="{ row }">{{ row.proxy_active_seats ?? 0 }}</template>
+          </el-table-column>
+        </el-table>
+      </section>
     </div>
-    <el-alert
-      v-if="ranking.decision"
-      :type="ranking.decision.picked_by === 'jev' ? 'success' : 'info'"
-      :closable="false"
-      class="ranking-decision"
-    >
-      <template #title>
-        <span v-if="ranking.decision.picked_by === 'jev'">
-          Jev 主判 · {{ ranking.decision.model || 'typesafe/jev' }} · 置信度
-          {{ ranking.decision.confidence ?? '—' }}
-          <el-tag v-if="ranking.decision.cached" size="small" type="info">缓存</el-tag>
-        </span>
-        <span v-else>
-          算法分保底 · {{ decisionFallbackLabel(ranking.decision.fallback_reason) }}
-        </span>
-      </template>
-    </el-alert>
-    <h4 class="section-title">入选排序</h4>
-    <el-table v-loading="rankingLoading" :data="ranking.ranked" stripe class="rank-table">
-      <el-table-column label="#" width="52" fixed>
-        <template #default="{ $index }">{{ $index + 1 }}</template>
-      </el-table-column>
-      <el-table-column label="账号" min-width="140" fixed>
-        <template #default="{ row }">
-          {{ row.account_identifier }}
-          <el-tag v-if="row.picked" size="small" type="success">选用</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="综合分" width="108">
-        <template #default="{ row }">
-          <el-tooltip
-            v-if="row.score_adjust != null"
-            :content="`算法分 ${row.computed_score}，人工 ${row.score_adjust >= 0 ? '+' : ''}${row.score_adjust}`"
-          >
-            <span>{{ row.score }} <el-tag size="small" type="warning">微调</el-tag></span>
-          </el-tooltip>
-          <span v-else>{{ row.score }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="人工分" width="150">
-        <template #default="{ row }">
-          <el-input-number
-            :model-value="row.score_adjust ?? undefined"
-            :disabled="!canWrite"
-            :min="-10"
-            :max="10"
-            :step="0.05"
-            :precision="4"
-            :value-on-clear="null"
-            controls-position="right"
-            placeholder="微调"
-            size="small"
-            class="score-input"
-            @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column prop="surplus_cents" label="预计余量" width="92" />
-      <el-table-column label="主负责人保留" width="150">
-        <template #default="{ row }">
-          <el-input-number
-            :model-value="row.reserve_pct ?? undefined"
-            :disabled="!canWrite"
-            :min="0"
-            :max="100"
-            :step="5"
-            :precision="0"
-            :value-on-clear="null"
-            controls-position="right"
-            placeholder="不保留"
-            size="small"
-            class="score-input"
-            @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column prop="urgency_cents_per_day" label="消化压力/日" width="100" />
-      <el-table-column label="额度进度" min-width="180">
-        <template #default="{ row }">
-          <QuotaProgressBars
-            :total_pct="row.total_pct"
-            :auto_pct="row.auto_pct"
-            :api_pct="row.api_pct"
-            :status="row.status"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column prop="hours_to_deadline" label="距作废(h)" width="96" />
-      <el-table-column label="作废时刻" min-width="160">
-        <template #default="{ row }">{{ formatDeadline(row) }}</template>
-      </el-table-column>
-      <el-table-column prop="active_loans" label="在借" width="64" />
-      <el-table-column prop="snapshot_freshness" label="快照" width="72" />
-    </el-table>
-    <h4 class="section-title">已排除</h4>
-    <el-table v-loading="rankingLoading" :data="ranking.excluded" stripe class="rank-table excluded-table">
-      <el-table-column prop="account_identifier" label="账号" min-width="140" />
-      <el-table-column label="额度进度" min-width="180">
-        <template #default="{ row }">
-          <QuotaProgressBars
-            :total_pct="row.total_pct"
-            :auto_pct="row.auto_pct"
-            :api_pct="row.api_pct"
-            :status="row.status"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column label="原因" min-width="140">
-        <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
-      </el-table-column>
-      <el-table-column label="人工分" width="150">
-        <template #default="{ row }">
-          <el-input-number
-            :model-value="row.score_adjust ?? undefined"
-            :disabled="!canWrite"
-            :min="-10"
-            :max="10"
-            :step="0.05"
-            :precision="4"
-            :value-on-clear="null"
-            controls-position="right"
-            placeholder="微调"
-            size="small"
-            class="score-input"
-            @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column prop="active_loans" label="在借" width="64" />
-      <el-table-column prop="status" label="额度状态" width="100" />
-    </el-table>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, defineComponent, h, onMounted, ref } from 'vue'
+import { ElMessage, ElTooltip } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import { formatChinaTime } from '@/utils/time'
+
+const ColHeader = defineComponent({
+  name: 'ColHeader',
+  props: {
+    label: { type: String, required: true },
+    tip: { type: String, required: true },
+  },
+  setup(props) {
+    return () =>
+      h('span', { class: 'col-header' }, [
+        props.label,
+        h(
+          ElTooltip,
+          { content: props.tip, placement: 'top', effect: 'dark' },
+          {
+            default: () => h('span', { class: 'col-header-q' }, '?'),
+          },
+        ),
+      ])
+  },
+})
 
 interface RankingRow {
   account_id: string
@@ -166,6 +251,7 @@ interface RankingRow {
   deadline_at?: string | null
   hours_to_deadline?: number | null
   active_loans?: number
+  proxy_active_seats?: number
   snapshot_freshness?: number
   reason?: string
   status?: string | null
@@ -181,16 +267,28 @@ interface RankingDecision {
   cached?: boolean
 }
 
+interface SeatSnapshot {
+  max_concurrent_users: number
+  ttl_seconds: number
+}
+
 interface RankingBoard {
   ranked: RankingRow[]
   excluded: RankingRow[]
   decision?: RankingDecision | null
+  seat_snapshot?: SeatSnapshot | null
 }
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const rankingLoading = ref(false)
-const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null })
+const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null, seat_snapshot: null })
+
+const seatSnapshot = computed(() => ranking.value.seat_snapshot)
+const seatLimitLabel = computed(() => {
+  const max = seatSnapshot.value?.max_concurrent_users ?? 0
+  return max <= 0 ? '不限制' : `${max} 人/账号`
+})
 
 const DECISION_FALLBACK_LABELS: Record<string, string> = {
   auto_mode_off: 'Auto Lender 未开启',
@@ -229,6 +327,26 @@ function formatDeadline(row: RankingRow): string {
   return row.deadline || '—'
 }
 
+function formatProxySeats(row: RankingRow): string {
+  const n = row.proxy_active_seats ?? 0
+  const max = seatSnapshot.value?.max_concurrent_users ?? 0
+  if (max <= 0) return String(n)
+  return `${n}/${max}`
+}
+
+function seatPillClass(row: RankingRow): string {
+  const n = row.proxy_active_seats ?? 0
+  const max = seatSnapshot.value?.max_concurrent_users ?? 0
+  if (max <= 0) return ''
+  if (n >= max) return 'seat-pill--full'
+  if (n >= Math.max(1, max - 1)) return 'seat-pill--warn'
+  return ''
+}
+
+function rankedRowClass({ row }: { row: RankingRow }) {
+  return row.picked ? 'row-picked' : ''
+}
+
 async function loadRanking() {
   rankingLoading.value = true
   try {
@@ -237,6 +355,7 @@ async function loadRanking() {
       ranked: res.data.ranked || [],
       excluded: res.data.excluded || [],
       decision: res.data.decision || null,
+      seat_snapshot: res.data.seat_snapshot || null,
     }
   } catch {
     ElMessage.error('打分表加载失败')
@@ -282,36 +401,174 @@ onMounted(loadRanking)
 </script>
 
 <style scoped>
-.ranking-toolbar {
+.ranking-panel {
+  --rank-accent: #0d9488;
+  --rank-surface: #ffffff;
+  --rank-muted: #64748b;
+  --rank-border: rgba(15, 23, 42, 0.08);
+  font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+}
+.panel-card {
+  background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 42%, #ffffff 100%);
+  border: 1px solid var(--rank-border);
+  border-radius: 14px;
+  padding: 20px 20px 8px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 40px rgba(15, 23, 42, 0.06);
+}
+.ranking-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
-.hint {
-  margin: 0;
+.head-copy {
   flex: 1;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 1.55;
+  min-width: 0;
+}
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rank-accent);
+}
+.lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #334155;
+  max-width: 52rem;
+}
+.seat-meta {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--rank-muted);
+}
+.seat-meta strong {
+  color: #0f172a;
+  font-weight: 600;
+}
+.seat-meta a {
+  margin-left: 8px;
+  color: var(--rank-accent);
+  text-decoration: none;
+}
+.seat-meta a:hover {
+  text-decoration: underline;
 }
 .ranking-decision {
-  margin: 8px 0 12px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+}
+.table-block {
+  margin-bottom: 20px;
+}
+.table-block--muted {
+  padding-top: 4px;
+  border-top: 1px dashed var(--rank-border);
 }
 .section-title {
-  margin: 16px 0 8px;
-  font-size: 14px;
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 650;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+.title-mark {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--rank-accent);
+}
+.title-mark--muted {
+  background: #94a3b8;
+}
+.title-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--rank-muted);
 }
 .rank-table {
   width: 100%;
-  margin-bottom: 8px;
+  border-radius: 10px;
+  overflow: hidden;
+  --el-table-header-bg-color: #f1f5f9;
+  --el-table-tr-bg-color: #fff;
 }
-.excluded-table {
-  margin-bottom: 0;
+.rank-table :deep(.row-picked) {
+  --el-table-tr-bg-color: rgba(13, 148, 136, 0.06);
+}
+.rank-index {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #64748b;
+}
+.account-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.account-id {
+  font-size: 13px;
+  word-break: break-all;
+}
+.score-cell {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 .score-input {
-  width: 130px;
+  width: 120px;
+}
+.metric-pill,
+.seat-pill {
+  display: inline-block;
+  min-width: 2rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+}
+.seat-pill {
+  background: rgba(13, 148, 136, 0.12);
+  color: #0f766e;
+}
+.seat-pill--warn {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+.seat-pill--full {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+:deep(.col-header) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+:deep(.col-header-q) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  background: #e2e8f0;
+  cursor: help;
 }
 </style>
