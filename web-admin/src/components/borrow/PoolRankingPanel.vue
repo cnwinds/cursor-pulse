@@ -25,19 +25,19 @@
         </template>
       </el-alert>
 
-      <section class="table-block">
-        <h4 class="section-title">
-          <span class="title-mark" />
-          入选排序
-          <span class="title-count">{{ ranking.ranked.length }} 个账号</span>
-        </h4>
-        <el-table
-          v-loading="rankingLoading"
-          :data="ranking.ranked"
-          stripe
-          class="rank-table"
-          :row-class-name="rankedRowClass"
-        >
+      <el-tabs v-model="rankingTab" class="ranking-tabs">
+        <el-tab-pane name="ranked">
+          <template #label>
+            <span class="tab-label">入选排序</span>
+            <span class="tab-count">{{ ranking.ranked.length }}</span>
+          </template>
+          <el-table
+            v-loading="rankingLoading"
+            :data="ranking.ranked"
+            stripe
+            class="rank-table"
+            :row-class-name="rankedRowClass"
+          >
           <el-table-column width="44" fixed align="center">
             <template #header>
               <ColHeader label="#" tip="按当前综合分排序的名次，会随额度消耗与微调变化。" />
@@ -184,16 +184,14 @@
               />
             </template>
           </el-table-column>
-        </el-table>
-      </section>
-
-      <section v-if="ranking.excluded.length" class="table-block table-block--muted">
-        <h4 class="section-title">
-          <span class="title-mark title-mark--muted" />
-          已排除
-          <span class="title-count">{{ ranking.excluded.length }} 个账号</span>
-        </h4>
-        <el-table v-loading="rankingLoading" :data="ranking.excluded" stripe class="rank-table">
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane name="excluded">
+          <template #label>
+            <span class="tab-label">已排除</span>
+            <span class="tab-count tab-count--muted">{{ ranking.excluded.length }}</span>
+          </template>
+          <el-table v-loading="rankingLoading" :data="ranking.excluded" stripe class="rank-table">
           <el-table-column min-width="140">
             <template #header>
               <ColHeader label="账号" tip="未通过硬过滤、未进入入选排序的入池账号。" />
@@ -237,8 +235,9 @@
             </template>
             <template #default="{ row }">{{ row.proxy_active_seats ?? 0 }}</template>
           </el-table-column>
-        </el-table>
-      </section>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
     </div>
   </div>
 </template>
@@ -318,6 +317,7 @@ interface RankingBoard {
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const rankingLoading = ref(false)
+const rankingTab = ref<'ranked' | 'excluded'>('ranked')
 const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null, seat_snapshot: null })
 
 const seatSnapshot = computed(() => ranking.value.seat_snapshot)
@@ -462,37 +462,35 @@ onMounted(loadRanking)
   margin-bottom: 16px;
   border-radius: 10px;
 }
-.table-block {
-  margin-bottom: 20px;
+.ranking-tabs {
+  margin-top: 4px;
 }
-.table-block--muted {
-  padding-top: 4px;
-  border-top: 1px dashed var(--rank-border);
+.ranking-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 650;
-  color: #0f172a;
-  letter-spacing: -0.02em;
+.ranking-tabs :deep(.el-tabs__item) {
+  font-weight: 600;
+  padding: 0 16px;
 }
-.title-mark {
-  width: 4px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--rank-accent);
+.tab-label {
+  margin-right: 6px;
 }
-.title-mark--muted {
-  background: #94a3b8;
+.tab-count {
+  display: inline-block;
+  min-width: 1.25rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.12);
 }
-.title-count {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--rank-muted);
+.tab-count--muted {
+  color: #64748b;
+  background: #e2e8f0;
 }
 .rank-table {
   width: 100%;
