@@ -1,12 +1,15 @@
 <template>
   <div class="loans-page" v-loading="loading">
-    <header class="page-header">
-      <div>
+    <header class="page-header" :class="{ embedded }">
+      <div v-if="!embedded">
         <h2>借用记录</h2>
         <p class="desc">
           管理临时 Key 借用。进行中 {{ activeCount }} 条。自动分配走账号池，使用中轮换，消耗按本笔借用归因；指定账号锁定一把 Key，消耗仍为账号用量差值近似。
         </p>
       </div>
+      <p v-else class="embedded-summary">
+        进行中 <strong>{{ activeCount }}</strong> 条 · 自动分配走账号池轮换，指定账号锁定单号
+      </p>
       <div class="header-actions">
         <div class="filter-switch">
           <span class="filter-label">仅显示正在借用</span>
@@ -187,8 +190,13 @@
                 <span v-if="row.score != null"> · 分 {{ row.score }}</span>
               </li>
             </ol>
-            <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先开启入池。</p>
-            <router-link to="/proxy-keys">打开账号池，管理入池和打分表</router-link>
+            <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
+            <router-link v-if="embedded" :to="{ path: '/borrow-management', query: { tab: 'pool' } }">
+              前往入池账号
+            </router-link>
+            <router-link v-else :to="{ path: '/borrow-management', query: { tab: 'pool' } }">
+              打开借用管理 · 入池账号
+            </router-link>
           </div>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="借出账号" required>
@@ -405,6 +413,14 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime, formatLoanDuration } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+
+withDefaults(
+  defineProps<{
+    /** 嵌入「借用管理」页签时隐藏大标题 */
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
@@ -904,6 +920,20 @@ onMounted(loadLoans)
   align-items: flex-start;
   margin-bottom: 20px;
   gap: 16px;
+}
+.page-header.embedded {
+  margin-bottom: 12px;
+  align-items: center;
+}
+.embedded-summary {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+.embedded-summary strong {
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 .page-header h2 {
   margin: 0 0 8px;

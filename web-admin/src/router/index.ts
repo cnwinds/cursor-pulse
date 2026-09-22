@@ -51,10 +51,18 @@ const router = createRouter({
           meta: { permission: 'accounts:read', title: '用量分析' },
         },
         {
+          path: 'borrow-management',
+          name: 'borrow-management',
+          component: () => import('@/views/BorrowManagementView.vue'),
+          meta: {
+            permission: ['accounts:read', 'proxy:read'],
+            permissionMode: 'any',
+            title: '借用管理',
+          },
+        },
+        {
           path: 'loans',
-          name: 'loans',
-          component: () => import('@/views/LoansView.vue'),
-          meta: { permission: 'accounts:read', title: '借用记录' },
+          redirect: (to) => ({ path: '/borrow-management', query: { ...to.query, tab: 'loans' } }),
         },
         {
           path: 'my-loans',
@@ -70,9 +78,7 @@ const router = createRouter({
         },
         {
           path: 'proxy-keys',
-          name: 'proxy-keys',
-          component: () => import('@/views/ProxyKeysView.vue'),
-          meta: { permission: 'proxy:read', title: '账号池' },
+          redirect: (to) => ({ path: '/borrow-management', query: { ...to.query, tab: 'pool' } }),
         },
         {
           path: 'audit',
@@ -147,9 +153,15 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
-  const perm = to.meta.permission as string | undefined
-  if (perm && !auth.hasPermission(perm)) {
-    return { name: 'forbidden' }
+  const perm = to.meta.permission as string | string[] | undefined
+  if (perm) {
+    const perms = Array.isArray(perm) ? perm : [perm]
+    const mode = (to.meta.permissionMode as string | undefined) || 'all'
+    const ok =
+      mode === 'any'
+        ? perms.some((p) => auth.hasPermission(p))
+        : perms.every((p) => auth.hasPermission(p))
+    if (!ok) return { name: 'forbidden' }
   }
   return true
 })

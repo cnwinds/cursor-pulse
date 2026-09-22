@@ -49,10 +49,6 @@
         <CursorPricingSettings />
       </el-tab-pane>
 
-      <el-tab-pane label="选号规则" name="loan_selection" lazy>
-        <LoanSelectionRules :selection="forms.loan_selection" @saved="applySettings" />
-      </el-tab-pane>
-
       <el-tab-pane label="代理地址" name="proxy_addresses">
         <el-table :data="proxyAddressRows" stripe class="settings-table">
           <el-table-column prop="display_name" label="显示名称" min-width="140" />
@@ -103,7 +99,6 @@ import client from '@/api/client'
 import { useSettingsStore } from '@/stores/settings'
 import SettingEditDialog from '@/components/SettingEditDialog.vue'
 import CursorPricingSettings from '@/components/CursorPricingSettings.vue'
-import LoanSelectionRules from '@/components/LoanSelectionRules.vue'
 import type { SettingsField } from '@/components/SettingsSectionForm.vue'
 
 type SettingRow = {
@@ -809,7 +804,13 @@ const FIELD_DEFS: Record<string, SettingsField> = {
 watch(
   () => route.query.tab,
   (value) => {
-    if (typeof value === 'string' && value) tab.value = value
+    if (typeof value === 'string' && value) {
+      if (value === 'loan_selection') {
+        router.replace({ path: '/borrow-management', query: { tab: 'ranking' } })
+        return
+      }
+      tab.value = value
+    }
   },
   { immediate: true },
 )

@@ -33,9 +33,12 @@
             <el-icon><DataAnalysis /></el-icon>
             <span>用量分析</span>
           </el-menu-item>
-          <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/loans">
+          <el-menu-item
+            v-if="auth.hasPermission('accounts:read') || auth.hasPermission('proxy:read')"
+            index="/borrow-management"
+          >
             <el-icon><Share /></el-icon>
-            <span>借用记录</span>
+            <span>借用管理</span>
           </el-menu-item>
           <el-menu-item
             v-if="auth.hasPermission('loans:self') && !auth.hasPermission('accounts:read')"
@@ -43,10 +46,6 @@
           >
             <el-icon><Share /></el-icon>
             <span>我的借用</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPermission('proxy:read')" index="/proxy-keys">
-            <el-icon><Key /></el-icon>
-            <span>账号池</span>
           </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('knowledge:read')" index="/tool-tips">
             <el-icon><Reading /></el-icon>
