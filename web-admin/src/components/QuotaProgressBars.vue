@@ -66,38 +66,41 @@ function toneFromPct(v: number | null | undefined, fallback?: string | null): To
   return 'ok'
 }
 
-const rows = computed<ProgressRow[]>(() => [
-  {
-    key: 'total',
-    label: 'Total',
-    title: 'Total',
-    pct: pctNum(props.total_pct),
-    width: pctWidth(props.total_pct),
-    text: pctText(props.total_pct),
-    tone: toneFromPct(props.total_pct, props.status),
-    sub: false,
-  },
-  {
-    key: 'auto',
-    label: 'Auto',
-    title: 'Auto + Composer',
-    pct: pctNum(props.auto_pct),
-    width: pctWidth(props.auto_pct),
-    text: pctText(props.auto_pct),
-    tone: toneFromPct(props.auto_pct),
-    sub: true,
-  },
-  {
-    key: 'api',
-    label: 'API',
-    title: 'API',
-    pct: pctNum(props.api_pct),
-    width: pctWidth(props.api_pct),
-    text: pctText(props.api_pct),
-    tone: toneFromPct(props.api_pct),
-    sub: true,
-  },
-])
+const rows = computed<ProgressRow[]>(() => {
+  const totalTone = toneFromPct(props.total_pct, props.status)
+  return [
+    {
+      key: 'total',
+      label: 'Total',
+      title: 'Total',
+      pct: pctNum(props.total_pct),
+      width: pctWidth(props.total_pct),
+      text: pctText(props.total_pct),
+      tone: totalTone,
+      sub: false,
+    },
+    {
+      key: 'auto',
+      label: 'Auto',
+      title: 'Auto + Composer',
+      pct: pctNum(props.auto_pct),
+      width: pctWidth(props.auto_pct),
+      text: pctText(props.auto_pct),
+      tone: totalTone,
+      sub: true,
+    },
+    {
+      key: 'api',
+      label: 'API',
+      title: 'API',
+      pct: pctNum(props.api_pct),
+      width: pctWidth(props.api_pct),
+      text: pctText(props.api_pct),
+      tone: totalTone,
+      sub: true,
+    },
+  ]
+})
 </script>
 
 <style scoped>
