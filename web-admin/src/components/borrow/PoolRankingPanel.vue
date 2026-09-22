@@ -176,18 +176,21 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="hours_to_deadline" width="72" align="right">
+          <el-table-column width="96" align="right" show-overflow-tooltip>
             <template #header>
               <ColHeader
-                label="剩余h"
-                tip="距本周期额度作废（重置）的小时数；越近越优先消化剩余额度。"
+                label="距作废"
+                tip="距本周期额度作废（重置）的剩余时间；越近越优先消化剩余额度。"
               />
+            </template>
+            <template #default="{ row }">
+              {{ formatHoursUntilDeadline(row.hours_to_deadline) }}
             </template>
           </el-table-column>
           <el-table-column prop="snapshot_freshness" width="56" align="center">
             <template #header>
               <ColHeader
-                label="新鲜"
+                label="新鲜度"
                 tip="额度快照新鲜度（0–1）：越接近 1 越刚同步；过久未同步会在算法分中降权，非硬过滤。"
               />
             </template>
