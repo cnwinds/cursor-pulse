@@ -89,7 +89,7 @@
               <span v-else class="score-cell">{{ row.score }}</span>
             </template>
           </el-table-column>
-          <el-table-column width="138">
+          <el-table-column width="108" align="center">
             <template #header>
               <ColHeader label="人工分" tip="加在算法分上，正数提前、负数延后；清空恢复自动。" />
             </template>
@@ -105,13 +105,13 @@
                 controls-position="right"
                 placeholder="—"
                 size="small"
-                class="score-input"
+                class="score-input score-input--manual"
                 @change="(val: number | undefined | null) => setScoreAdjust(row, val ?? null)"
               />
             </template>
           </el-table-column>
           <el-table-column prop="surplus_cents" label="预计余量" width="88" align="right" />
-          <el-table-column width="152">
+          <el-table-column width="118" align="center">
             <template #header>
               <ColHeader
                 label="主负责人保留 %"
@@ -526,13 +526,22 @@ onMounted(loadRanking)
 .score-input {
   width: 120px;
 }
+.score-input--manual {
+  width: 88px;
+}
+.rank-table :deep(.score-input--manual.el-input-number) {
+  width: 88px;
+}
 .pct-input-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .reserve-input {
-  width: 108px;
+  width: 72px;
+}
+.rank-table :deep(.reserve-input.el-input-number) {
+  width: 72px;
 }
 .pct-unit {
   font-size: 12px;
