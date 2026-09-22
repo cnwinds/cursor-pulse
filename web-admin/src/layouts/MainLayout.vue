@@ -34,7 +34,11 @@
             <span>用量分析</span>
           </el-menu-item>
           <el-menu-item
-            v-if="auth.hasPermission('accounts:read') || auth.hasPermission('proxy:read')"
+            v-if="
+              auth.hasPermission('accounts:read') ||
+              auth.hasPermission('proxy:read') ||
+              auth.hasPermission('settings:read')
+            "
             index="/borrow-management"
           >
             <el-icon><Share /></el-icon>

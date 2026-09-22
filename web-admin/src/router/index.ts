@@ -55,7 +55,7 @@ const router = createRouter({
           name: 'borrow-management',
           component: () => import('@/views/BorrowManagementView.vue'),
           meta: {
-            permission: ['accounts:read', 'proxy:read'],
+            permission: ['accounts:read', 'proxy:read', 'settings:read'],
             permissionMode: 'any',
             title: '借用管理',
           },

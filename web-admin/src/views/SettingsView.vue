@@ -806,7 +806,7 @@ watch(
   (value) => {
     if (typeof value === 'string' && value) {
       if (value === 'loan_selection') {
-        router.replace({ path: '/borrow-management', query: { tab: 'ranking' } })
+        router.replace({ path: '/borrow-management', query: { tab: 'rules' } })
         return
       }
       tab.value = value
