@@ -222,7 +222,7 @@
             </template>
             <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
           </el-table-column>
-          <el-table-column width="56" align="center">
+          <el-table-column width="64" align="center">
             <template #header>
               <ColHeader
                 label="在借"
