@@ -14,10 +14,10 @@
         <LoansView embedded />
       </el-tab-pane>
       <el-tab-pane v-if="canProxy" label="入池账号" name="pool" lazy>
-        <PoolAccountsPanel ref="poolPanelRef" />
+        <PoolAccountsPanel />
       </el-tab-pane>
       <el-tab-pane v-if="canProxy" label="打分表" name="ranking" lazy>
-        <PoolRankingPanel ref="rankingPanelRef" />
+        <PoolRankingPanel />
       </el-tab-pane>
     </el-tabs>
   </div>
