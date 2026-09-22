@@ -100,8 +100,8 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
     """把一次 Auto Lender 决策写入 proxy_events（审计）。
 
     只记「确有决策价值」的情况：Jev 选中了账号，或出现了回落原因。纯算法分
-    且无回落（如 auto 未开启）不写，避免池轮询/预览把事件表刷爆。调用方负责
-    commit。
+    且无回落、以及 Jev 未启用（``jev_unavailable`` / 旧 ``auto_mode_off``）不写，
+    避免池轮询和预览把事件表刷爆。调用方负责 commit。
     """
     decision = (result or {}).get("decision") or {}
     picked_by = decision.get("picked_by")

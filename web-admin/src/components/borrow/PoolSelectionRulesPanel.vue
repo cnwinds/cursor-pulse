@@ -10,9 +10,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useSettingsStore } from '@/stores/settings'
 import LoanSelectionRules from '@/components/LoanSelectionRules.vue'
+
+const route = useRoute()
 
 const store = useSettingsStore()
 const loading = ref(false)
@@ -20,8 +23,8 @@ const loaded = ref(false)
 const loanSelection = ref<Record<string, unknown>>({})
 const jevEnabled = ref(false)
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const data = await store.load()
     loanSelection.value = { ...(data?.tool_center?.loan_selection || {}) }
@@ -31,6 +34,13 @@ async function load() {
     loading.value = false
   }
 }
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (tab === 'rules' && loaded.value) load(true)
+  },
+)
 
 function onSaved(data: Record<string, unknown>) {
   loanSelection.value = { ...(data?.tool_center?.loan_selection || loanSelection.value) }

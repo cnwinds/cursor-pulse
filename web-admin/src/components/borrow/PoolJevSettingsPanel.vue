@@ -93,7 +93,6 @@ onMounted(load)
 
 <style scoped>
 .jev-panel {
-  --jev-accent: #0d9488;
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
 }
 .panel-card {
