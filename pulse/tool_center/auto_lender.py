@@ -355,13 +355,6 @@ def rank_lenders(
     ranked = board["ranked"]
     excluded = board["excluded"]
 
-    if not cfg.auto_mode:
-        return _result(
-            ranked,
-            excluded,
-            AutoLenderDecision(fallback_reason="auto_mode_off"),
-            on_decision,
-        )
     if jev is None:
         return _result(
             ranked,

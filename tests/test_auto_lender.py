@@ -97,24 +97,24 @@ def _clean_state():
 
 
 def _auto_cfg(**kwargs) -> LoanSelectionConfig:
-    base = {"auto_mode": True, "auto_cache_seconds": 600.0}
+    base = {"auto_cache_seconds": 600.0}
     base.update(kwargs)
     return LoanSelectionConfig(**base)
 
 
-def test_auto_mode_off_keeps_algorithm_order():
+def test_legacy_auto_mode_flag_does_not_gate_jev():
+    """选号不再看 loan_selection.auto_mode，只看有没有 Jev 客户端。"""
     jev = FakeJev(decision=_decision("acc-b"))
     board = rank_lenders(
         _two_candidates(),
-        loan_selection=LoanSelectionConfig(auto_mode=False),
+        loan_selection=LoanSelectionConfig(auto_mode=False, auto_cache_seconds=600.0),
         today=TODAY,
         now=NOW,
         jev=jev,
     )
-    assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
-    assert board["decision"]["picked_by"] == "algorithm"
-    assert board["decision"]["fallback_reason"] == "auto_mode_off"
-    assert jev.calls == 0
+    assert [r["account_id"] for r in board["ranked"]] == ["acc-b", "acc-a"]
+    assert board["decision"]["picked_by"] == "jev"
+    assert jev.calls == 1
 
 
 def test_jev_unavailable_falls_back():

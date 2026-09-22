@@ -204,7 +204,7 @@ class LoanSelectionConfig(BaseModel):
     recency_penalty: float = Field(default=0.25, ge=0)
     # 主负责人保留量（账号级 proxy_reserve_pct 优先）；0 = 不保留
     owner_reserve_pct: float = Field(default=0.0, ge=0, le=100)
-    # Auto Lender：Jev 只对存活候选重排，护栏不通过则回落算法分
+    # 已废弃：是否调用 Jev 由 ``jev.enabled`` 决定；保留字段仅兼容旧配置
     auto_mode: bool = False
     auto_top_n: int = Field(default=8, ge=1, le=50)
     auto_min_confidence: float = Field(default=0.5, ge=0, le=1)

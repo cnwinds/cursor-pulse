@@ -333,8 +333,7 @@ const proxySeatsTip = computed(() => {
 })
 
 const DECISION_FALLBACK_LABELS: Record<string, string> = {
-  auto_mode_off: '未启用 Jev 重排（请在选号规则中开启）',
-  jev_unavailable: 'Jev 未配置或未启用',
+  jev_unavailable: '未启用 Jev 主判或未配置 Key（请在「Jev 决策」页签开启）',
   insufficient_candidates: '可用候选不足',
   jev_error: 'Jev 调用失败',
   circuit_open: 'Jev 熔断中',
