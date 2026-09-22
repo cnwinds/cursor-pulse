@@ -110,7 +110,6 @@
               />
             </template>
           </el-table-column>
-          <el-table-column prop="surplus_cents" label="预计余量" width="88" align="right" />
           <el-table-column width="118" align="center">
             <template #header>
               <ColHeader
