@@ -79,6 +79,34 @@ export function formatChinaTime(iso: string | null | undefined): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
+/** 中国时区日期与时间分行展示（表格窄列） */
+export function formatChinaDateTimeParts(
+  iso: string | null | undefined,
+): { date: string; time: string } | null {
+  if (!iso) return null
+  const date = parseApiDateTime(iso)
+  if (!date) return null
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? ''
+
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}:${get('second')}`,
+  }
+}
+
 /** 毫秒差值格式化为中文时长，如「2天3小时15分」 */
 export function formatDurationMs(ms: number): string {
   const safeMs = Math.max(ms, 0)

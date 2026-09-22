@@ -100,12 +100,14 @@
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" width="180">
-        <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column label="归还时间" width="180">
+      <el-table-column label="创建时间" width="96" align="center">
         <template #default="{ row }">
-          {{ row.revoked_at ? formatChinaTime(row.revoked_at) : '—' }}
+          <LoanTimeStack :iso="row.created_at" />
+        </template>
+      </el-table-column>
+      <el-table-column label="归还时间" width="96" align="center">
+        <template #default="{ row }">
+          <LoanTimeStack :iso="row.revoked_at" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="148" fixed="right" align="center">
@@ -412,6 +414,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import LoanTimeStack from '@/components/LoanTimeStack.vue'
 
 withDefaults(
   defineProps<{
