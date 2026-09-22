@@ -1,112 +1,198 @@
 <template>
-  <div class="loan-rules" :class="{ 'loan-rules--sidebar': layout === 'sidebar' }">
-    <el-collapse v-if="layout === 'sidebar'" v-model="docOpen" class="rules-doc">
-      <el-collapse-item title="规则说明（只读）" name="doc">
-        <RulesDoc
-          :selection="selection"
-          :jev-enabled="jevEnabled"
-          :hours-text="hoursText"
-          :num="num"
-        />
-      </el-collapse-item>
-    </el-collapse>
-    <template v-else>
-      <p class="lead">
-        借用和账号池按同一套顺序选号。下面是现在生效的规则；改完数字保存后，下一次选号和代理上报都会用新值。
-      </p>
-      <RulesDoc
-        :selection="selection"
-        :jev-enabled="jevEnabled"
-        :hours-text="hoursText"
-        :num="num"
-      />
-    </template>
+  <form class="flow" :class="{ 'flow--sidebar': layout === 'sidebar' }" @submit.prevent="onSave">
+    <ol class="rail">
+      <li class="stage">
+        <span class="node">1</span>
+        <section class="stage-card">
+          <header class="stage-head">
+            <h3>硬过滤</h3>
+            <Tip
+              text="不通过的账号不进候选。另有固定条件：额度快照无余量，或按当前用量会在重置前耗尽。"
+            />
+          </header>
+          <div class="controls">
+            <label class="field">
+              <span class="field-label">
+                最少覆盖
+                <Tip text="距本周期作废短于该小时数的账号，不再新借出。" />
+              </span>
+              <el-input-number
+                v-model="draft.min_coverage_hours"
+                :min="0"
+                :max="720"
+                :step="1"
+                :precision="1"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">小时</span>
+            </label>
+            <label class="field">
+              <span class="field-label">
+                在借上限
+                <Tip text="该账号上尚未结束的固定借用笔数。与下方「同时使用」不是同一指标。" />
+              </span>
+              <el-input-number
+                v-model="draft.max_active_loans_per_account"
+                :min="1"
+                :max="100"
+                :step="1"
+                :precision="0"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">笔</span>
+            </label>
+            <label class="field">
+              <span class="field-label">
+                保留
+                <Tip text="主负责人默认保留比例。账号上单独设过时以账号为准。0 为不保留。" />
+              </span>
+              <el-input-number
+                v-model="draft.owner_reserve_pct"
+                :min="0"
+                :max="100"
+                :step="5"
+                :precision="0"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">%</span>
+            </label>
+          </div>
+        </section>
+      </li>
 
-    <el-form :label-width="layout === 'sidebar' ? '120px' : '168px'" class="form" @submit.prevent="onSave">
-      <el-form-item label="同时使用上限">
-        <el-input-number
-          v-model="draft.max_concurrent_users"
-          :min="0"
-          :max="100"
-          :step="1"
-          :precision="0"
-          :disabled="!canWrite"
-        />
-        <span class="hint">人。0 为不限制，默认 3。</span>
-      </el-form-item>
-      <el-form-item label="在线判定超时">
-        <el-input-number
-          v-model="draft.concurrent_ttl_seconds"
-          :min="30"
-          :max="3600"
-          :step="30"
-          :precision="0"
-          :disabled="!canWrite"
-        />
-        <span class="hint">秒。应长于会话续期间隔（默认 120 秒）。</span>
-      </el-form-item>
-      <el-form-item label="最短切换间隔">
-        <el-input-number
-          v-model="draft.min_switch_minutes"
-          :min="0"
-          :max="1440"
-          :step="5"
-          :precision="0"
-          :disabled="!canWrite"
-        />
-        <span class="hint">分钟。只影响评分降权。代理进程里的停留用 PROXY_STICKY_MIN_DWELL。</span>
-      </el-form-item>
-      <el-form-item label="同时在借上限">
-        <el-input-number
-          v-model="draft.max_active_loans_per_account"
-          :min="1"
-          :max="100"
-          :step="1"
-          :precision="0"
-          :disabled="!canWrite"
-        />
-        <span class="hint">笔。一个账号上尚未结束的借用。</span>
-      </el-form-item>
-      <el-form-item label="最少覆盖">
-        <el-input-number
-          v-model="draft.min_coverage_hours"
-          :min="0"
-          :max="720"
-          :step="1"
-          :precision="1"
-          :disabled="!canWrite"
-        />
-        <span class="hint">小时。离重置太近的账号不新借出。</span>
-      </el-form-item>
-      <el-form-item label="主负责人保留">
-        <div class="pct-field">
-          <el-input-number
-            v-model="draft.owner_reserve_pct"
-            :min="0"
-            :max="100"
-            :step="5"
-            :precision="0"
-            :disabled="!canWrite"
-          />
-          <span class="pct-unit">%</span>
-        </div>
-        <span class="hint">账号未单独设置时用这个默认值。0 为不保留。</span>
-      </el-form-item>
-      <el-form-item :class="{ 'form-actions--sidebar': layout === 'sidebar' }">
-        <el-button v-if="canWrite" type="primary" :loading="saving" @click="onSave">
-          {{ layout === 'sidebar' ? '保存' : '保存选号规则' }}
-        </el-button>
-        <span v-else class="hint">当前账号只能查看。</span>
-      </el-form-item>
-    </el-form>
-  </div>
+      <li class="stage">
+        <span class="node">2</span>
+        <section class="stage-card">
+          <header class="stage-head">
+            <h3>算法排序</h3>
+            <Tip :text="scoreTip" />
+          </header>
+          <div class="controls">
+            <label class="field">
+              <span class="field-label">
+                最短切换
+                <Tip
+                  text="绑定后这段时间内降权，避免来回跳号。代理进程内的强制停留由 PROXY_STICKY_MIN_DWELL 控制。登录失败或额度桶耗尽仍会换。"
+                />
+              </span>
+              <el-input-number
+                v-model="draft.min_switch_minutes"
+                :min="0"
+                :max="1440"
+                :step="5"
+                :precision="0"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">分钟</span>
+            </label>
+          </div>
+        </section>
+      </li>
+
+      <li class="stage" :class="{ 'stage--off': !jevEnabled }">
+        <span class="node">3</span>
+        <section class="stage-card">
+          <header class="stage-head">
+            <h3>Jev 主判</h3>
+            <el-tag :type="jevEnabled ? 'success' : 'info'" size="small" effect="plain">
+              {{ jevEnabled ? '已启用' : '未启用' }}
+            </el-tag>
+            <Tip :text="jevTip" />
+          </header>
+        </section>
+      </li>
+
+      <li class="stage">
+        <span class="node">4</span>
+        <section class="stage-card">
+          <header class="stage-head">
+            <h3>占座</h3>
+            <Tip
+              text="经本代理同时在线的人数。同人同号多会话算 1；主负责人直连 Cursor 不计。已在座的人不被挤走。指定账号借用占一座。"
+            />
+          </header>
+          <div class="controls">
+            <label class="field">
+              <span class="field-label">
+                同时使用
+                <Tip text="同一账号经本代理的并发人数上限。0 为不限制。" />
+              </span>
+              <el-input-number
+                v-model="draft.max_concurrent_users"
+                :min="0"
+                :max="100"
+                :step="1"
+                :precision="0"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">人</span>
+            </label>
+            <label class="field">
+              <span class="field-label">
+                离开判定
+                <Tip text="该秒数内没有再上报，视为已离开。应长于会话续期间隔（默认 120 秒）。" />
+              </span>
+              <el-input-number
+                v-model="draft.concurrent_ttl_seconds"
+                :min="30"
+                :max="3600"
+                :step="30"
+                :precision="0"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">秒</span>
+            </label>
+          </div>
+        </section>
+      </li>
+    </ol>
+
+    <footer class="flow-actions">
+      <el-button v-if="canWrite" type="primary" native-type="submit" :loading="saving">
+        保存
+      </el-button>
+      <span v-else class="readonly">只读</span>
+    </footer>
+  </form>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch, defineComponent, h } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, defineComponent, h, reactive, ref, watch } from 'vue'
+import { ElMessage, ElTooltip } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
+
+const Tip = defineComponent({
+  name: 'RuleTip',
+  props: { text: { type: String, required: true } },
+  setup(props) {
+    return () =>
+      h(
+        ElTooltip,
+        { content: props.text, placement: 'top', showAfter: 200 },
+        {
+          default: () =>
+            h(
+              'button',
+              { type: 'button', class: 'q', 'aria-label': '说明' },
+              '?',
+            ),
+        },
+      )
+  },
+})
 
 const props = withDefaults(
   defineProps<{
@@ -116,97 +202,6 @@ const props = withDefaults(
   }>(),
   { jevEnabled: false, layout: 'default' },
 )
-
-const docOpen = ref<string[]>([])
-
-const RulesDoc = defineComponent({
-  name: 'RulesDoc',
-  props: {
-    selection: { type: Object, required: true },
-    jevEnabled: { type: Boolean, default: false },
-    hoursText: { type: Function, required: true },
-    num: { type: Function, required: true },
-  },
-  setup(p) {
-    const draft = reactive({
-      max_concurrent_users: 3,
-      concurrent_ttl_seconds: 180,
-      min_switch_minutes: 30,
-      max_active_loans_per_account: 2,
-      min_coverage_hours: 1,
-      owner_reserve_pct: 0,
-    })
-    watch(
-      () => p.selection,
-      (value) => {
-        const src = (value || {}) as Record<string, unknown>
-        draft.max_concurrent_users = Number(src.max_concurrent_users ?? 3)
-        draft.concurrent_ttl_seconds = Number(src.concurrent_ttl_seconds ?? 180)
-        draft.min_switch_minutes = Number(src.min_switch_minutes ?? 30)
-        draft.max_active_loans_per_account = Number(src.max_active_loans_per_account ?? 2)
-        draft.min_coverage_hours = Number(src.min_coverage_hours ?? 1)
-        draft.owner_reserve_pct = Number(src.owner_reserve_pct ?? 0)
-      },
-      { immediate: true, deep: true },
-    )
-    return () =>
-      h(
-        'ol',
-        { class: 'rules' },
-        [
-          h('li', [
-            h('h3', '硬过滤'),
-            h('p', '过不了的账号不会进入候选。'),
-            h('ul', [
-              h('li', '额度快照没有余量。'),
-              h('li', `离重置还够用的时间短于「最少覆盖」${p.hoursText(draft.min_coverage_hours)}。`),
-              h(
-                'li',
-                `这个账号上尚未结束的借用已经有 ${draft.max_active_loans_per_account} 笔。这是借用名额，不是同时在线人数。`,
-              ),
-              h(
-                'li',
-                `主负责人保留量不足。按当前用量推到重置日，留给主负责人的比例低于 ${draft.owner_reserve_pct}%。账号上单独设过保留量时，以账号上的为准。`,
-              ),
-            ]),
-          ]),
-          h('li', [
-            h('h3', '算法打分'),
-            h('p', '硬过滤之后用确定性分数排序。可以在账号上加人工基础分，让指定账号靠前。'),
-            h('p', { class: 'weights' }, [
-              `借用权重：紧迫 ${p.num(p.selection.weight_urgency)} · 剩余 ${p.num(p.selection.weight_surplus)} · 负载 ${p.num(p.selection.weight_load)} · 新鲜度 ${p.num(p.selection.weight_freshness)}。`,
-              ` 账号池权重：紧迫 ${p.num(p.selection.proxy_weight_urgency)} · 主负责人余量 ${p.num(p.selection.proxy_weight_headroom)} · 剩余 ${p.num(p.selection.proxy_weight_surplus)} · 新鲜度 ${p.num(p.selection.proxy_weight_freshness)}。`,
-            ]),
-          ]),
-          h('li', [
-            h('h3', 'Jev 主判'),
-            h(
-              'p',
-              `${p.jevEnabled ? '已在「Jev 决策」启用主判' : '未启用 Jev 主判（请在「Jev 决策」页签开启并配好模型与 Key）'}。启用后，只对通过硬过滤的前 ${p.selection.auto_top_n ?? 8} 个候选重排。调用失败、置信度低于 ${p.num(p.selection.auto_min_confidence)}、与次优的差距小于 ${p.num(p.selection.auto_min_margin)}、判定会侵占主负责人、或返回了未知账号时，仍用算法第一名。每一次代理请求不会单独问 Jev。`,
-            ),
-          ]),
-          h('li', [
-            h('h3', '切换驻留'),
-            h(
-              'p',
-              `同一会话绑上账号后，至少停留 ${draft.min_switch_minutes} 分钟，不因为额度压力来回跳。账号真的不可用（登录失败，或正在用的额度桶耗尽）仍会换。请求侧的停留时钟在代理进程里，默认 30 分钟，可用环境变量 PROXY_STICKY_MIN_DWELL 调整。`,
-            ),
-          ]),
-          h('li', [
-            h('h3', '同时在线'),
-            h(
-              'p',
-              '代理在换票、会话续期，以及因为额度耗尽要换号时，把当前连接的凭证报给 Web。Web 按人计座：能识别到成员时，同一成员在同一个账号上的多个会话只算 1 人；同时用两个账号则各占一席。识别不到成员时按借用单计。',
-            ),
-            h(
-              'p',
-              `同一个账号上，经过本代理同时在线的人数不超过 ${draft.max_concurrent_users}。填 0 表示不限制。只统计经过本代理的连接，主负责人直接打开 Cursor 不计入。已经坐在这个账号上的人不会被后来的人挤走。指定账号的借用始终留在原账号，并占一个座位；新加入账号池或自动轮换的人会避开已满的账号。${draft.concurrent_ttl_seconds} 秒内没有再上报，视为已经离开。座位记在单个 Web 进程的内存里。`,
-            ),
-          ]),
-        ],
-      )
-  },
-})
 
 const emit = defineEmits<{
   saved: [data: Record<string, unknown>]
@@ -232,11 +227,26 @@ function num(value: unknown): string {
   return String(Math.round(n * 100) / 100)
 }
 
-function hoursText(value: unknown): string {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '—'
-  return `${n} 小时`
-}
+const scoreTip = computed(() => {
+  const s = props.selection
+  return (
+    '硬过滤之后按确定性分数排序。可在打分表对单个账号加人工分。' +
+    `借用权重：紧迫 ${num(s.weight_urgency)} · 剩余 ${num(s.weight_surplus)} · 负载 ${num(s.weight_load)} · 新鲜度 ${num(s.weight_freshness)}。` +
+    `账号池权重：紧迫 ${num(s.proxy_weight_urgency)} · 主负责人余量 ${num(s.proxy_weight_headroom)} · 剩余 ${num(s.proxy_weight_surplus)} · 新鲜度 ${num(s.proxy_weight_freshness)}。`
+  )
+})
+
+const jevTip = computed(() => {
+  const s = props.selection
+  const state = props.jevEnabled
+    ? '已在「Jev 决策」启用'
+    : '未启用。请到「Jev 决策」打开主判并配好模型与 Key'
+  return (
+    `${state}。启用后只重排硬过滤后的前 ${s.auto_top_n ?? 8} 名。` +
+    `调用失败、置信度低于 ${num(s.auto_min_confidence)}、与次优差距小于 ${num(s.auto_min_margin)}、` +
+    '判定会侵占主负责人，或返回未知账号时，仍用算法第一名。不在每次代理请求上调用。'
+  )
+})
 
 function readSelection(raw: Record<string, unknown> | undefined) {
   const src = raw || {}
@@ -290,115 +300,141 @@ async function onSave() {
 </script>
 
 <style scoped>
-.loan-rules {
-  max-width: 820px;
-  color: var(--el-text-color-primary);
+.flow {
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #d6dee8;
+  --accent: #0f766e;
+  max-width: 760px;
+  color: var(--ink);
 }
-.lead {
-  margin: 4px 0 8px;
-  line-height: 1.6;
-  color: var(--el-text-color-regular);
-}
-.rules {
-  list-style: none;
-  margin: 0 0 28px;
-  padding: 0;
-  counter-reset: rule;
-}
-.rules li {
-  counter-increment: rule;
-  padding: 14px 0 14px 44px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  position: relative;
-}
-.rules li::before {
-  content: counter(rule);
-  position: absolute;
-  left: 0;
-  top: 16px;
-  width: 28px;
-  font-variant-numeric: tabular-nums;
-  color: var(--el-text-color-secondary);
-}
-.rules h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.rules p,
-.rules li ul {
-  margin: 0 0 6px;
-  line-height: 1.65;
-  color: var(--el-text-color-regular);
-}
-.rules ul {
-  padding-left: 18px;
-}
-.weights {
-  font-variant-numeric: tabular-nums;
-}
-.form {
-  padding-top: 8px;
-  border-top: 1px solid var(--el-border-color);
-}
-.hint {
-  margin-left: 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-.loan-rules--sidebar {
+.flow--sidebar {
   max-width: none;
 }
-.loan-rules--sidebar .form {
-  padding-top: 12px;
+.rail {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
 }
-.loan-rules--sidebar .hint {
-  display: block;
-  margin: 4px 0 0;
-  margin-left: 0;
-  line-height: 1.45;
+.stage {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 14px;
+  position: relative;
+  padding-bottom: 16px;
 }
-.pct-field {
+.stage:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 30px;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(var(--accent), var(--line));
+  opacity: 0.55;
+}
+.node {
+  width: 28px;
+  height: 28px;
+  margin-top: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: grid;
+  place-items: center;
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 4px #f8fafc;
+}
+.stage--off .node {
+  background: #94a3b8;
+}
+.stage-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.stage--off .stage-card {
+  background: #f8fafc;
+}
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.stage-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.field {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
 }
-.pct-unit {
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--el-text-color-secondary);
+  color: #334155;
+  white-space: nowrap;
 }
-.loan-rules--sidebar :deep(.el-form-item) {
-  margin-bottom: 14px;
+.unit {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
 }
-.loan-rules--sidebar :deep(.el-form-item__label) {
-  font-size: 13px;
-  line-height: 1.3;
-  padding-right: 8px;
+.flow :deep(.el-input-number) {
+  width: 108px;
 }
-.form-actions--sidebar :deep(.el-form-item__content) {
-  justify-content: stretch;
-}
-.form-actions--sidebar .el-button {
-  width: 100%;
-}
-.rules-doc {
-  margin-bottom: 4px;
+.flow :deep(.q) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
   border: none;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
 }
-.rules-doc :deep(.el-collapse-item__header) {
-  font-size: 13px;
+.flow :deep(.q:hover) {
+  background: #ccfbf1;
+  color: var(--accent);
+}
+.flow-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-left: 42px;
+}
+.readonly {
+  font-size: 12px;
   font-weight: 600;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  height: 40px;
-}
-.rules-doc :deep(.el-collapse-item__wrap) {
-  border-bottom: none;
-}
-.rules-doc :deep(.rules) {
-  margin-bottom: 0;
-}
-.rules-doc :deep(.rules li) {
-  padding-left: 36px;
+  color: var(--muted);
 }
 </style>
