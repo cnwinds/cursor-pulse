@@ -25,8 +25,8 @@
           <div class="card-top">
             <div>
               <div class="account-id">
-                <span>{{ item.account_identifier }}</span>
-                <span v-if="item.primary_member_name" class="primary-member">
+                <span class="account-email">{{ item.account_identifier }}</span>
+                <span v-if="item.primary_member_name" class="account-owner">
                   {{ item.primary_member_name }}
                 </span>
               </div>
@@ -624,17 +624,22 @@ onMounted(loadAll)
   margin-bottom: 12px;
 }
 .account-id {
-  font-weight: 600;
-  word-break: break-all;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.25;
+  max-width: 100%;
 }
-.primary-member {
-  font-weight: 500;
-  color: var(--el-text-color-regular);
+.account-email {
+  font-weight: 600;
   font-size: 14px;
+  word-break: break-all;
+}
+.account-owner {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--el-text-color-secondary);
 }
 
 .auto-pick-tag {
