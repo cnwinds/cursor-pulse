@@ -60,7 +60,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column width="100" align="right">
+          <el-table-column width="92" align="right">
             <template #header>
               <ColHeader
                 label="综合分"
@@ -80,7 +80,7 @@
               <span v-else class="score-cell">{{ row.score }}</span>
             </template>
           </el-table-column>
-          <el-table-column width="108" align="center">
+          <el-table-column width="112" align="center">
             <template #header>
               <ColHeader
                 label="人工"
@@ -104,31 +104,28 @@
               />
             </template>
           </el-table-column>
-          <el-table-column width="100" align="center">
+          <el-table-column width="104" align="center">
             <template #header>
               <ColHeader
-                label="保留"
+                label="保留%"
                 tip="主负责人保留（%）：该账号 Quota 池必须为号主留出的余量比例。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空用选号规则默认值；0 表示本账号不单独保留。"
               />
             </template>
             <template #default="{ row }">
-              <div class="pct-input-wrap">
-                <el-input-number
-                  :model-value="row.reserve_pct ?? undefined"
-                  :disabled="!canWrite"
-                  :min="0"
-                  :max="100"
-                  :step="5"
-                  :precision="0"
-                  :value-on-clear="null"
-                  controls-position="right"
-                  placeholder="默认"
-                  size="small"
-                  class="score-input reserve-input"
-                  @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
-                />
-                <span class="pct-unit">%</span>
-              </div>
+              <el-input-number
+                :model-value="row.reserve_pct ?? undefined"
+                :disabled="!canWrite"
+                :min="0"
+                :max="100"
+                :step="5"
+                :precision="0"
+                :value-on-clear="null"
+                controls-position="right"
+                placeholder="默认"
+                size="small"
+                class="score-input reserve-input"
+                @change="(val: number | undefined | null) => setReservePct(row, val ?? null)"
+              />
             </template>
           </el-table-column>
           <el-table-column min-width="176">
@@ -147,7 +144,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column width="56" align="center">
+          <el-table-column width="64" align="center">
             <template #header>
               <ColHeader
                 label="在借"
@@ -158,7 +155,7 @@
               <span class="metric-pill">{{ row.active_loans ?? 0 }}</span>
             </template>
           </el-table-column>
-          <el-table-column width="72" align="center">
+          <el-table-column width="76" align="center">
             <template #header>
               <ColHeader label="在用" :tip="proxySeatsTip" />
             </template>
@@ -168,7 +165,7 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column width="96" align="right" show-overflow-tooltip>
+          <el-table-column width="100" align="right" show-overflow-tooltip>
             <template #header>
               <ColHeader
                 label="距作废"
@@ -179,7 +176,7 @@
               {{ formatHoursUntilDeadline(row.hours_to_deadline) }}
             </template>
           </el-table-column>
-          <el-table-column prop="snapshot_freshness" width="56" align="center">
+          <el-table-column prop="snapshot_freshness" width="80" align="center">
             <template #header>
               <ColHeader
                 label="新鲜度"
@@ -505,6 +502,12 @@ onMounted(loadRanking)
   --el-table-header-bg-color: #f1f5f9;
   --el-table-tr-bg-color: #fff;
 }
+.rank-table :deep(.el-table__header th .cell) {
+  white-space: nowrap;
+  line-height: 1.2;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
 .rank-table :deep(.row-picked) {
   --el-table-tr-bg-color: rgba(13, 148, 136, 0.06);
 }
@@ -536,22 +539,11 @@ onMounted(loadRanking)
 .rank-table :deep(.score-input--manual.el-input-number) {
   width: 88px;
 }
-.pct-input-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
 .reserve-input {
-  width: 72px;
+  width: 88px;
 }
 .rank-table :deep(.reserve-input.el-input-number) {
-  width: 72px;
-}
-.pct-unit {
-  font-size: 12px;
-  font-weight: 600;
-  color: #64748b;
-  user-select: none;
+  width: 88px;
 }
 .metric-pill,
 .seat-pill {
@@ -580,8 +572,10 @@ onMounted(loadRanking)
 :deep(.col-header) {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   cursor: help;
+  white-space: nowrap;
+  font-size: 13px;
 }
 :deep(.col-header-q) {
   display: inline-flex;
