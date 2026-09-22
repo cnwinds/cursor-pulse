@@ -13,6 +13,13 @@
     </template>
 
     <el-form :label-width="layout === 'sidebar' ? '120px' : '168px'" class="form" @submit.prevent="onSave">
+      <el-form-item label="Jev 重排">
+        <el-switch v-model="draft.auto_mode" :disabled="!canWrite" />
+        <span class="hint">
+          开启 Auto Lender：对通过硬过滤的前若干候选调用 Jev 重排（须先在「Jev 决策」页签配好模型与 Key）。
+          关闭则打分表与自动分配仅按算法分排序。
+        </span>
+      </el-form-item>
       <el-form-item label="同时使用上限">
         <el-input-number
           v-model="draft.max_concurrent_users"
@@ -128,6 +135,7 @@ const RulesDoc = defineComponent({
       () => p.selection,
       (value) => {
         const src = (value || {}) as Record<string, unknown>
+        draft.auto_mode = src.auto_mode === true
         draft.max_concurrent_users = Number(src.max_concurrent_users ?? 3)
         draft.concurrent_ttl_seconds = Number(src.concurrent_ttl_seconds ?? 180)
         draft.min_switch_minutes = Number(src.min_switch_minutes ?? 30)
@@ -170,7 +178,7 @@ const RulesDoc = defineComponent({
             h('h3', 'Jev 重排'),
             h(
               'p',
-              `开启后，只对通过硬过滤的前 ${p.selection.auto_top_n ?? 8} 个候选重排。调用失败、置信度低于 ${p.num(p.selection.auto_min_confidence)}、与次优的差距小于 ${p.num(p.selection.auto_min_margin)}、判定会侵占主负责人、或返回了未知账号时，仍用算法第一名。每一次代理请求不会单独问 Jev。`,
+              `${p.selection.auto_mode === true ? '已开启' : '未开启'} Auto Lender（auto_mode）。开启后，只对通过硬过滤的前 ${p.selection.auto_top_n ?? 8} 个候选重排。调用失败、置信度低于 ${p.num(p.selection.auto_min_confidence)}、与次优的差距小于 ${p.num(p.selection.auto_min_margin)}、判定会侵占主负责人、或返回了未知账号时，仍用算法第一名。每一次代理请求不会单独问 Jev。`,
             ),
           ]),
           h('li', [
@@ -206,6 +214,7 @@ const canWrite = auth.hasPermission('settings:write')
 const saving = ref(false)
 
 const draft = reactive({
+  auto_mode: false,
   max_concurrent_users: 3,
   concurrent_ttl_seconds: 180,
   min_switch_minutes: 30,
@@ -228,6 +237,7 @@ function hoursText(value: unknown): string {
 
 function readSelection(raw: Record<string, unknown> | undefined) {
   const src = raw || {}
+  draft.auto_mode = src.auto_mode === true
   draft.max_concurrent_users = Number(src.max_concurrent_users ?? 3)
   draft.concurrent_ttl_seconds = Number(src.concurrent_ttl_seconds ?? 180)
   draft.min_switch_minutes = Number(src.min_switch_minutes ?? 30)
@@ -240,6 +250,7 @@ watch(() => props.selection, (value) => readSelection(value), { immediate: true,
 
 async function onSave() {
   const patch = {
+    auto_mode: draft.auto_mode,
     max_concurrent_users: draft.max_concurrent_users,
     concurrent_ttl_seconds: draft.concurrent_ttl_seconds,
     min_switch_minutes: draft.min_switch_minutes,
@@ -247,7 +258,20 @@ async function onSave() {
     min_coverage_hours: draft.min_coverage_hours,
     owner_reserve_pct: draft.owner_reserve_pct,
   }
-  if (Object.values(patch).some((value) => value == null || Number.isNaN(Number(value)))) {
+  const numericKeys = [
+    'max_concurrent_users',
+    'concurrent_ttl_seconds',
+    'min_switch_minutes',
+    'max_active_loans_per_account',
+    'min_coverage_hours',
+    'owner_reserve_pct',
+  ] as const
+  if (
+    numericKeys.some((key) => {
+      const value = patch[key]
+      return value == null || Number.isNaN(Number(value))
+    })
+  ) {
     ElMessage.error('请把参数填成数字')
     return
   }
