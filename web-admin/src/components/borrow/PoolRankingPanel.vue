@@ -1,31 +1,8 @@
 <template>
   <div class="ranking-panel">
     <div class="panel-card">
-      <div class="ranking-toolbar">
-        <el-button type="primary" plain :loading="rankingLoading" @click="loadRanking">
-          刷新
-        </el-button>
-      </div>
-
-      <el-alert
-        v-if="ranking.decision"
-        :type="ranking.decision.picked_by === 'jev' ? 'success' : 'info'"
-        :closable="false"
-        class="ranking-decision"
-      >
-        <template #title>
-          <span v-if="ranking.decision.picked_by === 'jev'">
-            Jev 主判 · {{ ranking.decision.model || 'typesafe/jev' }} · 置信度
-            {{ ranking.decision.confidence ?? '—' }}
-            <el-tag v-if="ranking.decision.cached" size="small" type="info">缓存</el-tag>
-          </span>
-          <span v-else>
-            算法分保底 · {{ decisionFallbackLabel(ranking.decision.fallback_reason) }}
-          </span>
-        </template>
-      </el-alert>
-
-      <el-tabs v-model="rankingTab" class="ranking-tabs">
+      <div class="ranking-shell">
+        <el-tabs v-model="rankingTab" class="ranking-tabs">
         <el-tab-pane name="ranked">
           <template #label>
             <span class="tab-label">入选排序</span>
@@ -237,7 +214,35 @@
           </el-table-column>
           </el-table>
         </el-tab-pane>
-      </el-tabs>
+        </el-tabs>
+        <div class="ranking-head-aside">
+          <el-tooltip
+            v-if="decisionBanner"
+            :content="decisionBanner.tip"
+            placement="top"
+            :show-after="200"
+          >
+            <span class="decision-chip" :class="`decision-chip--${decisionBanner.tone}`">
+              <span class="decision-chip-kicker">{{ decisionBanner.kicker }}</span>
+              <span class="decision-chip-text">{{ decisionBanner.text }}</span>
+              <el-tag v-if="decisionBanner.cached" size="small" type="info" effect="plain">缓存</el-tag>
+            </span>
+          </el-tooltip>
+          <el-tooltip content="刷新打分表" placement="top" :show-after="200">
+            <el-button
+              class="refresh-btn"
+              :loading="rankingLoading"
+              circle
+              plain
+              type="primary"
+              aria-label="刷新打分表"
+              @click="loadRanking"
+            >
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -351,6 +356,30 @@ function decisionFallbackLabel(reason?: string | null): string {
   return DECISION_FALLBACK_LABELS[reason] || reason
 }
 
+const decisionBanner = computed(() => {
+  const d = ranking.value.decision
+  if (!d) return null
+  if (d.picked_by === 'jev') {
+    const model = d.model || 'typesafe/jev'
+    const conf = d.confidence ?? '—'
+    return {
+      tone: 'jev' as const,
+      kicker: 'Jev 主判',
+      text: `${model} · 置信 ${conf}`,
+      tip: `Jev 主判 · ${model} · 置信度 ${conf}`,
+      cached: !!d.cached,
+    }
+  }
+  const detail = decisionFallbackLabel(d.fallback_reason)
+  return {
+    tone: 'algo' as const,
+    kicker: '算法保底',
+    text: detail,
+    tip: `算法分保底 · ${detail}`,
+    cached: false,
+  }
+})
+
 function exclusionReasonLabel(reason: string | undefined) {
   return (
     {
@@ -448,25 +477,66 @@ onMounted(loadRanking)
   background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 42%, #ffffff 100%);
   border: 1px solid var(--rank-border);
   border-radius: 14px;
-  padding: 20px 20px 8px;
+  padding: 12px 16px 4px;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 40px rgba(15, 23, 42, 0.06);
 }
-.ranking-toolbar {
+.ranking-shell {
+  position: relative;
+}
+.ranking-head-aside {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 8px;
+  max-width: min(52%, 520px);
+  height: 40px;
 }
-.ranking-decision {
-  margin-bottom: 16px;
-  border-radius: 10px;
+.decision-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.25;
+  border: 1px solid transparent;
+  cursor: default;
 }
-.ranking-tabs {
-  margin-top: 4px;
+.decision-chip-kicker {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+.decision-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  opacity: 0.92;
+}
+.decision-chip--jev {
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.1);
+  border-color: rgba(13, 148, 136, 0.22);
+}
+.decision-chip--algo {
+  color: #475569;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+.refresh-btn {
+  flex-shrink: 0;
 }
 .ranking-tabs :deep(.el-tabs__header) {
-  margin-bottom: 12px;
+  margin: 0 0 10px;
+  padding-right: min(52%, 520px);
 }
 .ranking-tabs :deep(.el-tabs__item) {
   font-weight: 600;
