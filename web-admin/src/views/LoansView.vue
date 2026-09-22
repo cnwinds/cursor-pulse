@@ -93,7 +93,7 @@
           ${{ (row.borrowed_cents / 100).toFixed(2) }}
         </template>
       </el-table-column>
-      <el-table-column label="proxy 统计" width="120">
+      <el-table-column label="proxy消耗" width="120">
         <template #default="{ row }">
           <el-button link type="primary" @click="openUsages(row)">
             ${{ ((row.proxy_cost_cents ?? 0) / 100).toFixed(2) }}
