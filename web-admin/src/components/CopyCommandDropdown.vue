@@ -142,3 +142,11 @@ async function copyItem(item: ProxyCommandMenuItem) {
   }
 }
 </script>
+
+<style scoped>
+.copy-cmd-icon-btn {
+  padding: 4px;
+  margin: 0;
+  vertical-align: middle;
+}
+</style>

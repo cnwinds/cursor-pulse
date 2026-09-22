@@ -998,10 +998,28 @@ onMounted(loadLoans)
   font-size: 14px;
   color: var(--el-text-color-regular);
 }
-.primary-member {
-  margin-left: 8px;
-  font-weight: 500;
-  color: var(--el-text-color-regular);
+.account-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.25;
+  max-width: 100%;
+}
+.account-line1 {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.account-id {
+  font-size: 13px;
+  word-break: break-all;
+}
+.account-owner {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
 }
 .muted {
   color: var(--el-text-color-secondary);

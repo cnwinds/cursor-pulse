@@ -23,7 +23,7 @@
               <span class="rank-index">{{ $index + 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column min-width="152" fixed>
+          <el-table-column min-width="140" fixed>
             <template #header>
               <ColHeader
                 label="账号"
@@ -32,8 +32,13 @@
             </template>
             <template #default="{ row }">
               <div class="account-cell">
-                <span class="account-id">{{ row.account_identifier }}</span>
-                <el-tag v-if="row.picked" size="small" type="success" effect="dark">选用</el-tag>
+                <div class="account-line1">
+                  <span class="account-id">{{ row.account_identifier }}</span>
+                  <el-tag v-if="row.picked" size="small" type="success" effect="dark">选用</el-tag>
+                </div>
+                <span v-if="row.primary_member_name" class="account-owner">
+                  {{ row.primary_member_name }}
+                </span>
               </div>
             </template>
           </el-table-column>
@@ -173,7 +178,14 @@
             <template #header>
               <ColHeader label="账号" tip="未通过硬过滤、未进入入选排序的入池账号。" />
             </template>
-            <template #default="{ row }">{{ row.account_identifier }}</template>
+            <template #default="{ row }">
+              <div class="account-cell">
+                <span class="account-id">{{ row.account_identifier }}</span>
+                <span v-if="row.primary_member_name" class="account-owner">
+                  {{ row.primary_member_name }}
+                </span>
+              </div>
+            </template>
           </el-table-column>
           <el-table-column min-width="176">
             <template #header>
@@ -279,6 +291,7 @@ const ColHeader = defineComponent({
 interface RankingRow {
   account_id: string
   account_identifier: string
+  primary_member_name?: string | null
   score?: number
   computed_score?: number
   score_adjust?: number | null
@@ -585,13 +598,26 @@ onMounted(loadRanking)
 }
 .account-cell {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.25;
+  max-width: 100%;
+}
+.account-line1 {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
 }
 .account-id {
   font-size: 13px;
   word-break: break-all;
+}
+.account-owner {
+  font-size: 11px;
+  color: var(--rank-muted);
 }
 .score-cell {
   font-variant-numeric: tabular-nums;
