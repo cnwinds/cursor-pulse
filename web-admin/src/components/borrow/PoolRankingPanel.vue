@@ -38,7 +38,10 @@
           class="rank-table"
           :row-class-name="rankedRowClass"
         >
-          <el-table-column label="#" width="48" fixed align="center">
+          <el-table-column width="44" fixed align="center">
+            <template #header>
+              <ColHeader label="#" tip="按当前综合分排序的名次，会随额度消耗与微调变化。" />
+            </template>
             <template #default="{ $index }">
               <span class="rank-index">{{ $index + 1 }}</span>
             </template>
@@ -79,7 +82,10 @@
           </el-table-column>
           <el-table-column width="108" align="center">
             <template #header>
-              <ColHeader label="人工分" tip="加在算法分上，正数提前、负数延后；清空恢复自动。" />
+              <ColHeader
+                label="人工"
+                tip="人工微调分：加在算法综合分上，正数提前、负数延后；清空输入恢复纯算法排序。"
+              />
             </template>
             <template #default="{ row }">
               <el-input-number
@@ -98,11 +104,11 @@
               />
             </template>
           </el-table-column>
-          <el-table-column width="118" align="center">
+          <el-table-column width="100" align="center">
             <template #header>
               <ColHeader
-                label="主负责人保留 %"
-                tip="该账号 Quota 池必须为号主留出的余量百分比（%）。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空表示用选号规则里的默认百分比；0 表示不单独保留。"
+                label="保留"
+                tip="主负责人保留（%）：该账号 Quota 池必须为号主留出的余量比例。按当前用量推到重置日，若借出后留给主负责人的比例低于此值，账号会被硬过滤排除。留空用选号规则默认值；0 表示本账号不单独保留。"
               />
             </template>
             <template #default="{ row }">
@@ -125,19 +131,19 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="urgency_cents_per_day" width="80" align="right">
+          <el-table-column prop="urgency_cents_per_day" width="72" align="right">
             <template #header>
               <ColHeader
-                label="消化/日"
-                tip="距额度作废越近、余量消化压力越大，数值越高；排序时会优先「快到期要先用完」的账号。"
+                label="消化"
+                tip="消化压力（估算美元/日）：距额度作废越近、余量越紧，数值越高；排序时优先快到期需先用完的账号。"
               />
             </template>
           </el-table-column>
           <el-table-column min-width="176">
             <template #header>
               <ColHeader
-                label="额度进度"
-                tip="同步快照中的 Total / Auto / API 用量占本周期上限比例。"
+                label="额度"
+                tip="额度进度：同步快照中 Total / Auto / API 用量占本周期上限的比例。"
               />
             </template>
             <template #default="{ row }">
@@ -149,20 +155,20 @@
               />
             </template>
           </el-table-column>
-          <el-table-column width="72" align="center">
+          <el-table-column width="56" align="center">
             <template #header>
               <ColHeader
-                label="固定借用"
-                tip="锁定出借账号、尚未结束的借用笔数（指定账号 / 非池轮换）。受「同时在借上限」约束，与右侧「代理在用」不是同一指标。"
+                label="在借"
+                tip="固定借用笔数：锁定出借账号、尚未结束的借用（指定账号 / 非池轮换）。受选号规则「同时在借上限」约束，与「在用」不是同一指标。"
               />
             </template>
             <template #default="{ row }">
               <span class="metric-pill">{{ row.active_loans ?? 0 }}</span>
             </template>
           </el-table-column>
-          <el-table-column width="88" align="center">
+          <el-table-column width="72" align="center">
             <template #header>
-              <ColHeader label="代理在用" :tip="proxySeatsTip" />
+              <ColHeader label="在用" :tip="proxySeatsTip" />
             </template>
             <template #default="{ row }">
               <span class="seat-pill" :class="seatPillClass(row)">
@@ -170,19 +176,19 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="hours_to_deadline" width="88" align="right">
+          <el-table-column prop="hours_to_deadline" width="72" align="right">
             <template #header>
               <ColHeader
-                label="距作废(h)"
-                tip="距离本周期额度作废（重置）的小时数；越近越优先消化剩余额度。"
+                label="剩余h"
+                tip="距本周期额度作废（重置）的小时数；越近越优先消化剩余额度。"
               />
             </template>
           </el-table-column>
-          <el-table-column prop="snapshot_freshness" width="64" align="center">
+          <el-table-column prop="snapshot_freshness" width="56" align="center">
             <template #header>
               <ColHeader
-                label="快照"
-                tip="额度快照新鲜度 0–1：越接近 1 表示越刚同步；过久未同步会在算法分中被降权（非硬过滤）。"
+                label="新鲜"
+                tip="额度快照新鲜度（0–1）：越接近 1 越刚同步；过久未同步会在算法分中降权，非硬过滤。"
               />
             </template>
           </el-table-column>
@@ -196,8 +202,19 @@
           <span class="title-count">{{ ranking.excluded.length }} 个账号</span>
         </h4>
         <el-table v-loading="rankingLoading" :data="ranking.excluded" stripe class="rank-table">
-          <el-table-column prop="account_identifier" label="账号" min-width="140" />
-          <el-table-column label="额度进度" min-width="176">
+          <el-table-column min-width="140">
+            <template #header>
+              <ColHeader label="账号" tip="未通过硬过滤、未进入入选排序的入池账号。" />
+            </template>
+            <template #default="{ row }">{{ row.account_identifier }}</template>
+          </el-table-column>
+          <el-table-column min-width="176">
+            <template #header>
+              <ColHeader
+                label="额度"
+                tip="额度进度：Total / Auto / API 用量占本周期上限的比例。"
+              />
+            </template>
             <template #default="{ row }">
               <QuotaProgressBars
                 :total_pct="row.total_pct"
@@ -213,18 +230,18 @@
             </template>
             <template #default="{ row }">{{ exclusionReasonLabel(row.reason) }}</template>
           </el-table-column>
-          <el-table-column width="72" align="center">
+          <el-table-column width="56" align="center">
             <template #header>
               <ColHeader
-                label="固定借用"
-                tip="锁定出借账号、尚未结束的借用笔数（指定账号 / 非池轮换）。"
+                label="在借"
+                tip="固定借用笔数：锁定出借账号、尚未结束的借用（指定账号 / 非池轮换）。"
               />
             </template>
             <template #default="{ row }">{{ row.active_loans ?? 0 }}</template>
           </el-table-column>
-          <el-table-column width="88" align="center">
+          <el-table-column width="72" align="center">
             <template #header>
-              <ColHeader label="代理在用" :tip="proxySeatsTip" />
+              <ColHeader label="在用" :tip="proxySeatsTip" />
             </template>
             <template #default="{ row }">{{ row.proxy_active_seats ?? 0 }}</template>
           </el-table-column>
