@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-22
+
 ### 新增
 
 - **同时在线人数**：Go 代理在换票、会话续期和因额度耗尽换号时，把当前连接的凭证上报给 Web。Web 按人计座（同一成员在同一个账号上的多个会话算 1 人，同时用两个账号则各占一席），默认同一个账号不超过 3 个经代理的同时使用者。没有候选账号时不算人数上限。已经在座的人不被挤走；指定账号的借用始终留在原账号。0 表示不限制。主负责人直接使用 Cursor 不计入。规则和参数在「系统设置 → 选号规则」。
@@ -34,6 +36,11 @@
 - **换绑/发放失败残留远端 Key**：远端 Key 已创建但本地事务失败时，只回滚数据库，Cursor 侧那条 Key 因无本地记录而无法回收。改为失败即 best-effort 吊销。
 - **日趋势图例重叠**：ECharts 6 默认把 legend 放在底部，grid 底部留白不够，图例会叠在日期和矮柱上。概览 / 用量分析共用的日趋势改为顶部图例，并加大 `grid.top`。
 - **概览与用量分析日趋势对齐**：两页共用同一套日聚合；日趋势改为堆叠柱（输入/输出/cache，柱高=当日总 Token）+ 花费折线，避免平滑面积图把相邻日「鼓包」。概览改为本账期全日序列，不再截成近 14 天。
+
+### 变更（借用管理 UI）
+
+- **借用管理合并页**：共享池代理导航改为「账号池 / 借用管理」；选号规则、打分表、借用记录集中展示；移除独立 Proxy Keys 页与设置内选号规则 Tab。
+- **借 Key 通知**：钉钉/IM 下发临时 Key 时列出系统设置中全部有效代理地址及对应 PowerShell / bash 启动命令（多地址带展示名）。
 
 ### 变更（概览与用量）
 
@@ -146,7 +153,8 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...v0.2.0
