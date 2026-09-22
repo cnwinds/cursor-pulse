@@ -29,7 +29,7 @@
 
     <el-table :data="loans" stripe>
       <el-table-column label="借出人" prop="borrower_name" width="120" />
-      <el-table-column label="借出账号" min-width="240">
+      <el-table-column label="借出账号" min-width="168">
         <template #default="{ row }">
           <template v-if="row.routing_mode === 'pool'">
             <span>账号池</span>
@@ -37,21 +37,23 @@
               使用中轮换
             </el-tag>
           </template>
-          <template v-else>
-            <span>{{ row.source_account_identifier }}</span>
-            <span v-if="row.primary_member_name" class="primary-member">
+          <div v-else class="account-stack">
+            <div class="account-line1">
+              <span class="account-id">{{ row.source_account_identifier }}</span>
+              <el-tag
+                v-if="row.lender_mode === 'auto'"
+                size="small"
+                type="warning"
+                class="lender-mode-tag"
+                title="自助自动分配：借用 Key 会在候选账号的 primary Key 之间游走"
+              >
+                自动
+              </el-tag>
+            </div>
+            <span v-if="row.primary_member_name" class="account-owner">
               {{ row.primary_member_name }}
             </span>
-            <el-tag
-              v-if="row.lender_mode === 'auto'"
-              size="small"
-              type="warning"
-              class="lender-mode-tag"
-              title="自助自动分配：借用 Key 会在候选账号的 primary Key 之间游走"
-            >
-              自动
-            </el-tag>
-          </template>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
