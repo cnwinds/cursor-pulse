@@ -74,7 +74,11 @@ def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
         warning="须配置 HTTPS_PROXY",
         proxy_url="http://proxy.example:8317",
         delivery_mode="proxy_alias",
+        lender_mode="manual",
+        routing_mode="pinned",
     )
+    assert "分配方式：指定账号" in text
+    assert "交付：代理别名" not in text
     assert "借出人" not in text
     assert "Alice" not in text
     assert "pka_testkey" in text

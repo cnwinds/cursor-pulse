@@ -40,15 +40,6 @@
           <div v-else class="account-stack">
             <div class="account-line1">
               <span class="account-id">{{ row.source_account_identifier }}</span>
-              <el-tag
-                v-if="row.lender_mode === 'auto'"
-                size="small"
-                type="warning"
-                class="lender-mode-tag"
-                title="自助自动分配：借用 Key 会在候选账号的 primary Key 之间游走"
-              >
-                自动
-              </el-tag>
             </div>
             <span v-if="row.primary_member_name" class="account-owner">
               {{ row.primary_member_name }}
@@ -367,14 +358,8 @@
           借出账号：{{ revealedKey?.routing_mode === 'pool' ? '账号池（使用中轮换）' : revealedKey?.source_account_identifier }}
         </div>
         <div class="muted">借用人：{{ revealedKey?.borrower_name }}</div>
-        <div class="muted" v-if="revealedKey?.delivery_mode">
-          分配方式：{{
-            loanAssignmentLabel({
-              delivery_mode: revealedKey?.delivery_mode,
-              lender_mode: revealedKey?.lender_mode,
-              routing_mode: revealedKey?.routing_mode,
-            })
-          }}
+        <div class="muted" v-if="revealedKey">
+          分配方式：{{ loanAssignmentLabel(revealedKey) }}
         </div>
         <el-input :model-value="revealedKey?.api_key" readonly>
           <template #append>
@@ -532,6 +517,7 @@ interface LoanRow {
   borrowed_cents: number
   proxy_cost_cents: number | null
   proxy_cost_today_cents?: number | null
+  assignment_label?: string | null
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
@@ -573,7 +559,9 @@ const revealedKey = ref<{
   api_key: string
   borrower_name: string
   source_account_identifier: string
+  assignment_label?: string | null
   delivery_mode?: string
+  lender_mode?: string | null
   routing_mode?: string
 } | null>(null)
 

@@ -97,6 +97,7 @@ interface LoanRow {
   source_account_identifier: string
   routing_mode?: string | null
   delivery_mode: string | null
+  assignment_label?: string | null
   lender_mode?: string | null
   status: string
   created_at: string

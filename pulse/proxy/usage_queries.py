@@ -12,6 +12,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from pulse.storage.models import ProxyKeyUsage
+from pulse.util.datetime_fmt import ensure_aware
 from pulse.util.timezone_ctx import display_zone
 
 _UTC = timezone.utc
@@ -55,6 +56,8 @@ def loan_proxy_totals_by_loan(
     if not ids:
         return {}
     day_start, day_end = display_today_utc_window()
+    day_start = ensure_aware(day_start)
+    day_end = ensure_aware(day_end)
     today_cost = case(
         (
             and_(ProxyKeyUsage.ts >= day_start, ProxyKeyUsage.ts < day_end),

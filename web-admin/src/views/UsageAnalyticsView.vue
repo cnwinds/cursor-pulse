@@ -614,10 +614,9 @@ onMounted(async () => {
 }
 .filters {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  overflow-x: auto;
 }
 .filter-preset {
   flex: 0 0 auto;

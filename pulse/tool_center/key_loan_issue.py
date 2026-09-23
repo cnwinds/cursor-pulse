@@ -25,6 +25,7 @@ from pulse.tool_center.key_loan_delivery import (
     VALID_DELIVERY_MODES,
     VALID_LENDER_MODES,
     KeyLoanError,
+    assignment_mode_label,
 )
 from pulse.tool_center.key_loan_lender import account_loan_deadline
 from pulse.tool_center.key_loan_auto import resolve_auto_lender
@@ -310,6 +311,11 @@ def issue_loan_key(
         "loan_expires_on": deadline.isoformat() if deadline else None,
         "lender_mode": loan.lender_mode,
         "routing_mode": getattr(loan, "routing_mode", None) or "pinned",
+        "assignment_label": assignment_mode_label(
+            delivery_mode=DELIVERY_PROXY_ALIAS,
+            lender_mode=loan.lender_mode,
+            routing_mode=getattr(loan, "routing_mode", None),
+        ),
         "warning": warning,
     }
 
@@ -382,6 +388,11 @@ def issue_pool_loan(
         "primary_member_name": None,
         "loan_expires_on": None,
         "lender_mode": loan.lender_mode,
+        "assignment_label": assignment_mode_label(
+            delivery_mode=DELIVERY_PROXY_ALIAS,
+            lender_mode=loan.lender_mode,
+            routing_mode=ROUTING_POOL,
+        ),
         "warning": warning,
     }
 

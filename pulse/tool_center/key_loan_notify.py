@@ -14,6 +14,10 @@ from pulse.config import ProxyAddress
 from pulse.proxy.key_crud import build_client_command, build_client_setup_commands
 from pulse.storage.models import KeyLoan, Member
 from pulse.tenant.context import team_repository
+from pulse.tool_center.key_loan_delivery import (
+    DELIVERY_PROXY_ALIAS,
+    assignment_mode_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,9 @@ def format_borrower_issued(
     proxy_url: str | None = None,
     addresses: list[ProxyAddress] | None = None,
     delivery_mode: str | None = None,
+    lender_mode: str | None = None,
+    routing_mode: str | None = None,
+    assignment_label: str | None = None,
 ) -> str:
     if addresses:
         resolved = addresses
@@ -108,8 +115,16 @@ def format_borrower_issued(
         f"借用编号：{(loan_id or '')[:8] or '—'}",
         f"自动回收日：{loan_expires_on or '—'}",
     ]
-    if (delivery_mode or "").strip() == "proxy_alias":
-        lines.append("交付：代理别名 Key（须配置 HTTPS_PROXY）")
+    mode = (delivery_mode or "").strip()
+    if mode == DELIVERY_PROXY_ALIAS:
+        label = (assignment_label or "").strip() or assignment_mode_label(
+            delivery_mode=mode,
+            lender_mode=lender_mode,
+            routing_mode=routing_mode,
+        )
+        lines.append(f"分配方式：{label}（须配置 HTTPS_PROXY）")
+    elif mode and mode != DELIVERY_PROXY_ALIAS:
+        lines.append("分配方式：Cursor Key")
     if warning:
         lines.extend(["", warning.strip()])
     lines.extend(
@@ -245,6 +260,9 @@ def notify_loan_issued(
     expires = result.get("loan_expires_on")
     expires_s = str(expires) if expires else None
     delivery_mode = result.get("delivery_mode")
+    lender_mode = result.get("lender_mode")
+    routing_mode = result.get("routing_mode")
+    assignment_label = result.get("assignment_label")
     warning = result.get("warning")
     borrower_name = result.get("borrower_name")
     addresses = resolve_proxy_addresses(session, config)
@@ -252,10 +270,22 @@ def notify_loan_issued(
     if not skip_borrower and api_key:
         borrower_id = result.get("borrower_member_id")
         borrower = session.get(Member, borrower_id) if borrower_id else None
-        if borrower is None and loan_id:
-            loan = session.get(KeyLoan, loan_id)
-            if loan and loan.borrower_member_id:
-                borrower = session.get(Member, loan.borrower_member_id)
+        loan_row = None
+        if loan_id:
+            loan_row = session.get(KeyLoan, loan_id)
+        if borrower is None and loan_row and loan_row.borrower_member_id:
+            borrower = session.get(Member, loan_row.borrower_member_id)
+        if loan_row is not None:
+            if lender_mode is None:
+                lender_mode = getattr(loan_row, "lender_mode", None)
+            if routing_mode is None:
+                routing_mode = getattr(loan_row, "routing_mode", None)
+            if not assignment_label:
+                assignment_label = assignment_mode_label(
+                    delivery_mode=str(delivery_mode or getattr(loan_row, "delivery_mode", None)),
+                    lender_mode=lender_mode,
+                    routing_mode=routing_mode,
+                )
         if borrower is not None:
             uid = resolve_member_im_user_id(session, config, borrower)
             if uid:
@@ -266,6 +296,9 @@ def notify_loan_issued(
                     warning=str(warning) if warning else None,
                     addresses=addresses,
                     delivery_mode=str(delivery_mode) if delivery_mode else None,
+                    lender_mode=str(lender_mode) if lender_mode else None,
+                    routing_mode=str(routing_mode) if routing_mode else None,
+                    assignment_label=str(assignment_label) if assignment_label else None,
                 )
                 _send_oto(
                     session,

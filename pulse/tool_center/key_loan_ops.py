@@ -202,6 +202,9 @@ def request_loan(
             warning=payload.get("warning"),
             addresses=resolve_proxy_addresses(repo.session, config),
             delivery_mode=payload.get("delivery_mode"),
+            lender_mode=payload.get("lender_mode"),
+            routing_mode=payload.get("routing_mode"),
+            assignment_label=payload.get("assignment_label"),
         )
     return str(payload.get("error") or "借 Key 失败")
 
@@ -253,6 +256,9 @@ def request_loan_payload(
             "schema_version": 1,
             "api_key": api_key,
             "delivery_mode": result.get("delivery_mode") or "proxy_alias",
+            "lender_mode": result.get("lender_mode"),
+            "routing_mode": result.get("routing_mode"),
+            "assignment_label": result.get("assignment_label"),
             "warning": result.get("warning"),
             "loan_id": result.get("loan_id"),
             "loan_expires_on": result.get("loan_expires_on"),
