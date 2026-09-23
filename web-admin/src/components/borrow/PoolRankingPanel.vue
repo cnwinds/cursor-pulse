@@ -403,11 +403,16 @@ const decisionBanner = computed(() => {
   if (d.picked_by === 'jev') {
     const model = d.model || 'typesafe/jev'
     const conf = d.confidence ?? '—'
+    const probs = d.probabilities || {}
+    const topProb = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]
+    const pickHint = topProb
+      ? ` · pick ${(topProb[1] * 100).toFixed(0)}%`
+      : ''
     return {
       tone: 'jev' as const,
       kicker: 'Jev 主判',
-      text: `${model} · 置信 ${conf}`,
-      tip: `Jev 主判 · ${model} · 置信度 ${conf}`,
+      text: `${model} · 置信 ${conf}${pickHint}`,
+      tip: `Jev 主判 · ${model} · 置信度 ${conf}${pickHint}`,
       cached: !!d.cached,
     }
   }

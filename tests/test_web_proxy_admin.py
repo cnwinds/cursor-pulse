@@ -392,6 +392,9 @@ def test_pool_ranking_board(env):
     assert reasons["acct-nosnap"] == "no_snapshot"
     assert all("score" in r for r in body["ranked"])
     assert "loan_cap" not in reasons.values()
+    assert "jev_trace" in body["decision"]
+    assert body["decision"]["jev_trace"]["meta"]["status"] == "skipped"
+    assert body["decision"]["jev_trace"]["meta"]["skip_reason"] == "jev_unavailable"
 
 
 def test_pool_ranking_ignores_loan_cap(env):

@@ -193,7 +193,6 @@ def _build_jev_guards(
 def _build_jev_trace(
     *,
     status: str,
-    cfg: LoanSelectionConfig,
     skip_reason: str | None = None,
     error_message: str | None = None,
     cached: bool = False,
@@ -450,7 +449,6 @@ def rank_lenders(
                 fallback_reason="jev_unavailable",
                 jev_trace=_build_jev_trace(
                     status="skipped",
-                    cfg=cfg,
                     skip_reason="jev_unavailable",
                 ),
             ),
@@ -468,10 +466,10 @@ def rank_lenders(
                 fallback_reason="insufficient_candidates",
                 jev_trace=_build_jev_trace(
                     status="skipped",
-                    cfg=cfg,
                     skip_reason="insufficient_candidates",
                     model=jev.model,
                     jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
                 ),
             ),
             on_decision,
@@ -501,7 +499,6 @@ def rank_lenders(
                 usage=cached.usage,
                 jev_trace=_build_jev_trace(
                     status="cached",
-                    cfg=cfg,
                     cached=True,
                     model=cached.model,
                     jev_input=jev_input,
@@ -526,10 +523,10 @@ def rank_lenders(
                 fallback_reason="circuit_open",
                 jev_trace=_build_jev_trace(
                     status="skipped",
-                    cfg=cfg,
                     skip_reason="circuit_open",
                     model=jev.model,
                     jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
                 ),
             ),
             on_decision,
@@ -553,11 +550,11 @@ def rank_lenders(
                 fallback_reason="jev_error",
                 jev_trace=_build_jev_trace(
                     status="skipped",
-                    cfg=cfg,
                     skip_reason="jev_error",
                     error_message=msg,
                     model=jev.model,
                     jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
                 ),
             ),
             on_decision,
@@ -586,7 +583,6 @@ def rank_lenders(
         usage=jev_decision.usage,
         jev_trace=_build_jev_trace(
             status="called",
-            cfg=cfg,
             model=jev_decision.model,
             jev_input=jev_input,
             jev_output=jev_output,

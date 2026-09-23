@@ -231,6 +231,16 @@ def test_decision_cache_avoids_repeat_calls():
     assert [r["account_id"] for r in second["ranked"]] == ["acc-b", "acc-a"]
 
 
+def test_decision_cache_includes_jev_output_in_trace():
+    jev = FakeJev(decision=_decision("acc-b"))
+    cfg = _auto_cfg()
+    rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    second = rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    trace = second["decision"]["jev_trace"]
+    assert trace["meta"]["status"] == "cached"
+    assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
+
+
 def test_cache_ignores_minutes_since_switch():
     """驻留分钟数一直在变，但不能让缓存失效。"""
     jev = FakeJev(decision=_decision("acc-b"))
