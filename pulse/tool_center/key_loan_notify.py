@@ -11,7 +11,7 @@ from pulse.channels.base import normalize_platform, outbound_messenger_or_none
 from pulse.channels.outbound_ledger import send_oto_and_ledger
 from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
 from pulse.config import ProxyAddress
-from pulse.proxy.key_crud import build_client_command
+from pulse.proxy.key_crud import build_client_command, build_client_setup_commands
 from pulse.storage.models import KeyLoan, Member
 from pulse.tenant.context import team_repository
 
@@ -66,27 +66,21 @@ def build_setup_commands(*, api_key: str, proxy_url: str) -> dict[str, str]:
     }
 
 
-def _shell_command_blocks(*, api_key: str, addresses: list[ProxyAddress]) -> tuple[str, str]:
-    """按代理地址生成 PowerShell / bash 命令块（多地址时带展示名）。"""
-    ps_parts: list[str] = []
-    bash_parts: list[str] = []
-    multi = len(addresses) > 1
-    for addr in addresses:
-        url = addr.url.rstrip("/")
-        label = (addr.display_name or url).strip()
-        ps_cmd = build_client_command(shell="powershell", proxy_url=url, plaintext_key=api_key)
-        bash_cmd = build_client_command(shell="bash", proxy_url=url, plaintext_key=api_key)
-        if multi:
-            ps_parts.extend([label, ps_cmd, ""])
-            bash_parts.extend([label, bash_cmd, ""])
+def _menu_style_command_block(*, api_key: str, addresses: list[ProxyAddress]) -> str:
+    """与 web-admin「复制命令」下拉菜单相同顺序：每代理先 PowerShell 再 Linux/macOS，均为一行命令。"""
+    items = build_client_setup_commands(plaintext_key=api_key, addresses=addresses)
+    parts: list[str] = []
+    for item in items:
+        name = str(item.get("proxy_name") or item.get("proxy_url") or "").strip()
+        shell = item.get("shell")
+        if shell == "powershell":
+            label = f"{name} · Windows PowerShell"
         else:
-            ps_parts.append(ps_cmd)
-            bash_parts.append(bash_cmd)
-    while ps_parts and ps_parts[-1] == "":
-        ps_parts.pop()
-    while bash_parts and bash_parts[-1] == "":
-        bash_parts.pop()
-    return "\n".join(ps_parts), "\n".join(bash_parts)
+            label = f"{name} · Linux / macOS"
+        parts.extend([label, str(item.get("command") or ""), ""])
+    while parts and parts[-1] == "":
+        parts.pop()
+    return "\n".join(parts)
 
 
 def format_borrower_issued(
@@ -106,7 +100,7 @@ def format_borrower_issued(
     else:
         resolved = [ProxyAddress(url="http://127.0.0.1:8317", display_name="http://127.0.0.1:8317")]
 
-    ps_block, bash_block = _shell_command_blocks(api_key=api_key, addresses=resolved)
+    cmd_block = _menu_style_command_block(api_key=api_key, addresses=resolved)
     lines = [
         "✅ 临时 Key 已生效",
         "",
@@ -121,11 +115,7 @@ def format_borrower_issued(
     lines.extend(
         [
             "",
-            "【Windows PowerShell】",
-            ps_block,
-            "",
-            "【Linux / macOS】",
-            bash_block,
+            cmd_block,
             "",
             "归还请发送：归还 Key",
         ]

@@ -29,12 +29,19 @@ def test_format_borrower_issued_includes_every_configured_proxy_address():
         delivery_mode="proxy_alias",
         addresses=addresses,
     )
-    assert "本机代理" in text
-    assert "内网代理" in text
+    assert "本机代理 · Windows PowerShell" in text
+    assert "本机代理 · Linux / macOS" in text
+    assert "内网代理 · Windows PowerShell" in text
+    assert "内网代理 · Linux / macOS" in text
+    ps_idx = text.index("本机代理 · Windows PowerShell")
+    bash_idx = text.index("本机代理 · Linux / macOS")
+    inner_ps = text.index("内网代理 · Windows PowerShell")
+    assert ps_idx < bash_idx < inner_ps
     assert 'set HTTPS_PROXY=http://127.0.0.1:8317&&' in text
     assert 'set HTTPS_PROXY=http://192.168.11.39:8317&&' in text
     assert 'HTTPS_PROXY="http://127.0.0.1:8317"' in text
     assert 'HTTPS_PROXY="http://192.168.11.39:8317"' in text
+    assert "【Windows PowerShell】" not in text
 
 
 def test_resolve_proxy_addresses_uses_team_settings_when_present(monkeypatch):
@@ -72,8 +79,8 @@ def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
     assert "Alice" not in text
     assert "pka_testkey" in text
     assert "abcdef12" in text
-    assert "Windows PowerShell" in text
-    assert "Linux / macOS" in text
+    assert "http://proxy.example:8317 · Windows PowerShell" in text
+    assert "http://proxy.example:8317 · Linux / macOS" in text
     assert (
         'cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& '
         'set CURSOR_API_KEY=pka_testkey&& agent -k"'
