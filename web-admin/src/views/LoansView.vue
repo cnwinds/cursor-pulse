@@ -112,7 +112,7 @@
           <LoanTimeStack :iso="row.revoked_at" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="148" fixed="right" align="center">
+      <el-table-column label="操作" width="168" fixed="right" align="center">
         <template #default="{ row }">
           <div class="loan-actions">
             <CopyCommandDropdown
@@ -960,11 +960,19 @@ onMounted(loadLoans)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
 }
 .loan-actions :deep(.el-button) {
-  padding: 4px;
+  padding: 6px;
   margin: 0;
+  min-height: 32px;
+  min-width: 32px;
+}
+.loan-actions :deep(.el-icon) {
+  font-size: 18px;
+}
+.loan-actions :deep(.copy-cmd-icon-btn) {
+  padding: 6px;
 }
 .recycle-date {
   padding: 0;
