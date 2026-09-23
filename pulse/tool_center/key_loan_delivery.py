@@ -19,5 +19,22 @@ LENDER_MODE_AUTO = "auto"
 VALID_LENDER_MODES = frozenset({LENDER_MODE_MANUAL, LENDER_MODE_AUTO})
 
 
+def assignment_mode_label(
+    *,
+    delivery_mode: str | None,
+    lender_mode: str | None,
+    routing_mode: str | None,
+) -> str:
+    """列表/通知用分配方式文案：Cursor Key、指定账号、自动分配。"""
+    mode = (delivery_mode or DELIVERY_CURSOR_DIRECT).strip()
+    if mode != DELIVERY_PROXY_ALIAS:
+        return "Cursor Key"
+    if (routing_mode or ROUTING_PINNED).strip() == ROUTING_POOL:
+        return "自动分配"
+    if (lender_mode or LENDER_MODE_MANUAL).strip() == LENDER_MODE_AUTO:
+        return "自动分配"
+    return "指定账号"
+
+
 class KeyLoanError(ValueError):
     pass

@@ -11,6 +11,7 @@ from pulse.tool_center.key_loan_delivery import (
     DELIVERY_PROXY_ALIAS,
     LENDER_MODE_MANUAL,
     KeyLoanError,
+    assignment_mode_label,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
 from pulse.tool_center.key_loan_store import resolve_borrowed_cents
@@ -113,6 +114,11 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "loan_expires_on": deadline.isoformat() if deadline else None,
                 "note": loan.note,
                 "delivery_mode": delivery_mode,
+                "assignment_label": assignment_mode_label(
+                    delivery_mode=delivery_mode,
+                    lender_mode=lender_mode,
+                    routing_mode=routing_mode,
+                ),
                 "key_hint": key_hint,
                 "lender_mode": lender_mode,
                 "routing_mode": routing_mode,

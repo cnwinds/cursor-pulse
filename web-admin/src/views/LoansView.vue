@@ -61,13 +61,10 @@
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="交付模式" width="110">
+      <el-table-column label="分配方式" width="108" align="center">
         <template #default="{ row }">
-          <el-tag
-            :type="row.delivery_mode === 'proxy_alias' ? 'success' : 'info'"
-            size="small"
-          >
-            {{ row.delivery_mode === 'proxy_alias' ? '代理别名' : 'Cursor Key' }}
+          <el-tag :type="loanAssignmentTagType(row)" size="small">
+            {{ loanAssignmentLabel(row) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -371,7 +368,13 @@
         </div>
         <div class="muted">借用人：{{ revealedKey?.borrower_name }}</div>
         <div class="muted" v-if="revealedKey?.delivery_mode">
-          交付模式：{{ revealedKey.delivery_mode === 'proxy_alias' ? '代理别名 Key' : 'Cursor Key' }}
+          分配方式：{{
+            loanAssignmentLabel({
+              delivery_mode: revealedKey?.delivery_mode,
+              lender_mode: revealedKey?.lender_mode,
+              routing_mode: revealedKey?.routing_mode,
+            })
+          }}
         </div>
         <el-input :model-value="revealedKey?.api_key" readonly>
           <template #append>
@@ -415,6 +418,7 @@ import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
+import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
 

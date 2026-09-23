@@ -26,9 +26,11 @@
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="交付模式" width="120">
+      <el-table-column label="分配方式" width="108" align="center">
         <template #default="{ row }">
-          {{ row.delivery_mode === 'proxy_alias' ? '代理别名' : 'Cursor Key' }}
+          <el-tag :type="loanAssignmentTagType(row)" size="small">
+            {{ loanAssignmentLabel(row) }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建时间" width="180">
@@ -88,12 +90,14 @@ import client from '@/api/client'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
+import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 
 interface LoanRow {
   id: string
   source_account_identifier: string
   routing_mode?: string | null
   delivery_mode: string | null
+  lender_mode?: string | null
   status: string
   created_at: string
 }
