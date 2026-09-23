@@ -120,6 +120,8 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         "owner_safe": decision.get("owner_safe") or {},
         "jev_status": trace_meta.get("status") if isinstance(trace_meta, dict) else None,
         "jev_skip_reason": trace_meta.get("skip_reason") if isinstance(trace_meta, dict) else None,
+        "jev_called_at": trace_meta.get("called_at") if isinstance(trace_meta, dict) else None,
+        "jev_duration_ms": trace_meta.get("duration_ms") if isinstance(trace_meta, dict) else None,
     }
     try:
         from pulse.proxy.key_crud import record_event

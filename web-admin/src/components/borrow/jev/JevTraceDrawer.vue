@@ -12,6 +12,7 @@
         <el-tag :type="statusTagType" effect="plain">{{ statusLabel }}</el-tag>
         <el-tag v-if="trace.meta.force_refresh" type="warning" effect="plain">强制外呼</el-tag>
         <span v-if="trace.meta.model" class="meta-model">{{ trace.meta.model }}</span>
+        <span v-if="trace.meta.duration_ms != null" class="meta-timing">{{ trace.meta.duration_ms }} ms</span>
         <span v-if="trace.meta.error_message" class="meta-error">{{ trace.meta.error_message }}</span>
       </div>
 
@@ -159,6 +160,11 @@ function formatJson(value: unknown): string {
 .meta-model {
   font-size: 13px;
   color: var(--el-text-color-regular);
+}
+.meta-timing {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
 }
 .meta-error {
   font-size: 13px;
