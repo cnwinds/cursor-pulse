@@ -182,7 +182,6 @@ def test_loan_payload_includes_proxy_cost(loan_client_env):
     loan = next(item for item in res.json()["items"] if item["id"] == loan_id)
     assert loan["proxy_cost_cents"] == 50
     assert loan["proxy_cost_today_cents"] == 50
-    assert loan["last_proxy_used_at"] is not None
 
 
 def test_loan_proxy_today_cost_excludes_older_usage(loan_client_env):

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
-from pulse.proxy.usage_queries import last_loan_usage_at, loan_proxy_totals_by_loan
+from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_CURSOR_DIRECT,
