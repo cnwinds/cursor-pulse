@@ -1,5 +1,10 @@
 <template>
   <div class="jev-panel" v-loading="loading">
+    <p class="observe-hint">
+      保存配置后，在
+      <router-link :to="{ path: '/borrow-management', query: { tab: 'ranking' } }">打分表</router-link>
+      刷新并点击「Jev 报文」，可查看 Decisions 入参与出参。自动分配弹窗内也可查看同一池顺序的报文。
+    </p>
     <div class="panel-card">
       <SettingsSectionForm
         v-if="loaded"
@@ -94,6 +99,13 @@ onMounted(load)
 <style scoped>
 .jev-panel {
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+}
+.observe-hint {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 14px;
+  line-height: 1.5;
+  max-width: 640px;
 }
 .panel-card {
   background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 42%, #ffffff 100%);

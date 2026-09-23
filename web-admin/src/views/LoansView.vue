@@ -188,6 +188,15 @@
             <router-link v-else :to="{ path: '/borrow-management', query: { tab: 'pool' } }">
               打开借用管理 · 入池账号
             </router-link>
+            <el-button
+              v-if="poolJevTrace"
+              link
+              type="primary"
+              class="jev-trace-link"
+              @click="poolJevTraceOpen = true"
+            >
+              查看 Jev 报文
+            </el-button>
           </div>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="借出账号" required>
@@ -227,6 +236,12 @@
         <el-button type="primary" :loading="loanSubmitting" @click="submitLoan">确认分配</el-button>
       </template>
     </el-dialog>
+
+    <JevTraceDrawer
+      v-model="poolJevTraceOpen"
+      :trace="poolJevTrace"
+      :accounts="poolJevTraceAccounts"
+    />
 
     <el-dialog v-model="reassignDialogVisible" title="更换出借账号" width="520px">
       <p class="manual-hint">
@@ -406,6 +421,8 @@ import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
+import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
+import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
 
 withDefaults(
   defineProps<{
@@ -545,6 +562,9 @@ const loanForm = ref({
 })
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>([])
 const poolPreviewLoaded = ref(false)
+const poolJevTrace = ref<JevTrace | null>(null)
+const poolJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
+const poolJevTraceOpen = ref(false)
 
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
@@ -749,9 +769,20 @@ async function loadPoolPreview() {
   poolPreviewLoaded.value = false
   try {
     const res = await client.get('/api/v2/proxy-pool/ranking')
-    poolPreview.value = (res.data.ranked || []).slice(0, 3)
+    const ranked = res.data.ranked || []
+    poolPreview.value = ranked.slice(0, 3)
+    poolJevTrace.value = res.data.decision?.jev_trace ?? null
+    poolJevTraceAccounts.value = ranked.map(
+      (row: { account_id: string; account_identifier?: string; primary_member_name?: string | null }) => ({
+        account_id: row.account_id,
+        account_identifier: row.account_identifier,
+        primary_member_name: row.primary_member_name,
+      }),
+    )
   } catch {
     poolPreview.value = []
+    poolJevTrace.value = null
+    poolJevTraceAccounts.value = []
   } finally {
     poolPreviewLoaded.value = true
   }

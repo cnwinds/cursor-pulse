@@ -52,6 +52,8 @@ def _two_candidates():
 
 
 class FakeJev:
+    model = "typesafe/jev-1.13"
+
     def __init__(self, decision=None, error=None):
         self.decision = decision
         self.error = error
@@ -130,6 +132,21 @@ def test_jev_pick_is_promoted_to_front():
     assert board["decision"]["fallback_reason"] is None
     assert board["decision"]["confidence"] == 0.9
     assert jev.calls == 1
+
+
+def test_decision_includes_jev_trace_on_call():
+    jev = FakeJev(decision=_decision("acc-b"))
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
+    trace = board["decision"]["jev_trace"]
+    assert trace["meta"]["status"] == "called"
+    assert trace["input"]["model"]
+    assert set(trace["input"]["questions"]) == {
+        PICK_QUESTION,
+        f"{OWNER_QUESTION_PREFIX}acc-a",
+        f"{OWNER_QUESTION_PREFIX}acc-b",
+    }
+    assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
+    assert trace["guards"]["pick_choice"] == "acc-b"
 
 
 def test_state_and_questions_carry_candidate_features():
@@ -212,6 +229,16 @@ def test_decision_cache_avoids_repeat_calls():
     assert first["decision"]["cached"] is False
     assert second["decision"]["cached"] is True
     assert [r["account_id"] for r in second["ranked"]] == ["acc-b", "acc-a"]
+
+
+def test_decision_cache_includes_jev_output_in_trace():
+    jev = FakeJev(decision=_decision("acc-b"))
+    cfg = _auto_cfg()
+    rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    second = rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    trace = second["decision"]["jev_trace"]
+    assert trace["meta"]["status"] == "cached"
+    assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
 
 
 def test_cache_ignores_minutes_since_switch():

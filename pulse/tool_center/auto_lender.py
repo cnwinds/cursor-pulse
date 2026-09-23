@@ -39,6 +39,19 @@ PICKED_BY_JEV = "jev"
 
 
 @dataclass
+class _CachedJevPayload:
+    """TTL 缓存里附带的 Jev 响应快照，供 UI 在 cache hit 时展示出参。"""
+
+    account_id: str
+    confidence: float | None
+    probabilities: dict[str, float]
+    owner_safe: dict[str, bool]
+    model: str | None
+    output: dict
+    usage: dict
+
+
+@dataclass
 class AutoLenderDecision:
     """本轮选号结果：谁选中、回落原因、置信度与概率。"""
 
@@ -50,10 +63,11 @@ class AutoLenderDecision:
     owner_safe: dict[str, bool] = field(default_factory=dict)
     cached: bool = False
     usage: dict = field(default_factory=dict)
+    jev_trace: dict | None = None
 
     def as_dict(self) -> dict:
         """转成可直接进 API 响应 / 审计事件的普通字典。"""
-        return {
+        out = {
             "picked_by": self.picked_by,
             "fallback_reason": self.fallback_reason,
             "model": self.model,
@@ -63,9 +77,12 @@ class AutoLenderDecision:
             "cached": self.cached,
             "usage": self.usage,
         }
+        if self.jev_trace is not None:
+            out["jev_trace"] = self.jev_trace
+        return out
 
 
-# 决策缓存：feature_key -> (account_id, confidence, probabilities, owner_safe)
+# 决策缓存：feature_key -> _CachedJevPayload
 # 键里含 hours_to_deadline / surplus 这类连续变化字段，惰性淘汰几乎不触发，
 # 因此必须有硬上限，否则长驻进程里只增不减。
 CACHE_MAX_ENTRIES = 512
@@ -109,19 +126,98 @@ def _cache_get(key: str, ttl_seconds: float):
 
 def _cache_put(
     key: str,
-    account_id: str,
-    confidence: float | None,
-    probabilities: dict[str, float],
-    owner_safe: dict[str, bool],
+    payload: _CachedJevPayload,
     *,
     ttl_seconds: float = 0.0,
 ) -> None:
     """写决策缓存；ttl 只用于超上限时清理过期项。"""
-    _decision_cache.put(
-        key,
-        (account_id, confidence, probabilities, owner_safe),
-        ttl_seconds=ttl_seconds,
-    )
+    _decision_cache.put(key, payload, ttl_seconds=ttl_seconds)
+
+
+def _serialize_jev_output(decision: JevDecision) -> dict:
+    answers = {
+        name: answer.raw for name, answer in decision.answers.items()
+    }
+    out: dict = {"answers": answers}
+    if decision.model:
+        out["model"] = decision.model
+    if decision.provider:
+        out["provider"] = decision.provider
+    if decision.usage:
+        out["usage"] = decision.usage
+    raw_id = decision.raw.get("id") if isinstance(decision.raw, dict) else None
+    if raw_id:
+        out["id"] = raw_id
+    return out
+
+
+def build_jev_input(
+    rows: list[dict],
+    *,
+    pool: QuotaPoolKind | None,
+    cfg: LoanSelectionConfig,
+    model: str,
+) -> dict:
+    """构造 Decisions 请求的 input 视图（不含密钥）。"""
+    return {
+        "model": model,
+        "state": _build_state(rows, pool=pool, cfg=cfg),
+        "questions": _build_questions(rows),
+        "top_n_account_ids": [r["account_id"] for r in rows],
+    }
+
+
+def _build_jev_guards(
+    *,
+    cfg: LoanSelectionConfig,
+    pick_choice: str | None = None,
+    confidence: float | None = None,
+    probabilities: dict[str, float] | None = None,
+    owner_safe: dict[str, bool] | None = None,
+    fallback_reason: str | None = None,
+) -> dict:
+    return {
+        "pick_choice": pick_choice,
+        "confidence": confidence,
+        "probabilities": probabilities or {},
+        "owner_safe": owner_safe or {},
+        "fallback_reason": fallback_reason,
+        "thresholds": {
+            "auto_min_confidence": cfg.auto_min_confidence,
+            "auto_min_margin": cfg.auto_min_margin,
+            "owner_unsafe_probability": OWNER_UNSAFE_PROBABILITY,
+        },
+    }
+
+
+def _build_jev_trace(
+    *,
+    status: str,
+    skip_reason: str | None = None,
+    error_message: str | None = None,
+    cached: bool = False,
+    model: str | None = None,
+    jev_input: dict | None = None,
+    jev_output: dict | None = None,
+    guards: dict | None = None,
+) -> dict:
+    meta: dict = {"status": status}
+    if skip_reason:
+        meta["skip_reason"] = skip_reason
+    if error_message:
+        meta["error_message"] = error_message
+    if cached:
+        meta["cached"] = True
+    if model:
+        meta["model"] = model
+    trace: dict = {"meta": meta}
+    if jev_input is not None:
+        trace["input"] = jev_input
+    if jev_output is not None:
+        trace["output"] = jev_output
+    if guards is not None:
+        trace["guards"] = guards
+    return trace
 
 
 def _breaker_open() -> bool:
@@ -349,33 +445,72 @@ def rank_lenders(
         return _result(
             ranked,
             excluded,
-            AutoLenderDecision(fallback_reason="jev_unavailable"),
+            AutoLenderDecision(
+                fallback_reason="jev_unavailable",
+                jev_trace=_build_jev_trace(
+                    status="skipped",
+                    skip_reason="jev_unavailable",
+                ),
+            ),
             on_decision,
         )
 
     top = ranked[: cfg.auto_top_n]
+    jev_input = build_jev_input(top, pool=pool, cfg=cfg, model=jev.model)
     if len(top) < 2:
         # 只有一个候选时重排没有意义，也不值得付一次调用
         return _result(
             ranked,
             excluded,
-            AutoLenderDecision(fallback_reason="insufficient_candidates"),
+            AutoLenderDecision(
+                fallback_reason="insufficient_candidates",
+                jev_trace=_build_jev_trace(
+                    status="skipped",
+                    skip_reason="insufficient_candidates",
+                    model=jev.model,
+                    jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
+                ),
+            ),
             on_decision,
         )
 
     key = _feature_key(top, pool, cfg)
     cached = _cache_get(key, cfg.auto_cache_seconds)
     if cached is not None:
-        picked, confidence, probabilities, owner_safe = cached
+        picked = cached.account_id
+        confidence = cached.confidence
+        probabilities = cached.probabilities
+        owner_safe = cached.owner_safe
+        pick_answer = cached.output.get("answers", {}).get(PICK_QUESTION)
+        pick_choice = (
+            pick_answer.get("choice") if isinstance(pick_answer, dict) else None
+        )
         return _result(
             _promote(ranked, picked),
             excluded,
             AutoLenderDecision(
                 picked_by=PICKED_BY_JEV,
+                model=cached.model,
                 confidence=confidence,
                 probabilities=probabilities,
                 owner_safe=owner_safe,
                 cached=True,
+                usage=cached.usage,
+                jev_trace=_build_jev_trace(
+                    status="cached",
+                    cached=True,
+                    model=cached.model,
+                    jev_input=jev_input,
+                    jev_output=cached.output,
+                    guards=_build_jev_guards(
+                        cfg=cfg,
+                        pick_choice=pick_choice,
+                        confidence=confidence,
+                        probabilities=probabilities,
+                        owner_safe=owner_safe,
+                    ),
+                ),
             ),
             on_decision,
         )
@@ -384,27 +519,60 @@ def rank_lenders(
         return _result(
             ranked,
             excluded,
-            AutoLenderDecision(fallback_reason="circuit_open"),
+            AutoLenderDecision(
+                fallback_reason="circuit_open",
+                jev_trace=_build_jev_trace(
+                    status="skipped",
+                    skip_reason="circuit_open",
+                    model=jev.model,
+                    jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
+                ),
+            ),
             on_decision,
         )
 
     try:
         jev_decision = jev.decide(
-            state=_build_state(top, pool=pool, cfg=cfg),
-            questions=_build_questions(top),
+            state=jev_input["state"],
+            questions=jev_input["questions"],
         )
     except JevError as exc:
         _record_failure(jev_config)
         logger.warning("auto lender: jev call failed: %s", exc)
+        msg = str(exc)
+        if len(msg) > 200:
+            msg = msg[:200]
         return _result(
             ranked,
             excluded,
-            AutoLenderDecision(fallback_reason="jev_error"),
+            AutoLenderDecision(
+                fallback_reason="jev_error",
+                jev_trace=_build_jev_trace(
+                    status="skipped",
+                    skip_reason="jev_error",
+                    error_message=msg,
+                    model=jev.model,
+                    jev_input=jev_input,
+                    guards=_build_jev_guards(cfg=cfg),
+                ),
+            ),
             on_decision,
         )
 
     _record_success()
+    jev_output = _serialize_jev_output(jev_decision)
     picked, reason, confidence, probabilities, owner_safe = _evaluate_jev(jev_decision, top, cfg)
+    pick_answer = jev_decision.answer(PICK_QUESTION)
+    pick_choice = pick_answer.choice if pick_answer else None
+    guards = _build_jev_guards(
+        cfg=cfg,
+        pick_choice=pick_choice,
+        confidence=confidence,
+        probabilities=probabilities,
+        owner_safe=owner_safe,
+        fallback_reason=reason,
+    )
     decision = AutoLenderDecision(
         picked_by=PICKED_BY_JEV if picked else PICKED_BY_ALGORITHM,
         fallback_reason=reason,
@@ -413,16 +581,28 @@ def rank_lenders(
         probabilities=probabilities,
         owner_safe=owner_safe,
         usage=jev_decision.usage,
+        jev_trace=_build_jev_trace(
+            status="called",
+            model=jev_decision.model,
+            jev_input=jev_input,
+            jev_output=jev_output,
+            guards=guards,
+        ),
     )
     if picked is None:
         return _result(ranked, excluded, decision, on_decision)
 
     _cache_put(
         key,
-        picked,
-        confidence,
-        probabilities,
-        owner_safe,
+        _CachedJevPayload(
+            account_id=picked,
+            confidence=confidence,
+            probabilities=probabilities,
+            owner_safe=owner_safe,
+            model=jev_decision.model,
+            output=jev_output,
+            usage=jev_decision.usage if isinstance(jev_decision.usage, dict) else {},
+        ),
         ttl_seconds=cfg.auto_cache_seconds,
     )
     return _result(_promote(ranked, picked), excluded, decision, on_decision)

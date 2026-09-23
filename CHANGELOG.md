@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **打分表 Jev 报文**：`/proxy-pool/ranking` 的 `decision.jev_trace` 返回 Decisions 请求的 `state` / `questions` 与响应 `answers`（含缓存命中时的出参快照）。借用管理 → 打分表可通过「Jev 报文」抽屉查看摘要、护栏与完整 JSON；「为成员分配 Key」选自动分配时亦可查看同一池顺序的报文。
+
 ## [0.5.0] - 2026-09-22
 
 ### 新增
