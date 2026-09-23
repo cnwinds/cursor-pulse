@@ -13,12 +13,15 @@ from assistant_platform.conversation.agent_tools import (
     NOTIFY_USER_TOOL_NAME,
     VERBATIM_PRIVATE_CAPABILITIES,
     is_builtin_tool,
-    is_local_memory_tool,
     resolve_capability_for_tool_name,
     tools_from_capabilities,
 )
 from assistant_platform.conversation.turn_inbox import TurnInbox
-from assistant_platform.memory.agent_tools import MemoryToolService, invoke_memory_tool
+from assistant_platform.memory.agent_tools import (
+    MemoryToolService,
+    invoke_memory_tool,
+    is_local_memory_tool,
+)
 from assistant_platform.skills.agent_tools import invoke_load_skill_docs, is_local_skill_tool
 from assistant_platform.skills.models import SkillActorContext
 from assistant_platform.skills.registry import SkillRegistry

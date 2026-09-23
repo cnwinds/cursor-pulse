@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from assistant_platform.capabilities.resolve import ResolvedCapability
-from assistant_platform.memory.agent_tools import is_local_memory_tool, memory_tool_definitions
+from assistant_platform.memory.agent_tools import memory_tool_definitions
 from assistant_platform.skills.agent_tools import load_skill_docs_tool_definition
 
 TOOL_EXCLUSIONS = frozenset({"bot.help"})
