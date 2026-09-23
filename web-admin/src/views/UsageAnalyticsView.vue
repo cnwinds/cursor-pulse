@@ -583,7 +583,9 @@ onMounted(async () => {
 
 <style scoped>
 .usage-analytics {
-  max-width: 1400px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .page-header {
   display: flex;
