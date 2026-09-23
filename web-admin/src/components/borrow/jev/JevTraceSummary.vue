@@ -1,5 +1,23 @@
 <template>
   <div class="jev-summary">
+    <section v-if="callTiming" class="card card--muted">
+      <h4>调用</h4>
+      <dl class="kv kv--compact">
+        <div v-if="callTiming.at">
+          <dt>外呼时间</dt>
+          <dd>{{ callTiming.at }}</dd>
+        </div>
+        <div v-if="callTiming.duration != null">
+          <dt>耗时</dt>
+          <dd>{{ callTiming.duration }}</dd>
+        </div>
+        <div v-if="trace.meta.cached">
+          <dt>说明</dt>
+          <dd>本次未重复外呼，时间与耗时来自 TTL 缓存中的快照</dd>
+        </div>
+      </dl>
+    </section>
+
     <section v-if="trace.guards" class="card">
       <h4>护栏结论</h4>
       <dl class="kv">
@@ -66,6 +84,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { JevTrace, JevTraceAccountLookup } from './jevTraceTypes'
+import { formatChinaTime } from '@/utils/time'
 
 const FALLBACK_LABELS: Record<string, string> = {
   jev_unavailable: '未启用 Jev',
@@ -84,6 +103,15 @@ const props = defineProps<{
   trace: JevTrace
   lookup: Map<string, JevTraceAccountLookup>
 }>()
+
+const callTiming = computed(() => {
+  const meta = props.trace.meta
+  if (!meta.called_at && meta.duration_ms == null) return null
+  return {
+    at: meta.called_at ? formatChinaTime(meta.called_at) : null,
+    duration: meta.duration_ms != null ? `${meta.duration_ms} ms` : null,
+  }
+})
 
 function labelAccount(accountId: string): string {
   const row = props.lookup.get(accountId)

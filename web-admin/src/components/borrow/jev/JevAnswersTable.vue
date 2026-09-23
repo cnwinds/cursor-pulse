@@ -43,6 +43,7 @@ function summarize(name: string, raw: unknown): { kind: string; summary: string;
     else if (raw && typeof raw === 'object') {
       const o = raw as Record<string, unknown>
       if (typeof o.probability === 'number') p = o.probability
+      else if (typeof o.noul === 'number') p = o.noul
     }
     if (p != null) {
       const safe = p < 0.5

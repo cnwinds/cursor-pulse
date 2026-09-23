@@ -49,6 +49,8 @@ class _CachedJevPayload:
     model: str | None
     output: dict
     usage: dict
+    called_at: str | None = None
+    duration_ms: float | None = None
 
 
 @dataclass
@@ -216,6 +218,8 @@ def _build_jev_trace(
     error_message: str | None = None,
     cached: bool = False,
     model: str | None = None,
+    called_at: str | None = None,
+    duration_ms: float | None = None,
     jev_input: dict | None = None,
     jev_output: dict | None = None,
     guards: dict | None = None,
@@ -229,6 +233,10 @@ def _build_jev_trace(
         meta["cached"] = True
     if model:
         meta["model"] = model
+    if called_at:
+        meta["called_at"] = called_at
+    if duration_ms is not None:
+        meta["duration_ms"] = round(float(duration_ms), 1)
     trace: dict = {"meta": meta}
     if jev_input is not None:
         trace["input"] = jev_input
@@ -538,6 +546,8 @@ def rank_lenders(
                     status="cached",
                     cached=True,
                     model=cached.model,
+                    called_at=cached.called_at,
+                    duration_ms=cached.duration_ms,
                     jev_input=jev_input,
                     jev_output=cached.output,
                     guards=_build_jev_guards(
@@ -571,14 +581,19 @@ def rank_lenders(
             force_refresh=jev_bypass_cache,
         )
 
+    call_started = time.perf_counter()
+    called_at = datetime.now(UTC).isoformat()
     try:
         jev_decision = jev.decide(
             state=jev_input["state"],
             questions=jev_input["questions"],
         )
     except JevError as exc:
+        duration_ms = (time.perf_counter() - call_started) * 1000
         _record_failure(jev_config)
-        logger.warning("auto lender: jev call failed: %s", exc)
+        logger.warning(
+            "auto lender: jev call failed after %.0fms: %s", duration_ms, exc
+        )
         msg = str(exc)
         if len(msg) > 200:
             msg = msg[:200]
@@ -592,6 +607,8 @@ def rank_lenders(
                     skip_reason="jev_error",
                     error_message=msg,
                     model=jev.model,
+                    called_at=called_at,
+                    duration_ms=duration_ms,
                     jev_input=jev_input,
                     guards=_build_jev_guards(cfg=cfg),
                 ),
@@ -600,6 +617,7 @@ def rank_lenders(
             force_refresh=jev_bypass_cache,
         )
 
+    duration_ms = (time.perf_counter() - call_started) * 1000
     _record_success()
     jev_output = _serialize_jev_output(jev_decision)
     picked, reason, confidence, probabilities, owner_safe = _evaluate_jev(jev_decision, top, cfg)
@@ -624,6 +642,8 @@ def rank_lenders(
         jev_trace=_build_jev_trace(
             status="called",
             model=jev_decision.model,
+            called_at=called_at,
+            duration_ms=duration_ms,
             jev_input=jev_input,
             jev_output=jev_output,
             guards=guards,
@@ -642,6 +662,8 @@ def rank_lenders(
             model=jev_decision.model,
             output=jev_output,
             usage=jev_decision.usage if isinstance(jev_decision.usage, dict) else {},
+            called_at=called_at,
+            duration_ms=duration_ms,
         ),
         ttl_seconds=cfg.auto_cache_seconds,
     )

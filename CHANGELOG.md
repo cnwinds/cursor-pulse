@@ -6,6 +6,8 @@
 
 ### 新增
 
+- **Jev 外呼耗时**：`jev_trace.meta` 记录 `called_at`（UTC ISO）与 `duration_ms`（HTTP 端到端）；缓存命中时沿用首次外呼的时间与耗时。摘要 Tab 与中国时区展示；审计 `lender_auto_pick` 附带 `jev_called_at` / `jev_duration_ms`。
+- **noul 响应解析**：识别 OpenRouter 返回的 `{"type":"noul","noul":…}`，主负责人安全判定与报文表格可正确显示。
 - **打分表 Jev 报文**：`/proxy-pool/ranking` 的 `decision.jev_trace` 返回 Decisions 请求的 `state` / `questions` 与响应 `answers`（含缓存命中时的出参快照）。借用管理 → 打分表可通过「Jev 报文」抽屉查看摘要、护栏与完整 JSON；「为成员分配 Key」选自动分配时亦可查看同一池顺序的报文。
 - **Jev 强制外呼**：`GET /proxy-pool/ranking?force_jev=1`（需 `proxy:write`，30s/团队限流）与 `POST /loans/auto-pick` 的 `force_jev` 可绕过 TTL 缓存。指定账号分配时按借用人 + 目标模型调用 auto-pick 预览 Jev 报文；额度看板可打开池顺序报文。
 

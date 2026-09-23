@@ -143,6 +143,7 @@ def test_decide_raises_on_network_error(patch_outbound):
         (True, 1.0),
         (False, 0.0),
         ({"probability": 0.25}, 0.25),
+        ({"type": "noul", "noul": 0.44}, 0.44),
         ({"probabilities": {"true": 0.7, "false": 0.3}}, 0.7),
         ({"choice": "a"}, None),
         (None, None),

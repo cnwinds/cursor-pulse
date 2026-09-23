@@ -5,6 +5,10 @@ export interface JevTraceMeta {
   cached?: boolean
   force_refresh?: boolean
   model?: string
+  /** ISO8601 UTC，实际外呼完成时刻（缓存命中时为首次外呼时间） */
+  called_at?: string
+  /** 端到端 HTTP 耗时（毫秒） */
+  duration_ms?: number
 }
 
 export interface JevTraceGuards {

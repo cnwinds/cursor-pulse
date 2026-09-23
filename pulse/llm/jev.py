@@ -60,7 +60,7 @@ class JevAnswer:
         if isinstance(raw, (int, float)):
             return float(raw)
         if isinstance(raw, dict):
-            for key in ("probability", "p"):
+            for key in ("probability", "p", "noul"):
                 value = raw.get(key)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     return float(value)

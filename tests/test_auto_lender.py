@@ -147,6 +147,9 @@ def test_decision_includes_jev_trace_on_call():
     }
     assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
     assert trace["guards"]["pick_choice"] == "acc-b"
+    assert trace["meta"]["called_at"]
+    assert trace["meta"]["duration_ms"] is not None
+    assert trace["meta"]["duration_ms"] >= 0
 
 
 def test_state_and_questions_carry_candidate_features():
