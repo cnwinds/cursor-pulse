@@ -240,6 +240,15 @@
               <el-tag v-if="decisionBanner.cached" size="small" type="info" effect="plain">缓存</el-tag>
             </span>
           </el-tooltip>
+          <el-button
+            v-if="ranking.decision?.jev_trace"
+            class="jev-trace-btn"
+            size="small"
+            plain
+            @click="jevTraceOpen = true"
+          >
+            Jev 报文
+          </el-button>
           <el-tooltip content="刷新打分表" placement="top" :show-after="200">
             <el-button
               class="refresh-btn"
@@ -256,6 +265,11 @@
         </div>
       </div>
     </div>
+    <JevTraceDrawer
+      v-model="jevTraceOpen"
+      :trace="ranking.decision?.jev_trace"
+      :accounts="traceAccountLookup"
+    />
   </div>
 </template>
 
@@ -265,6 +279,8 @@ import { ElMessage, ElTooltip } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
+import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
+import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
 import { formatHoursUntilDeadline } from '@/utils/time'
 
 const ColHeader = defineComponent({
@@ -317,7 +333,9 @@ interface RankingDecision {
   fallback_reason?: string | null
   model?: string | null
   confidence?: number | null
+  probabilities?: Record<string, number>
   cached?: boolean
+  jev_trace?: JevTrace | null
 }
 
 interface SeatSnapshot {
@@ -337,6 +355,16 @@ const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const rankingLoading = ref(false)
 const rankingTab = ref<'ranked' | 'excluded'>('ranked')
 const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null, seat_snapshot: null })
+const jevTraceOpen = ref(false)
+
+const traceAccountLookup = computed((): JevTraceAccountLookup[] => {
+  const rows = [...ranking.value.ranked, ...ranking.value.excluded]
+  return rows.map((r) => ({
+    account_id: r.account_id,
+    account_identifier: r.account_identifier,
+    primary_member_name: r.primary_member_name,
+  }))
+})
 
 const seatSnapshot = computed(() => ranking.value.seat_snapshot)
 
@@ -498,6 +526,10 @@ onMounted(loadRanking)
 .ranking-shell {
   position: relative;
 }
+.jev-trace-btn {
+  flex-shrink: 0;
+}
+
 .ranking-head-aside {
   position: absolute;
   top: 0;
