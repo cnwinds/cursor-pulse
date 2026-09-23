@@ -102,11 +102,6 @@
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="最后使用" width="96" align="center">
-        <template #default="{ row }">
-          <LoanTimeStack :iso="row.last_proxy_used_at" />
-        </template>
-      </el-table-column>
       <el-table-column label="创建时间" width="96" align="center">
         <template #default="{ row }">
           <LoanTimeStack :iso="row.created_at" />
@@ -533,7 +528,6 @@ interface LoanRow {
   borrowed_cents: number
   proxy_cost_cents: number | null
   proxy_cost_today_cents?: number | null
-  last_proxy_used_at?: string | null
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
