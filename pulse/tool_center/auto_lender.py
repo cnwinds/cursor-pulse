@@ -120,6 +120,23 @@ def try_force_jev_refresh(team_id: str, *, cooldown_seconds: float = FORCE_JEV_R
     return None
 
 
+def _proxy_seats_map(cfg: LoanSelectionConfig) -> dict[str, int]:
+    """经代理当前占座人数（按成员去重），供 Jev state 使用。"""
+    from pulse.proxy.occupancy import get_occupancy
+
+    ttl = float(getattr(cfg, "concurrent_ttl_seconds", 180) or 180)
+    return get_occupancy().count_by_account(ttl_seconds=ttl)
+
+
+def _rows_for_jev(rows: list[dict], seats: dict[str, int]) -> list[dict]:
+    out: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        item["proxy_active_seats"] = int(seats.get(row["account_id"], 0))
+        out.append(item)
+    return out
+
+
 def _feature_key(rows: list[dict], pool: QuotaPoolKind | None, cfg: LoanSelectionConfig) -> str:
     """候选特征指纹：特征没变就不重复问 Jev。
 
@@ -129,7 +146,7 @@ def _feature_key(rows: list[dict], pool: QuotaPoolKind | None, cfg: LoanSelectio
         "|".join(
             f"{r['account_id']}:{r.get('pool_headroom_pct')}:"
             f"{r.get('pool_surplus_cents')}:{r.get('score_adjust')}:"
-            f"{r.get('hours_to_deadline')}:{r.get('active_loans')}"
+            f"{r.get('hours_to_deadline')}:{r.get('proxy_active_seats', 0)}"
             for r in rows
         ),
         f"pool={pool}",
@@ -290,7 +307,7 @@ def _candidate_summary(row: dict) -> str:
         f"owner={owner}; pool_headroom={row.get('pool_headroom_pct')}%; "
         f"idle_surplus_usd={surplus_usd}; "
         f"hours_to_reset={row.get('hours_to_deadline')}; "
-        f"active_loans={row.get('active_loans')}; "
+        f"proxy_active_seats={row.get('proxy_active_seats', 0)}; "
         f"manual_score_delta={row.get('score_adjust')}; "
         f"minutes_since_last_switch={row.get('minutes_since_switch')}; "
         f"quota_state={row.get('status')}"
@@ -309,12 +326,13 @@ def _build_state(rows: list[dict], *, pool: QuotaPoolKind | None, cfg: LoanSelec
             "prefer": [
                 "accounts whose pool headroom is projected to go unused before reset",
                 "accounts closer to their reset deadline",
-                "accounts with fewer active loans",
+                "accounts with fewer concurrent proxy users on that credential",
             ],
             "avoid": [
                 "accounts where the primary owner is projected to need the pool",
                 "accounts just switched to or from (switch dwell)",
                 "accounts with little headroom on the requested quota pool",
+                "accounts already at or over the concurrent proxy user limit",
             ],
         },
         "candidates": [
@@ -329,7 +347,7 @@ def _build_state(rows: list[dict], *, pool: QuotaPoolKind | None, cfg: LoanSelec
                 "api_pct": r.get("api_pct"),
                 "hours_to_reset": r.get("hours_to_deadline"),
                 "days_to_reset": r.get("days_to_deadline"),
-                "active_loans": r.get("active_loans"),
+                "proxy_active_seats": r.get("proxy_active_seats", 0),
                 "manual_score_delta": r.get("score_adjust"),
                 "algorithm_score": r.get("computed_score"),
                 "minutes_since_last_switch": r.get("minutes_since_switch"),
@@ -339,7 +357,8 @@ def _build_state(rows: list[dict], *, pool: QuotaPoolKind | None, cfg: LoanSelec
         ],
         "constraints": {
             "switch_dwell_minutes": cfg.min_switch_minutes,
-            "max_active_loans_per_account": cfg.max_active_loans_per_account,
+            "max_concurrent_proxy_users": cfg.max_concurrent_users,
+            "concurrent_seat_ttl_seconds": cfg.concurrent_ttl_seconds,
         },
     }
 
@@ -500,7 +519,8 @@ def rank_lenders(
         )
 
     top = ranked[: cfg.auto_top_n]
-    jev_input = build_jev_input(top, pool=pool, cfg=cfg, model=jev.model)
+    top_jev = _rows_for_jev(top, _proxy_seats_map(cfg))
+    jev_input = build_jev_input(top_jev, pool=pool, cfg=cfg, model=jev.model)
     if len(top) < 2:
         # 只有一个候选时重排没有意义，也不值得付一次调用
         return _result(
@@ -520,7 +540,7 @@ def rank_lenders(
             force_refresh=jev_bypass_cache,
         )
 
-    key = _feature_key(top, pool, cfg)
+    key = _feature_key(top_jev, pool, cfg)
     cached = None if jev_bypass_cache else _cache_get(key, cfg.auto_cache_seconds)
     if cached is not None:
         picked = cached.account_id
