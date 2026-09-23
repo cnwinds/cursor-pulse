@@ -95,11 +95,16 @@
           ${{ (row.borrowed_cents / 100).toFixed(2) }}
         </template>
       </el-table-column>
-      <el-table-column label="proxy消耗" width="120">
+      <el-table-column label="proxy消耗" width="132" align="center">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openUsages(row)">
-            ${{ ((row.proxy_cost_cents ?? 0) / 100).toFixed(2) }}
+          <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
+            {{ formatProxySpend(row) }}
           </el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="最后使用" width="96" align="center">
+        <template #default="{ row }">
+          <LoanTimeStack :iso="row.last_proxy_used_at" />
         </template>
       </el-table-column>
       <el-table-column label="创建时间" width="96" align="center">
@@ -527,6 +532,8 @@ interface LoanRow {
   revoked_at: string | null
   borrowed_cents: number
   proxy_cost_cents: number | null
+  proxy_cost_today_cents?: number | null
+  last_proxy_used_at?: string | null
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
@@ -633,6 +640,12 @@ function formatAccountWithPrimary(row: {
   const account = row.account_identifier || '—'
   if (!row.primary_member_name) return account
   return `${account}（${row.primary_member_name}）`
+}
+
+function formatProxySpend(row: LoanRow) {
+  const total = ((row.proxy_cost_cents ?? 0) / 100).toFixed(2)
+  const today = ((row.proxy_cost_today_cents ?? 0) / 100).toFixed(2)
+  return `$${total} / $${today}`
 }
 
 function loanStatusType(status: string) {
@@ -955,6 +968,10 @@ onMounted(loadLoans)
   margin: 0;
   color: var(--el-text-color-secondary);
   font-size: 14px;
+}
+.proxy-spend-btn {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .loan-actions {
   display: inline-flex;

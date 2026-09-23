@@ -305,7 +305,7 @@ def list_active_loans(repo: Repository, config, *, team_id: str) -> str:
     for loan in shown:
         payload = loan_payload(loan, repo.session)
         approx = loan_svc.approximate_borrowed_cents(
-            loan, proxy_cents=proxy_totals.get(loan.id, (0, 0))[1]
+            loan, proxy_cents=proxy_totals.get(loan.id, (0, 0, 0))[1]
         )
         lines.append(
             f"· {loan.id[:8]} {payload['borrower_name'] or '—'} "

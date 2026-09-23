@@ -181,6 +181,42 @@ def test_loan_payload_includes_proxy_cost(loan_client_env):
     assert res.status_code == 200
     loan = next(item for item in res.json()["items"] if item["id"] == loan_id)
     assert loan["proxy_cost_cents"] == 50
+    assert loan["proxy_cost_today_cents"] == 50
+    assert loan["last_proxy_used_at"] is not None
+
+
+def test_loan_proxy_today_cost_excludes_older_usage(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=10,
+            cost_cents=100,
+            ts=datetime(2020, 6, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=5,
+            cost_cents=7,
+        )
+    )
+    s.commit()
+    s.close()
+
+    res = env["client"].get("/api/v2/loans", headers=_headers(token))
+    loan = next(item for item in res.json()["items"] if item["id"] == loan_id)
+    assert loan["proxy_cost_cents"] == 107
+    assert loan["proxy_cost_today_cents"] == 7
 
 
 def test_auto_loan_borrowed_cents_follows_proxy_ledger(loan_client_env):

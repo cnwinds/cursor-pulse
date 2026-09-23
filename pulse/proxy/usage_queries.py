@@ -6,12 +6,24 @@ lifecycle modules do not depend on the write ledger.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
 from pulse.storage.models import ProxyKeyUsage
+from pulse.util.timezone_ctx import display_zone
+
+_UTC = timezone.utc
+
+
+def display_today_utc_window() -> tuple[datetime, datetime]:
+    """团队展示时区「当日」对应的 UTC 半开区间 [start, end)。"""
+    zone = display_zone()
+    now_local = datetime.now(zone)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(_UTC), end_local.astimezone(_UTC)
 
 
 def last_loan_usage_at(session: Session, loan_ids: list[str]) -> dict[str, datetime]:
@@ -37,24 +49,40 @@ def last_loan_usage_at(session: Session, loan_ids: list[str]) -> dict[str, datet
 
 def loan_proxy_totals_by_loan(
     session: Session, loan_ids: list[str]
-) -> dict[str, tuple[int, int]]:
+) -> dict[str, tuple[int, int, int]]:
+    """每个借用的代理汇总：(total_tokens, total_cost_cents, today_cost_cents)。"""
     ids = [loan_id for loan_id in loan_ids if loan_id]
     if not ids:
         return {}
+    day_start, day_end = display_today_utc_window()
+    today_cost = case(
+        (
+            and_(ProxyKeyUsage.ts >= day_start, ProxyKeyUsage.ts < day_end),
+            ProxyKeyUsage.cost_cents,
+        ),
+        else_=0,
+    )
     rows = session.execute(
         select(
             ProxyKeyUsage.loan_id,
             func.coalesce(func.sum(ProxyKeyUsage.total_tokens), 0),
             func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0),
+            func.coalesce(func.sum(today_cost), 0),
         )
         .where(ProxyKeyUsage.loan_id.in_(ids))
         .group_by(ProxyKeyUsage.loan_id)
     )
-    return {loan_id: (int(tokens), int(cents)) for loan_id, tokens, cents in rows}
+    return {
+        loan_id: (int(tokens), int(cents), int(today_cents))
+        for loan_id, tokens, cents, today_cents in rows
+    }
 
 
 def loan_proxy_totals(session: Session, loan_id: str) -> tuple[int, int]:
-    return loan_proxy_totals_by_loan(session, [loan_id]).get(loan_id, (0, 0))
+    tokens, cents, _today = loan_proxy_totals_by_loan(session, [loan_id]).get(
+        loan_id, (0, 0, 0)
+    )
+    return tokens, cents
 
 
 def active_proxy_key_usage_totals(session: Session) -> tuple[int, int, int]:

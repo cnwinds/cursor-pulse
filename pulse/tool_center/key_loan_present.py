@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
-from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
+from pulse.proxy.usage_queries import last_loan_usage_at, loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
     DELIVERY_CURSOR_DIRECT,
@@ -42,7 +42,9 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
         )
     }
     snapshots = latest_snapshots_for_accounts(session, account_ids)
-    proxy_totals = loan_proxy_totals_by_loan(session, [loan.id for loan in loans])
+    loan_ids = [loan.id for loan in loans]
+    proxy_totals = loan_proxy_totals_by_loan(session, loan_ids)
+    last_proxy_used = last_loan_usage_at(session, loan_ids)
     cred_ids = {
         loan.credential_id
         for loan in loans
@@ -75,7 +77,10 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
             else 0
         )
         deadline = loan_display_expires_on(loan, account)
-        _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
+        _tokens, proxy_cost_cents, proxy_cost_today_cents = proxy_totals.get(
+            loan.id, (0, 0, 0)
+        )
+        last_used = last_proxy_used.get(loan.id)
         delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
         lender_mode = getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL
         routing_mode = getattr(loan, "routing_mode", None) or "pinned"
@@ -104,6 +109,8 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "borrowed_cents": borrowed_cents,
                 "borrowed_basis": borrowed_basis,
                 "proxy_cost_cents": proxy_cost_cents,
+                "proxy_cost_today_cents": proxy_cost_today_cents,
+                "last_proxy_used_at": tool_datetime(last_used),
                 "status": loan.status,
                 "auto_revoke_on_reset": loan.auto_revoke_on_reset,
                 "loan_expires_on": deadline.isoformat() if deadline else None,
