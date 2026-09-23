@@ -11,7 +11,7 @@
       <el-table-column prop="pool_idle_surplus_usd" label="闲置 USD" width="96" align="right" />
       <el-table-column prop="algorithm_score" label="算法分" width="88" align="right" />
       <el-table-column prop="hours_to_reset" label="距重置 h" width="96" align="right" />
-      <el-table-column prop="active_loans" label="在借" width="64" align="center" />
+      <el-table-column prop="proxy_active_seats" label="在用" width="64" align="center" />
     </el-table>
   </section>
 </template>
