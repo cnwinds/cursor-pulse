@@ -1,8 +1,7 @@
 import pytest
-
 from pulse.config import AppConfig, WebConfig
-from pulse.web.permissions import has_permission, resolve_permissions
 from pulse.storage.models import Member
+from pulse.web.permissions import has_permission, resolve_permissions
 
 
 def test_owner_has_all_permissions():
@@ -51,8 +50,7 @@ def test_auditor_read_only_write_denied():
 
 
 def test_jwt_roundtrip():
-    jwt = pytest.importorskip("jwt")
-    from pulse.config import AppConfig, WebConfig
+    pytest.importorskip("jwt")
     from pulse.web.auth_tokens import create_access_token, decode_access_token
 
     config = AppConfig(web=WebConfig(jwt_secret="test-secret"))

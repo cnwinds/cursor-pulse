@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from sqlalchemy import select
 
-from assistant_platform.config import AssistantConfig, AssistantChatMemoryConfig, MemoryArchiveConfig, MemoryFeatureFlags
+from assistant_platform.config import (
+    AssistantChatMemoryConfig,
+    AssistantConfig,
+    MemoryArchiveConfig,
+    MemoryFeatureFlags,
+)
 from assistant_platform.conversation.models import ChatMessageRow
 from assistant_platform.conversation.orchestrator import process_session_close_job
 from assistant_platform.conversation.session_store import attach_user_message, close_session
@@ -18,10 +23,10 @@ from assistant_platform.memory.archive_pipeline import (
     run_archive_pipeline_stage,
 )
 from assistant_platform.memory.contracts import ArchivePipelineStage, ArchivePipelineStatus
+from assistant_platform.memory.semantic.models import SemanticAtomRow
 from assistant_platform.memory.session_summary import SessionSummaryRow, load_session_summary
 from assistant_platform.profiles.models import ProfileEffectiveRow, ProfileSignalRow
 from assistant_platform.storage.db import init_assistant_db
-from assistant_platform.memory.semantic.models import SemanticAtomRow
 
 TEAM_ID = "team-pipeline"
 
@@ -54,7 +59,7 @@ def _event(*, text: str = "偏好: 简洁回复", sender: str = "u1") -> Incomin
         conversation_type="private",
         conversation_id=sender,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -83,7 +88,7 @@ def test_archive_pipeline_stages_complete_idempotently():
             session_id=session_row.id,
             role="user",
             text_redacted="偏好: 简洁列表",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
     )
     session.commit()
@@ -91,9 +96,7 @@ def test_archive_pipeline_stages_complete_idempotently():
     run_archive_pipeline(session, config=config, session_row=session_row)
     session.commit()
 
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert archive is not None
     assert archive.archive_status == "ready"
     assert archive.index_status == "ready"
@@ -108,9 +111,7 @@ def test_archive_pipeline_stages_complete_idempotently():
     # second run is a no-op for ready stages
     run_archive_pipeline(session, config=config, session_row=session_row)
     session.commit()
-    archive2 = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive2 = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert archive2.content_hash == archive.content_hash
     session.close()
 
@@ -144,9 +145,7 @@ def test_single_stage_retry_after_failure():
             )
         session.commit()
 
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert archive is not None
     assert get_stage_status(archive, ArchivePipelineStage.INDEX).status == ArchivePipelineStatus.FAILED
 
@@ -157,9 +156,7 @@ def test_single_stage_retry_after_failure():
         stage=ArchivePipelineStage.INDEX,
     )
     session.commit()
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert archive.index_status == "ready"
     session.close()
 
@@ -191,9 +188,7 @@ def test_process_session_close_job_runs_pipeline_and_profile():
     assert atom is not None
     assert (atom.evidence_json or {}).get("session_ids")
 
-    summary_row = session.scalar(
-        select(SessionSummaryRow).where(SessionSummaryRow.session_id == session_row.id)
-    )
+    summary_row = session.scalar(select(SessionSummaryRow).where(SessionSummaryRow.session_id == session_row.id))
     assert summary_row is not None
     session.close()
 
@@ -218,9 +213,7 @@ def test_facts_stage_skipped_without_distill_on_close():
     session.commit()
 
     assert session.scalar(select(SemanticAtomRow).where(SemanticAtomRow.subject_id == "u1")) is None
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert get_stage_status(archive, ArchivePipelineStage.FACTS).status == ArchivePipelineStatus.READY
     session.close()
 
@@ -239,7 +232,7 @@ def test_group_close_skips_personal_profile():
         conversation_type="group",
         conversation_id="g1",
         text_redacted="偏好: 群里不说",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     session_row, _ = attach_user_message(session, group_event)
     close_session(session, session_row, reason="manual", enqueue_close_job=False)

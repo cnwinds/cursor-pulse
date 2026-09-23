@@ -133,9 +133,7 @@ def test_channel_reply_web_stores_delivery(api_env):
 
     from pulse.web.portal_chat import list_portal_chat_deliveries
 
-    rows = list_portal_chat_deliveries(
-        session, team_id=team.id, member_id=member.id, after_id=0
-    )
+    rows = list_portal_chat_deliveries(session, team_id=team.id, member_id=member.id, after_id=0)
     assert len(rows) == 1
     assert rows[0].text == "6月用量如下"
     assert rows[0].kind == "final"

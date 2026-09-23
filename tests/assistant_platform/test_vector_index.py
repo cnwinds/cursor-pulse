@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-from assistant_platform.memory.embedding import HashingEmbedder
+from datetime import UTC, datetime, timezone
 
 from assistant_platform.memory.archive_models import ArchiveChunkRow
+from assistant_platform.memory.embedding import HashingEmbedder
 from assistant_platform.memory.vector_index import LocalVectorIndex, VectorRecord
 from assistant_platform.storage.db import init_assistant_db
 
@@ -15,7 +14,7 @@ def test_local_vector_index_upsert_search_and_delete():
     embedder = HashingEmbedder(dimensions=64)
     index = LocalVectorIndex(db, embedder=embedder)
 
-    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 17, tzinfo=UTC)
     specs = [
         ("c1", "s1", "u1", 0, "blue project deadline next week", "h1"),
         ("c2", "s1", "u1", 1, "unrelated weather chat", "h2"),

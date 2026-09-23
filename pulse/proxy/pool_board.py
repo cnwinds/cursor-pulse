@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import NamedTuple
 
 from sqlalchemy import func, select
@@ -83,12 +83,7 @@ def _pool_primary_context(session: Session) -> PoolPrimaryContext:
     rows = unique_rows
 
     account_ids = list({c.account_id for c in rows})
-    accounts = {
-        a.id: a
-        for a in session.execute(
-            select(AiAccount).where(AiAccount.id.in_(account_ids))
-        ).scalars()
-    }
+    accounts = {a.id: a for a in session.execute(select(AiAccount).where(AiAccount.id.in_(account_ids))).scalars()}
     latest_snaps = latest_snapshots_for_accounts(session, account_ids)
 
     loan_counts: dict = dict(
@@ -102,12 +97,8 @@ def _pool_primary_context(session: Session) -> PoolPrimaryContext:
         ).all()
     )
     bound_at_by_account = last_bound_at_by_account(session, account_ids)
-    member_names = member_names_by_id(
-        session, {a.primary_member_id for a in accounts.values() if a.primary_member_id}
-    )
-    return PoolPrimaryContext(
-        rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names
-    )
+    member_names = member_names_by_id(session, {a.primary_member_id for a in accounts.values() if a.primary_member_id})
+    return PoolPrimaryContext(rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names)
 
 
 def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
@@ -118,11 +109,11 @@ def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
             continue
         t = snap.captured_at
         if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
+            t = t.replace(tzinfo=UTC)
         captured.append(t)
-    now = max(captured) if captured else datetime.now(timezone.utc)
+    now = max(captured) if captured else datetime.now(UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     return now.date(), now
 
 
@@ -163,9 +154,7 @@ def _build_pool_lender_candidates(
                         "account_id": aid,
                         "account_identifier": account.account_identifier,
                         "primary_member_name": (
-                            member_names.get(account.primary_member_id)
-                            if account.primary_member_id
-                            else None
+                            member_names.get(account.primary_member_id) if account.primary_member_id else None
                         ),
                         "reason": "no_snapshot",
                         "active_loans": active_loans,
@@ -192,9 +181,7 @@ def _build_pool_lender_candidates(
                 reserve_pct=account.proxy_reserve_pct,
                 bound_at=bound_at_by_account.get(aid),
                 primary_member_name=(
-                    member_names.get(account.primary_member_id)
-                    if account.primary_member_id
-                    else None
+                    member_names.get(account.primary_member_id) if account.primary_member_id else None
                 ),
             )
         )
@@ -235,9 +222,7 @@ def loan_candidate_credentials(
             cached = _loan_candidates_get(loan_id, ttl_seconds)
             if cached is not None:
                 return cached
-            ordered = _rank_loan_candidates(
-                session, loan, loan_selection=loan_selection
-            )
+            ordered = _rank_loan_candidates(session, loan, loan_selection=loan_selection)
             _loan_candidates_put(loan_id, ordered, ttl_seconds=ttl_seconds)
             return ordered
     finally:
@@ -276,8 +261,7 @@ def _rank_loan_candidates(session: Session, loan, *, loan_selection=None) -> lis
     candidates = [
         candidate
         for candidate in candidates
-        if candidate.account_id not in own_accounts
-        and candidate.account_id not in blockers
+        if candidate.account_id not in own_accounts and candidate.account_id not in blockers
     ]
 
     today, now = _pool_scoring_clock(ctx.latest_snaps)
@@ -334,9 +318,7 @@ def _loan_candidates_get(loan_id: str, ttl_seconds: float) -> list[str] | None:
     return _loan_candidates.get(loan_id, ttl_seconds)
 
 
-def _loan_candidates_put(
-    loan_id: str, credential_ids: list[str], *, ttl_seconds: float = 0.0
-) -> None:
+def _loan_candidates_put(loan_id: str, credential_ids: list[str], *, ttl_seconds: float = 0.0) -> None:
     """写白名单缓存；ttl 只用于超上限时清理过期项。"""
     _loan_candidates.put(loan_id, credential_ids, ttl_seconds=ttl_seconds)
 
@@ -352,7 +334,6 @@ def forget_loan_candidate_cache(loan_id: str) -> None:
 
 
 def list_pool_credentials(
-
     session: Session,
     *,
     encryption_key: str,
@@ -466,9 +447,7 @@ def ranked_pool_credential_pairs(
     return pairs
 
 
-def list_pool_ranking_board(
-    session: Session, *, loan_selection=None, jev=None, quota_pool=None
-) -> dict:
+def list_pool_ranking_board(session: Session, *, loan_selection=None, jev=None, quota_pool=None) -> dict:
     """Credential Pool Board explain view: ranked + excluded + decision (no secrets)."""
     from pulse.tool_center.auto_lender import rank_lenders
 

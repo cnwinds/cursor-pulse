@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock
 
 from assistant_platform.contracts.provider import CapabilityInvokeResult
@@ -12,7 +12,7 @@ from pulse.util.timezone_ctx import activate_display_timezone
 
 
 def test_format_capability_reply_respects_display_timezone_context():
-    captured = datetime(2026, 7, 15, 4, 30, 0, tzinfo=timezone.utc)
+    captured = datetime(2026, 7, 15, 4, 30, 0, tzinfo=UTC)
     accounts = [
         {
             "account_id": "a1",

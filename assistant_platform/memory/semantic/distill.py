@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 from assistant_platform.memory.semantic.domain import (
@@ -60,9 +60,7 @@ class RuleBasedDistiller:
             if not text or text.startswith("#"):
                 continue
             if text.startswith("偏好:"):
-                atoms.append(
-                    DistilledAtom(kind=AtomKind.PREFERENCE, content=text.removeprefix("偏好:").strip())
-                )
+                atoms.append(DistilledAtom(kind=AtomKind.PREFERENCE, content=text.removeprefix("偏好:").strip()))
             elif text.startswith("事实:"):
                 atoms.append(DistilledAtom(kind=AtomKind.FACT, content=text.removeprefix("事实:").strip()))
             else:
@@ -161,7 +159,7 @@ def distill_conversation(
         logger.exception("Distiller failed; skipping memory write")
         return [], []
 
-    resolved_now = now or datetime.now(timezone.utc)
+    resolved_now = now or datetime.now(UTC)
     source_vis = SourceVisibility.PUBLIC if context.is_public() else SourceVisibility.PRIVATE
     default_sens = _default_sensitivity(context)
     saved_atoms = []

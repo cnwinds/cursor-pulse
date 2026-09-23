@@ -18,8 +18,8 @@ from assistant_platform.memory.archive_search import (
 )
 from assistant_platform.memory.contracts import ChunkAnchor, RecallCursor
 from assistant_platform.memory.observability import log_memory_tool
-from assistant_platform.memory.session_summary import load_session_summary
 from assistant_platform.memory.semantic.domain import VisibilityContext
+from assistant_platform.memory.session_summary import load_session_summary
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,7 @@ def memory_tool_definitions() -> list[dict[str, Any]]:
             "function": {
                 "name": "memory_search",
                 "description": (
-                    "搜索已关闭会话的脱敏历史片段（仅限当前用户/群作用域）。"
-                    "支持 query 关键词与 cursor 续页。"
+                    "搜索已关闭会话的脱敏历史片段（仅限当前用户/群作用域）。支持 query 关键词与 cursor 续页。"
                 ),
                 "parameters": {
                     "type": "object",

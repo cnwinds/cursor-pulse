@@ -97,9 +97,7 @@ def _account_payload(account) -> dict:
         "status": account.status,
         "primary_member_id": account.primary_member_id,
         "shared_note": account.shared_note,
-        "monthly_budget_cap": float(account.monthly_budget_cap)
-        if account.monthly_budget_cap is not None
-        else None,
+        "monthly_budget_cap": float(account.monthly_budget_cap) if account.monthly_budget_cap is not None else None,
         "budget_currency": account.budget_currency,
         "started_on": account.started_on.isoformat() if account.started_on else None,
         "renews_on": account.renews_on.isoformat() if account.renews_on else None,
@@ -148,9 +146,7 @@ def register_accounts_v2_routes(
                 "price_amount": float(p.price_amount),
                 "price_currency": p.price_currency,
                 "quota_ratio_enabled": p.quota_ratio_enabled,
-                "quota_denominator": float(p.quota_denominator)
-                if p.quota_denominator is not None
-                else None,
+                "quota_denominator": float(p.quota_denominator) if p.quota_denominator is not None else None,
                 "upgrade_threshold_pct": p.upgrade_threshold_pct,
                 "usage_submit_methods": p.usage_submit_methods or [],
             }
@@ -167,22 +163,16 @@ def register_accounts_v2_routes(
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
         accounts = list(repo.list_accounts(status=status))
-        cursor_ids = [
-            a.id for a in accounts if a.vendor is not None and a.vendor.slug == "cursor"
-        ]
+        cursor_ids = [a.id for a in accounts if a.vendor is not None and a.vendor.slug == "cursor"]
         cred_by_account: dict[str, AiAccountCredential] = {}
         if cursor_ids:
             rows = session.scalars(
-                select(AiAccountCredential).where(
-                    AiAccountCredential.account_id.in_(cursor_ids)
-                )
+                select(AiAccountCredential).where(AiAccountCredential.account_id.in_(cursor_ids))
             ).all()
             # Prefer active over revoked if duplicates exist historically.
             for row in rows:
                 existing = cred_by_account.get(row.account_id)
-                if existing is None or (
-                    existing.status != "active" and row.status == "active"
-                ):
+                if existing is None or (existing.status != "active" and row.status == "active"):
                     cred_by_account[row.account_id] = row
 
         payloads = []
@@ -191,9 +181,7 @@ def register_accounts_v2_routes(
             if account.vendor is None or account.vendor.slug != "cursor":
                 payload["credential"] = None
             elif can_manage_credential(user, account):
-                payload["credential"] = credential_status_summary(
-                    cred_by_account.get(account.id)
-                )
+                payload["credential"] = credential_status_summary(cred_by_account.get(account.id))
             else:
                 # Same shape as unbound so UI badges stay stable without leaking
                 # peer credential hints to viewers who cannot manage the row.
@@ -249,9 +237,7 @@ def register_accounts_v2_routes(
                 if plan is None:
                     raise HTTPException(status_code=400, detail="套餐不存在或不属于 Cursor")
             else:
-                plan = infer_plan_from_period_usage(plans, period_usage) or default_cursor_plan(
-                    plans
-                )
+                plan = infer_plan_from_period_usage(plans, period_usage) or default_cursor_plan(plans)
             if plan is None:
                 raise HTTPException(status_code=400, detail="无法确定 Cursor 套餐")
 
@@ -451,9 +437,7 @@ def register_accounts_v2_routes(
             "period": period,
             "quota_usage_ratio": row.quota_usage_ratio,
             "cycle_quota_usage_ratio": row.cycle_quota_usage_ratio,
-            "cycle_metric_value": float(row.cycle_metric_value)
-            if row.cycle_metric_value is not None
-            else None,
+            "cycle_metric_value": float(row.cycle_metric_value) if row.cycle_metric_value is not None else None,
         }
 
     @app.get(
@@ -478,26 +462,18 @@ def register_accounts_v2_routes(
                 "period": r.period,
                 "primary_metric_value": float(r.primary_metric_value),
                 "primary_metric_unit": r.primary_metric_unit,
-                "reported_spend_usd": float(r.reported_spend_usd)
-                if r.reported_spend_usd is not None
-                else None,
+                "reported_spend_usd": float(r.reported_spend_usd) if r.reported_spend_usd is not None else None,
                 "estimated_included_spend_usd": float(r.estimated_included_spend_usd)
                 if r.estimated_included_spend_usd is not None
                 else None,
                 "quota_usage_ratio": r.quota_usage_ratio,
-                "billing_cycle_start": r.billing_cycle_start.isoformat()
-                if r.billing_cycle_start
-                else None,
-                "billing_cycle_end": r.billing_cycle_end.isoformat()
-                if r.billing_cycle_end
-                else None,
+                "billing_cycle_start": r.billing_cycle_start.isoformat() if r.billing_cycle_start else None,
+                "billing_cycle_end": r.billing_cycle_end.isoformat() if r.billing_cycle_end else None,
                 "plan_id_used": r.plan_id_used,
                 "quota_denominator_snapshot": float(r.quota_denominator_snapshot)
                 if r.quota_denominator_snapshot is not None
                 else None,
-                "cycle_metric_value": float(r.cycle_metric_value)
-                if r.cycle_metric_value is not None
-                else None,
+                "cycle_metric_value": float(r.cycle_metric_value) if r.cycle_metric_value is not None else None,
                 "cycle_quota_usage_ratio": r.cycle_quota_usage_ratio,
                 "estimation_coverage_pct": r.estimation_coverage_pct,
                 "unmatched_models": r.unmatched_models or [],

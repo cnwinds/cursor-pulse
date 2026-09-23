@@ -26,9 +26,7 @@ _FRAGMENT_STUBS = canonical_fragments()
 
 
 def get_production_release(session: Session) -> PromptReleaseRow | None:
-    return session.scalar(
-        select(PromptReleaseRow).where(PromptReleaseRow.status == "production")
-    )
+    return session.scalar(select(PromptReleaseRow).where(PromptReleaseRow.status == "production"))
 
 
 def _fragment_texts_for_release(session: Session, release_id: str) -> dict[str, str]:
@@ -95,7 +93,5 @@ def ensure_production_prompt_release(session: Session) -> PromptReleaseRow | Non
     if production is None:
         return seed_default_prompt_release(session)
     if _production_differs_from_files(session, production):
-        logger.warning(
-            "ap_prompt production differs from files; files are source of truth"
-        )
+        logger.warning("ap_prompt production differs from files; files are source of truth")
     return production

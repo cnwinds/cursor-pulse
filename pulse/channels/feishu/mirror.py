@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
+
 from pulse.channels.dingtalk.mirror import (
     _post_to_assistant,
     _post_to_assistant_async,
@@ -17,6 +17,7 @@ from pulse.channels.dingtalk.mirror import (
 )
 from pulse.channels.inbound import InboundMessage
 from pulse.config import AppConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,7 @@ def build_event_from_feishu(
     redacted, refs = redact_text(inbound.text or "")
     safe_refs = [{"ref_id": r["ref_id"], "kind": r["kind"], "hint": r["hint"]} for r in refs]
     is_group = inbound.conversation_type == "group"
-    conversation_id = (
-        inbound.conversation_id
-        if is_group and inbound.conversation_id
-        else inbound.channel_user_id
-    )
+    conversation_id = inbound.conversation_id if is_group and inbound.conversation_id else inbound.channel_user_id
     reply_endpoint: dict = {
         "channel": "feishu",
         "conversation_type": "group" if is_group else "private",
@@ -61,7 +58,7 @@ def build_event_from_feishu(
         text_redacted=redacted,
         secret_refs=safe_refs,
         attachments=[],
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         raw_metadata_redacted={},
     )
 
@@ -132,9 +129,7 @@ def mirror_feishu_message_sync(
     except Exception as exc:
         _write_deadletter("feishu", payload, exc)
         if mirror.fail_open:
-            logger.exception(
-                "Assistant mirror failed after retries (fail-open); wrote dead-letter"
-            )
+            logger.exception("Assistant mirror failed after retries (fail-open); wrote dead-letter")
             return
         raise
 
@@ -162,8 +157,6 @@ async def mirror_feishu_message(
     except Exception as exc:
         _write_deadletter("feishu", payload, exc)
         if mirror.fail_open:
-            logger.exception(
-                "Assistant mirror failed after retries (fail-open); wrote dead-letter"
-            )
+            logger.exception("Assistant mirror failed after retries (fail-open); wrote dead-letter")
             return
         raise

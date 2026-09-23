@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from pulse.pricing.cursor_tables import get_cursor_pricing_table
 from pulse.pricing.types import PricingTable, estimate_token_cost
 from pulse.proxy.clock import WINDOW_5H, utcnow
-from pulse.proxy.usage_queries import loan_proxy_totals
+from pulse.proxy.usage_queries import loan_proxy_totals  # noqa: F401 — re-exported via pulse.proxy.service
 from pulse.storage.models import AiAccount, KeyLoan, Member, ProxyKey, ProxyKeyUsage
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def window_usage_cost(
 ) -> int:
     now = now or utcnow()
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     since = now - window
     value = session.execute(
         select(func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0)).where(
@@ -41,7 +41,7 @@ def window_usage_tokens(session: Session, proxy_key_id: str, *, now: datetime | 
     """Legacy helper: 5h token sum (kept for callers; limits no longer use tokens)."""
     now = now or utcnow()
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     since = now - WINDOW_5H
     # ProxyKeyUsage.ts 统一按 UTC 写入；SQLite 绑参时 tzinfo 被静默丢弃，比较基于 UTC 墙钟
     value = session.execute(
@@ -57,9 +57,7 @@ def total_usage(session: Session, proxy_key_id: str) -> tuple[int, int]:
     return usage_totals_by_proxy_key(session, [proxy_key_id]).get(proxy_key_id, (0, 0))
 
 
-def usage_totals_by_proxy_key(
-    session: Session, proxy_key_ids: list[str]
-) -> dict[str, tuple[int, int]]:
+def usage_totals_by_proxy_key(session: Session, proxy_key_ids: list[str]) -> dict[str, tuple[int, int]]:
     ids = [key_id for key_id in proxy_key_ids if key_id]
     if not ids:
         return {}
@@ -117,11 +115,7 @@ def loan_proxy_usage_summary(
         clauses.append(ProxyKeyUsage.ts < end)
 
     rows = list(
-        session.execute(
-            select(ProxyKeyUsage).where(*clauses).order_by(ProxyKeyUsage.ts.desc())
-        )
-        .scalars()
-        .all()
+        session.execute(select(ProxyKeyUsage).where(*clauses).order_by(ProxyKeyUsage.ts.desc())).scalars().all()
     )
     by_model: dict[str, dict] = {}
     total_tokens = 0
@@ -155,7 +149,6 @@ def loan_proxy_usage_summary(
         "models": models,
         "data_updated_at": data_updated_at,
     }
-
 
 
 _TOKEN_FIELDS = ("input", "output", "cache_read", "cache_write", "reasoning")
@@ -195,13 +188,7 @@ def canonical_turn_ended_tokens(tokens: dict) -> dict:
 def total_tokens_from_canonical(tokens: dict) -> int:
     """canonical 后的总量：与官方 tokens_total 对齐，另含 reasoning。"""
     t = _normalize_tokens(tokens)
-    return (
-        t["input"]
-        + t["output"]
-        + t["cache_read"]
-        + t["cache_write"]
-        + t["reasoning"]
-    )
+    return t["input"] + t["output"] + t["cache_read"] + t["cache_write"] + t["reasoning"]
 
 
 def estimate_cost_cents(
@@ -339,9 +326,7 @@ def _pricing_table_for_usage_row(
     return table
 
 
-def record_usages(
-    session: Session, items: list[dict], *, now: datetime | None = None
-) -> dict:
+def record_usages(session: Session, items: list[dict], *, now: datetime | None = None) -> dict:
     now = now or utcnow()
     recorded = 0
     touched: set[str] = set()
@@ -454,5 +439,3 @@ def record_usages(
             if evaluate_key(session, key):
                 suspended.append(key_id)
     return {"recorded": recorded, "suspended": suspended}
-
-

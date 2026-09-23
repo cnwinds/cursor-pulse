@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from assistant_platform.capabilities.resolve import resolve_capabilities
 from assistant_platform.capabilities.seed import seed_phase1_capabilities
+from assistant_platform.config import AssistantConfig
 from assistant_platform.conversation.help import (
     build_help_detail,
     build_help_message,
     parse_help_request,
 )
-from assistant_platform.conversation.orchestrator import generate_reply_text
-from assistant_platform.capabilities.resolve import resolve_capabilities
-from assistant_platform.config import AssistantConfig
 from assistant_platform.conversation.models import ChatSessionRow
+from assistant_platform.conversation.orchestrator import generate_reply_text
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import IncomingEventRow
 
@@ -44,9 +44,7 @@ def test_build_help_message_excludes_admin_commands_for_self_service():
     seed_phase1_capabilities(session, TEAM_ID)
     session.commit()
 
-    caps = resolve_capabilities(
-        session, team_id=TEAM_ID, role=None, member_id="member-self"
-    )
+    caps = resolve_capabilities(session, team_id=TEAM_ID, role=None, member_id="member-self")
     text = build_help_message(caps)
 
     assert text.startswith("## 可用技能")
@@ -63,9 +61,7 @@ def test_build_help_message_includes_owner_commands():
     seed_phase1_capabilities(session, TEAM_ID)
     session.commit()
 
-    caps = resolve_capabilities(
-        session, team_id=TEAM_ID, role="owner", member_id="owner-1"
-    )
+    caps = resolve_capabilities(session, team_id=TEAM_ID, role="owner", member_id="owner-1")
     text = build_help_message(caps)
 
     assert "| 团队运营管理 |" in text
@@ -79,9 +75,7 @@ def test_build_help_detail_for_granted_command():
     seed_phase1_capabilities(session, TEAM_ID)
     session.commit()
 
-    caps = resolve_capabilities(
-        session, team_id=TEAM_ID, role=None, member_id="member-self"
-    )
+    caps = resolve_capabilities(session, team_id=TEAM_ID, role=None, member_id="member-self")
     text = build_help_detail("绑定", caps)
 
     assert text.startswith("## 绑定 Key")
@@ -96,9 +90,7 @@ def test_build_help_detail_denies_admin_command_for_member():
     seed_phase1_capabilities(session, TEAM_ID)
     session.commit()
 
-    caps = resolve_capabilities(
-        session, team_id=TEAM_ID, role=None, member_id="member-self"
-    )
+    caps = resolve_capabilities(session, team_id=TEAM_ID, role=None, member_id="member-self")
     text = build_help_detail("状态", caps)
 
     assert "暂无权限" in text
@@ -122,9 +114,7 @@ def test_generate_reply_help_uses_resolved_capabilities():
     seed_phase1_capabilities(session, TEAM_ID)
     session.commit()
 
-    caps = resolve_capabilities(
-        session, team_id=TEAM_ID, role=None, member_id="member-self"
-    )
+    caps = resolve_capabilities(session, team_id=TEAM_ID, role=None, member_id="member-self")
     help_text = build_help_message(caps)
 
     config = AssistantConfig(

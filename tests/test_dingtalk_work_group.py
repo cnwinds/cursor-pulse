@@ -6,7 +6,7 @@ from pulse.channels.dingtalk.work_group import (
     activate_work_group,
     is_work_group_activation,
 )
-from pulse.config import AppConfig, DingTalkConfig, AssistantMirrorConfig, TenantConfig
+from pulse.config import AppConfig, AssistantMirrorConfig, DingTalkConfig, TenantConfig
 from pulse.storage.db import init_db
 from pulse.storage.models import TeamSetting
 from tests.conftest import make_team_repo, make_test_session_factory
@@ -49,7 +49,9 @@ def test_activate_work_group_persists_team_settings():
     assert config.dingtalk.group_open_conversation_id == "cid-work-group=="
 
     row = session.scalar(
-        __import__("sqlalchemy").select(TeamSetting).where(
+        __import__("sqlalchemy")
+        .select(TeamSetting)
+        .where(
             TeamSetting.team_id == team.id,
             TeamSetting.section == "dingtalk",
         )
@@ -138,7 +140,9 @@ def test_handler_activation_replies_without_mirror():
     assert config.dingtalk.group_open_conversation_id == "cid-activate=="
 
     row = session.scalar(
-        __import__("sqlalchemy").select(TeamSetting).where(
+        __import__("sqlalchemy")
+        .select(TeamSetting)
+        .where(
             TeamSetting.section == "dingtalk",
         )
     )

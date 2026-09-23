@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -97,11 +97,7 @@ class SemanticMemoryRepository:
         tokens = [t for t in re.split(r"\s+", query.strip()) if t]
         if not tokens:
             return atoms
-        return [
-            atom
-            for atom in atoms
-            if any(token.lower() in atom.content.lower() for token in tokens)
-        ]
+        return [atom for atom in atoms if any(token.lower() in atom.content.lower() for token in tokens)]
 
     def list_commitments(
         self,
@@ -219,7 +215,7 @@ class SemanticMemoryRepository:
         return row.id
 
     def list_atoms_since(self, namespace: str, *, days: int = 7) -> list[SemanticAtom]:
-        since = datetime.now(timezone.utc) - timedelta(days=days)
+        since = datetime.now(UTC) - timedelta(days=days)
         stmt = (
             select(SemanticAtomRow)
             .where(

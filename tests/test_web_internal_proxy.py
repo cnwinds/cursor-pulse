@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,8 +11,8 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
 from pulse.ingestion.crypto import encrypt_secret
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.proxy import service as proxy_service
+from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
@@ -27,7 +27,7 @@ from pulse.web.portal import bootstrap_portal_owner
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
-NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 TODAY = date(2026, 7, 22)
 
 
@@ -198,7 +198,6 @@ CURSOR_UNDER_ALIAS = "crsr_bound_under_alias_key_yy"
 def _seed_loan_alias(env, *, loan_status: str = "active", lender_mode: str = "manual"):
     """建一笔 pka_ 别名借用（loan Key + 别名哈希），返回 (cred_id, loan_id)。"""
     from pulse.tool_center.key_loans import DELIVERY_PROXY_ALIAS
-
 
     s = env["sf"]()
     cred = AiAccountCredential(
@@ -376,7 +375,6 @@ def test_loan_candidate_credentials_excludes_borrower_own_accounts(env):
 def test_loan_candidate_credentials_cached(env):
     """同一 loan 第二次调用命中缓存，reset 后缓存清空。"""
     from pulse.proxy.pool_board import (
-
         _loan_candidates,
         loan_candidate_credentials,
         reset_loan_candidate_cache,
@@ -651,9 +649,7 @@ def test_record_usage_missing_both_ids_skipped(env):
 def test_usage_records_without_suspend(env):
     client, sf = env["client"], env["sf"]
     s = sf()
-    key, _ = proxy_service.create_key(
-        s, name="k", member_id="m1", window_5h_cost_limit_cents=100
-    )
+    key, _ = proxy_service.create_key(s, name="k", member_id="m1", window_5h_cost_limit_cents=100)
     s.commit()
     s.close()
     resp = client.post(
@@ -757,9 +753,7 @@ def test_pool_excludes_disabled_account_and_undecryptable(env):
 
 def test_internal_token_header_and_503(env):
     # X-Pulse-Internal-Token 头路径
-    resp = env["client"].get(
-        "/api/internal/v1/proxy/pool", headers={"X-Pulse-Internal-Token": "internal-token"}
-    )
+    resp = env["client"].get("/api/internal/v1/proxy/pool", headers={"X-Pulse-Internal-Token": "internal-token"})
     assert resp.status_code == 200
     # 错误 token
     resp = env["client"].get("/api/internal/v1/proxy/pool", headers=_h("wrong"))
@@ -901,7 +895,7 @@ def test_pool_ranking_board_carries_owner_and_switch_recency(env):
 
     漏填这两项会让驻留降权恒为 1.0，且 Jev 看到的 owner 退化成 unassigned。
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pulse.proxy.pool_board import list_pool_ranking_board
     from pulse.storage.models import KeyLoan, Member
@@ -947,7 +941,7 @@ def test_pool_ranking_board_carries_owner_and_switch_recency(env):
             baseline_used_cents=0,
             status="active",
             lender_mode="manual",
-            source_bound_at=datetime.now(timezone.utc),
+            source_bound_at=datetime.now(UTC),
         )
     )
     default = s.get(AiAccount, env["account_id"])
@@ -1146,9 +1140,7 @@ def test_authorize_reports_current_credential_and_caps_seats(env):
     assert other["assigned_credential_id"] in (None, "")
     assert env["cred_id"] in other["blocked_credential_ids"]
 
-    released = _authorize(
-        env, first, current_credential_id=env["cred_id"], release_current=True
-    )
+    released = _authorize(env, first, current_credential_id=env["cred_id"], release_current=True)
     assert released["assigned_credential_id"] in (None, "")
     took = _authorize(env, second)
     assert took["assigned_credential_id"] == env["cred_id"]

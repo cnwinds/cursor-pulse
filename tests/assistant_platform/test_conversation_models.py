@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import inspect
 
@@ -21,7 +21,7 @@ def test_chat_session_and_message_tables_exist():
 def test_chat_session_and_message_round_trip():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session_id = str(uuid.uuid4())
     message_id = str(uuid.uuid4())
 

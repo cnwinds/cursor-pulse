@@ -90,8 +90,7 @@ def ensure_proxy_binary(root: Path | None = None) -> Path:
         if binary.exists():
             return binary
         raise FileNotFoundError(
-            "未找到 Go 代理二进制且未安装 go。请安装 Go 1.22+ 后执行: "
-            f"cd proxy && go build -o {proxy_binary_name()} ."
+            f"未找到 Go 代理二进制且未安装 go。请安装 Go 1.22+ 后执行: cd proxy && go build -o {proxy_binary_name()} ."
         )
     subprocess.run([go, "build", "-o", str(binary), "."], cwd=str(proxy_dir), check=True)
     return binary

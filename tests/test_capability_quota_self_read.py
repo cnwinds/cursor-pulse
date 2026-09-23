@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+
 def _msg(result):
     data = result.result or {}
     return result.user_message or data.get("text") or data.get("answer") or ""
 
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 
 import pytest
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.quota_self_read import (
     _format_user_message,
@@ -40,21 +40,15 @@ def quota_env(session):
     session.flush()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_accounts = [
-        a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"
-    ]
+    cursor_accounts = [a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"]
     actor_account = cursor_accounts[0]
     other_account = cursor_accounts[1]
-    tool_repo.update_account(
-        actor_account.id, primary_member_id=actor.id, status="shared"
-    )
-    tool_repo.update_account(
-        other_account.id, primary_member_id=other.id, status="shared"
-    )
+    tool_repo.update_account(actor_account.id, primary_member_id=actor.id, status="shared")
+    tool_repo.update_account(other_account.id, primary_member_id=other.id, status="shared")
 
     snap = AccountQuotaSnapshot(
         account_id=actor_account.id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=date(2026, 7, 1),
         cycle_end=date(2026, 8, 1),
         limit_cents=7000,
@@ -98,9 +92,7 @@ def test_quota_self_read_returns_actor_accounts_only(session, quota_env):
         team_id=quota_env["team"].id,
         actor_member_id=quota_env["actor"].id,
     )
-    result = handle_quota_self_read(
-        session, request=request, config=quota_env["config"], op={}
-    )
+    result = handle_quota_self_read(session, request=request, config=quota_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -124,9 +116,7 @@ def test_quota_self_read_no_primary_cursor_account(session, quota_env):
     tool_repo.update_account(quota_env["other_account"].id, primary_member_id=None)
     session.flush()
 
-    result = handle_quota_self_read(
-        session, request=request, config=quota_env["config"], op={}
-    )
+    result = handle_quota_self_read(session, request=request, config=quota_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -139,9 +129,7 @@ def test_invoke_capability_quota_self_read(session, quota_env):
         team_id=quota_env["team"].id,
         actor_member_id=quota_env["actor"].id,
     )
-    result = invoke_capability(
-        session, request=request, config=quota_env["config"]
-    )
+    result = invoke_capability(session, request=request, config=quota_env["config"])
 
     assert result.status == "succeeded"
     assert len(result.result["accounts"]) == 1
@@ -152,9 +140,7 @@ def test_quota_self_read_rejects_wrong_team(session, quota_env):
         team_id="wrong-team-id",
         actor_member_id=quota_env["actor"].id,
     )
-    result = handle_quota_self_read(
-        session, request=request, config=quota_env["config"], op={}
-    )
+    result = handle_quota_self_read(session, request=request, config=quota_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "forbidden"

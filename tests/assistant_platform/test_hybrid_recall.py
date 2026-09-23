@@ -2,27 +2,27 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock
 
-from assistant_platform.config import AssistantChatMemoryConfig, MemoryFeatureFlags, MemoryRecallBudgetConfig
 from sqlalchemy import select
 
-from assistant_platform.memory.archive_models import SessionArchiveRow
+from assistant_platform.config import AssistantChatMemoryConfig, MemoryFeatureFlags, MemoryRecallBudgetConfig
 from assistant_platform.conversation.agent_runtime import AgentRuntime
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.conversation.orchestrator import generate_reply_text
 from assistant_platform.memory.agent_tools import MemoryToolService
 from assistant_platform.memory.archive_indexer import archive_and_index_session
-from assistant_platform.memory.session_summary import generate_session_summary
+from assistant_platform.memory.archive_models import SessionArchiveRow
 from assistant_platform.memory.archive_search import resolve_search_scope
+from assistant_platform.memory.semantic.domain import VisibilityContext
+from assistant_platform.memory.session_summary import generate_session_summary
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import IncomingEventRow
-from assistant_platform.memory.semantic.domain import VisibilityContext
 
 
 def _session_row(**overrides) -> ChatSessionRow:
-    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, tzinfo=UTC)
     data = dict(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -42,7 +42,7 @@ def _session_row(**overrides) -> ChatSessionRow:
 def _msg(session_id: str, role: str, text: str, *, kind: str | None = None, offset: int = 0) -> ChatMessageRow:
     from datetime import timedelta
 
-    base = datetime(2026, 7, 1, tzinfo=timezone.utc) + timedelta(seconds=offset)
+    base = datetime(2026, 7, 1, tzinfo=UTC) + timedelta(seconds=offset)
     return ChatMessageRow(
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -82,7 +82,7 @@ class FakeLlm:
 def test_memory_tool_service_search_and_expand():
     Session = init_assistant_db("sqlite://")
     db = Session()
-    session_row = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    session_row = _session_row(status="closed", closed_at=datetime.now(UTC))
     messages = [
         _msg(session_row.id, "user", "nebula cluster sizing question", offset=1),
         _msg(session_row.id, "assistant", "nebula noted", kind="final", offset=2),
@@ -94,9 +94,7 @@ def test_memory_tool_service_search_and_expand():
         db.add(message)
     db.commit()
     archive_and_index_session(db, session_row, index_version=1)
-    archive_header = db.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive_header = db.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     generate_session_summary(db, session_row, archive_header)
     db.commit()
 
@@ -140,7 +138,7 @@ def test_memory_tool_denies_cross_scope_session():
     db = Session()
     session_row = _session_row(
         status="closed",
-        closed_at=datetime.now(timezone.utc),
+        closed_at=datetime.now(UTC),
         team_id="team-b",
         user_id="user-b",
         conversation_id="user-b",
@@ -172,7 +170,7 @@ def test_memory_tool_denies_cross_scope_session():
 def test_agent_runtime_invokes_local_memory_tool():
     Session = init_assistant_db("sqlite://")
     db = Session()
-    session_row = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    session_row = _session_row(status="closed", closed_at=datetime.now(UTC))
     db.add(session_row)
     db.add(_msg(session_row.id, "user", "runtime memory query violet", offset=1))
     db.add(_msg(session_row.id, "assistant", "violet ok", kind="final", offset=2))
@@ -208,6 +206,7 @@ def test_agent_runtime_invokes_local_memory_tool():
         },
         {"content": "found it", "tool_calls": [], "raw_assistant_message": {}},
     ]
+
     # FakeLlm uses script list — adapt
     class ScriptLlm(FakeLlm):
         def __init__(self):
@@ -244,7 +243,7 @@ def test_agent_runtime_invokes_local_memory_tool():
 def test_orchestrator_injects_recall_into_system_prompt(monkeypatch):
     Session = init_assistant_db("sqlite://")
     db = Session()
-    closed = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    closed = _session_row(status="closed", closed_at=datetime.now(UTC))
     open_row = _session_row()
     for row, keyword in ((closed, "injection-signal"), (open_row, "current-turn")):
         db.add(row)

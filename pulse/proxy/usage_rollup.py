@@ -80,9 +80,7 @@ def rollup_proxy_usages(
         if bucket_key not in by_account_map:
             by_account_map[bucket_key] = {
                 "account_id": account_id,
-                "account_identifier": (
-                    acct.account_identifier if acct else _UNKNOWN_ACCOUNT_LABEL
-                ),
+                "account_identifier": (acct.account_identifier if acct else _UNKNOWN_ACCOUNT_LABEL),
                 "primary_member_name": primary_name(acct),
                 "plan_name": plans.get(acct.plan_id) if acct else None,
                 "request_count": 0,
@@ -152,9 +150,7 @@ def _resolve_usage_accounts(
     cred_ids = {u.credential_id for u in rows if u.credential_id}
     cred_to_account: dict[str, str] = {}
     if cred_ids:
-        for cred in session.execute(
-            select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))
-        ).scalars():
+        for cred in session.execute(select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))).scalars():
             cred_to_account[cred.id] = cred.account_id
 
     account_ids = set(cred_to_account.values())
@@ -164,9 +160,7 @@ def _resolve_usage_accounts(
     if not account_ids:
         return cred_to_account, accounts, plans, members
 
-    for acct in session.execute(
-        select(AiAccount).where(AiAccount.id.in_(account_ids))
-    ).scalars():
+    for acct in session.execute(select(AiAccount).where(AiAccount.id.in_(account_ids))).scalars():
         accounts[acct.id] = acct
     plan_ids = {a.plan_id for a in accounts.values()}
     if plan_ids:

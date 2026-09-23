@@ -99,9 +99,7 @@ def test_dispatch_text_command_is_channel_neutral_for_feishu():
             config=_config(),
             session_factory=lambda: session,
             messenger=MagicMock(),
-            inbound=_inbound(
-                "额度", channel="feishu", channel_user_id="ou_feishu_user_1"
-            ),
+            inbound=_inbound("额度", channel="feishu", channel_user_id="ou_feishu_user_1"),
         )
         assert reply == "尚未绑定 Cursor 账号"
     finally:

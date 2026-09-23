@@ -13,9 +13,7 @@ def test_migrate_creates_archive_fts5_table_with_trigram():
     assert "ap_archive_chunks_fts" in tables
 
     with engine.begin() as conn:
-        ddl = conn.execute(
-            text("SELECT sql FROM sqlite_master WHERE name = 'ap_archive_chunks_fts'")
-        ).scalar_one()
+        ddl = conn.execute(text("SELECT sql FROM sqlite_master WHERE name = 'ap_archive_chunks_fts'")).scalar_one()
         assert "trigram" in ddl
 
         conn.execute(
@@ -26,10 +24,7 @@ def test_migrate_creates_archive_fts5_table_with_trigram():
             )
         )
         rows = conn.execute(
-            text(
-                "SELECT chunk_id FROM ap_archive_chunks_fts "
-                "WHERE ap_archive_chunks_fts MATCH 'archive'"
-            )
+            text("SELECT chunk_id FROM ap_archive_chunks_fts WHERE ap_archive_chunks_fts MATCH 'archive'")
         ).all()
     assert [r.chunk_id for r in rows] == ["c1"]
 
@@ -62,9 +57,7 @@ def test_migrate_rebuilds_legacy_unicode61_fts():
     migrate_assistant_schema(engine)
 
     with engine.begin() as conn:
-        ddl = conn.execute(
-            text("SELECT sql FROM sqlite_master WHERE name = 'ap_archive_chunks_fts'")
-        ).scalar_one()
+        ddl = conn.execute(text("SELECT sql FROM sqlite_master WHERE name = 'ap_archive_chunks_fts'")).scalar_one()
         assert "trigram" in ddl
         assert "unicode61" not in ddl
         rows = conn.execute(
@@ -86,10 +79,7 @@ def test_migrate_trigram_supports_chinese_substring_match():
             )
         )
         rows = conn.execute(
-            text(
-                "SELECT chunk_id FROM ap_archive_chunks_fts "
-                "WHERE ap_archive_chunks_fts MATCH '苏州旅游'"
-            )
+            text("SELECT chunk_id FROM ap_archive_chunks_fts WHERE ap_archive_chunks_fts MATCH '苏州旅游'")
         ).all()
     assert [r.chunk_id for r in rows] == ["c-cn"]
 

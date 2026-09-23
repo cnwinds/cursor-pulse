@@ -10,9 +10,7 @@ from pulse.tool_center.snapshot_headroom import (
     snapshot_quota_ok_for_pool,
 )
 
-_FIXTURE = (
-    Path(__file__).resolve().parent / "fixtures" / "quota_pool_snapshot_contract.json"
-)
+_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "quota_pool_snapshot_contract.json"
 
 
 def test_quota_pool_snapshot_contract_matches_fixture():
@@ -21,10 +19,6 @@ def test_quota_pool_snapshot_contract_matches_fixture():
     for case in cases:
         auto = case["auto_pct"]
         api = case["api_pct"]
-        assert snapshot_has_any_pool_headroom(auto_pct=auto, api_pct=api) is case[
-            "intake_ok"
-        ], case["name"]
+        assert snapshot_has_any_pool_headroom(auto_pct=auto, api_pct=api) is case["intake_ok"], case["name"]
         for pool, expected in case["snapshot_ok"].items():
-            assert (
-                snapshot_quota_ok_for_pool(pool, auto_pct=auto, api_pct=api) is expected
-            ), f"{case['name']}/{pool}"
+            assert snapshot_quota_ok_for_pool(pool, auto_pct=auto, api_pct=api) is expected, f"{case['name']}/{pool}"

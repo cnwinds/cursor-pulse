@@ -1,24 +1,21 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
+from pulse.proxy import service
+from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
+from pulse.storage.models import Base, ProxyEvent, ProxyKey, ProxyKeyUsage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from pulse.proxy import service
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
-from pulse.storage.models import Base, ProxyEvent, ProxyKey, ProxyKeyUsage
-
-NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture
 def session():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     sf = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     s = sf()
@@ -108,16 +105,8 @@ def test_authorize_suspended(session):
 def test_authorize_window_5h_cost_limited(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=1000)
-    session.add(
-        ProxyKeyUsage(
-            proxy_key_id=key.id, total_tokens=1, cost_cents=600, ts=NOW - timedelta(hours=1)
-        )
-    )
-    session.add(
-        ProxyKeyUsage(
-            proxy_key_id=key.id, total_tokens=1, cost_cents=500, ts=NOW - timedelta(hours=2)
-        )
-    )
+    session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=600, ts=NOW - timedelta(hours=1)))
+    session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=500, ts=NOW - timedelta(hours=2)))
     session.flush()
     result = service.authorize_status(session, plaintext, now=NOW)
     assert result["status"] == "window_limited"
@@ -161,11 +150,7 @@ def test_window_cost_ignores_old_usage(session):
 def test_window_5h_cost_boundary_exact(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=100)
-    session.add(
-        ProxyKeyUsage(
-            proxy_key_id=key.id, total_tokens=1, cost_cents=100, ts=NOW - timedelta(hours=1)
-        )
-    )
+    session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=100, ts=NOW - timedelta(hours=1)))
     session.flush()
     assert service.authorize_status(session, plaintext, now=NOW)["status"] == "window_limited"
 
@@ -173,11 +158,7 @@ def test_window_5h_cost_boundary_exact(session):
 def test_window_includes_exact_5h_boundary(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=10000)
-    session.add(
-        ProxyKeyUsage(
-            proxy_key_id=key.id, total_tokens=1, cost_cents=10, ts=NOW - timedelta(hours=5)
-        )
-    )
+    session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=10, ts=NOW - timedelta(hours=5)))
     session.flush()
     assert service.window_usage_cost(session, key.id, window=service.WINDOW_5H, now=NOW) == 10
 
@@ -197,8 +178,7 @@ def test_record_usage_computes_total_and_cost(session):
     key = _add_key(session, plaintext)
     result = service.record_usages(
         session,
-        [_usage_item(key, {"input": 1_000_000, "output": 100_000, "cache_read": 0,
-                           "cache_write": 0, "reasoning": 0})],
+        [_usage_item(key, {"input": 1_000_000, "output": 100_000, "cache_read": 0, "cache_write": 0, "reasoning": 0})],
         now=NOW,
     )
     assert result["recorded"] == 1
@@ -209,7 +189,7 @@ def test_record_usage_computes_total_and_cost(session):
     ts = usage.ts
     if ts.tzinfo is None:
         # SQLite 不保留 tzinfo，按 authorize_status 的约定 naive → UTC 归一化后比较
-        ts = ts.replace(tzinfo=timezone.utc)
+        ts = ts.replace(tzinfo=UTC)
     assert ts == NOW
 
 
@@ -340,18 +320,14 @@ def test_reprice_proxy_usages_fixes_historical_double_count(session):
 
 
 def test_record_usage_unknown_key_skipped(session):
-    result = service.record_usages(
-        session, [{"proxy_key_id": "missing", "tokens": {"input": 1}}], now=NOW
-    )
+    result = service.record_usages(session, [{"proxy_key_id": "missing", "tokens": {"input": 1}}], now=NOW)
     assert result == {"recorded": 0, "suspended": []}
 
 
 def test_window_overage_does_not_suspend(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=1)
-    result = service.record_usages(
-        session, [_usage_item(key, {"input": 1_000_000})], now=NOW
-    )
+    result = service.record_usages(session, [_usage_item(key, {"input": 1_000_000})], now=NOW)
     assert result["suspended"] == []
     session.refresh(key)
     assert key.status == "active"
@@ -361,9 +337,7 @@ def test_window_overage_does_not_suspend(session):
 def test_empty_windows_never_suspend(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota")
-    result = service.record_usages(
-        session, [_usage_item(key, {"input": 10_000_000})], now=NOW
-    )
+    result = service.record_usages(session, [_usage_item(key, {"input": 10_000_000})], now=NOW)
     assert result["suspended"] == []
     session.refresh(key)
     assert key.status == "active"
@@ -379,9 +353,7 @@ def test_resume_suspended_key(session):
 
 
 def test_record_event(session):
-    service.record_event(
-        session, event_type="rotation", credential_id="c1", detail="rate_limit"
-    )
+    service.record_event(session, event_type="rotation", credential_id="c1", detail="rate_limit")
     session.flush()
     event = session.query(ProxyEvent).one()
     assert event.event_type == "rotation"

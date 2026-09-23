@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from pulse.config import AppConfig, CursorSyncConfig
+from pulse.config import AppConfig
 from pulse.ingestion.sync_errors import FatalSyncError, RetryableSyncError
 from pulse.periods import report_period_for_config
 from pulse.storage.models import AiAccountCredential
-from sqlalchemy.orm import Session
 
 
 def account_jitter_sec(account_id: str, *, max_sec: int = 3600) -> int:
@@ -20,8 +20,8 @@ def account_jitter_sec(account_id: str, *, max_sec: int = 3600) -> int:
 
 def _utc_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def backoff_seconds(retry_count: int, *, cap: int = 3600) -> int:
@@ -31,7 +31,7 @@ def backoff_seconds(retry_count: int, *, cap: int = 3600) -> int:
 
 
 def init_schedule_on_bind(cred: AiAccountCredential, *, now: datetime | None = None) -> None:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cred.sync_jitter_sec = account_jitter_sec(cred.account_id)
     cred.next_sync_at = now + timedelta(seconds=cred.sync_jitter_sec)
     cred.next_retry_at = None
@@ -45,7 +45,7 @@ def apply_sync_success(
     *,
     now: datetime | None = None,
 ) -> None:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cred.retry_count = 0
     cred.next_retry_at = None
     if cred.sync_priority == "pre_publish":
@@ -61,7 +61,7 @@ def apply_sync_failure(
     *,
     now: datetime | None = None,
 ) -> None:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     classified = exc if isinstance(exc, (RetryableSyncError, FatalSyncError)) else None
     if classified is None:
         from pulse.ingestion.sync_errors import classify_sync_error
@@ -82,7 +82,7 @@ def apply_sync_failure(
 
 
 def elevate_pre_publish(creds: list[AiAccountCredential], *, now: datetime | None = None) -> None:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     for cred in creds:
         cred.sync_priority = "pre_publish"
         cred.next_sync_at = now
@@ -94,7 +94,7 @@ def elevate_month_close_if_needed(
     *,
     now: datetime | None = None,
 ) -> None:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if cred.sync_priority == "pre_publish":
         return
     if not _in_month_close_window(config, now):
@@ -163,7 +163,7 @@ def is_due_for_sync(cred: AiAccountCredential, now: datetime) -> bool:
 
 def accelerate_sync_schedules(session: Session, config: AppConfig, *, now: datetime | None = None) -> int:
     """Pull forward next_sync_at after admin shortens sync interval."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     creds = session.scalars(
         select(AiAccountCredential).where(
             AiAccountCredential.status == "active",

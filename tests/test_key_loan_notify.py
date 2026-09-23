@@ -37,8 +37,8 @@ def test_format_borrower_issued_includes_every_configured_proxy_address():
     bash_idx = text.index("本机代理 · Linux / macOS")
     inner_ps = text.index("内网代理 · Windows PowerShell")
     assert ps_idx < bash_idx < inner_ps
-    assert 'set HTTPS_PROXY=http://127.0.0.1:8317&&' in text
-    assert 'set HTTPS_PROXY=http://192.168.11.39:8317&&' in text
+    assert "set HTTPS_PROXY=http://127.0.0.1:8317&&" in text
+    assert "set HTTPS_PROXY=http://192.168.11.39:8317&&" in text
     assert 'HTTPS_PROXY="http://127.0.0.1:8317"' in text
     assert 'HTTPS_PROXY="http://192.168.11.39:8317"' in text
     assert "【Windows PowerShell】" not in text
@@ -85,10 +85,7 @@ def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
     assert "abcdef12" in text
     assert "http://proxy.example:8317 · Windows PowerShell" in text
     assert "http://proxy.example:8317 · Linux / macOS" in text
-    assert (
-        'cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& '
-        'set CURSOR_API_KEY=pka_testkey&& agent -k"'
-    ) in text
+    assert ('cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& set CURSOR_API_KEY=pka_testkey&& agent -k"') in text
     assert 'HTTPS_PROXY="http://proxy.example:8317" CURSOR_API_KEY="pka_testkey" agent -k' in text
     assert "export " not in text
     assert "$env:" not in text
@@ -142,9 +139,7 @@ def test_notify_loan_issued_sends_borrower_and_admin(monkeypatch):
 
     with patch(
         "pulse.identity.service.external_id_for",
-        side_effect=lambda _s, member, channel: (
-            "dt-borrower" if channel == "dingtalk" and member is borrower else None
-        ),
+        side_effect=lambda _s, member, channel: "dt-borrower" if channel == "dingtalk" and member is borrower else None,
     ):
         notify.notify_loan_issued(
             session,
@@ -164,12 +159,8 @@ def test_notify_loan_issued_sends_borrower_and_admin(monkeypatch):
     assert messenger.send_oto_text.call_count == 2
     recipients = {c.args[0] for c in messenger.send_oto_text.call_args_list}
     assert recipients == {"dt-borrower", "dt-admin"}
-    borrower_msg = next(
-        c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-borrower"
-    )
-    admin_msg = next(
-        c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-admin"
-    )
+    borrower_msg = next(c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-borrower")
+    admin_msg = next(c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-admin")
     assert "pka_abc" in borrower_msg
     assert "PowerShell" in borrower_msg
     assert "借出人" not in borrower_msg

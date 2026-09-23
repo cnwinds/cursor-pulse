@@ -18,9 +18,7 @@ def test_concurrent_claim_only_one_worker_gets_job():
     engine = make_engine(f"sqlite:///{db_path.as_posix()}")
     try:
         Base.metadata.create_all(engine)
-        Session = sessionmaker(
-            bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-        )
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
         setup = Session()
         repo = AssistantRepository(setup)
         repo.add_job(
@@ -147,15 +145,11 @@ def test_claim_respects_allowed_job_types():
 
     from assistant_platform.jobs.claim import BACKGROUND_JOB_TYPES, INTERACTIVE_JOB_TYPES
 
-    bg = claim_next_job(
-        db, blocked_session_ids=set(), allowed_job_types=BACKGROUND_JOB_TYPES
-    )
+    bg = claim_next_job(db, blocked_session_ids=set(), allowed_job_types=BACKGROUND_JOB_TYPES)
     assert bg is not None
     assert bg.job_type == "session.close"
 
-    interactive = claim_next_job(
-        db, blocked_session_ids=set(), allowed_job_types=INTERACTIVE_JOB_TYPES
-    )
+    interactive = claim_next_job(db, blocked_session_ids=set(), allowed_job_types=INTERACTIVE_JOB_TYPES)
     assert interactive is not None
     assert interactive.job_type == "session.process"
 

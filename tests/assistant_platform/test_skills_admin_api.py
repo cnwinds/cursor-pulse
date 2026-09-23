@@ -60,9 +60,7 @@ def test_skills_list_endpoint_returns_all_skills_and_docs(client: TestClient):
 def test_app_starts_when_doc_frontmatter_invalid(tmp_path, monkeypatch):
     bad_root = tmp_path / "skills"
     (bad_root / "docs").mkdir(parents=True)
-    (bad_root / "docs" / "broken.md").write_text(
-        "---\nnot: valid: yaml: [\n---\n# Broken\n", encoding="utf-8"
-    )
+    (bad_root / "docs" / "broken.md").write_text("---\nnot: valid: yaml: [\n---\n# Broken\n", encoding="utf-8")
 
     original_init = SkillRegistry.__init__
 
@@ -82,9 +80,7 @@ def test_app_starts_when_doc_frontmatter_invalid(tmp_path, monkeypatch):
 
 
 def test_skill_detail_and_help_topics_endpoints(client: TestClient):
-    detail_response = client.get(
-        "/api/assistant/v1/skills/cursor.self/overview", headers=_headers()
-    )
+    detail_response = client.get("/api/assistant/v1/skills/cursor.self/overview", headers=_headers())
     topics_response = client.get("/api/assistant/v1/skills/help-topics", headers=_headers())
 
     assert detail_response.status_code == 200
@@ -97,7 +93,5 @@ def test_skill_detail_and_help_topics_endpoints(client: TestClient):
 
 
 def test_skill_detail_endpoint_404_for_unknown_skill(client: TestClient):
-    response = client.get(
-        "/api/assistant/v1/skills/does-not-exist/overview", headers=_headers()
-    )
+    response = client.get("/api/assistant/v1/skills/does-not-exist/overview", headers=_headers())
     assert response.status_code == 404

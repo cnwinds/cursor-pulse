@@ -29,16 +29,12 @@ def test_skill_actor_admin():
 def test_list_cards_filters_admin_skill_files():
     reg = SkillRegistry(root=Path("assistant_platform/skills"))
     member = SkillActorContext("m1", "member", frozenset({"quota.self.read"}))
-    admin = SkillActorContext(
-        "m1", "owner", frozenset({"members.manage", "quota.self.read"})
-    )
+    admin = SkillActorContext("m1", "owner", frozenset({"members.manage", "quota.self.read"}))
     member_ids = {c.skill_id for c in reg.list_cards(member)}
     admin_ids = {c.skill_id for c in reg.list_cards(admin)}
     assert "team.admin/overview" not in member_ids
     assert "team.admin/tasks/aggregate" not in member_ids
-    assert "team.admin/overview" in admin_ids or any(
-        i.startswith("team.admin/") for i in admin_ids
-    )
+    assert "team.admin/overview" in admin_ids or any(i.startswith("team.admin/") for i in admin_ids)
     assert "cursor.self/tasks/quota" in member_ids or "cursor.self/overview" in member_ids
 
 

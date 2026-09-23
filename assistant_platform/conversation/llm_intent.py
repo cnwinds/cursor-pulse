@@ -50,9 +50,7 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
 def _catalog_lines(caps: list[ResolvedCapability]) -> str:
     lines = []
     for cap in caps:
-        lines.append(
-            f"- {cap.key} ({cap.risk_level}): {cap.display_name} — {cap.description}"
-        )
+        lines.append(f"- {cap.key} ({cap.risk_level}): {cap.display_name} — {cap.description}")
     return "\n".join(lines)
 
 

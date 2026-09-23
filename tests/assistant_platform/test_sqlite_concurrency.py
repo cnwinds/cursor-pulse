@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError, PendingRollbackError
 from sqlalchemy.orm import Session
+
+# Reuse archive pipeline fixtures helpers
+from tests.assistant_platform.test_archive_pipeline import TEAM_ID, _closed_session, _config
 
 from assistant_platform.config import AssistantLlmConfig
 from assistant_platform.conversation.agent_trace import persist_agent_trace_event
@@ -18,9 +22,6 @@ from assistant_platform.memory.archive_indexer import index_archived_session
 from assistant_platform.memory.archive_pipeline import run_archive_pipeline
 from assistant_platform.storage.db import init_assistant_db, make_engine
 from assistant_platform.storage.repository import AssistantRepository
-
-# Reuse archive pipeline fixtures helpers
-from tests.assistant_platform.test_archive_pipeline import TEAM_ID, _closed_session, _config
 
 
 def test_busy_timeout_is_at_least_30s():
@@ -125,7 +126,7 @@ def test_recover_stale_processing_jobs_at_90s():
         payload={"session_id": "s1", "message_id": "m1"},
     )
     job.status = "processing"
-    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=91)
+    job.updated_at = datetime.now(UTC) - timedelta(seconds=91)
     db.commit()
 
     assert recover_stale_processing_jobs(db, timeout_seconds=90) == 1
@@ -212,9 +213,7 @@ def test_index_embeds_before_write_burst(monkeypatch):
     from assistant_platform.memory.archive_pipeline import run_archive_pipeline_stage
     from assistant_platform.memory.contracts import ArchivePipelineStage
 
-    run_archive_pipeline_stage(
-        db, config=config, session_row=session_row, stage=ArchivePipelineStage.ARCHIVE
-    )
+    run_archive_pipeline_stage(db, config=config, session_row=session_row, stage=ArchivePipelineStage.ARCHIVE)
     db.commit()
 
     embedder = _CountingEmbedder()

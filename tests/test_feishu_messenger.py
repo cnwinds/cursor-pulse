@@ -4,7 +4,6 @@ import json
 
 import httpx
 import pytest
-
 from pulse.channels.feishu.messenger import FEISHU_OPEN_API, FeishuMessenger
 from pulse.config import AppConfig, FeishuConfig
 
@@ -54,9 +53,7 @@ def test_send_oto_text_posts_message_with_open_id():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/tenant_access_token/internal"):
-            return httpx.Response(
-                200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200}
-            )
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200})
         seen["url"] = str(request.url)
         seen["headers"] = dict(request.headers)
         seen["body"] = json.loads(request.content)
@@ -78,9 +75,7 @@ def test_send_group_text_uses_configured_chat_id():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/tenant_access_token/internal"):
-            return httpx.Response(
-                200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200}
-            )
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200})
         seen["url"] = str(request.url)
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"code": 0, "msg": "success", "data": {}})
@@ -106,9 +101,7 @@ def test_send_group_text_requires_configured_chat_id():
 def test_send_message_raises_on_error_code():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/tenant_access_token/internal"):
-            return httpx.Response(
-                200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200}
-            )
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200})
         return httpx.Response(200, json={"code": 12345, "msg": "receiver not found"})
 
     messenger = _messenger(handler)
@@ -121,9 +114,7 @@ def test_send_text_to_chat_uses_chat_id_receive_type():
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/tenant_access_token/internal"):
-            return httpx.Response(
-                200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200}
-            )
+            return httpx.Response(200, json={"code": 0, "tenant_access_token": "t-xyz", "expire": 7200})
         seen["url"] = str(request.url)
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"code": 0, "msg": "success", "data": {}})

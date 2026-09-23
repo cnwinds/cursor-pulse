@@ -5,14 +5,14 @@ from datetime import date
 from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
-from pulse.settings.team_store import effective_loan_selection
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
+from pulse.settings.team_store import effective_loan_selection
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
@@ -21,13 +21,12 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
+from pulse.tool_center.auto_lender import rank_lenders
 from pulse.tool_center.burn_rate import (
     analyze_burn_rate,
     display_api_remaining_cents,
     display_remaining_cents,
 )
-from pulse.tool_center.auto_lender import rank_lenders
-from pulse.tool_center.key_loan_lender import active_loan_counts_by_account, select_team_loans
 from pulse.tool_center.key_loan_auto import (
     record_auto_lender_decision,
     resolve_auto_lender,
@@ -37,7 +36,7 @@ from pulse.tool_center.key_loan_delivery import (
     LENDER_MODE_MANUAL,
     ROUTING_POOL,
 )
-from pulse.tool_center.quota_pool import quota_pool_for_model
+from pulse.tool_center.key_loan_lender import active_loan_counts_by_account, select_team_loans
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
@@ -52,6 +51,7 @@ from pulse.tool_center.key_loans import (
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
+from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.sync_health import (
@@ -172,9 +172,7 @@ def _board_item(
             "api_limit_usd": analysis.api_limit_usd,
             "quota_progress": analysis.quota_progress,
             "projected_exhaustion_date": (
-                analysis.projected_exhaustion_date.isoformat()
-                if analysis.projected_exhaustion_date
-                else None
+                analysis.projected_exhaustion_date.isoformat() if analysis.projected_exhaustion_date else None
             ),
             "exhausts_before_reset": analysis.exhausts_before_reset,
             "days_until_reset": analysis.days_until_reset,
@@ -212,9 +210,7 @@ def build_quota_board_items(
     member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
     if member_ids:
-        members = session.scalars(
-            select(Member).where(Member.id.in_(member_ids))
-        ).all()
+        members = session.scalars(select(Member).where(Member.id.in_(member_ids))).all()
         member_names = {m.id: m.display_name for m in members}
     loan_counts = active_loan_counts_by_account(session, team_id)
     creds = primary_credentials_by_account(session, [account.id for account in accounts])
@@ -256,9 +252,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        return build_quota_board_items(
-            session, team.id, include_usage_summaries=include_summaries
-        )
+        return build_quota_board_items(session, team.id, include_usage_summaries=include_summaries)
 
     @app.get(
         "/api/v2/quota-board/recommend",
@@ -303,9 +297,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
 
         total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
         active_count = count_active_loans(session, team.id)
-        loans = session.scalars(
-            base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
-        ).all()
+        loans = session.scalars(base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)).all()
         return {
             "items": loan_payloads(list(loans), session),
             "total": total,
@@ -331,12 +323,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             KeyLoan.borrower_member_id == user.member.id,
             KeyLoan.status == "active",
         )
-        active_count = (
-            session.scalar(select(func.count()).select_from(mine_active.subquery())) or 0
-        )
-        loans = session.scalars(
-            base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
-        ).all()
+        active_count = session.scalar(select(func.count()).select_from(mine_active.subquery())) or 0
+        loans = session.scalars(base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)).all()
         return {
             "items": loan_payloads(list(loans), session),
             "total": total,
@@ -476,11 +464,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 member_id=user.member.id,
                 action="quota.loan_key",
                 capability="accounts:write",
-                detail=(
-                    f"{account_id}->{borrower.display_name}"
-                    if not is_auto
-                    else f"pool->{borrower.display_name}"
-                ),
+                detail=(f"{account_id}->{borrower.display_name}" if not is_auto else f"pool->{borrower.display_name}"),
             )
             session.commit()
             try:
@@ -515,9 +499,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         payload = loan_payload(loan, session)
         rows = (
             session.execute(
-                select(ProxyKeyUsage)
-                .where(ProxyKeyUsage.loan_id == loan_id)
-                .order_by(ProxyKeyUsage.ts.desc())
+                select(ProxyKeyUsage).where(ProxyKeyUsage.loan_id == loan_id).order_by(ProxyKeyUsage.ts.desc())
             )
             .scalars()
             .all()
@@ -565,12 +547,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
-        commands = proxy_service.build_client_setup_commands(
-            plaintext_key=plaintext, addresses=addresses
-        )
-        chosen = proxy_service.pick_client_setup_command(
-            commands, shell=shell, proxy_url=proxy_url
-        )
+        commands = proxy_service.build_client_setup_commands(plaintext_key=plaintext, addresses=addresses)
+        chosen = proxy_service.pick_client_setup_command(commands, shell=shell, proxy_url=proxy_url)
         return {
             "plaintext_key": plaintext,
             "delivery_mode": getattr(loan, "delivery_mode", None) or "cursor_direct",

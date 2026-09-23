@@ -32,12 +32,7 @@ def build_archive_embedder(
     falls back to ``HashingEmbedder`` (transitional default for local/dev).
     """
     model_name = (embedding.model or "").strip() or _HASHING_MODEL
-    if (
-        embedding.enabled
-        and llm_enabled
-        and llm_api_key.strip()
-        and model_name != _HASHING_MODEL
-    ):
+    if embedding.enabled and llm_enabled and llm_api_key.strip() and model_name != _HASHING_MODEL:
         try:
             client = OpenAIEmbeddingClient(
                 api_key=llm_api_key.strip(),

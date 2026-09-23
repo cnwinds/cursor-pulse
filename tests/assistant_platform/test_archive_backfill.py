@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select
 
@@ -16,7 +16,7 @@ from assistant_platform.storage.db import init_assistant_db
 
 
 def _closed_session_with_messages(db, *, text: str = "legacy topic alpha") -> ChatSessionRow:
-    now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 1, tzinfo=UTC)
     row = ChatSessionRow(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -66,8 +66,8 @@ def test_find_backfill_candidates_closed_sessions_with_ledger():
         conversation_id="u2",
         user_id="u2",
         status="open",
-        opened_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
-        last_activity_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        opened_at=datetime(2026, 7, 1, tzinfo=UTC),
+        last_activity_at=datetime(2026, 7, 1, tzinfo=UTC),
     )
     db.add(open_row)
     db.add(
@@ -134,8 +134,7 @@ def test_backfill_rebuilds_when_index_version_changes():
     assert archive is not None
     assert archive.index_version == 1
     old_chunk_ids = {
-        c.id
-        for c in db.scalars(select(ArchiveChunkRow).where(ArchiveChunkRow.session_id == row.id)).all()
+        c.id for c in db.scalars(select(ArchiveChunkRow).where(ArchiveChunkRow.session_id == row.id)).all()
     }
 
     summary = run_archive_backfill(db, index_version=2, batch_size=10, force_reindex=True)

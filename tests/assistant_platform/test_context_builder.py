@@ -2,23 +2,23 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import patch
 
 from assistant_platform.config import AssistantChatMemoryConfig, MemoryFeatureFlags, MemoryRecallBudgetConfig
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.memory.archive_indexer import archive_and_index_session, estimate_tokens
-from assistant_platform.memory.context_builder import build_recall_bundle, format_recall_block
 from assistant_platform.memory.archive_search import resolve_search_scope
-from assistant_platform.profiles.models import ProfileSignalRow
-from assistant_platform.storage.db import init_assistant_db
+from assistant_platform.memory.context_builder import build_recall_bundle, format_recall_block
 from assistant_platform.memory.semantic.domain import AtomKind, SourceVisibility, VisibilityContext
 from assistant_platform.memory.semantic.models import SemanticAtomRow
 from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
+from assistant_platform.profiles.models import ProfileSignalRow
+from assistant_platform.storage.db import init_assistant_db
 
 
 def _session_row(**overrides) -> ChatSessionRow:
-    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, tzinfo=UTC)
     data = dict(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -39,7 +39,7 @@ def _session_row(**overrides) -> ChatSessionRow:
 def _msg(session_id: str, role: str, text: str, *, kind: str | None = None, offset: int = 0) -> ChatMessageRow:
     from datetime import timedelta
 
-    base = datetime(2026, 7, 1, tzinfo=timezone.utc) + timedelta(seconds=offset)
+    base = datetime(2026, 7, 1, tzinfo=UTC) + timedelta(seconds=offset)
     return ChatMessageRow(
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -146,7 +146,7 @@ def test_build_recall_bundle_includes_facts_and_profile():
     archive_and_index_session(db, session_row, index_version=1)
     db.commit()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     db.add(
         SemanticAtomRow(
             id=str(uuid.uuid4()),

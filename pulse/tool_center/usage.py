@@ -158,19 +158,13 @@ def build_account_usage_summary(
     else:
         return build_usage_summary(plan=plan, records=records)
 
-    cycle_records = [
-        r
-        for r in records
-        if r.event_date is not None and cycle_start <= r.event_date < cycle_end
-    ]
+    cycle_records = [r for r in records if r.event_date is not None and cycle_start <= r.event_date < cycle_end]
 
     resolver = plan_at_date or (lambda _d: plan)
     cycle_plan = resolver(cycle_start) or plan
     cycle_summary = build_usage_summary(plan=cycle_plan, records=cycle_records)
 
-    denominator = (
-        float(cycle_plan.quota_denominator) if cycle_plan.quota_denominator is not None else None
-    )
+    denominator = float(cycle_plan.quota_denominator) if cycle_plan.quota_denominator is not None else None
     result = {key: cycle_summary[key] for key in _CYCLE_DISPLAY_KEYS if key in cycle_summary}
     result["billing_cycle_start"] = cycle_start
     result["billing_cycle_end"] = cycle_end

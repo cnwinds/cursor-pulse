@@ -41,9 +41,7 @@ def reprice_ingestion(session: Session, ingestion_id: str, *, team_id: str) -> d
     if not ing or ing.status != "confirmed":
         return None
 
-    records = list(
-        session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id == ingestion_id))
-    )
+    records = list(session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id == ingestion_id)))
     if not records:
         return None
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from pulse.util.timezone_ctx import DEFAULT_DISPLAY_TIMEZONE
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Depends, FastAPI
+from pulse.util.datetime_fmt import serialize_datetime
+from pulse.util.timezone_ctx import DEFAULT_DISPLAY_TIMEZONE, set_default_display_timezone
+from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -20,9 +22,6 @@ from assistant_platform.api.skills_admin import register_skills_admin_routes
 from assistant_platform.config import AssistantConfig
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.ingest.service import EventIngestService
-from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
-from pulse.util.timezone_ctx import set_default_display_timezone
-from pulse.util.datetime_fmt import serialize_datetime
 
 
 class IncomingEventBody(BaseModel):
@@ -88,7 +87,7 @@ def create_assistant_app(config: AssistantConfig, session_factory: sessionmaker[
         return {
             "status": "ok",
             "service": "assistant_platform",
-            "time": serialize_datetime(datetime.now(timezone.utc)),
+            "time": serialize_datetime(datetime.now(UTC)),
         }
 
     @app.post("/api/assistant/v1/events/messages", dependencies=[Depends(require_service_token)])

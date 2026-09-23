@@ -1,7 +1,6 @@
 import logging
 
 import pytest
-
 from pulse.config import AppConfig, WebConfig
 from pulse.storage.models import Member
 from pulse.web import auth_tokens as auth_tokens_module
@@ -66,10 +65,6 @@ def test_refresh_token_hash_is_stable():
 
 
 def test_issue_and_rotate_refresh_token(member):
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
     from pulse.storage.models import Base, PortalRefreshToken, Team
     from pulse.web.auth_tokens import (
         RefreshTokenError,
@@ -77,6 +72,9 @@ def test_issue_and_rotate_refresh_token(member):
         issue_token_pair,
         rotate_refresh_token,
     )
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
 
     engine = create_engine(
         "sqlite://",
@@ -103,9 +101,7 @@ def test_issue_and_rotate_refresh_token(member):
     session.commit()
     assert rotated["refresh_token"] != pair["refresh_token"]
     assert session.query(PortalRefreshToken).count() == 2
-    old = session.query(PortalRefreshToken).filter_by(
-        token_hash=hash_refresh_token(pair["refresh_token"])
-    ).one()
+    old = session.query(PortalRefreshToken).filter_by(token_hash=hash_refresh_token(pair["refresh_token"])).one()
     assert old.revoked_at is not None
     assert old.replaced_by_id is not None
 
@@ -113,11 +109,7 @@ def test_issue_and_rotate_refresh_token(member):
         rotate_refresh_token(session, config, pair["refresh_token"])
     session.commit()
     # Reuse must not revoke the winner's new session (multi-tab safe).
-    active = (
-        session.query(PortalRefreshToken)
-        .filter(PortalRefreshToken.revoked_at.is_(None))
-        .count()
-    )
+    active = session.query(PortalRefreshToken).filter(PortalRefreshToken.revoked_at.is_(None)).count()
     assert active == 1
     session.close()
 
@@ -188,12 +180,11 @@ def test_no_secret_raises(member, monkeypatch):
 
 def test_create_app_rejects_production_without_jwt_secret(monkeypatch):
     pytest.importorskip("fastapi")
+    from pulse.storage.models import Base
+    from pulse.web.app import create_app
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
-
-    from pulse.storage.models import Base
-    from pulse.web.app import create_app
 
     monkeypatch.setenv("PULSE_ENV", "production")
     config = AppConfig(web=WebConfig(admin_token="admin-only"))

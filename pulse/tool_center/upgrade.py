@@ -11,11 +11,7 @@ from pulse.tool_center.snapshot_headroom import api_quota_ratio_for_period
 
 def evaluate_account_upgrade(session: Session, account_id: str, period: str) -> bool:
     """连续 N 月额度使用率均达阈值时，首次标记 suggest_dedicated。"""
-    account = session.scalar(
-        select(AiAccount)
-        .options(joinedload(AiAccount.plan))
-        .where(AiAccount.id == account_id)
-    )
+    account = session.scalar(select(AiAccount).options(joinedload(AiAccount.plan)).where(AiAccount.id == account_id))
     if not account or not account.plan or not account.plan.quota_ratio_enabled:
         return False
     if account.suggest_dedicated:
@@ -72,9 +68,7 @@ def notify_upgrade_if_needed(
     if not triggered:
         return False
 
-    account = session.scalar(
-        select(AiAccount).options(joinedload(AiAccount.plan)).where(AiAccount.id == account_id)
-    )
+    account = session.scalar(select(AiAccount).options(joinedload(AiAccount.plan)).where(AiAccount.id == account_id))
     if not account:
         return False
 

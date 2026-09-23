@@ -176,9 +176,7 @@ def test_notify_loan_issued_records_ledger(monkeypatch):
 
     with patch(
         "pulse.identity.service.external_id_for",
-        side_effect=lambda _s, member, channel: (
-            "dt-borrower" if channel == "dingtalk" and member is borrower else None
-        ),
+        side_effect=lambda _s, member, channel: "dt-borrower" if channel == "dingtalk" and member is borrower else None,
     ):
         notify.notify_loan_issued(
             session,

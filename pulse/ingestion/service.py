@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import delete, select
@@ -49,29 +49,21 @@ class UsageIngestionService:
             metadata_json=metadata,
             raw_snapshot_path=str(context.raw_file_path) if context.raw_file_path else None,
             raw_text=context.raw_text,
-            confirmed_at=datetime.now(timezone.utc) if final_status == "confirmed" else None,
+            confirmed_at=datetime.now(UTC) if final_status == "confirmed" else None,
         )
         self.session.add(ingestion)
         self.session.flush()
 
         if final_status == "confirmed":
-            self._replace_account_period_records(
-                context.account_id, context.billing_period, ingestion.id
-            )
+            self._replace_account_period_records(context.account_id, context.billing_period, ingestion.id)
 
         member_id = self._resolve_member_id(context)
         pricing_table = get_cursor_pricing_table(session=self.session, team_id=self.team_id)
         for dto in events:
-            self.session.add(
-                self._to_usage_record(dto, ingestion.id, member_id, pricing_table=pricing_table)
-            )
+            self.session.add(self._to_usage_record(dto, ingestion.id, member_id, pricing_table=pricing_table))
 
         self.session.flush()
-        records = list(
-            self.session.scalars(
-                select(UsageRecord).where(UsageRecord.ingestion_id == ingestion.id)
-            )
-        )
+        records = list(self.session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id == ingestion.id)))
         if final_status == "confirmed":
             self._recompute_summary(context, ingestion, records)
             affected_dates = {dto.event_date for dto in events}
@@ -95,9 +87,7 @@ class UsageIngestionService:
             return context.triggered_by
         raise ValueError("member_id required for usage records")
 
-    def _replace_account_period_records(
-        self, account_id: str, period: str, current_ingestion_id: str
-    ) -> None:
+    def _replace_account_period_records(self, account_id: str, period: str, current_ingestion_id: str) -> None:
         old_ingestions = self.session.scalars(
             select(UsageIngestion).where(
                 UsageIngestion.account_id == account_id,
@@ -107,9 +97,7 @@ class UsageIngestionService:
             )
         ).all()
         for ing in old_ingestions:
-            self.session.execute(
-                delete(UsageRecord).where(UsageRecord.ingestion_id == ing.id)
-            )
+            self.session.execute(delete(UsageRecord).where(UsageRecord.ingestion_id == ing.id))
             self.session.delete(ing)
 
     def _recompute_summary(
@@ -145,7 +133,7 @@ class UsageIngestionService:
             cycle_bounds=cycle_bounds,
         )
         sync_source = "api" if context.source_type == "api_sync" else "manual"
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         submitted_by = context.member_id or self._resolve_member_id(context)
 
         existing = self.session.scalar(

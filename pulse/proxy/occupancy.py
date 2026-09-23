@@ -158,9 +158,7 @@ class OccupancyBook:
                     occupy(keep)
                 return SeatChoice(keep, [])
 
-            if current and accounts.get(current) and (
-                not full(accounts[current]) or holder_on(accounts[current])
-            ):
+            if current and accounts.get(current) and (not full(accounts[current]) or holder_on(accounts[current])):
                 occupy(current)
                 return SeatChoice(current, blocked_ids())
 
@@ -186,11 +184,7 @@ class OccupancyBook:
     def _expire_unlocked(self, now: float, ttl_seconds: float) -> None:
         if ttl_seconds <= 0:
             return
-        stale = [
-            key
-            for key, seat in self._seats.items()
-            if now - seat.seen_at >= ttl_seconds
-        ]
+        stale = [key for key, seat in self._seats.items() if now - seat.seen_at >= ttl_seconds]
         for key in stale:
             self._seats.pop(key, None)
 

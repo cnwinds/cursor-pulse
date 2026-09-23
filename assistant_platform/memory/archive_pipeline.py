@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from pulse.util.datetime_fmt import serialize_datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -15,23 +15,23 @@ from sqlalchemy.orm.attributes import flag_modified
 from assistant_platform.config import AssistantConfig, resolve_effective_chat_memory
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.memory.archive_indexer import archive_session_messages, index_archived_session
-from assistant_platform.memory.embedder import build_archive_embedder
 from assistant_platform.memory.archive_models import SessionArchiveRow
 from assistant_platform.memory.contracts import ArchivePipelineStage, ArchivePipelineStatus, ArchiveStageStatus
-from assistant_platform.memory.session_summary import generate_session_summary, load_session_summary
-from assistant_platform.profiles.compiler import compile_and_persist_effective_profile
-from assistant_platform.profiles.extractor import extract_profile_signals_from_session
+from assistant_platform.memory.embedder import build_archive_embedder
+from assistant_platform.memory.observability import log_archive_stage, safe_error_code
+from assistant_platform.memory.opt_out import is_memory_opted_out
 from assistant_platform.memory.semantic.domain import (
     Commitment,
-    Sensitivity,
     SemanticAtom,
+    Sensitivity,
     SourceVisibility,
     VisibilityContext,
     team_id_to_namespace,
 )
-from assistant_platform.memory.observability import log_archive_stage, safe_error_code
-from assistant_platform.memory.opt_out import is_memory_opted_out
 from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
+from assistant_platform.memory.session_summary import generate_session_summary, load_session_summary
+from assistant_platform.profiles.compiler import compile_and_persist_effective_profile
+from assistant_platform.profiles.extractor import extract_profile_signals_from_session
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ _STAGE_ORDER = (
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _stage_key(stage: ArchivePipelineStage) -> str:
@@ -170,9 +170,7 @@ def _distill_facts_from_summary(
 
     existing = repo.list_atoms(namespace, [user_id])
     existing_for_session = {
-        atom.content.strip().lower()
-        for atom in existing
-        if session_row.id in atom.evidence_session_ids
+        atom.content.strip().lower() for atom in existing if session_row.id in atom.evidence_session_ids
     }
 
     transcript_lines: list[str] = []
@@ -303,9 +301,7 @@ def _run_stage(
 
 
 def _load_archive(session: Session, session_id: str) -> SessionArchiveRow | None:
-    return session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-    )
+    return session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
 
 
 def run_archive_pipeline_stage(

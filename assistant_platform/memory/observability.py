@@ -7,7 +7,6 @@ search queries, API keys, or other secrets.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ def log_archive_stage(
     error_code: str | None = None,
 ) -> None:
     parts = [
-        f"event=archive_stage",
+        "event=archive_stage",
         f"session_id={session_id}",
         f"team_id={team_id}",
         f"stage={stage}",
@@ -88,7 +87,7 @@ def log_memory_tool(
     session_id: str | None = None,
 ) -> None:
     parts = [
-        f"event=memory_tool",
+        "event=memory_tool",
         f"tool={tool}",
         f"team_id={team_id}",
         f"subject_id={subject_id}",

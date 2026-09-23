@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from pydantic import ValidationError
 
 from pulse.config import AppConfig, LoanSelectionConfig, ProxyAddress
 from pulse.storage.models import TeamSetting
@@ -142,13 +141,11 @@ def patch_team_setting(
     if section not in EDITABLE_SECTIONS:
         raise ValueError(f"不可编辑的配置分区: {section}")
 
-    row = session.scalar(
-        select(TeamSetting).where(TeamSetting.team_id == team_id, TeamSetting.section == section)
-    )
+    row = session.scalar(select(TeamSetting).where(TeamSetting.team_id == team_id, TeamSetting.section == section))
     merged = patch if row is None else _deep_merge(row.data or {}, patch)
     if section == "tool_center":
         _validate_tool_center(merged)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if row is None:
         row = TeamSetting(team_id=team_id, section=section, data=merged, updated_at=now)
         session.add(row)

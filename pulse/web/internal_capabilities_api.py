@@ -4,18 +4,18 @@ import hmac
 from dataclasses import asdict
 from typing import Annotated, Any
 
+from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.invocation_store import (
     get_by_idempotency,
     get_by_invocation_id,
     result_from_dict,
     save_invocation,
 )
+from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.manifest import list_operations
 from pulse.capabilities.routing_metrics import snapshot as routing_metrics_snapshot
 from pulse.config import AppConfig

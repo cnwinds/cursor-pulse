@@ -1,5 +1,4 @@
 import pytest
-
 from pulse.pricing.cursor_tables import builtin_cursor_pricing_table, get_cursor_pricing_table
 from pulse.pricing.store import (
     load_team_cursor_pricing,
@@ -11,6 +10,7 @@ from pulse.pricing.store import (
 )
 from pulse.pricing.types import estimate_token_cost
 from pulse.storage.db import init_db
+
 from conftest import make_team
 
 

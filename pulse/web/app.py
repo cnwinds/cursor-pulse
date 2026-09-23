@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
-from pulse.util.datetime_fmt import serialize_datetime
-from datetime import datetime, timezone
-from typing import Annotated
-
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,38 +15,39 @@ from sqlalchemy.orm import Session, sessionmaker
 from pulse.config import AppConfig
 from pulse.storage.models import QueryLog
 from pulse.tenant.context import team_repository
+from pulse.util.datetime_fmt import serialize_datetime
+from pulse.util.timezone_ctx import (
+    configure_display_timezone_resolver,
+    set_default_display_timezone,
+)
+from pulse.web.accounts_api import register_accounts_v2_routes
+from pulse.web.assistant_capabilities_api import register_assistant_capabilities_routes
+from pulse.web.assistant_prompts_api import register_assistant_prompts_routes
+from pulse.web.assistant_sessions_api import register_assistant_sessions_routes
+from pulse.web.assistant_skills_api import register_assistant_skills_routes
 from pulse.web.audit import list_admin_audit_logs
-from pulse.web.deps import PortalUser, require_portal_user
-from pulse.web.permissions import has_permission
-from pulse.web.schemas import ChatBody
+from pulse.web.credentials_api import register_credentials_routes
 from pulse.web.dashboard_api import (
     build_dashboard_overview,
     build_integrations_status,
     build_schedule_plan,
 )
-from pulse.web.accounts_api import register_accounts_v2_routes
-from pulse.web.credentials_api import register_credentials_routes
+from pulse.web.deps import PortalUser, require_portal_user
 from pulse.web.ingestion_status_api import register_ingestion_status_routes
-from pulse.web.knowledge_api import register_knowledge_routes
-from pulse.web.assistant_capabilities_api import register_assistant_capabilities_routes
-from pulse.web.assistant_prompts_api import register_assistant_prompts_routes
-from pulse.web.assistant_sessions_api import register_assistant_sessions_routes
-from pulse.web.assistant_skills_api import register_assistant_skills_routes
 from pulse.web.internal_capabilities_api import register_internal_capabilities_routes
 from pulse.web.internal_channel_api import register_internal_channel_routes
 from pulse.web.internal_proxy_api import register_internal_proxy_routes
+from pulse.web.knowledge_api import register_knowledge_routes
+from pulse.web.permissions import has_permission
 from pulse.web.portal_auth_api import register_portal_auth_routes
 from pulse.web.portal_users_api import register_portal_users_routes
 from pulse.web.pricing_api import register_pricing_routes
 from pulse.web.proxy_keys_api import register_proxy_keys_routes
 from pulse.web.quota_api import register_quota_routes
+from pulse.web.schemas import ChatBody
 from pulse.web.settings_api import register_settings_routes
-from pulse.web.usage_analytics_api import register_usage_analytics_routes
 from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
-from pulse.util.timezone_ctx import (
-    configure_display_timezone_resolver,
-    set_default_display_timezone,
-)
+from pulse.web.usage_analytics_api import register_usage_analytics_routes
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +115,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "time": serialize_datetime(datetime.now(timezone.utc))}
+        return {"status": "ok", "time": serialize_datetime(datetime.now(UTC))}
 
     admin_spa_dir = resolve_admin_static_dir()
     if require_admin_spa and admin_spa_dir is None:
@@ -134,9 +133,7 @@ def create_app(
 
     @app.get("/api/query-logs", dependencies=[Depends(require_capability("audit:read"))])
     def query_logs(session: Session = Depends(get_db), limit: int = Query(50, le=200)):
-        rows = session.scalars(
-            select(QueryLog).order_by(QueryLog.created_at.desc()).limit(limit)
-        ).all()
+        rows = session.scalars(select(QueryLog).order_by(QueryLog.created_at.desc()).limit(limit)).all()
         return [
             {
                 "id": row.id,
@@ -216,9 +213,7 @@ def create_app(
         user: PortalUser = Depends(_require_user),
     ):
         team, repo = _team_repo(session)
-        return build_dashboard_overview(
-            config, session, team.id, repo=repo, actor=user.member
-        )
+        return build_dashboard_overview(config, session, team.id, repo=repo, actor=user.member)
 
     @app.get("/api/system/schedule", dependencies=[Depends(require_capability("settings:read"))])
     def system_schedule(session: Session = Depends(get_db)):
@@ -235,9 +230,7 @@ def create_app(
     register_pricing_routes(app, get_db, require_capability, _team_repo)
     register_portal_users_routes(app, config, get_db, require_capability, _team_repo)
     register_accounts_v2_routes(app, get_db, require_capability, _team_repo, config=config)
-    register_credentials_routes(
-        app, get_db, require_capability, _team_repo, config, require_user=_require_user
-    )
+    register_credentials_routes(app, get_db, require_capability, _team_repo, config, require_user=_require_user)
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
     register_quota_routes(app, get_db, require_capability, _team_repo, config)
@@ -245,21 +238,11 @@ def create_app(
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)
     register_internal_proxy_routes(app, get_db, config)
-    register_proxy_keys_routes(
-        app, get_db, require_capability, config, require_user=_require_user
-    )
-    register_assistant_capabilities_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_sessions_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_skills_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_prompts_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
+    register_proxy_keys_routes(app, get_db, require_capability, config, require_user=_require_user)
+    register_assistant_capabilities_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_sessions_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_skills_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_prompts_routes(app, get_db, require_capability, _team_repo, config)
 
     if admin_spa_dir is not None:
         _mount_admin_static(app, admin_spa_dir)

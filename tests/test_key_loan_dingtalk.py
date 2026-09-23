@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def _msg(result):
     data = result.result or {}
     return result.user_message or data.get("text") or data.get("answer") or ""
@@ -7,13 +8,10 @@ def _msg(result):
 
 import base64
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from sqlalchemy import select
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig, CredentialConfig, LoanSelectionConfig, TenantConfig
@@ -23,6 +21,7 @@ from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.key_loans import KeyLoanError, KeyLoanService, issue_loan_key, request_self_service_loan
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import (
     ensure_synced_primary_credential,
     make_team_repo,
@@ -57,7 +56,7 @@ def loan_bot_env():
     cycle_start, cycle_end = _active_cycle_bounds()
     exhausted_snap = AccountQuotaSnapshot(
         account_id=own_account.id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
         limit_cents=7000,
@@ -67,7 +66,7 @@ def loan_bot_env():
     )
     healthy_snap = AccountQuotaSnapshot(
         account_id=lender_account.id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
         limit_cents=7000,
@@ -126,9 +125,7 @@ def test_request_self_service_loan_success(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     result = request_self_service_loan(
@@ -162,9 +159,7 @@ def test_request_self_service_loan_rejects_missing_borrower_key(loan_bot_env):
 
 
 @patch("pulse.tool_center.key_loan_store.CursorApiClient")
-def test_request_self_service_loan_rejects_partially_bound_accounts(
-    mock_client_cls, loan_bot_env
-):
+def test_request_self_service_loan_rejects_partially_bound_accounts(mock_client_cls, loan_bot_env):
     env = loan_bot_env
     session = env["repo"].session
     mock_client = MagicMock()
@@ -248,9 +243,7 @@ def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     result = _invoke(
@@ -261,7 +254,6 @@ def test_dingtalk_borrow_key_command(mock_client_cls, loan_bot_env):
         arguments={"text": "借 Key 项目赶工"},
         config=config,
     )
-    reply = _msg(result)
     api_key = (result.result or {}).get("api_key") or ""
     assert api_key.startswith("pka_")
     assert (result.result or {}).get("delivery_mode") == "proxy_alias"
@@ -293,9 +285,7 @@ def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     result = _invoke(
@@ -306,7 +296,6 @@ def test_dingtalk_borrow_key_natural_language(mock_client_cls, loan_bot_env):
         arguments={"note": "用量不够，申请临时 key"},
         config=config,
     )
-    reply = _msg(result)
     api_key = (result.result or {}).get("api_key") or ""
     assert api_key.startswith("pka_")
     assert (result.result or {}).get("delivery_mode") == "proxy_alias"
@@ -336,9 +325,7 @@ def test_dingtalk_self_loan_read_includes_key(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     request_self_service_loan(
@@ -373,6 +360,8 @@ def test_dingtalk_self_loan_read_includes_key(mock_client_cls, loan_bot_env):
     assert loan.get("requires_proxy") is True
     assert payload.get("empty_reason") is None
     assert str(payload.get("loan", {}).get("api_key") or "").startswith("pka_")
+
+
 @patch("pulse.tool_center.key_loan_store.CursorApiClient")
 def test_dingtalk_return_key_command(mock_client_cls, loan_bot_env):
     env = loan_bot_env
@@ -395,9 +384,7 @@ def test_dingtalk_return_key_command(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     request_self_service_loan(
@@ -443,9 +430,7 @@ def test_self_service_recommend_respects_configured_cap(mock_client_cls, loan_bo
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     # 先占掉出借账号在 cap=1 下的唯一名额
@@ -491,9 +476,7 @@ def test_self_service_rejects_second_active_loan(mock_client_cls, loan_bot_env):
         member_id=env["admin"].id,
     )
     # 出借候选要求出借账号同步正常
-    ensure_synced_primary_credential(
-        session, env["lender_account"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(session, env["lender_account"], member_id=env["admin"].id)
     session.flush()
 
     request_self_service_loan(

@@ -42,7 +42,9 @@ watch(
   },
 )
 
-function onSaved(data: Record<string, unknown>) {
+function onSaved(data: {
+  tool_center?: { loan_selection?: Record<string, unknown> }
+}) {
   loanSelection.value = { ...(data?.tool_center?.loan_selection || loanSelection.value) }
 }
 

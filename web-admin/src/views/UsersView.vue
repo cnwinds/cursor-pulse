@@ -681,7 +681,9 @@ const loadDirectoryTreeNode: LoadFunction = async (node, resolve) => {
 function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   const memberId = row.member_id || row.id
   const displayName =
-    ('display_name' in row && row.display_name) || row.label || ''
+    ('display_name' in row && row.display_name) ||
+    ('label' in row && row.label) ||
+    ''
   const channelUserId = row.channel_user_id || ''
   const portalStatus = row.portal_status
   const channel =

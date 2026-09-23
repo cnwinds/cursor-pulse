@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import select
@@ -32,7 +32,7 @@ def _event(*, msg_id: str = "m-orch", text: str = "你好") -> IncomingMessageEv
         conversation_id="u1",
         reply_endpoint={"webhook": "https://example.test/reply"},
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -75,9 +75,7 @@ def test_process_session_job_writes_assistant_message_and_reply_outbox():
     session.add(incoming)
     session.flush()
 
-    session_row, user_message = attach_user_message(
-        session, event, incoming_event_id=incoming.id
-    )
+    session_row, user_message = attach_user_message(session, event, incoming_event_id=incoming.id)
     session.commit()
 
     with patch(
@@ -95,26 +93,18 @@ def test_process_session_job_writes_assistant_message_and_reply_outbox():
         )
     session.commit()
 
-    assistant_messages = list(
-        session.scalars(
-            select(ChatMessageRow).where(ChatMessageRow.role == "assistant")
-        )
-    )
+    assistant_messages = list(session.scalars(select(ChatMessageRow).where(ChatMessageRow.role == "assistant")))
     assert len(assistant_messages) == 1
     assert assistant_messages[0].text_redacted == _UNAVAILABLE
 
-    outbox = session.scalar(
-        select(OutboxEventRow).where(OutboxEventRow.kind == "reply.send")
-    )
+    outbox = session.scalar(select(OutboxEventRow).where(OutboxEventRow.kind == "reply.send"))
     assert outbox is not None
     assert outbox.payload_json["session_id"] == session_row.id
     assert outbox.payload_json["message_id"] == assistant_messages[0].id
     assert outbox.payload_json["reply_endpoint"] == event.reply_endpoint
     assert outbox.payload_json["text"] == assistant_messages[0].text_redacted
 
-    reply_job = session.scalar(
-        select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")
-    )
+    reply_job = session.scalar(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send"))
     assert reply_job is not None
     assert reply_job.payload_json["text"] == assistant_messages[0].text_redacted
 
@@ -144,18 +134,14 @@ def test_process_session_job_quota_intent_uses_capability_when_available():
     session.add(incoming)
     session.flush()
 
-    session_row, user_message = attach_user_message(
-        session, event, incoming_event_id=incoming.id
-    )
+    session_row, user_message = attach_user_message(session, event, incoming_event_id=incoming.id)
     session.commit()
 
     fake_llm = MagicMock()
     fake_llm.complete_with_tools.side_effect = [
         {
             "content": "",
-            "tool_calls": [
-                {"id": "c1", "name": "quota_self_read", "arguments": "{}"}
-            ],
+            "tool_calls": [{"id": "c1", "name": "quota_self_read", "arguments": "{}"}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": None,

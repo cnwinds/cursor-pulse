@@ -43,15 +43,10 @@ def format_cursor_account_choice_prompt(
         plan_name = account.plan.plan_name if account.plan else "未知套餐"
         lines.append(f"{index}. {account.account_identifier}（{plan_name}）")
     lines.append(
-        "\n请回复序号（如 1）或账号标识（如 "
-        f"{cursor_accounts[0].account_identifier}）。\n"
-        "回复「取消」可放弃本次提交。"
+        f"\n请回复序号（如 1）或账号标识（如 {cursor_accounts[0].account_identifier}）。\n回复「取消」可放弃本次提交。"
     )
     if admin_hint and not subject_name:
-        lines.append(
-            "\n管理员也可回复「帮 姓名 提交」（如：帮 朱涛 提交），"
-            "或直接回复他人的账号邮箱。"
-        )
+        lines.append("\n管理员也可回复「帮 姓名 提交」（如：帮 朱涛 提交），或直接回复他人的账号邮箱。")
     return "\n".join(lines)
 
 
@@ -124,11 +119,7 @@ def parse_account_selection_text(
 
     if "@" in needle:
         local = needle.split("@", 1)[0]
-        local_matches = [
-            a
-            for a in candidates
-            if a.account_identifier.lower().split("@", 1)[0] == local
-        ]
+        local_matches = [a for a in candidates if a.account_identifier.lower().split("@", 1)[0] == local]
         if len(local_matches) == 1:
             return local_matches[0]
 

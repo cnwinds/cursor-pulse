@@ -1,5 +1,4 @@
 import pytest
-
 from pulse.storage.models import Member
 from pulse.web.permissions import has_permission, resolve_permissions
 

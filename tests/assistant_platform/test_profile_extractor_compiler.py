@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select
 
@@ -70,7 +70,7 @@ def test_compiler_prefers_correction_over_inferred_signal():
             signal_id=signal.id,
             dimension=ProfileDimension.VERBOSITY.value,
             correction_text="请保持简洁",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
     )
     session.commit()
@@ -96,7 +96,7 @@ def test_compiler_picks_higher_explicitness_on_conflict():
             explicitness="inferred",
             status="active",
             source_session_ids_json=["s1"],
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
     )
     session.add(
@@ -110,7 +110,7 @@ def test_compiler_picks_higher_explicitness_on_conflict():
             explicitness="explicit",
             status="active",
             source_session_ids_json=["s2"],
-            created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 2, 1, tzinfo=UTC),
         )
     )
     session.commit()

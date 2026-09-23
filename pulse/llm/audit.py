@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-_NUMBER_RE = re.compile(
-    r"(?<![\w.])(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?)(?:%|(?=[\s，。,.、)\]]|$))"
-)
+_NUMBER_RE = re.compile(r"(?<![\w.])(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?)(?:%|(?=[\s，。,.、)\]]|$))")
 
 
 def _normalize_number(token: str) -> str:

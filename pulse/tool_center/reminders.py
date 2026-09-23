@@ -18,9 +18,7 @@ class NudgeTarget:
 def _credential_map(session, account_ids: list[str]) -> dict[str, AiAccountCredential]:
     if not account_ids:
         return {}
-    rows = session.scalars(
-        select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids))
-    ).all()
+    rows = session.scalars(select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids))).all()
     return {row.account_id: row for row in rows}
 
 

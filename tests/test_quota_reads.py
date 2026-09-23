@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, select
-
 from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiVendor
 from pulse.tool_center.quota_reads import (
@@ -14,6 +12,7 @@ from pulse.tool_center.quota_reads import (
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import delete, select
 from tests.conftest import make_team_repo
 
 
@@ -49,7 +48,7 @@ def qr_env():
     session.flush()
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     older = now - timedelta(hours=2)
     session.add_all(
         [
@@ -136,7 +135,7 @@ def test_latest_snapshots_for_team_all_vendors_and_inactive(qr_env):
 def test_latest_snapshots_for_accounts_picks_newest_among_many(qr_env):
     session = qr_env["session"]
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     extras = [
         AccountQuotaSnapshot(
             account_id=qr_env["cursor_id"],
@@ -164,7 +163,7 @@ def test_latest_snapshots_for_accounts_empty_ids(qr_env):
 def test_prune_quota_snapshots_keeps_newest(qr_env):
     session = qr_env["session"]
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session.add_all(
         [
             AccountQuotaSnapshot(
@@ -185,11 +184,7 @@ def test_prune_quota_snapshots_keeps_newest(qr_env):
     session.commit()
     assert deleted >= 18
     remaining = list(
-        session.scalars(
-            select(AccountQuotaSnapshot).where(
-                AccountQuotaSnapshot.account_id == qr_env["cursor_id"]
-            )
-        )
+        session.scalars(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == qr_env["cursor_id"]))
     )
     assert len(remaining) == 3
     latest = latest_snapshots_for_accounts(session, [qr_env["cursor_id"]])
@@ -201,11 +196,7 @@ def test_prune_quota_snapshots_naive_aware_mix(qr_env):
     session = qr_env["session"]
     account_id = qr_env["cursor_id"]
     today = date.today()
-    session.execute(
-        delete(AccountQuotaSnapshot).where(
-            AccountQuotaSnapshot.account_id == account_id
-        )
-    )
+    session.execute(delete(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id))
     session.commit()
 
     naive_base = datetime(2026, 9, 10, 6, 0, 0)  # offset-naive, as SQLite returns
@@ -228,17 +219,11 @@ def test_prune_quota_snapshots_naive_aware_mix(qr_env):
 
     # Re-load so identity map holds naive datetimes, then flush an aware row
     # (mirrors CursorSyncService._apply_period_usage → prune).
-    _ = list(
-        session.scalars(
-            select(AccountQuotaSnapshot).where(
-                AccountQuotaSnapshot.account_id == account_id
-            )
-        )
-    )
+    _ = list(session.scalars(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id)))
     session.add(
         AccountQuotaSnapshot(
             account_id=account_id,
-            captured_at=datetime(2026, 9, 10, 7, 0, 0, tzinfo=timezone.utc),
+            captured_at=datetime(2026, 9, 10, 7, 0, 0, tzinfo=UTC),
             cycle_start=today - timedelta(days=5),
             cycle_end=today + timedelta(days=25),
             limit_cents=7000,
@@ -252,13 +237,7 @@ def test_prune_quota_snapshots_naive_aware_mix(qr_env):
     deleted = prune_quota_snapshots_for_account(session, account_id, keep=3)
     session.commit()
     assert deleted >= 8
-    remaining = list(
-        session.scalars(
-            select(AccountQuotaSnapshot).where(
-                AccountQuotaSnapshot.account_id == account_id
-            )
-        )
-    )
+    remaining = list(session.scalars(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id)))
     assert len(remaining) == 3
     latest = latest_snapshots_for_accounts(session, [account_id])
     assert latest[account_id].total_pct == 99.0

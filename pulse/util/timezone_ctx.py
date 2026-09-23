@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Any, Iterator
-
+from typing import Any
 from zoneinfo import ZoneInfo
 
 DEFAULT_DISPLAY_TIMEZONE = "Asia/Shanghai"

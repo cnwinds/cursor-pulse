@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
-
 from pulse.config import AppConfig, CredentialConfig, TenantConfig
 from pulse.ingestion.credentials import CredentialService
 from pulse.storage.db import init_db
@@ -26,6 +24,7 @@ from pulse.tool_center.key_loans import (
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import (
     ensure_synced_primary_credential,
     make_team_repo,
@@ -50,7 +49,7 @@ def lender_env():
         session.add(
             AccountQuotaSnapshot(
                 account_id=acc.id,
-                captured_at=datetime.now(timezone.utc),
+                captured_at=datetime.now(UTC),
                 cycle_start=today - timedelta(days=10),
                 cycle_end=today + timedelta(days=20),
                 limit_cents=7000,
@@ -108,9 +107,7 @@ def test_build_candidates_counts_active_loans(lender_env):
     candidates = build_lender_candidates(session, env["repo"].team_id)
     by_id = {c.account_id: c for c in candidates}
     assert by_id[account.id].active_loans == 1
-    assert all(
-        c.active_loans == 0 for acc_id, c in by_id.items() if acc_id != account.id
-    )
+    assert all(c.active_loans == 0 for acc_id, c in by_id.items() if acc_id != account.id)
 
 
 def test_recommend_excludes_account_at_cap(lender_env):
@@ -191,10 +188,7 @@ def test_build_candidates_excludes_accounts_not_syncing_normally(lender_env):
 def test_recommend_returns_none_when_all_accounts_full(lender_env):
     env = lender_env
     session = env["session"]
-    borrowers = [
-        env["repo"].add_member(f"full-b{i}", f"FullB{i}")
-        for i in range(len(env["accounts"]) * 2)
-    ]
+    borrowers = [env["repo"].add_member(f"full-b{i}", f"FullB{i}") for i in range(len(env["accounts"]) * 2)]
     session.flush()
     for idx, acc in enumerate(env["accounts"]):
         _make_loan(session, env, acc, borrowers[idx * 2])
@@ -244,7 +238,7 @@ def test_expire_when_billing_cycle_rolled_past_loan(lender_env):
     session = env["session"]
     account = env["accounts"][0]
     loan = _make_loan(session, env, account, env["member"])
-    loan.created_at = datetime.now(timezone.utc) - timedelta(days=40)
+    loan.created_at = datetime.now(UTC) - timedelta(days=40)
     loan.expires_on = None
     env["tool_repo"].update_account(
         account.id,
@@ -259,7 +253,7 @@ def test_expire_when_billing_cycle_rolled_past_loan(lender_env):
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=date.today() - timedelta(days=2),
             cycle_end=date.today() + timedelta(days=28),
             limit_cents=2000,
@@ -280,7 +274,7 @@ def test_frozen_future_expires_on_not_killed_by_cycle_rollover(lender_env):
     session = env["session"]
     account = env["accounts"][0]
     loan = _make_loan(session, env, account, env["member"])
-    loan.created_at = datetime.now(timezone.utc) - timedelta(days=40)
+    loan.created_at = datetime.now(UTC) - timedelta(days=40)
     loan.expires_on = date.today() + timedelta(days=20)
     for snap in session.scalars(
         select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
@@ -289,7 +283,7 @@ def test_frozen_future_expires_on_not_killed_by_cycle_rollover(lender_env):
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=date.today() - timedelta(days=2),
             cycle_end=date.today() + timedelta(days=28),
             limit_cents=2000,
@@ -364,9 +358,7 @@ def test_account_loan_deadline_picks_earliest(lender_env):
     env = lender_env
     account = env["accounts"][0]
     tool_repo = env["tool_repo"]
-    tool_repo.update_account(
-        account.id, usage_resets_on=date(2026, 8, 1), renews_on=None
-    )
+    tool_repo.update_account(account.id, usage_resets_on=date(2026, 8, 1), renews_on=None)
     assert account_loan_deadline(account) == date(2026, 8, 1)
     tool_repo.update_account(account.id, renews_on=date(2026, 7, 25))
     assert account_loan_deadline(account) == date(2026, 7, 25)

@@ -6,11 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
-
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.storage.db import init_assistant_db
+from fastapi.testclient import TestClient
 from pulse.channels.dingtalk.mirror import mirror_dingtalk_message_sync
 from pulse.config import AppConfig, AssistantMirrorConfig
 
@@ -56,8 +55,9 @@ def test_mirror_posts_to_assistant_and_creates_session(assistant_client):
         routed.raise_for_status = response.raise_for_status
         return routed
 
-    with patch("pulse.channels.dingtalk.mirror.internal_client") as Client, patch(
-        "pulse.channels.dingtalk.mirror.time.sleep"
+    with (
+        patch("pulse.channels.dingtalk.mirror.internal_client") as Client,
+        patch("pulse.channels.dingtalk.mirror.time.sleep"),
     ):
         http_client = Client.return_value.__enter__.return_value
         http_client.post.side_effect = _route_post

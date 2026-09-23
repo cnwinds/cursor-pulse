@@ -78,11 +78,7 @@ def test_policy_injects_skill_cards_when_enabled():
     actor = SkillActorContext("m1", "member", frozenset({"quota.self.read"}))
     cards = [c for c in reg.list_cards(actor) if c.skill_id == "cursor.self/tasks/quota"]
     assert cards
-    previews = {
-        cards[0].skill_id: reg.load_docs(
-            cards[0].skill_id, actor=actor, start_line=1, max_lines=200
-        )
-    }
+    previews = {cards[0].skill_id: reg.load_docs(cards[0].skill_id, actor=actor, start_line=1, max_lines=200)}
     system = build_agent_system(
         prompt_studio_supplement="",
         capabilities=[_cap("quota.self.read")],

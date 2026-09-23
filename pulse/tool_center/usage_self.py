@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.periods import current_period
+from pulse.pricing.billing_scope import KIND_FAMILY_LABELS, kind_family, pool_for_row
 from pulse.proxy.usage import loan_proxy_usage_summary
 from pulse.storage.models import (
     AccountQuotaSnapshot,
@@ -18,7 +19,6 @@ from pulse.storage.models import (
     UsageIngestion,
     UsageRecord,
 )
-from pulse.pricing.billing_scope import KIND_FAMILY_LABELS, kind_family, pool_for_row
 from pulse.tool_center.billing_cycle import (
     add_months,
     billing_cycle_containing,
@@ -119,8 +119,8 @@ def _loan_borrowed_quota_pct(loan: KeyLoan, snapshot: AccountQuotaSnapshot) -> f
 def _date_window_to_utc_datetimes(start: date, end: date) -> tuple[datetime, datetime]:
     """Convert [start, end) calendar dates to UTC datetimes for ProxyKeyUsage.ts filters."""
     return (
-        datetime.combine(start, time.min, tzinfo=timezone.utc),
-        datetime.combine(end, time.min, tzinfo=timezone.utc),
+        datetime.combine(start, time.min, tzinfo=UTC),
+        datetime.combine(end, time.min, tzinfo=UTC),
     )
 
 
@@ -159,9 +159,7 @@ def build_loan_usage_payload(
         today=today,
     )
     ts_start, ts_end = _date_window_to_utc_datetimes(win_start, win_end)
-    proxy = loan_proxy_usage_summary(
-        session, loan.id, start=ts_start, end=ts_end
-    )
+    proxy = loan_proxy_usage_summary(session, loan.id, start=ts_start, end=ts_end)
     has_proxy = int(proxy.get("request_count") or 0) > 0
     usage_source = "proxy" if has_proxy else "quota_approx"
 
@@ -215,11 +213,7 @@ def aggregate_models_from_daily_rows(rows: list[UsageDailyAggregate]) -> list[di
         family = (getattr(r, "kind_family", None) or "unknown").strip() or "unknown"
         bucket = by_model.setdefault(_model_bucket_key(r.model, family), _new_model_bucket(r.model, family))
         bucket["events"] += int(r.event_count or 0)
-        bucket["tokens"] += (
-            int(r.tokens_input or 0)
-            + int(r.tokens_output or 0)
-            + int(r.tokens_cache_read or 0)
-        )
+        bucket["tokens"] += int(r.tokens_input or 0) + int(r.tokens_output or 0) + int(r.tokens_cache_read or 0)
         bucket["cost_usd"] += float(r.total_cost_usd or 0)
     return _sorted_model_buckets(by_model)
 
@@ -263,15 +257,11 @@ def load_account_model_usage(
     latest_ingested_at: datetime | None = None
     for rec, ingested_at in rec_rows:
         family = kind_family(rec.kind)
-        bucket = by_model.setdefault(
-            _model_bucket_key(rec.model, family), _new_model_bucket(rec.model, family)
-        )
+        bucket = by_model.setdefault(_model_bucket_key(rec.model, family), _new_model_bucket(rec.model, family))
         bucket["events"] += 1
         bucket["tokens"] += int(rec.tokens_total or 0)
         bucket["cost_usd"] += float(rec.cost_usd or 0)
-        if ingested_at is not None and (
-            latest_ingested_at is None or ingested_at > latest_ingested_at
-        ):
+        if ingested_at is not None and (latest_ingested_at is None or ingested_at > latest_ingested_at):
             latest_ingested_at = ingested_at
     return _sorted_model_buckets(by_model), latest_ingested_at
 
@@ -293,9 +283,7 @@ def _model_share_pct(model: dict[str, Any], *, total_tokens: int, total_events: 
     return 0.0
 
 
-def _format_model_table(
-    models: list[dict[str, Any]], *, estimated_cost: bool = False
-) -> list[str]:
+def _format_model_table(models: list[dict[str, Any]], *, estimated_cost: bool = False) -> list[str]:
     if not models:
         return ["*暂无已上报明细*"]
     total_tokens = sum(int(m["tokens"]) for m in models)
@@ -339,10 +327,7 @@ def _format_loan_section(acc: dict[str, Any]) -> list[str]:
         events = int(acc.get("events") or 0)
         tokens = int(acc.get("tokens") or 0)
         cost_usd = float(acc.get("cost_usd") or 0.0)
-        lines.append(
-            f"合计：{_fmt_int(events)} 次 · {_fmt_int(tokens)} tokens · "
-            f"{_fmt_cost(cost_usd, estimated=True)}"
-        )
+        lines.append(f"合计：{_fmt_int(events)} 次 · {_fmt_int(tokens)} tokens · {_fmt_cost(cost_usd, estimated=True)}")
         headroom = acc.get("remaining_headroom_pct")
         if headroom is None:
             headroom = loan.get("remaining_headroom_pct")
@@ -350,11 +335,7 @@ def _format_loan_section(acc: dict[str, Any]) -> list[str]:
             lines.append(f"还能用：**{headroom:.1f}%**（借出账号额度余量）")
         else:
             lines.append("还能用：暂无快照")
-        updated = (
-            acc.get("proxy_data_updated_at")
-            or acc.get("data_updated_at")
-            or loan.get("proxy_data_updated_at")
-        )
+        updated = acc.get("proxy_data_updated_at") or acc.get("data_updated_at") or loan.get("proxy_data_updated_at")
         if updated:
             lines.append(format_data_updated_line(updated))
         lines.append("")
@@ -391,11 +372,7 @@ def format_usage_self_message(
 ) -> str:
     if not accounts:
         return "尚未绑定 Cursor 账号"
-    header = (
-        f"### 你的用量（自然月 {period}）"
-        if mode == "calendar_month"
-        else "### 你的用量（当前账期）"
-    )
+    header = f"### 你的用量（自然月 {period}）" if mode == "calendar_month" else "### 你的用量（当前账期）"
     lines = [header, ""]
     for index, acc in enumerate(accounts):
         if index > 0:
@@ -455,9 +432,7 @@ def build_usage_self_payload(
             usage_resets_on=account.usage_resets_on,
             today=today,
         )
-        models, data_updated_at = load_account_model_usage(
-            session, account_id=account.id, start=start, end=end
-        )
+        models, data_updated_at = load_account_model_usage(session, account_id=account.id, start=start, end=end)
         rows.append(
             {
                 "kind": "owned",
@@ -506,37 +481,23 @@ def build_usage_self_payload(
                     "models": list(loan_payload_item.get("models") or []),
                     "usage_source": usage_source,
                     "data_updated_at": _iso_or_none(data_updated),
-                    "proxy_data_updated_at": _iso_or_none(
-                        loan_payload_item.get("proxy_data_updated_at")
-                    ),
+                    "proxy_data_updated_at": _iso_or_none(loan_payload_item.get("proxy_data_updated_at")),
                     "loan": {
                         "lender_name": loan_payload_item.get("lender_name"),
                         "source_identifier": loan_payload_item.get("source_identifier"),
-                        "loan_created_at": _iso_or_none(
-                            loan_payload_item.get("loan_created_at")
-                        ),
+                        "loan_created_at": _iso_or_none(loan_payload_item.get("loan_created_at")),
                         "borrowed_quota_pct": loan_payload_item.get("borrowed_quota_pct"),
-                        "remaining_headroom_pct": loan_payload_item.get(
-                            "remaining_headroom_pct"
-                        ),
-                        "approx_borrowed_usd": loan_payload_item.get(
-                            "approx_borrowed_usd"
-                        ),
+                        "remaining_headroom_pct": loan_payload_item.get("remaining_headroom_pct"),
+                        "approx_borrowed_usd": loan_payload_item.get("approx_borrowed_usd"),
                         "usage_source": usage_source,
                     },
                     "is_loan": True,
                     "source_identifier": loan_payload_item.get("source_identifier"),
                     "lender_name": loan_payload_item.get("lender_name"),
-                    "loan_created_at": _iso_or_none(
-                        loan_payload_item.get("loan_created_at")
-                    ),
+                    "loan_created_at": _iso_or_none(loan_payload_item.get("loan_created_at")),
                     "borrowed_quota_pct": loan_payload_item.get("borrowed_quota_pct"),
-                    "remaining_headroom_pct": loan_payload_item.get(
-                        "remaining_headroom_pct"
-                    ),
-                    "quota_captured_at": _iso_or_none(
-                        loan_payload_item.get("quota_captured_at")
-                    ),
+                    "remaining_headroom_pct": loan_payload_item.get("remaining_headroom_pct"),
+                    "quota_captured_at": _iso_or_none(loan_payload_item.get("quota_captured_at")),
                 }
             )
 

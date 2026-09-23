@@ -44,7 +44,7 @@ def format_skill_cards_block(
             if preview.has_more and preview.next_start_line is not None:
                 lines.append(
                     f"尚有后续正文未载入。需要时调用 "
-                    f"load_skill_docs(skill_id=\"{card.skill_id}\", "
+                    f'load_skill_docs(skill_id="{card.skill_id}", '
                     f"start_line={preview.next_start_line}) 续读"
                     f"（默认每次最多 {DEFAULT_SKILL_WINDOW_LINES} 行）。"
                 )

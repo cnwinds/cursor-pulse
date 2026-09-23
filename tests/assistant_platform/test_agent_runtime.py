@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from unittest.mock import MagicMock
 
 from assistant_platform.capabilities.resolve import ResolvedCapability
-from assistant_platform.conversation.agent_runtime import AgentRuntime
 from assistant_platform.contracts.provider import CapabilityInvokeResult
+from assistant_platform.conversation.agent_runtime import AgentRuntime
 
 
 @dataclass
@@ -187,9 +187,7 @@ def test_runtime_hits_max_rounds():
     }
     llm = FakeLlm(script=[forever, forever, forever])
     executor = MagicMock()
-    executor.invoke.return_value = CapabilityInvokeResult(
-        status="succeeded", user_message="ok", result={}
-    )
+    executor.invoke.return_value = CapabilityInvokeResult(status="succeeded", user_message="ok", result={})
     rt = AgentRuntime(
         llm=llm,
         executor=executor,

@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.storage.models import AiAccount, Member
 from pulse.tool_center.account_pick import filter_cursor_accounts
 from pulse.tool_center.burn_rate import analyze_burn_rate
@@ -120,9 +121,7 @@ def handle_quota_self_read(
         )
 
     tool_repo = ToolCenterRepository(session, request.team_id)
-    cursor_accounts = filter_cursor_accounts(
-        tool_repo.get_primary_accounts_for_member(member.id)
-    )
+    cursor_accounts = filter_cursor_accounts(tool_repo.get_primary_accounts_for_member(member.id))
     if not cursor_accounts:
         return CapabilityInvokeResult(
             status="succeeded",
@@ -136,10 +135,7 @@ def handle_quota_self_read(
 
     loan_svc = KeyLoanService(session, _encryption_key(config))
     today = date.today()
-    accounts_data = [
-        _account_item(account, loan_svc.latest_snapshot(account.id), today)
-        for account in cursor_accounts
-    ]
+    accounts_data = [_account_item(account, loan_svc.latest_snapshot(account.id), today) for account in cursor_accounts]
     return CapabilityInvokeResult(
         status="succeeded",
         user_message="",

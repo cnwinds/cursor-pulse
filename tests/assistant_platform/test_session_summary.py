@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.memory.archive_models import ArchiveChunkRow, ArchiveMessageRow
@@ -15,7 +15,7 @@ from assistant_platform.storage.db import init_assistant_db
 
 
 def _session_row() -> ChatSessionRow:
-    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 17, tzinfo=UTC)
     return ChatSessionRow(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -33,7 +33,7 @@ def _session_row() -> ChatSessionRow:
 
 def test_build_session_summary_extracts_facts_preferences_and_evidence():
     session_row = _session_row()
-    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 17, tzinfo=UTC)
     messages = [
         ArchiveMessageRow(
             session_id=session_row.id,
@@ -87,7 +87,7 @@ def test_upsert_session_summary_is_idempotent_on_same_content():
     Session = init_assistant_db("sqlite://")
     session = Session()
     session_row = _session_row()
-    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 17, tzinfo=UTC)
     messages = [
         ArchiveMessageRow(
             session_id=session_row.id,

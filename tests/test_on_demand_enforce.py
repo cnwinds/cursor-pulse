@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from pulse.config import AdminConfig, AppConfig, CursorSyncConfig
+from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.on_demand import (
     OnDemandEnforceResult,
     enforce_on_demand_disabled,
@@ -16,7 +16,6 @@ from pulse.ingestion.on_demand import (
     resolve_admin_dingtalk_ids,
     resolve_on_demand_notify_dingtalk_ids,
 )
-from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.ingestion.sync_tick import _make_on_demand_notify
 from pulse.integrations.cursor_api import CursorApiClient, map_usage_event
@@ -40,14 +39,10 @@ def session():
 
 def test_get_hard_limit_posts_dashboard_method():
     client = CursorApiClient()
-    client._post_dashboard = MagicMock(
-        return_value={"hardLimit": 0, "noUsageBasedAllowed": True}
-    )
+    client._post_dashboard = MagicMock(return_value={"hardLimit": 0, "noUsageBasedAllowed": True})
     data = client.get_hard_limit("tok", api_key="crsr_x")
     assert data["noUsageBasedAllowed"] is True
-    client._post_dashboard.assert_called_once_with(
-        "tok", "GetHardLimit", {}, api_key="crsr_x"
-    )
+    client._post_dashboard.assert_called_once_with("tok", "GetHardLimit", {}, api_key="crsr_x")
 
 
 def test_set_hard_limit_posts_disable_payload():
@@ -231,12 +226,8 @@ def test_sync_disables_on_demand_and_notifies(session):
         "hardLimit": 100,
         "noUsageBasedAllowed": False,
     }
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
 
     notify = MagicMock()
@@ -247,9 +238,7 @@ def test_sync_disables_on_demand_and_notifies(session):
         member_id=member.id,
     )
 
-    sync_service = CursorSyncService(
-        session, TEST_KEY, cursor_client=mock_client, on_demand_notify=notify
-    )
+    sync_service = CursorSyncService(session, TEST_KEY, cursor_client=mock_client, on_demand_notify=notify)
     sync_service.sync_account(cursor_account.id, channel="scheduler")
 
     mock_client.set_hard_limit.assert_called_once()
@@ -341,12 +330,8 @@ def test_sync_skips_enforce_when_disabled(session):
     mock_client = MagicMock()
     mock_cursor_key_exchange(mock_client, email=cursor_account.account_identifier.lower())
     mock_client.get_access_token.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
 
     cred_service = CredentialService(session, TEST_KEY, cursor_client=mock_client)
@@ -389,12 +374,8 @@ def test_sync_continues_when_on_demand_check_fails(session):
     mock_cursor_key_exchange(mock_client, email=cursor_account.account_identifier.lower())
     mock_client.get_access_token.return_value = "session-token"
     mock_client.get_hard_limit.side_effect = RuntimeError("hard limit unavailable")
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
 
     cred_service = CredentialService(session, TEST_KEY, cursor_client=mock_client)

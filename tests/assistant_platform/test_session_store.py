@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -36,7 +36,7 @@ def _event(
         conversation_type=conversation_type,
         conversation_id=conversation_id,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -53,9 +53,7 @@ def test_session_key_fields_private_includes_user_id():
 
 
 def test_session_key_fields_group_user_id_is_none():
-    key = session_key_fields(
-        _event(conversation_type="group", conversation_id="g1", sender="u42")
-    )
+    key = session_key_fields(_event(conversation_type="group", conversation_id="g1", sender="u42"))
     assert key["conversation_type"] == "group"
     assert key["conversation_id"] == "g1"
     assert key["user_id"] is None
@@ -64,7 +62,7 @@ def test_session_key_fields_group_user_id_is_none():
 def test_attach_creates_new_open_session_and_user_message():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     event = _event(msg_id="m-new", text="first message")
 
     session_row, message_row = attach_user_message(session, event, now=now)
@@ -82,7 +80,7 @@ def test_attach_creates_new_open_session_and_user_message():
 def test_attach_continues_private_session_when_conversation_id_differs():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
 
     first_session, _ = attach_user_message(
         session,
@@ -102,13 +100,11 @@ def test_attach_continues_private_session_when_conversation_id_differs():
 def test_attach_continues_open_session_within_idle_window():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     t1 = t0 + timedelta(minutes=5)
 
     first_session, _ = attach_user_message(session, _event(msg_id="m-a"), now=t0)
-    second_session, second_message = attach_user_message(
-        session, _event(msg_id="m-b", text="follow up"), now=t1
-    )
+    second_session, second_message = attach_user_message(session, _event(msg_id="m-b", text="follow up"), now=t1)
     session.commit()
 
     assert second_session.id == first_session.id
@@ -116,9 +112,7 @@ def test_attach_continues_open_session_within_idle_window():
     assert second_message.session_id == first_session.id
 
     message_count = session.scalar(
-        select(func.count()).select_from(ChatMessageRow).where(
-            ChatMessageRow.session_id == first_session.id
-        )
+        select(func.count()).select_from(ChatMessageRow).where(ChatMessageRow.session_id == first_session.id)
     )
     assert message_count == 2
 
@@ -126,7 +120,7 @@ def test_attach_continues_open_session_within_idle_window():
 def test_attach_closes_idle_private_session_and_opens_new():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     t1 = t0 + PRIVATE_IDLE + timedelta(seconds=1)
 
     first_session, _ = attach_user_message(session, _event(msg_id="m-old"), now=t0)
@@ -145,7 +139,7 @@ def test_attach_closes_idle_private_session_and_opens_new():
 def test_attach_closes_idle_group_session_after_shorter_timeout():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     within_group_idle = t0 + timedelta(minutes=5)
 
     group_event = _event(
@@ -192,7 +186,7 @@ def test_attach_closes_idle_group_session_after_shorter_timeout():
 def test_private_sessions_isolated_by_user_id():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
 
     s1, _ = attach_user_message(
         session,
@@ -214,7 +208,7 @@ def test_private_sessions_isolated_by_user_id():
 def test_get_open_session_returns_none_when_closed():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     event = _event()
 
     session_row, _ = attach_user_message(session, event, now=now)
@@ -237,7 +231,7 @@ def test_get_open_session_returns_none_when_closed():
 def test_attach_stores_incoming_event_id_on_message():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
     incoming_id = str(uuid.uuid4())
 
     _, message_row = attach_user_message(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -26,14 +26,14 @@ def _event(msg_id: str) -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id="u1",
         text_redacted="old message",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
 def test_retention_deletes_messages_older_than_threshold():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, tzinfo=UTC)
     old_time = now - timedelta(days=200)
     session_row, message = attach_user_message(session, _event("old-1"), now=old_time)
     message.created_at = old_time
@@ -57,9 +57,7 @@ def test_retention_deletes_messages_older_than_threshold():
     assert remaining == 1
     assert count_expired_messages(session, days=180, now=now) == 0
     # Permanent archive stays.
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     assert archive is not None
     assert archive.archive_status == "ready"
     session.close()
@@ -68,7 +66,7 @@ def test_retention_deletes_messages_older_than_threshold():
 def test_retention_keeps_unarchived_old_messages():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, tzinfo=UTC)
     old_time = now - timedelta(days=200)
     session_row, message = attach_user_message(session, _event("old-unarchived"), now=old_time)
     message.created_at = old_time
@@ -88,7 +86,7 @@ def test_retention_keeps_unarchived_old_messages():
 def test_retention_keeps_messages_when_archive_failed():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 14, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 14, tzinfo=UTC)
     old_time = now - timedelta(days=200)
     session_row = ChatSessionRow(
         id=str(uuid.uuid4()),

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.cursor_api import CursorApiClient
-from pulse.storage.models import AccountQuotaSnapshot, AiAccount, KeyLoan
+from pulse.storage.models import AccountQuotaSnapshot, KeyLoan
 from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS, LENDER_MODE_AUTO, LENDER_MODE_MANUAL
 from pulse.tool_center.key_loan_state import KeyLoanStateMixin
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
@@ -44,9 +44,7 @@ class KeyLoanService(KeyLoanStateMixin):
         self.session = session
         self.encryption_key = encryption_key
         self.cursor_client = cursor_client or CursorApiClient()
-        self.credential_service = CredentialService(
-            session, encryption_key, cursor_client=self.cursor_client
-        )
+        self.credential_service = CredentialService(session, encryption_key, cursor_client=self.cursor_client)
 
     def latest_snapshot(self, account_id: str) -> AccountQuotaSnapshot | None:
         return latest_snapshots_for_accounts(self.session, [account_id]).get(account_id)
@@ -84,7 +82,7 @@ class KeyLoanService(KeyLoanStateMixin):
             alias_key_hint=alias_key_hint,
             alias_encrypted_key=alias_encrypted_key,
             lender_mode=lender_mode,
-            source_bound_at=source_bound_at or datetime.now(timezone.utc),
+            source_bound_at=source_bound_at or datetime.now(UTC),
         )
         self.session.add(loan)
         self.session.flush()
@@ -102,9 +100,7 @@ class KeyLoanService(KeyLoanStateMixin):
     def get_loan(self, loan_id: str) -> KeyLoan | None:
         return self.session.get(KeyLoan, loan_id)
 
-    def approximate_borrowed_cents(
-        self, loan: KeyLoan, proxy_cents: int | None = None
-    ) -> int:
+    def approximate_borrowed_cents(self, loan: KeyLoan, proxy_cents: int | None = None) -> int:
         """借用消耗（cents）。
 
         自动分配借用的流量会在候选账号间游走，单一账号的快照差值不再代表本笔
@@ -154,8 +150,6 @@ class KeyLoanService(KeyLoanStateMixin):
 
         return list(
             self.session.scalars(
-                select_team_loans(team_id)
-                .where(KeyLoan.status == "active")
-                .order_by(KeyLoan.created_at.desc())
+                select_team_loans(team_id).where(KeyLoan.status == "active").order_by(KeyLoan.created_at.desc())
             ).all()
         )

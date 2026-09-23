@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from assistant_platform.config import AssistantConfig
 from assistant_platform.conversation.orchestrator import (
@@ -16,13 +16,13 @@ from assistant_platform.conversation.turn_recovery import (
     recover_stale_processing_jobs,
     recover_stale_turns,
 )
+from assistant_platform.integrations.channel_reply import send_channel_reply
 from assistant_platform.jobs.claim import (
     BACKGROUND_JOB_TYPES,
     INTERACTIVE_JOB_TYPES,
     claim_next_job,
 )
 from assistant_platform.jobs.db_errors import is_retryable_db_lock_error
-from assistant_platform.integrations.channel_reply import send_channel_reply
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,9 @@ def finalize_job_after_failure(
     by a single transient failure.
     """
     job.attempts = (job.attempts or 0) + 1
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     resumable = job.job_type in ("session.process", "session.close", "reply.send")
-    if job.attempts < max_attempts and (
-        is_retryable_db_lock_error(exc) or resumable
-    ):
+    if job.attempts < max_attempts and (is_retryable_db_lock_error(exc) or resumable):
         job.status = "pending"
         logger.warning(
             "requeue job after failure job_id=%s job_type=%s attempts=%s err=%s",
@@ -158,9 +156,7 @@ class JobWorkerPool:
             try:
                 if run_maintenance:
                     self._maybe_run_retention(session)
-                    stale_turns = recover_stale_turns(
-                        session, timeout_seconds=llm_cfg.turn_timeout_seconds
-                    )
+                    stale_turns = recover_stale_turns(session, timeout_seconds=llm_cfg.turn_timeout_seconds)
                     stale_jobs = recover_stale_processing_jobs(
                         session, timeout_seconds=llm_cfg.job_processing_timeout_seconds
                     )
@@ -187,21 +183,19 @@ class JobWorkerPool:
                             self._active_sessions.add(session_id)
 
                 logger.info(
-                    "reply.timing stage=job_claimed worker=%s job_type=%s job_id=%s "
-                    "session_id=%s created_at=%s at=%s",
+                    "reply.timing stage=job_claimed worker=%s job_type=%s job_id=%s session_id=%s created_at=%s at=%s",
                     worker_name,
                     job.job_type,
                     job.id,
                     job.payload_json.get("session_id", ""),
                     job.created_at.isoformat() if job.created_at else "",
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 )
                 job_t0 = time.monotonic()
                 try:
                     _run_job(session, job, self._config)
                     logger.info(
-                        "reply.timing stage=job_done worker=%s job_type=%s job_id=%s "
-                        "elapsed_ms=%d",
+                        "reply.timing stage=job_done worker=%s job_type=%s job_id=%s elapsed_ms=%d",
                         worker_name,
                         job.job_type,
                         job.id,
@@ -224,9 +218,7 @@ class JobWorkerPool:
                         finalize_job_after_failure(session, job, exc)
                         session.commit()
                     except Exception:
-                        logger.exception(
-                            "failed to finalize job after error job_id=%s", job.id
-                        )
+                        logger.exception("failed to finalize job after error job_id=%s", job.id)
                         session.rollback()
             except Exception:
                 # Claim / maintenance failures: keep the worker loop alive.

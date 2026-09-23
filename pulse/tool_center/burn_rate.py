@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
@@ -81,9 +81,7 @@ def display_api_remaining_cents(snapshot: AccountQuotaSnapshot) -> int | None:
     return _cents_from_pct_used(snapshot.limit_cents, snapshot.api_pct)
 
 
-def projected_exhaustion_date(
-    snapshot: AccountQuotaSnapshot, today: date | None = None
-) -> date | None:
+def projected_exhaustion_date(snapshot: AccountQuotaSnapshot, today: date | None = None) -> date | None:
     today = today or date.today()
     if snapshot.total_pct is not None:
         if snapshot.total_pct >= 100:
@@ -188,25 +186,23 @@ def lender_deadline_at(
     """
     deadline = lender_deadline(cycle_end, renews_on)
     if renews_on is not None and renews_on < cycle_end:
-        return datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+        return datetime.combine(deadline, time(23, 59, 59), tzinfo=UTC)
     if cycle_end_at is not None:
         return _ensure_aware(cycle_end_at)
-    return datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+    return datetime.combine(deadline, time(23, 59, 59), tzinfo=UTC)
 
 
-def hours_until_deadline(
-    deadline: date | datetime, now: datetime | None = None
-) -> float:
+def hours_until_deadline(deadline: date | datetime, now: datetime | None = None) -> float:
     """距作废的小时数。
 
     deadline 为 datetime 时用精确时刻；仅为 date 时回退 UTC 当天 23:59:59
     （兼容无 cycle_end_at 的旧快照）。
     """
-    now = _ensure_aware(now or datetime.now(timezone.utc))
+    now = _ensure_aware(now or datetime.now(UTC))
     if isinstance(deadline, datetime):
         end = _ensure_aware(deadline)
     else:
-        end = datetime.combine(deadline, time(23, 59, 59), tzinfo=timezone.utc)
+        end = datetime.combine(deadline, time(23, 59, 59), tzinfo=UTC)
     return max((end - now).total_seconds() / 3600.0, 0.0)
 
 
@@ -246,9 +242,7 @@ def _pool_pct(snapshot: AccountQuotaSnapshot, pool: QuotaPoolKind) -> float | No
     return None
 
 
-def pool_headroom_pct(
-    snapshot: AccountQuotaSnapshot, pool: QuotaPoolKind | None
-) -> float:
+def pool_headroom_pct(snapshot: AccountQuotaSnapshot, pool: QuotaPoolKind | None) -> float:
     """按池的 Snapshot Headroom；pool 为 None 或该桶缺失时回落 total。"""
     if pool is None:
         return remaining_headroom_pct(snapshot)
@@ -297,11 +291,7 @@ def owner_reserve_ok(
         return True
     pct = _pool_pct(snapshot, pool) if pool is not None else None
     if pct is None:
-        pct = (
-            snapshot.total_pct
-            if snapshot.total_pct is not None
-            else quota_progress(snapshot) * 100.0
-        )
+        pct = snapshot.total_pct if snapshot.total_pct is not None else quota_progress(snapshot) * 100.0
     today = today or date.today()
     elapsed = max((today - snapshot.cycle_start).days, 1)
     daily_pct = pct / elapsed
@@ -309,9 +299,7 @@ def owner_reserve_ok(
     return projected_pct <= (100.0 - reserve_pct)
 
 
-def effective_reserve_pct(
-    cand: "LenderCandidate", cfg: LoanSelectionConfig
-) -> float | None:
+def effective_reserve_pct(cand: LenderCandidate, cfg: LoanSelectionConfig) -> float | None:
     """生效的主负责人保留量：账号级设置优先，否则用配置默认值。"""
     return cand.reserve_pct if cand.reserve_pct is not None else cfg.owner_reserve_pct
 
@@ -338,10 +326,10 @@ def snapshot_freshness(
     """[0,1]：刚同步为 1，age ≥ full_penalty_hours 为 0；尺度 ≤ 0 时恒为 1。"""
     if full_penalty_hours <= 0:
         return 1.0
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     captured = snapshot.captured_at
     if captured.tzinfo is None:
-        captured = captured.replace(tzinfo=timezone.utc)
+        captured = captured.replace(tzinfo=UTC)
     age_hours = max((now - captured).total_seconds() / 3600.0, 0.0)
     return round(max(1.0 - age_hours / full_penalty_hours, 0.0), 4)
 
@@ -444,9 +432,7 @@ def _hard_filter_reason(
         # override per-bucket Snapshot Headroom (OR intake rule).
         if enforce_loan_cap or analysis.status != "exhausted":
             return "exhausts_before_reset"
-    should_exclude_cap = (
-        enforce_loan_cap if exclude_at_loan_cap is None else exclude_at_loan_cap
-    )
+    should_exclude_cap = enforce_loan_cap if exclude_at_loan_cap is None else exclude_at_loan_cap
     if should_exclude_cap and cand.active_loans >= cfg.max_active_loans_per_account:
         return "loan_cap"
     deadline_at = lender_deadline_at(
@@ -458,9 +444,7 @@ def _hard_filter_reason(
     if hours <= cfg.min_coverage_hours:
         return "coverage_too_short"
     if reserve_ok is None:
-        reserve_ok = owner_reserve_ok(
-            cand.snapshot, pool, effective_reserve_pct(cand, cfg), hours / 24.0, today
-        )
+        reserve_ok = owner_reserve_ok(cand.snapshot, pool, effective_reserve_pct(cand, cfg), hours / 24.0, today)
     if not reserve_ok:
         return "owner_reserve"
     return None
@@ -481,9 +465,7 @@ def _pool_view(
     """按池指标 + 驻留状态，供打分 payload / UI / Jev state 复用。"""
     minutes_since_switch = None
     if bound_at is not None:
-        minutes_since_switch = round(
-            max((now - ensure_aware(bound_at)).total_seconds() / 60.0, 0.0), 1
-        )
+        minutes_since_switch = round(max((now - ensure_aware(bound_at)).total_seconds() / 60.0, 0.0), 1)
     return {
         "pool": pool,
         "pool_headroom_pct": headroom,
@@ -624,9 +606,7 @@ def _rank_passing_candidates(
         hours = round(hours_until_deadline(deadline_at, now), 1)
         surplus = pool_surplus_cents(snapshot, pool, hours / 24.0, today)
         if enforce_loan_cap:
-            load_factor = 1.0 - cand.active_loans / max(
-                cfg.max_active_loans_per_account, 1
-            )
+            load_factor = 1.0 - cand.active_loans / max(cfg.max_active_loans_per_account, 1)
         else:
             load_factor = 1.0
         rows.append(
@@ -646,12 +626,8 @@ def _rank_passing_candidates(
                     hourly_power=profile.hourly_power,
                 ),
                 "load_factor": load_factor,
-                "freshness": snapshot_freshness(
-                    snapshot, cfg.freshness_full_penalty_hours, now
-                ),
-                "recency": switch_recency_factor(
-                    cand.bound_at, cfg.min_switch_minutes, now
-                ),
+                "freshness": snapshot_freshness(snapshot, cfg.freshness_full_penalty_hours, now),
+                "recency": switch_recency_factor(cand.bound_at, cfg.min_switch_minutes, now),
                 "reserve_pct": reserve_pct,
                 "reserve_ok": reserve_ok,
             }
@@ -743,9 +719,9 @@ def recommend_lenders(
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。
     """
     cfg = loan_selection or LoanSelectionConfig()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     if today is None:
         today = now.date()
     ranked, _ = _rank_passing_candidates(
@@ -772,9 +748,9 @@ def explain_lender_selection(
 ) -> dict:
     """与 recommend_lenders 同源打分，额外返回硬过滤排除项。"""
     cfg = loan_selection or LoanSelectionConfig()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     if today is None:
         today = now.date()
     ranked, excluded = _rank_passing_candidates(

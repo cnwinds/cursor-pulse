@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import inspect, text
-from sqlalchemy.orm import Session
-
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import ProxyKeyUsage
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
 from tests.conftest import make_test_engine
 
 

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from pulse.ingestion.credentials import CredentialService
 from pulse.proxy.keys import hash_proxy_key
 from pulse.storage.models import AccountQuotaSnapshot, AiAccountCredential, KeyLoan
@@ -30,7 +29,7 @@ def _add_snapshot(session, account_id: str, *, used_cents: int = 1000) -> None:
     session.add(
         AccountQuotaSnapshot(
             account_id=account_id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=date(2026, 7, 1),
             cycle_end=date(2026, 8, 1),
             limit_cents=7000,
@@ -112,9 +111,7 @@ def test_reassign_keeps_pka_and_switches_source(mock_client_cls, quota_env):
     session.flush()
     # Remote revoke is deferred until after DB commit.
     mock_client.revoke_user_api_key.assert_not_called()
-    finalize_reassign_old_remote_revoke(
-        session, TEST_KEY, result, cursor_client=mock_client
-    )
+    finalize_reassign_old_remote_revoke(session, TEST_KEY, result, cursor_client=mock_client)
 
     loan = session.get(KeyLoan, loan_id)
     assert loan.source_account_id == source_b.id

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from tests.assistant_platform.test_agent_runtime import FakeLlm, _cap
+
 from assistant_platform.capabilities.resolve import ResolvedCapability
+from assistant_platform.contracts.provider import CapabilityInvokeResult
 from assistant_platform.conversation.agent_runtime import AgentRuntime
 from assistant_platform.conversation.agent_tools import NOTIFY_USER_TOOL_NAME
-from assistant_platform.contracts.provider import CapabilityInvokeResult
-from tests.assistant_platform.test_agent_runtime import FakeLlm, _cap
 
 
 def test_runtime_nudges_when_ack_without_tool_calls():
@@ -22,9 +23,7 @@ def test_runtime_nudges_when_ack_without_tool_calls():
             },
             {
                 "content": "稍等",
-                "tool_calls": [
-                    {"id": "c1", "name": "quota_self_read", "arguments": "{}"}
-                ],
+                "tool_calls": [{"id": "c1", "name": "quota_self_read", "arguments": "{}"}],
                 "raw_assistant_message": {
                     "role": "assistant",
                     "content": "稍等",
@@ -86,9 +85,7 @@ def test_runtime_nudges_when_ack_without_tool_calls():
         script=[
             {
                 "content": "好的，我先查一下，请稍等",
-                "tool_calls": [
-                    {"id": "c1", "name": "usage_query", "arguments": "{}"}
-                ],
+                "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": "{}"}],
                 "raw_assistant_message": {
                     "role": "assistant",
                     "content": "好的，我先查一下，请稍等",
@@ -105,9 +102,7 @@ def test_runtime_nudges_when_ack_without_tool_calls():
         ]
     )
     executor = MagicMock()
-    executor.invoke.return_value = CapabilityInvokeResult(
-        status="succeeded", user_message="ok", result={}
-    )
+    executor.invoke.return_value = CapabilityInvokeResult(status="succeeded", user_message="ok", result={})
     interim: list[str] = []
     rt = AgentRuntime(
         llm=llm,
@@ -157,9 +152,7 @@ def test_runtime_notify_user_tool_emits_interim():
             },
             {
                 "content": "",
-                "tool_calls": [
-                    {"id": "c2", "name": "usage_query", "arguments": "{}"}
-                ],
+                "tool_calls": [{"id": "c2", "name": "usage_query", "arguments": "{}"}],
                 "raw_assistant_message": {
                     "role": "assistant",
                     "tool_calls": [
@@ -175,9 +168,7 @@ def test_runtime_notify_user_tool_emits_interim():
         ]
     )
     executor = MagicMock()
-    executor.invoke.return_value = CapabilityInvokeResult(
-        status="succeeded", user_message="ok", result={}
-    )
+    executor.invoke.return_value = CapabilityInvokeResult(status="succeeded", user_message="ok", result={})
     interim: list[str] = []
     rt = AgentRuntime(
         llm=llm,
@@ -218,9 +209,7 @@ def test_runtime_caps_interim_replies():
         ]
     )
     executor = MagicMock()
-    executor.invoke.return_value = CapabilityInvokeResult(
-        status="succeeded", user_message="ok", result={}
-    )
+    executor.invoke.return_value = CapabilityInvokeResult(status="succeeded", user_message="ok", result={})
     interim: list[str] = []
     rt = AgentRuntime(
         llm=llm,

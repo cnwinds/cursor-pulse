@@ -1,11 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
 import logging
 import os
 import sys
-from pathlib import Path
 
 from pulse.config import load_config
 from pulse.storage.db import init_db
@@ -225,8 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if stats["skipped"]:
             logger.warning(
-                "Some rows could not be decrypted with --old key; "
-                "verify backup and old key before updating env"
+                "Some rows could not be decrypted with --old key; verify backup and old key before updating env"
             )
             return 1
         return 0
@@ -321,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "web":
         try:
             import uvicorn
-        except ImportError as exc:
+        except ImportError:
             print("请安装 web 依赖：pip install -e '.[web]'")
             return 1
         host = args.host or config.web.host
@@ -367,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"channel_user_id: {userid}")
         print(f"display_name: {name}")
-        print(f"\npulse admin bootstrap --user-id {userid} --name \"{name}\" --password <密码>")
+        print(f'\npulse admin bootstrap --user-id {userid} --name "{name}" --password <密码>')
         return 0
 
     if args.command == "dingtalk" and args.dingtalk_cmd == "resolve-group":
@@ -421,10 +419,7 @@ def main(argv: list[str] | None = None) -> int:
             channel=args.channel,
         )
         repo.commit()
-        print(
-            f"Portal owner: {member.display_name} "
-            f"({member.channel}:{member.channel_user_id})"
-        )
+        print(f"Portal owner: {member.display_name} ({member.channel}:{member.channel_user_id})")
         session.close()
         return 0
 

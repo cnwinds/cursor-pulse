@@ -90,9 +90,7 @@ def start_skill_vector_sync(
         while not stop_event.wait(interval):
             sync_skill_vector_index(session_factory, config)
 
-    thread = threading.Thread(
-        target=_loop, name="skill-vector-sync", daemon=True
-    )
+    thread = threading.Thread(target=_loop, name="skill-vector-sync", daemon=True)
     thread.start()
     logger.info("skill vector sync thread started interval=%ds", interval)
     return thread

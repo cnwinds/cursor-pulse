@@ -9,8 +9,8 @@ from typing import Any
 from pulse.channels.admin_gate import is_channel_admin
 from pulse.channels.dingtalk.group_store import save_group_binding
 from pulse.config import AppConfig
-from pulse.web.audit import log_admin_action
 from pulse.settings import patch_team_setting
+from pulse.web.audit import log_admin_action
 
 logger = logging.getLogger(__name__)
 
@@ -173,11 +173,7 @@ def activate_work_group(
 
     welcome = build_work_group_welcome_message(config, group_title=title)
     if binding_changed and current:
-        welcome = (
-            f"工作群已切换至「{title or '当前群'}」。\n\n{welcome}"
-            if title
-            else f"工作群已切换。\n\n{welcome}"
-        )
+        welcome = f"工作群已切换至「{title or '当前群'}」。\n\n{welcome}" if title else f"工作群已切换。\n\n{welcome}"
     elif not binding_changed and current:
         welcome = f"本群已是工作群。\n\n{welcome}"
 

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
+from tests.conftest import SessionFactoryProxy
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -18,8 +21,6 @@ from assistant_platform.memory.archive_models import SessionArchiveRow
 from assistant_platform.memory.archive_pipeline import run_archive_pipeline
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import AuditEventRow
-from tests.assistant_actor_helpers import signed_actor_headers
-from tests.conftest import SessionFactoryProxy
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-memory-api"
@@ -27,11 +28,7 @@ TEAM_ID = "team-memory-api"
 
 def _headers(
     *,
-    permissions: str = (
-        "assistant:sessions:read:self,"
-        "assistant:sessions:export:self,"
-        "assistant:sessions:delete:self"
-    ),
+    permissions: str = ("assistant:sessions:read:self,assistant:sessions:export:self,assistant:sessions:delete:self"),
     channel_user_id: str = "u1",
 ) -> dict[str, str]:
     return signed_actor_headers(
@@ -55,7 +52,7 @@ def _event(*, sender: str = "u1", text: str = "alpha project deadline Friday") -
         conversation_type="private",
         conversation_id=sender,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 

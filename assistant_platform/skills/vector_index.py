@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -63,10 +63,7 @@ class SkillVectorIndex:
         """Reconcile ``ap_skill_embeddings`` with the current skill files."""
         registry = registry or self._registry
         sources = registry.index_sources()
-        existing = {
-            row.skill_id: row
-            for row in self._session.scalars(select(SkillEmbeddingRow)).all()
-        }
+        existing = {row.skill_id: row for row in self._session.scalars(select(SkillEmbeddingRow)).all()}
         seen: set[str] = set()
         upserted = skipped = unchanged = 0
 

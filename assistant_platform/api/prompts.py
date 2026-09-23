@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-from pulse.util.datetime_fmt import serialize_datetime
-
-from typing import Annotated, Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import Depends, HTTPException
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from assistant_platform.api.actor import ActorContext, build_actor_dependency
 from assistant_platform.evolution.models import FailureClusterRow, PromptChangeProposalRow
-from assistant_platform.prompts.models import PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.loader import (
     compose_system_supplement_from_files,
     load_manifest,
     load_prompt_fragments_from_files,
 )
+from assistant_platform.prompts.models import PromptFragmentRow, PromptReleaseRow
 
-_PROMPT_EDITING_RETIRED_DETAIL = (
-    "Prompt editing retired; edit files in assistant_platform/prompts/docs"
-)
+_PROMPT_EDITING_RETIRED_DETAIL = "Prompt editing retired; edit files in assistant_platform/prompts/docs"
 
 
 class CreateFragmentBody(BaseModel):
@@ -152,9 +150,7 @@ def register_prompt_routes(
         actor: ActorContext = Depends(actor_dependency),
     ):
         _require_read(actor)
-        rows = session.scalars(
-            select(PromptFragmentRow).order_by(PromptFragmentRow.key.asc())
-        ).all()
+        rows = session.scalars(select(PromptFragmentRow).order_by(PromptFragmentRow.key.asc())).all()
         return {"items": [_fragment_json(row) for row in rows]}
 
     @app.post(
@@ -173,9 +169,7 @@ def register_prompt_routes(
         actor: ActorContext = Depends(actor_dependency),
     ):
         _require_read(actor)
-        rows = session.scalars(
-            select(PromptReleaseRow).order_by(PromptReleaseRow.created_at.desc())
-        ).all()
+        rows = session.scalars(select(PromptReleaseRow).order_by(PromptReleaseRow.created_at.desc())).all()
         return {"items": [_release_json(row) for row in rows]}
 
     @app.post(
@@ -218,9 +212,7 @@ def register_prompt_routes(
         actor: ActorContext = Depends(actor_dependency),
     ):
         _require_read(actor)
-        rows = session.scalars(
-            select(FailureClusterRow).order_by(FailureClusterRow.size.desc())
-        ).all()
+        rows = session.scalars(select(FailureClusterRow).order_by(FailureClusterRow.size.desc())).all()
         return {"items": [_cluster_json(row) for row in rows]}
 
     @app.get(
@@ -233,9 +225,7 @@ def register_prompt_routes(
     ):
         _require_read(actor)
         rows = session.scalars(
-            select(PromptChangeProposalRow).order_by(
-                PromptChangeProposalRow.created_at.desc()
-            )
+            select(PromptChangeProposalRow).order_by(PromptChangeProposalRow.created_at.desc())
         ).all()
         return {"items": [_proposal_json(row) for row in rows]}
 

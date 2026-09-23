@@ -4,9 +4,8 @@ import logging
 import uuid
 from typing import Any
 
-import httpx
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client
@@ -23,11 +22,7 @@ def _looks_like_usage_accounts(accounts: list) -> bool:
         return False
     if "account_identifier" in sample:
         return False
-    return bool(
-        sample.get("kind") in ("owned", "loan")
-        or "identifier" in sample
-        or sample.get("is_loan") is True
-    )
+    return bool(sample.get("kind") in ("owned", "loan") or "identifier" in sample or sample.get("is_loan") is True)
 
 
 def format_capability_reply(result: CapabilityInvokeResult) -> str:

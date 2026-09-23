@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+
 def _msg(result):
     data = result.result or {}
     return result.user_message or data.get("text") or data.get("answer") or ""
 
 
 from unittest.mock import patch
-
-from sqlalchemy import select
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.key_loan import handle_key_loan_request
@@ -18,6 +17,7 @@ from pulse.config import AppConfig, TenantConfig
 from pulse.storage.db import init_db
 from pulse.storage.models import Team
 from pulse.storage.repository import Repository
+from sqlalchemy import select
 
 
 def _team_repo(session):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,9 +22,7 @@ _ACTIVE_JOB_TYPES = frozenset({"session.process", "session.close", "reply.send"}
 
 
 def _session_has_processing_job(db_session: Session, session_id: str) -> bool:
-    jobs = db_session.scalars(
-        select(BackgroundJobRow).where(BackgroundJobRow.status == "processing")
-    ).all()
+    jobs = db_session.scalars(select(BackgroundJobRow).where(BackgroundJobRow.status == "processing")).all()
     for job in jobs:
         if str(job.payload_json.get("session_id") or "") == session_id:
             if job.job_type in _ACTIVE_JOB_TYPES:
@@ -33,7 +31,7 @@ def _session_has_processing_job(db_session: Session, session_id: str) -> bool:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def recover_stale_turn_if_needed(
@@ -58,9 +56,7 @@ def recover_stale_turn_if_needed(
 
 def recover_stale_turns(db_session: Session, *, timeout_seconds: int) -> int:
     """Scan open sessions and reset turns that exceeded timeout."""
-    rows = db_session.scalars(
-        select(ChatSessionRow).where(ChatSessionRow.status == "open")
-    ).all()
+    rows = db_session.scalars(select(ChatSessionRow).where(ChatSessionRow.status == "open")).all()
     recovered = 0
     for row in rows:
         if recover_stale_turn_if_needed(db_session, row, timeout_seconds=timeout_seconds):
@@ -93,14 +89,12 @@ def recover_stale_processing_jobs(
     from assistant_platform.storage.models import BackgroundJobRow
 
     cutoff = _utcnow().timestamp() - timeout_seconds
-    rows = db_session.scalars(
-        select(BackgroundJobRow).where(BackgroundJobRow.status == "processing")
-    ).all()
+    rows = db_session.scalars(select(BackgroundJobRow).where(BackgroundJobRow.status == "processing")).all()
     recovered = 0
     for job in rows:
         updated = job.updated_at
         if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
+            updated = updated.replace(tzinfo=UTC)
         if updated.timestamp() > cutoff:
             continue
         job.status = "pending"

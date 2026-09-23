@@ -37,9 +37,7 @@ def api_env(_skills_app):
     proxy.bind(sf)
     session = sf()
     _, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin", display_name="Admin", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     auditor = repo.add_member("auditor", "Auditor")
     auditor.portal_role = "auditor"
     auditor.portal_status = "active"
@@ -73,9 +71,7 @@ def _headers(token: str) -> dict[str, str]:
     ],
 )
 @patch("pulse.web.assistant_skills_api.internal_client")
-def test_skills_endpoints_proxy_read_requests(
-    mock_client_cls, api_env, path: str, upstream_path: str
-):
+def test_skills_endpoints_proxy_read_requests(mock_client_cls, api_env, path: str, upstream_path: str):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.content = b'{"ok":true}'
@@ -92,17 +88,12 @@ def test_skills_endpoints_proxy_read_requests(
         "GET",
         f"{ASSISTANT_BASE}{upstream_path}",
     )
-    assert (
-        mock_client.request.call_args.kwargs["headers"]["X-Assistant-Token"]
-        == ASSISTANT_TOKEN
-    )
+    assert mock_client.request.call_args.kwargs["headers"]["X-Assistant-Token"] == ASSISTANT_TOKEN
 
 
 def test_skills_endpoints_require_skills_read_permission(api_env):
     token = create_access_token(api_env["config"], api_env["auditor"])
 
-    response = api_env["client"].get(
-        "/api/v2/assistant/skills", headers=_headers(token)
-    )
+    response = api_env["client"].get("/api/v2/assistant/skills", headers=_headers(token))
 
     assert response.status_code == 403

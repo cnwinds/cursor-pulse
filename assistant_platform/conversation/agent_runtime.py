@@ -53,9 +53,7 @@ def _looks_like_bare_ack(content: str) -> bool:
 
 
 class SupportsCompleteWithTools(Protocol):
-    def complete_with_tools(
-        self, *, messages: list[dict], tools: list[dict], temperature: float = 0.1
-    ) -> dict: ...
+    def complete_with_tools(self, *, messages: list[dict], tools: list[dict], temperature: float = 0.1) -> dict: ...
 
 
 class AgentUnavailable(Exception):
@@ -150,15 +148,12 @@ class AgentRuntime:
                 int((llm_t0 - run_t0) * 1000),
             )
             try:
-                resp = self._llm.complete_with_tools(
-                    messages=messages, tools=self._tools
-                )
+                resp = self._llm.complete_with_tools(messages=messages, tools=self._tools)
             except Exception as exc:
                 logger.exception("agent llm call failed subject=%s", self._subject_id)
                 raise AgentUnavailable(_UNAVAILABLE) from exc
             logger.info(
-                "reply.timing stage=llm_round_done subject_id=%s round=%d elapsed_ms=%d "
-                "has_content=%s tool_calls=%d",
+                "reply.timing stage=llm_round_done subject_id=%s round=%d elapsed_ms=%d has_content=%s tool_calls=%d",
                 self._subject_id,
                 round_no,
                 int((time.monotonic() - run_t0) * 1000),
@@ -187,10 +182,7 @@ class AgentRuntime:
                             "ack_nudge": True,
                         }
                     )
-                    messages.append(
-                        resp.get("raw_assistant_message")
-                        or {"role": "assistant", "content": content}
-                    )
+                    messages.append(resp.get("raw_assistant_message") or {"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": _ACK_NUDGE})
                     logger.info(
                         "reply.timing stage=ack_nudge subject_id=%s round=%d preview=%r",
@@ -249,11 +241,7 @@ class AgentRuntime:
                         tc,
                         emit_interim=maybe_emit_interim,
                     )
-                elif (
-                    is_local_skill_tool(name)
-                    and self._skill_registry is not None
-                    and self._skill_actor is not None
-                ):
+                elif is_local_skill_tool(name) and self._skill_registry is not None and self._skill_actor is not None:
                     payload = invoke_load_skill_docs(
                         self._skill_registry,
                         self._skill_actor,
@@ -425,7 +413,5 @@ class AgentRuntime:
                 default=str,
             )
         except Exception as exc:
-            logger.exception(
-                "tool invoke failed name=%s subject=%s", name, self._subject_id
-            )
+            logger.exception("tool invoke failed name=%s subject=%s", name, self._subject_id)
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)

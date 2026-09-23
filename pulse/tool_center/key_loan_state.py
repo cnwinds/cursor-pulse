@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan
 from pulse.tool_center.key_loan_lender import _loan_created_date, account_loan_deadline
@@ -32,16 +32,14 @@ class KeyLoanStateMixin:
             if primary:
                 api_key = self.credential_service.decrypt_api_key(primary)
                 token = self.cursor_client.get_access_token(api_key)
-                self.cursor_client.revoke_user_api_key(
-                    token, cred.remote_key_id, api_key=api_key
-                )
+                self.cursor_client.revoke_user_api_key(token, cred.remote_key_id, api_key=api_key)
         if cred:
             cred.status = "revoked"
             cred.sync_enabled = False
             cred.encrypted_value = ""
 
         loan.status = "revoked"
-        loan.revoked_at = datetime.now(timezone.utc)
+        loan.revoked_at = datetime.now(UTC)
         # 清空别名，防止误恢复 / 泄漏哈希侧信道
         loan.alias_key_hash = None
         loan.alias_key_hint = None
@@ -74,9 +72,7 @@ class KeyLoanStateMixin:
                 revoked_remote = True
             except Exception:
                 revoked_remote = False
-                logger.warning(
-                    "loan %s 远端撤销失败，转为仅本地过期", loan.id, exc_info=True
-                )
+                logger.warning("loan %s 远端撤销失败，转为仅本地过期", loan.id, exc_info=True)
             if not revoked_remote:
                 try:
                     loan, borrowed_cents = self.revoke_loan(loan.id, revoke_remote=False)
@@ -111,13 +107,9 @@ class KeyLoanStateMixin:
                     reason="expired",
                 )
             except Exception:
-                logger.exception(
-                    "key loan expire notify failed loan=%s", loan.id
-                )
+                logger.exception("key loan expire notify failed loan=%s", loan.id)
 
-    def loan_should_auto_expire(
-        self, loan: KeyLoan, *, today: date | None = None
-    ) -> bool:
+    def loan_should_auto_expire(self, loan: KeyLoan, *, today: date | None = None) -> bool:
         """Whether an active loan should be reclaimed for billing-cycle reset.
 
         Triggers:
@@ -142,4 +134,3 @@ class KeyLoanStateMixin:
             return False
         deadline = account_loan_deadline(account)
         return bool(deadline and deadline <= today)
-

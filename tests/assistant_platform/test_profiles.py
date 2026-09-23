@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
+from tests.conftest import SessionFactoryProxy
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -16,8 +19,6 @@ from assistant_platform.conversation.session_store import attach_user_message, c
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.profiles.models import ProfileCorrectionRow, ProfileEffectiveRow, ProfileSignalRow
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
-from tests.conftest import SessionFactoryProxy
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-profiles"
@@ -45,7 +46,7 @@ def _event(*, sender: str = "u1", text: str = "偏好: 我喜欢短句") -> Inco
         conversation_type="private",
         conversation_id=sender,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 

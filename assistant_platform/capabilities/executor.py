@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from pulse.util.datetime_fmt import serialize_datetime
 from sqlalchemy.orm import Session
 
 from assistant_platform.capabilities.models import ToolInvocationRow
@@ -18,7 +18,7 @@ _BIND_CAPABILITY = "cursor.key.bind"
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _redact_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -46,6 +46,7 @@ def _redact_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
     if result is None:
         return None
     return _redact_result_value(dict(result))
+
 
 class CapabilityExecutor:
     def __init__(
@@ -190,9 +191,7 @@ class CapabilityExecutor:
 
         row.status = result.status
         row.error_code = result.error_code
-        row.result_redacted_json = _redact_result(
-            dict(result.result) if result.result else None
-        )
+        row.result_redacted_json = _redact_result(dict(result.result) if result.result else None)
         row.updated_at = _utcnow()
         self._session.commit()
         return result
