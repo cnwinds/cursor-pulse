@@ -26,11 +26,14 @@
             <div>
               <div class="account-id">
                 <span class="account-email">{{ item.account_identifier }}</span>
-                <span v-if="item.primary_member_name" class="account-owner">
-                  {{ item.primary_member_name }}
-                </span>
+                <div class="account-subline">
+                  <span v-if="item.primary_member_name" class="account-owner">
+                    {{ item.primary_member_name }}
+                  </span>
+                  <span v-if="item.primary_member_name" class="sub-sep">·</span>
+                  <span class="account-plan">{{ item.plan_name }} · {{ item.vendor_name }}</span>
+                </div>
               </div>
-              <div class="muted">{{ item.plan_name }} · {{ item.vendor_name }}</div>
             </div>
             <el-tag
               v-if="autoPick && autoPick.accountId === item.account_id"
