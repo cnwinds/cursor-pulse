@@ -1,0 +1,25 @@
+{
+  "name": "Cursor Pulse",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web",
+      "command": ".venv/bin/pulse -c config.yaml web --host 0.0.0.0 --port 8080 --reload",
+      "description": "Pulse control-plane API (FastAPI/uvicorn, auto-reload) on http://localhost:8080 — serves /admin/ from the built SPA and /api/*."
+    },
+    {
+      "name": "admin",
+      "command": "cd web-admin && npm run dev -- --host 0.0.0.0 --port 5173",
+      "description": "Vue admin UI dev server (Vite HMR) on http://localhost:5173, proxying /api and /health to the API on 8080."
+    },
+    {
+      "name": "channel",
+      "command": ".venv/bin/pulse -c config.yaml channel",
+      "description": "Scheduler-only worker (Cursor usage sync + key-loan expiry). BOT_PLATFORM=none, so no IM channel is attached."
+    }
+  ],
+  "ports": [
+    { "name": "api", "port": 8080 },
+    { "name": "admin-ui", "port": 5173 }
+  ]
+}
