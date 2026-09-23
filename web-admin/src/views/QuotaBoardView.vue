@@ -639,10 +639,29 @@ onMounted(loadAll)
   font-size: 14px;
   word-break: break-all;
 }
-.account-owner {
+.account-subline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  max-width: 100%;
   font-size: 12px;
-  font-weight: 500;
+  line-height: 1.35;
   color: var(--el-text-color-secondary);
+}
+.account-owner {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.sub-sep {
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.account-plan {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--el-text-color-placeholder);
+  word-break: break-word;
 }
 
 .auto-pick-tag {
