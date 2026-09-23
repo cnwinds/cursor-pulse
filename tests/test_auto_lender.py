@@ -159,6 +159,9 @@ def test_state_and_questions_carry_candidate_features():
     assert state["quota_pool"] == "unknown"
     assert {c["account_id"] for c in state["candidates"]} == {"acc-a", "acc-b"}
     assert state["constraints"]["switch_dwell_minutes"] == 30.0
+    assert "max_concurrent_proxy_users" in state["constraints"]
+    assert "active_loans" not in state["candidates"][0]
+    assert "proxy_active_seats" in state["candidates"][0]
     # 每个候选一问「是否影响主负责人」，且 choice 的 criteria 覆盖全部候选
     assert set(jev.last_questions) == {
         PICK_QUESTION,
