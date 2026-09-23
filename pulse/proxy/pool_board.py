@@ -447,7 +447,14 @@ def ranked_pool_credential_pairs(
     return pairs
 
 
-def list_pool_ranking_board(session: Session, *, loan_selection=None, jev=None, quota_pool=None) -> dict:
+def list_pool_ranking_board(
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    quota_pool=None,
+    jev_bypass_cache: bool = False,
+) -> dict:
     """Credential Pool Board explain view: ranked + excluded + decision (no secrets)."""
     from pulse.tool_center.auto_lender import rank_lenders
 
@@ -484,6 +491,7 @@ def list_pool_ranking_board(session: Session, *, loan_selection=None, jev=None, 
         now=now,
         enforce_loan_cap=False,
         jev=jev,
+        jev_bypass_cache=jev_bypass_cache,
     )
     from pulse.proxy.occupancy import get_occupancy
 

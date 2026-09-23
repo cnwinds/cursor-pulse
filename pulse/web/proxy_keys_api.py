@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
+from pulse.tool_center.auto_lender import try_force_jev_refresh
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.settings.team_store import effective_config_for_saved_tenant
@@ -337,15 +338,35 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             default=None,
             description="目标模型；给出时按该模型所属 Quota Pool（auto/api）打分",
         ),
+        force_jev: bool = Query(
+            default=False,
+            description="绕过 Jev TTL 缓存并强制外呼（需 proxy:write，30s 内每团队限一次）",
+        ),
         session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("proxy:read")),
     ):
         """当前代理池打分表：入选排序 + 硬过滤排除项 + Auto Lender 决策。"""
+        jev_bypass_cache = False
+        if force_jev:
+            if not has_permission(user.member, "proxy:write"):
+                raise HTTPException(status_code=403, detail="强制刷新 Jev 需要 proxy:write 权限")
+            from pulse.tenant.context import team_repository
+
+            team, _ = team_repository(session, config)
+            wait = try_force_jev_refresh(team.id)
+            if wait is not None:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"强制 Jev 刷新过于频繁，请 {int(wait) + 1} 秒后再试",
+                )
+            jev_bypass_cache = True
         runtime = effective_config_for_saved_tenant(session, config)
         return proxy_service.list_pool_ranking_board(
             session,
             loan_selection=runtime.tool_center.loan_selection,
             jev=build_jev_client(runtime),
             quota_pool=quota_pool_for_model(model) if model else None,
+            jev_bypass_cache=jev_bypass_cache,
         )
 
     @app.post(

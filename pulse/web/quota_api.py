@@ -10,6 +10,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
+from pulse.tool_center.auto_lender import try_force_jev_refresh
+from pulse.web.deps import PortalUser
+from pulse.web.permissions import has_permission
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.settings.team_store import effective_loan_selection
@@ -89,6 +92,7 @@ class AutoPickBody(BaseModel):
 
     borrower_member_id: str
     model: str | None = None
+    force_jev: bool = False
 
 
 class ReassignLoanBody(BaseModel):
@@ -378,12 +382,27 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         "/api/v2/loans/auto-pick",
         dependencies=[Depends(require_capability("accounts:read"))],
     )
-    def loans_auto_pick(body: AutoPickBody, session: Session = Depends(get_db)):
+    def loans_auto_pick(
+        body: AutoPickBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:read")),
+    ):
         """Auto Lender 预览：打分排序 + Jev 决策，供「为成员分配 Key」先看再确认。"""
         team, _ = team_repo_fn(session)
         borrower = session.get(Member, body.borrower_member_id)
         if not borrower or borrower.team_id != team.id:
             raise HTTPException(status_code=400, detail="借用人不存在")
+        jev_bypass_cache = False
+        if body.force_jev:
+            if not has_permission(user.member, "accounts:write"):
+                raise HTTPException(status_code=403, detail="强制刷新 Jev 需要 accounts:write 权限")
+            wait = try_force_jev_refresh(team.id)
+            if wait is not None:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"强制 Jev 刷新过于频繁，请 {int(wait) + 1} 秒后再试",
+                )
+            jev_bypass_cache = True
         resolved = resolve_auto_lender(
             session,
             team.id,
@@ -392,6 +411,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             loan_selection=effective_loan_selection(session, config, team.id),
             jev=build_jev_client(config),
             jev_config=config.jev,
+            jev_bypass_cache=jev_bypass_cache,
         )
         return {
             "ranked": resolved["ranked"],

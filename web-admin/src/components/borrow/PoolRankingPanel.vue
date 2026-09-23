@@ -249,6 +249,23 @@
           >
             Jev 报文
           </el-button>
+          <el-tooltip
+            v-if="canWrite && ranking.decision?.jev_trace"
+            content="绕过 Jev 缓存并强制外呼（30 秒内限一次，可能产生 OpenRouter 费用）"
+            placement="top"
+            :show-after="200"
+          >
+            <el-button
+              class="jev-force-btn"
+              size="small"
+              plain
+              type="warning"
+              :loading="rankingLoading"
+              @click="forceRefreshJev"
+            >
+              强制 Jev
+            </el-button>
+          </el-tooltip>
           <el-tooltip content="刷新打分表" placement="top" :show-after="200">
             <el-button
               class="refresh-btn"
@@ -275,7 +292,7 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, ref } from 'vue'
-import { ElMessage, ElTooltip } from 'element-plus'
+import { ElMessage, ElMessageBox, ElTooltip } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
@@ -458,21 +475,37 @@ function rankedRowClass({ row }: { row: RankingRow }) {
   return row.picked ? 'row-picked' : ''
 }
 
-async function loadRanking() {
+async function loadRanking(options?: { forceJev?: boolean }) {
   rankingLoading.value = true
   try {
-    const res = await client.get('/api/v2/proxy-pool/ranking')
+    const res = await client.get('/api/v2/proxy-pool/ranking', {
+      params: options?.forceJev ? { force_jev: true } : undefined,
+    })
     ranking.value = {
       ranked: res.data.ranked || [],
       excluded: res.data.excluded || [],
       decision: res.data.decision || null,
       seat_snapshot: res.data.seat_snapshot || null,
     }
-  } catch {
-    ElMessage.error('打分表加载失败')
+  } catch (e: unknown) {
+    const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    ElMessage.error(detail || '打分表加载失败')
   } finally {
     rankingLoading.value = false
   }
+}
+
+async function forceRefreshJev() {
+  try {
+    await ElMessageBox.confirm(
+      '将绕过 Jev TTL 缓存并重新调用 OpenRouter Decisions（约 30 秒内每团队限一次）。确认继续？',
+      '强制 Jev 外呼',
+      { type: 'warning', confirmButtonText: '继续', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  await loadRanking({ forceJev: true })
 }
 
 async function setScoreAdjust(row: RankingRow, val: number | null) {

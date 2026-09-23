@@ -3,6 +3,7 @@ export interface JevTraceMeta {
   skip_reason?: string
   error_message?: string
   cached?: boolean
+  force_refresh?: boolean
   model?: string
 }
 
