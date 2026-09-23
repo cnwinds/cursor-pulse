@@ -3,9 +3,6 @@
     <header class="page-header">
       <div>
         <h2>借用管理</h2>
-        <p class="desc">
-          统一管理 Key 借用、账号入池、选号打分与 Jev 决策。成员通过「自动分配」获得池轮换 Key（pka_）；指定账号则锁定单号。
-        </p>
       </div>
     </header>
 
