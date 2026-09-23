@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 
@@ -133,9 +133,7 @@ def _render_help(
 
     lines = ["## 可用技能", "", "| 技能 | 说明 |", "| :--- | :--- |"]
     for card in cards:
-        lines.append(
-            f"| {_escape_table_cell(card.name)} | {_escape_table_cell(card.summary)} |"
-        )
+        lines.append(f"| {_escape_table_cell(card.name)} | {_escape_table_cell(card.summary)} |")
     lines.extend(
         [
             "",
@@ -156,11 +154,7 @@ def _format_detail(
     if resolved is None:
         cards = registry.list_cards(actor)
         names = "、".join(c.name for c in cards[:12])
-        return (
-            f"未找到「{topic}」的说明。\n\n"
-            f"可尝试：{names}\n\n"
-            "发送「帮助」查看全部技能摘要。"
-        )
+        return f"未找到「{topic}」的说明。\n\n可尝试：{names}\n\n发送「帮助」查看全部技能摘要。"
 
     skill_id, label, _topic_key = resolved
     visible_ids = {card.skill_id for card in registry.list_cards(actor)}

@@ -6,7 +6,7 @@ lifecycle modules do not depend on the write ledger.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from pulse.storage.models import ProxyKeyUsage
 from pulse.util.datetime_fmt import ensure_aware
 from pulse.util.timezone_ctx import display_zone
 
-_UTC = timezone.utc
+_UTC = UTC
 
 
 def display_today_utc_window() -> tuple[datetime, datetime]:
@@ -48,9 +48,7 @@ def last_loan_usage_at(session: Session, loan_ids: list[str]) -> dict[str, datet
     return out
 
 
-def loan_proxy_totals_by_loan(
-    session: Session, loan_ids: list[str]
-) -> dict[str, tuple[int, int, int]]:
+def loan_proxy_totals_by_loan(session: Session, loan_ids: list[str]) -> dict[str, tuple[int, int, int]]:
     """每个借用的代理汇总：(total_tokens, total_cost_cents, today_cost_cents)。"""
     ids = [loan_id for loan_id in loan_ids if loan_id]
     if not ids:
@@ -75,16 +73,11 @@ def loan_proxy_totals_by_loan(
         .where(ProxyKeyUsage.loan_id.in_(ids))
         .group_by(ProxyKeyUsage.loan_id)
     )
-    return {
-        loan_id: (int(tokens), int(cents), int(today_cents))
-        for loan_id, tokens, cents, today_cents in rows
-    }
+    return {loan_id: (int(tokens), int(cents), int(today_cents)) for loan_id, tokens, cents, today_cents in rows}
 
 
 def loan_proxy_totals(session: Session, loan_id: str) -> tuple[int, int]:
-    tokens, cents, _today = loan_proxy_totals_by_loan(session, [loan_id]).get(
-        loan_id, (0, 0, 0)
-    )
+    tokens, cents, _today = loan_proxy_totals_by_loan(session, [loan_id]).get(loan_id, (0, 0, 0))
     return tokens, cents
 
 
@@ -92,12 +85,7 @@ def active_proxy_key_usage_totals(session: Session) -> tuple[int, int, int]:
     """Return (active_key_count, total_tokens, total_cost_cents)."""
     from pulse.storage.models import ProxyKey
 
-    count = (
-        session.scalar(
-            select(func.count()).select_from(ProxyKey).where(ProxyKey.status == "active")
-        )
-        or 0
-    )
+    count = session.scalar(select(func.count()).select_from(ProxyKey).where(ProxyKey.status == "active")) or 0
     row = session.execute(
         select(
             func.coalesce(func.sum(ProxyKeyUsage.total_tokens), 0),

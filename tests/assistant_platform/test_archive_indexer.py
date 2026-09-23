@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select, text
 
@@ -17,7 +17,7 @@ from assistant_platform.storage.db import init_assistant_db
 
 
 def _session_row(**overrides) -> ChatSessionRow:
-    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, tzinfo=UTC)
     data = dict(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -44,7 +44,7 @@ def _msg(
     created_at=None,
     seq_offset: int = 0,
 ) -> ChatMessageRow:
-    base = created_at or datetime(2026, 7, 1, tzinfo=timezone.utc)
+    base = created_at or datetime(2026, 7, 1, tzinfo=UTC)
     if created_at is None and seq_offset:
         from datetime import timedelta
 
@@ -139,8 +139,7 @@ def test_archive_and_index_persists_all_messages_and_fts_chunks():
 
     fts_hits = db.execute(
         text(
-            "SELECT chunk_id FROM ap_archive_chunks_fts "
-            "WHERE ap_archive_chunks_fts MATCH 'blue' AND session_id = :sid"
+            "SELECT chunk_id FROM ap_archive_chunks_fts WHERE ap_archive_chunks_fts MATCH 'blue' AND session_id = :sid"
         ),
         {"sid": session_row.id},
     ).all()

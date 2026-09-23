@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import select
@@ -41,7 +41,7 @@ def _incoming_row(*, msg_id: str, text: str) -> tuple[IncomingMessageEvent, Inco
         conversation_id="u1",
         reply_endpoint={"member_id": "m1", "role": "member"},
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     incoming = IncomingEventRow(
         event_id=event.event_id,
@@ -81,9 +81,7 @@ def test_process_session_job_injects_inbox_during_tool_rounds():
     fake_llm.complete_with_tools.side_effect = [
         {
             "content": "",
-            "tool_calls": [
-                {"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}
-            ],
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": None,
@@ -158,11 +156,7 @@ def test_process_session_job_injects_inbox_during_tool_rounds():
     user_texts = [m["content"] for m in second_llm_messages if m.get("role") == "user"]
     assert "查6月份的" in user_texts
 
-    follow_jobs = list(
-        db.scalars(
-            select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")
-        )
-    )
+    follow_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")))
     assert follow_jobs == []
 
     db.refresh(user_msg2)
@@ -185,9 +179,7 @@ def test_process_session_job_sends_interim_before_final():
     fake_llm.complete_with_tools.side_effect = [
         {
             "content": "好的，我先查一下，请稍等",
-            "tool_calls": [
-                {"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-06"}'}
-            ],
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-06"}'}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": "好的，我先查一下，请稍等",
@@ -263,9 +255,7 @@ def test_process_session_job_sends_interim_before_final():
     assistant_rows = [
         row
         for row in db.scalars(
-            select(ChatMessageRow)
-            .where(ChatMessageRow.role == "assistant")
-            .order_by(ChatMessageRow.created_at.asc())
+            select(ChatMessageRow).where(ChatMessageRow.role == "assistant").order_by(ChatMessageRow.created_at.asc())
         )
         if not (row.meta_json or {}).get("ledger_only")
     ]
@@ -276,9 +266,7 @@ def test_process_session_job_sends_interim_before_final():
     assert assistant_rows[1].meta_json["kind"] == "final"
     assert assistant_rows[1].text_redacted == "6月用量结果"
 
-    reply_jobs = list(
-        db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send"))
-    )
+    reply_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")))
     assert len(reply_jobs) == 1
     assert reply_jobs[0].payload_json["kind"] == "final"
     db.close()
@@ -343,4 +331,3 @@ def test_process_session_job_queues_follow_up_when_pending_at_end():
     assert len(follow_jobs) == 1
     assert follow_jobs[0].payload_json["message_id"] == user_msg2.id
     db.close()
-

@@ -83,6 +83,7 @@ def test_me_returns_seeded_default_member_capabilities(client):
     assert "guide_image.update" not in keys
     assert "usage.aggregate" not in keys
 
+
 def test_catalog_non_empty(client):
     resp = client.get(
         "/api/assistant/v1/capabilities/catalog",

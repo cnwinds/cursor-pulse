@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -14,7 +14,6 @@ from pulse.storage.models import (
     AiPlan,
     AiVendor,
     KeyLoan,
-    Member,
     UsageDailyAggregate,
     UsageIngestion,
     UsageSummary,
@@ -60,20 +59,14 @@ class ToolCenterRepository:
         if load_secondary:
             options.append(selectinload(AiAccount.secondary_members))
         query = (
-            select(AiAccount)
-            .options(*options)
-            .where(AiAccount.team_id == self.team_id, AiAccount.deleted_at.is_(None))
+            select(AiAccount).options(*options).where(AiAccount.team_id == self.team_id, AiAccount.deleted_at.is_(None))
         )
         if status:
             query = query.where(AiAccount.status == status)
         elif statuses:
             query = query.where(AiAccount.status.in_(statuses))
         if vendor_slug:
-            query = query.where(
-                AiAccount.vendor_id.in_(
-                    select(AiVendor.id).where(AiVendor.slug == vendor_slug)
-                )
-            )
+            query = query.where(AiAccount.vendor_id.in_(select(AiVendor.id).where(AiVendor.slug == vendor_slug)))
         return list(self.session.scalars(query.order_by(AiAccount.account_identifier)))
 
     def list_active_accounts(self, *, vendor_slug: str | None = None) -> list[AiAccount]:
@@ -156,7 +149,7 @@ class ToolCenterRepository:
         ownership: str = "company",
         usage_resets_on: date | None = None,
     ) -> AiAccount:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         account = AiAccount(
             team_id=self.team_id,
             vendor_id=vendor_id,
@@ -182,9 +175,7 @@ class ToolCenterRepository:
         effective_from: date | None = None,
     ) -> None:
         existing = self.session.scalar(
-            select(AiAccountPlanHistory.id).where(
-                AiAccountPlanHistory.account_id == account.id
-            ).limit(1)
+            select(AiAccountPlanHistory.id).where(AiAccountPlanHistory.account_id == account.id).limit(1)
         )
         if existing:
             return
@@ -237,7 +228,7 @@ class ToolCenterRepository:
             )
         )
         account.plan_id = new_plan_id
-        account.updated_at = datetime.now(timezone.utc)
+        account.updated_at = datetime.now(UTC)
         self.session.flush()
         return account
 
@@ -256,11 +247,7 @@ class ToolCenterRepository:
             raise ValueError("账号不存在")
 
         existing = list(
-            self.session.scalars(
-                select(AiAccountPlanHistory).where(
-                    AiAccountPlanHistory.account_id == account_id
-                )
-            )
+            self.session.scalars(select(AiAccountPlanHistory).where(AiAccountPlanHistory.account_id == account_id))
         )
         if len(existing) > 1:
             raise ValueError("已有完整套餐历史，无需补录")
@@ -286,7 +273,7 @@ class ToolCenterRepository:
                 note=note,
             )
         )
-        account.updated_at = datetime.now(timezone.utc)
+        account.updated_at = datetime.now(UTC)
         self.session.flush()
         return account
 
@@ -305,11 +292,7 @@ class ToolCenterRepository:
         if not summary_row or not summary_row.latest_ingestion_id:
             return None
         records = list(
-            self.session.scalars(
-                select(UsageRecord).where(
-                    UsageRecord.ingestion_id == summary_row.latest_ingestion_id
-                )
-            )
+            self.session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id == summary_row.latest_ingestion_id))
         )
         if not records:
             return None
@@ -388,7 +371,7 @@ class ToolCenterRepository:
         for key, value in fields.items():
             if hasattr(account, key):
                 setattr(account, key, value)
-        account.updated_at = datetime.now(timezone.utc)
+        account.updated_at = datetime.now(UTC)
         self.session.flush()
         return account
 
@@ -396,13 +379,9 @@ class ToolCenterRepository:
         account = self.get_account(account_id)
         if not account:
             raise ValueError("账号不存在")
-        self.session.execute(
-            delete(AiAccountMember).where(AiAccountMember.account_id == account_id)
-        )
+        self.session.execute(delete(AiAccountMember).where(AiAccountMember.account_id == account_id))
         for member_id in member_ids:
-            self.session.add(
-                AiAccountMember(account_id=account_id, member_id=member_id, role="secondary")
-            )
+            self.session.add(AiAccountMember(account_id=account_id, member_id=member_id, role="secondary"))
         self.session.flush()
 
     def get_submitted_account_ids(self, period: str) -> set[str]:
@@ -454,7 +433,7 @@ class ToolCenterRepository:
                 UsageSummary.period == period,
             )
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if existing:
             existing.latest_ingestion_id = ingestion_id
             existing.submitted_by_member_id = submitted_by_member_id
@@ -547,19 +526,15 @@ class ToolCenterRepository:
         if not account:
             raise ValueError("账号不存在")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self.account_has_associated_data(account_id):
             account.deleted_at = now
             account.updated_at = now
             self.session.flush()
             return "soft"
 
-        self.session.execute(
-            delete(AiAccountMember).where(AiAccountMember.account_id == account_id)
-        )
-        self.session.execute(
-            delete(AiAccountPlanHistory).where(AiAccountPlanHistory.account_id == account_id)
-        )
+        self.session.execute(delete(AiAccountMember).where(AiAccountMember.account_id == account_id))
+        self.session.execute(delete(AiAccountPlanHistory).where(AiAccountPlanHistory.account_id == account_id))
         self.session.delete(account)
         self.session.flush()
         return "hard"

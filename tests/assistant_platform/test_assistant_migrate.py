@@ -19,13 +19,7 @@ def test_migrate_adds_session_state_json_to_legacy_table():
 def test_migrate_backfills_handled_at_for_legacy_messages():
     engine = make_engine("sqlite://")
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "CREATE TABLE ap_chat_messages ("
-                "id VARCHAR(36) PRIMARY KEY, "
-                "created_at DATETIME)"
-            )
-        )
+        conn.execute(text("CREATE TABLE ap_chat_messages (id VARCHAR(36) PRIMARY KEY, created_at DATETIME)"))
         conn.execute(
             text(
                 "INSERT INTO ap_chat_messages (id, created_at) "
@@ -38,9 +32,7 @@ def test_migrate_backfills_handled_at_for_legacy_messages():
     cols = {c["name"] for c in inspect(engine).get_columns("ap_chat_messages")}
     assert "handled_at" in cols
     with engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT id, created_at, handled_at FROM ap_chat_messages ORDER BY id")
-        ).all()
+        rows = conn.execute(text("SELECT id, created_at, handled_at FROM ap_chat_messages ORDER BY id")).all()
     assert all(r.handled_at is not None for r in rows)
     assert all(r.handled_at == r.created_at for r in rows)
 
@@ -86,7 +78,5 @@ def test_migrate_pm_atoms_with_null_evidence_json():
     migrate_assistant_schema(engine)
 
     with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT evidence_json FROM ap_semantic_atoms WHERE id = 'a1'")
-        ).one()
+        row = conn.execute(text("SELECT evidence_json FROM ap_semantic_atoms WHERE id = 'a1'")).one()
     assert row.evidence_json == "{}"

@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from pulse.channels.base import normalize_platform, outbound_messenger_or_none
 from pulse.channels.outbound_ledger import send_oto_and_ledger
-from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
 from pulse.config import ProxyAddress
+from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
 from pulse.proxy.key_crud import build_client_command, build_client_setup_commands
 from pulse.storage.models import KeyLoan, Member
 from pulse.tenant.context import team_repository
@@ -47,9 +47,7 @@ def resolve_proxy_addresses(session: Session | None, config: Any) -> list[ProxyA
     if cfg_addrs:
         return list(cfg_addrs)
 
-    fallback = (
-        getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317"
-    ).rstrip("/")
+    fallback = (getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317").rstrip("/")
     return [ProxyAddress(url=fallback, display_name=fallback)]
 
 
@@ -61,12 +59,8 @@ def proxy_public_url(config: Any, session: Session | None = None) -> str:
 
 def build_setup_commands(*, api_key: str, proxy_url: str) -> dict[str, str]:
     return {
-        "powershell": build_client_command(
-            shell="powershell", proxy_url=proxy_url, plaintext_key=api_key
-        ),
-        "bash": build_client_command(
-            shell="bash", proxy_url=proxy_url, plaintext_key=api_key
-        ),
+        "powershell": build_client_command(shell="powershell", proxy_url=proxy_url, plaintext_key=api_key),
+        "bash": build_client_command(shell="bash", proxy_url=proxy_url, plaintext_key=api_key),
     }
 
 
@@ -420,9 +414,7 @@ def notify_loan_reclaimed(
                 context="reclaimed-borrower",
             )
         else:
-            logger.info(
-                "key loan reclaimed: borrower has no IM identity loan=%s", loan.id[:8]
-            )
+            logger.info("key loan reclaimed: borrower has no IM identity loan=%s", loan.id[:8])
 
     admin_text = format_admin_reclaimed(
         borrower_name=borrower_name,

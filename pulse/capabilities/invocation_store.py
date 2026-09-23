@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from pulse.storage.models import CapabilityInvocationRow
 
 

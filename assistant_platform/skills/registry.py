@@ -147,9 +147,7 @@ class SkillRegistry:
                 next_start_line=None,
             )
         if start > total_lines:
-            raise ValueError(
-                f"start_line={start} 超出正文行数 total_lines={total_lines}"
-            )
+            raise ValueError(f"start_line={start} 超出正文行数 total_lines={total_lines}")
         end = min(total_lines, start + window - 1)
         chunk = body_lines[start - 1 : end]
         body_md = "\n".join(chunk)
@@ -187,16 +185,11 @@ class SkillRegistry:
             meta, body = self._parse_frontmatter(path)
             override = str(meta.get("skill_id") or "").strip()
             if override and override != path_id:
-                raise ValueError(
-                    f"skill_id frontmatter 与路径不一致: {rel} "
-                    f"frontmatter={override!r} path={path_id!r}"
-                )
+                raise ValueError(f"skill_id frontmatter 与路径不一致: {rel} frontmatter={override!r} path={path_id!r}")
             skill_id = path_id
             name = str(meta.get("name") or "").strip() or self._first_heading(body) or skill_id
             when_to_use = tuple(self._when_to_use_items(meta))
-            summary = str(meta.get("summary") or "").strip() or (
-                when_to_use[0] if when_to_use else name
-            )
+            summary = str(meta.get("summary") or "").strip() or (when_to_use[0] if when_to_use else name)
             privacy = meta.get("privacy")
             cards[skill_id] = SkillCard(
                 skill_id=skill_id,

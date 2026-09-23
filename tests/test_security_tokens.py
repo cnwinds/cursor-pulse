@@ -1,5 +1,4 @@
 import pytest
-
 from pulse.security_tokens import assert_secure_service_tokens, is_insecure_token
 
 

@@ -72,12 +72,8 @@ def _mock_cursor_client(*, email: str):
     mock_cursor_key_exchange(mock_client, email=email)
     mock_client.exchange_api_key.return_value = "session-token"
     mock_client.get_access_token.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     from pulse.integrations.cursor_api import map_usage_event
 
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])

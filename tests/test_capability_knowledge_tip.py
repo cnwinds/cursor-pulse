@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import load_config
@@ -10,6 +8,7 @@ from pulse.storage.db import init_db
 from pulse.storage.models import KnowledgeEntry, Member
 from pulse.tool_center.knowledge import KnowledgeService, TipSubmissionError, evaluate_tip_submission
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 

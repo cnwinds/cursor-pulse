@@ -28,9 +28,7 @@ def normalize_event_kind(kind: str | None) -> str:
     raw = (kind or "").strip()
     if not raw:
         return ""
-    compact = "_".join(
-        part for part in "".join(ch if ch.isalnum() else " " for ch in raw.upper()).split()
-    )
+    compact = "_".join(part for part in "".join(ch if ch.isalnum() else " " for ch in raw.upper()).split())
     if compact.startswith("USAGE_EVENT_KIND_"):
         compact = compact[len("USAGE_EVENT_KIND_") :]
     return compact
@@ -47,11 +45,7 @@ def normalize_cursor_model_name(model: str | None) -> str:
 def is_auto_composer_model(model: str | None) -> bool:
     """Auto Quota Pool heuristic (kind does not split Auto vs API; both are INCLUDED)."""
     normalized = normalize_cursor_model_name(model)
-    return (
-        normalized in {"auto", "default"}
-        or normalized.startswith("composer")
-        or normalized.startswith("grok")
-    )
+    return normalized in {"auto", "default"} or normalized.startswith("composer") or normalized.startswith("grok")
 
 
 def is_third_party_model(model: str | None) -> bool:

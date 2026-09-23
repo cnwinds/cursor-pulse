@@ -1,4 +1,4 @@
-"""Backward-compatible re-export — prefer ``pulse.channels.feishu``. """
+"""Backward-compatible re-export — prefer ``pulse.channels.feishu``."""
 
 from __future__ import annotations
 

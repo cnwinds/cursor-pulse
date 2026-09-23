@@ -2,7 +2,6 @@ import base64
 import os
 
 import pytest
-
 from pulse.ingestion.credentials import (
     AccountEmailMismatchError,
     _apply_key_account_identifier,
@@ -56,11 +55,10 @@ def test_encrypt_decrypt_with_passphrase_key():
 
 
 def test_rotate_credential_encryption_reencrypts_blob():
+    from pulse.storage.models import AiAccountCredential, Base
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
-
-    from pulse.storage.models import AiAccountCredential, Base
 
     old_key = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
     new_key = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")

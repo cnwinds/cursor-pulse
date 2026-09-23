@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -13,6 +13,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from pulse.capabilities.invoke import invoke_capability
+from pulse.config import WebSearchConfig, load_config
+from pulse.storage.db import init_db
+from pulse.storage.models import Member
+from tests.assistant_actor_helpers import signed_actor_headers
+from tests.conftest import make_team_repo
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import (
@@ -29,24 +36,18 @@ from assistant_platform.conversation.orchestrator import (
 )
 from assistant_platform.conversation.session_store import attach_user_message, close_session
 from assistant_platform.domain.events import IncomingMessageEvent
+from assistant_platform.memory.agent_tools import MemoryToolService
 from assistant_platform.memory.archive_models import SessionArchiveRow
 from assistant_platform.memory.archive_pipeline import run_archive_pipeline
 from assistant_platform.memory.archive_search import hybrid_search, resolve_search_scope
 from assistant_platform.memory.context_builder import build_recall_bundle
 from assistant_platform.memory.contracts import ArchivePipelineStatus
 from assistant_platform.memory.opt_out import set_memory_opt_out
-from assistant_platform.memory.agent_tools import MemoryToolService
+from assistant_platform.memory.semantic.domain import VisibilityContext
 from assistant_platform.profiles.compiler import compile_profile_guidance
 from assistant_platform.profiles.models import ProfileSignalRow
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import IncomingEventRow
-from assistant_platform.memory.semantic.domain import VisibilityContext
-from pulse.capabilities.invoke import invoke_capability
-from pulse.config import WebSearchConfig, load_config
-from pulse.storage.db import init_db
-from pulse.storage.models import Member
-from tests.assistant_actor_helpers import signed_actor_headers
-from tests.conftest import make_team_repo
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_A = "team-rollout-a"
@@ -65,7 +66,7 @@ def _isolate_team_settings(monkeypatch):
 
 
 def _session_row(**overrides) -> ChatSessionRow:
-    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, tzinfo=UTC)
     data = dict(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -85,7 +86,7 @@ def _session_row(**overrides) -> ChatSessionRow:
 def _msg(session_id: str, role: str, text: str, *, kind: str | None = None, offset: int = 0) -> ChatMessageRow:
     from datetime import timedelta
 
-    base = datetime(2026, 7, 1, tzinfo=timezone.utc) + timedelta(seconds=offset)
+    base = datetime(2026, 7, 1, tzinfo=UTC) + timedelta(seconds=offset)
     return ChatMessageRow(
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -154,7 +155,7 @@ def test_e2e_close_archive_recall_expand(caplog):
     Session = init_assistant_db("sqlite://", team_id=TEAM_A)
     db = Session()
 
-    closed = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    closed = _session_row(status="closed", closed_at=datetime.now(UTC))
     open_row = _session_row()
     for row, keyword in ((closed, "rollout-nebula"), (open_row, "current-turn")):
         db.add(row)
@@ -183,15 +184,19 @@ def test_e2e_close_archive_recall_expand(caplog):
         chat_memory=_memory_config(),
     )
 
-    with patch(
-        "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
-        return_value=CaptureLlm(),
-    ), patch(
-        "assistant_platform.conversation.orchestrator.resolve_capabilities",
-        return_value=[],
-    ), patch(
-        "assistant_platform.conversation.orchestrator.compose_system_supplement",
-        return_value="",
+    with (
+        patch(
+            "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
+            return_value=CaptureLlm(),
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.resolve_capabilities",
+            return_value=[],
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.compose_system_supplement",
+            return_value="",
+        ),
     ):
         reply = generate_reply_text(
             db,
@@ -230,7 +235,9 @@ def test_e2e_close_archive_recall_expand(caplog):
     assert expand["ok"] is True
 
     recall_logs = [r.message for r in caplog.records if "event=recall_bundle" in r.message]
-    expand_logs = [r.message for r in caplog.records if "event=memory_tool" in r.message and "memory_expand" in r.message]
+    expand_logs = [
+        r.message for r in caplog.records if "event=memory_tool" in r.message and "memory_expand" in r.message
+    ]
     assert recall_logs
     assert expand_logs
     assert "rollout-nebula" not in " ".join(recall_logs)
@@ -245,7 +252,7 @@ def test_private_group_cross_team_isolation():
 
     private_a = _session_row(
         status="closed",
-        closed_at=datetime.now(timezone.utc),
+        closed_at=datetime.now(UTC),
         conversation_type="private",
         user_id="user-a",
         conversation_id="user-a",
@@ -253,7 +260,7 @@ def test_private_group_cross_team_isolation():
     group_a = _session_row(
         id=str(uuid.uuid4()),
         status="closed",
-        closed_at=datetime.now(timezone.utc),
+        closed_at=datetime.now(UTC),
         conversation_type="group",
         user_id="user-a",
         conversation_id="group-1",
@@ -261,7 +268,7 @@ def test_private_group_cross_team_isolation():
     private_b_team = _session_row(
         id=str(uuid.uuid4()),
         status="closed",
-        closed_at=datetime.now(timezone.utc),
+        closed_at=datetime.now(UTC),
         team_id=TEAM_B,
         user_id="user-a",
         conversation_id="user-a",
@@ -281,9 +288,7 @@ def test_private_group_cross_team_isolation():
         conversation_id="user-a",
         user_id="user-a",
     )
-    private_hits, page = hybrid_search(
-        db, query=keyword, scope=private_scope, config=_memory_config()
-    )
+    private_hits, page = hybrid_search(db, query=keyword, scope=private_scope, config=_memory_config())
     assert page.total_hits == 1
     assert private_hits[0].session_id == private_a.id
 
@@ -294,9 +299,7 @@ def test_private_group_cross_team_isolation():
         conversation_id="group-1",
         user_id="user-a",
     )
-    group_hits, group_page = hybrid_search(
-        db, query=keyword, scope=group_scope, config=_memory_config()
-    )
+    group_hits, group_page = hybrid_search(db, query=keyword, scope=group_scope, config=_memory_config())
     assert group_page.total_hits == 1
     assert group_hits[0].session_id == group_a.id
 
@@ -307,9 +310,7 @@ def test_private_group_cross_team_isolation():
         conversation_id="user-a",
         user_id="user-a",
     )
-    cross_hits, cross_page = hybrid_search(
-        db, query=keyword, scope=cross_team_scope, config=_memory_config()
-    )
+    cross_hits, cross_page = hybrid_search(db, query=keyword, scope=cross_team_scope, config=_memory_config())
     session_ids = {h.session_id for h in cross_hits}
     assert private_b_team.id not in session_ids
     db.close()
@@ -320,7 +321,7 @@ def test_recall_degrades_when_search_fails(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     Session = init_assistant_db("sqlite://", team_id=TEAM_A)
     db = Session()
-    closed = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    closed = _session_row(status="closed", closed_at=datetime.now(UTC))
     db.add(closed)
     db.add(_msg(closed.id, "user", "degrade-marker phrase", offset=1))
     db.add(_msg(closed.id, "assistant", "ok", kind="final", offset=2))
@@ -376,15 +377,19 @@ def test_recall_degrades_when_search_fails(monkeypatch, caplog):
         llm=config_module.AssistantLlmConfig(enabled=True, api_key="k", model="m"),
         chat_memory=_memory_config(),
     )
-    with patch(
-        "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
-        return_value=CaptureLlm(),
-    ), patch(
-        "assistant_platform.conversation.orchestrator.resolve_capabilities",
-        return_value=[],
-    ), patch(
-        "assistant_platform.conversation.orchestrator.compose_system_supplement",
-        return_value="",
+    with (
+        patch(
+            "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
+            return_value=CaptureLlm(),
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.resolve_capabilities",
+            return_value=[],
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.compose_system_supplement",
+            return_value="",
+        ),
     ):
         reply = generate_reply_text(
             db,
@@ -421,7 +426,7 @@ def test_profile_correction_affects_next_recall():
             conversation_type="private",
             conversation_id="user-a",
             text_redacted="偏好: 详细回复",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         ),
     )
     db.add(
@@ -488,7 +493,7 @@ def test_memory_opt_out_blocks_archive():
             conversation_type="private",
             conversation_id="user-a",
             text_redacted="opt-out test",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         ),
     )
     close_session(db, session_row, reason="manual", enqueue_close_job=False)
@@ -509,10 +514,7 @@ def test_delete_cascade_removes_search_hits():
         member_id="mem-1",
         role="operator",
         channel_user_id="user-a",
-        permissions=(
-            "assistant:sessions:read:self,"
-            "assistant:sessions:delete:self"
-        ),
+        permissions=("assistant:sessions:read:self,assistant:sessions:delete:self"),
     )
 
     db = sf()
@@ -529,7 +531,7 @@ def test_delete_cascade_removes_search_hits():
             conversation_type="private",
             conversation_id="user-a",
             text_redacted="cascade-delete-target phrase",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         ),
     )
     db.add(
@@ -628,7 +630,7 @@ def test_archive_pipeline_logs_stage_timing(caplog):
     caplog.set_level(logging.INFO)
     Session = init_assistant_db("sqlite://", team_id=TEAM_A)
     db = Session()
-    row = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    row = _session_row(status="closed", closed_at=datetime.now(UTC))
     db.add(row)
     db.add(_msg(row.id, "user", "timing log test", offset=1))
     db.add(_msg(row.id, "assistant", "ok", kind="final", offset=2))
@@ -650,7 +652,7 @@ def test_observability_logs_exclude_body_text(caplog):
     Session = init_assistant_db("sqlite://", team_id=TEAM_A)
     db = Session()
     secret_phrase = "super-secret-memory-body-xyz"
-    closed = _session_row(status="closed", closed_at=datetime.now(timezone.utc))
+    closed = _session_row(status="closed", closed_at=datetime.now(UTC))
     db.add(closed)
     db.add(_msg(closed.id, "user", secret_phrase, offset=1))
     db.add(_msg(closed.id, "assistant", "ok", kind="final", offset=2))

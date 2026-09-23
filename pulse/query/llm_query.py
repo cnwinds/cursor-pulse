@@ -4,9 +4,9 @@ import json
 from typing import Any
 
 import pandas as pd
+from assistant_platform.llm.client import AssistantLlmClient
 from sqlalchemy.orm import Session
 
-from assistant_platform.llm.client import AssistantLlmClient
 from pulse.periods import current_period
 from pulse.query.engine import load_usage_dataframe
 
@@ -127,10 +127,7 @@ def answer_usage_with_llm(
         "4. 用简洁中文，必要时用列表；金额保留两位小数，tokens 用千分位。\n"
         "5. 数据不足以回答时，说明缺什么并给出 1～2 条可尝试的问法。"
     )
-    user = (
-        f"用户问题：{question.strip()}\n\n"
-        f"数据：\n{json.dumps(context, ensure_ascii=False, indent=2)}"
-    )
+    user = f"用户问题：{question.strip()}\n\n数据：\n{json.dumps(context, ensure_ascii=False, indent=2)}"
     return client.complete(system=system, user=user, temperature=0.2)
 
 

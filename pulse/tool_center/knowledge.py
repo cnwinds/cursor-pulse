@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -135,12 +134,20 @@ def _evaluate_tip_rules(title: str, body: str) -> tuple[bool, list[str]]:
         or re.search(r"^\s*\d+[.)]\s", body, re.M)
     )
     if not has_structure:
-        issues.append(
-            "请用 Markdown 组织正文（如 ## 技巧说明、## 操作步骤，或有序/无序列表）"
-        )
+        issues.append("请用 Markdown 组织正文（如 ## 技巧说明、## 操作步骤，或有序/无序列表）")
 
     actionable_keywords = (
-        "步骤", "做法", "如何", "可以", "建议", "操作", "使用", "配置", "设置", "先", "然后",
+        "步骤",
+        "做法",
+        "如何",
+        "可以",
+        "建议",
+        "操作",
+        "使用",
+        "配置",
+        "设置",
+        "先",
+        "然后",
     )
     if not any(kw in body for kw in actionable_keywords):
         issues.append("缺少可执行的操作要点，请写清「具体怎么做」")
@@ -191,10 +198,7 @@ def infer_tip_tags(title: str, body: str, tags: list[str] | None = None) -> list
             return cleaned[:5]
     lower = f"{title}\n{body}".lower()
     found: list[str] = []
-    if any(
-        k in lower
-        for k in ("cursor", "composer", "tab", "@codebase", "@file")
-    ):
+    if any(k in lower for k in ("cursor", "composer", "tab", "@codebase", "@file")):
         found.append("cursor")
     return found or ["general"]
 
@@ -217,7 +221,7 @@ class KnowledgeService:
         organized = organize_tip(body_text, self.config)
         vendor_id = self._resolve_vendor_id(organized.get("vendor_slug"))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entry = KnowledgeEntry(
             team_id=self.team_id,
             author_member_id=author.id,
@@ -260,7 +264,7 @@ class KnowledgeService:
         if vendor_id is None and resolved_tags and resolved_tags[0] != "general":
             vendor_id = self._resolve_vendor_id(resolved_tags[0])
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entry = KnowledgeEntry(
             team_id=self.team_id,
             author_member_id=author.id,
@@ -348,9 +352,7 @@ class KnowledgeService:
         elif not include_hidden:
             query = query.where(KnowledgeEntry.status != "hidden")
         return list(
-            self.session.scalars(
-                query.order_by(KnowledgeEntry.pinned.desc(), KnowledgeEntry.created_at.desc())
-            )
+            self.session.scalars(query.order_by(KnowledgeEntry.pinned.desc(), KnowledgeEntry.created_at.desc()))
         )
 
     def update_entry(self, entry_id: str, **fields) -> KnowledgeEntry:

@@ -4,11 +4,11 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.settings.team_store import effective_loan_selection
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
-from pulse.config import AppConfig, TenantConfig, WebConfig
 
 
 @pytest.fixture(scope="module")
@@ -71,10 +71,9 @@ def test_patch_loan_selection_updates_effective_config(settings_client):
 
 
 def test_saved_tenant_config_does_not_create_or_backfill(tmp_path):
-    from sqlalchemy import select
-
     from pulse.settings.team_store import effective_config_for_saved_tenant
     from pulse.storage.models import Member, Team
+    from sqlalchemy import select
 
     db_url = f"sqlite:///{(tmp_path / 'tenant.db').as_posix()}"
     sf = make_test_session_factory(db_url)

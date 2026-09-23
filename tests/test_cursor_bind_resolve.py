@@ -1,11 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from pulse.config import AppConfig, CredentialConfig, TenantConfig
 from pulse.ingestion.crypto import encrypt_secret, mask_api_key
 from pulse.storage.db import init_db
@@ -26,9 +25,7 @@ def bind_ctx():
     seed_v2_catalog(session, team)
     member = repo.add_member("dt1", "Tester")
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_accounts = [
-        a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"
-    ]
+    cursor_accounts = [a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"]
     bound = cursor_accounts[0]
     unbound = cursor_accounts[1] if len(cursor_accounts) > 1 else None
     tool_repo.update_account(bound.id, primary_member_id=member.id)
@@ -81,9 +78,7 @@ def test_wrong_email_falls_back_to_single_unbound(bind_ctx):
         pytest.skip("need two cursor accounts in catalog")
 
     cred_service = _mock_cred_service(bound_id=ctx["bound"].id, key_email=None)
-    cred_service.cursor_client.exchange_user_api_key_response.side_effect = Exception(
-        "offline"
-    )
+    cred_service.cursor_client.exchange_user_api_key_response.side_effect = Exception("offline")
 
     account, note = resolve_bind_cursor_account(
         member=ctx["member"],
@@ -123,9 +118,7 @@ def test_wrong_email_matches_key_email(bind_ctx):
 @patch("pulse.ingestion.sync.CursorSyncService")
 @patch("pulse.ingestion.credentials.CredentialService")
 @patch("pulse.tool_center.cursor_bind.resolve_bind_cursor_account")
-def test_bind_command_shows_note_from_resolver(
-    mock_resolve, mock_cred_cls, mock_sync_cls, bind_ctx
-):
+def test_bind_command_shows_note_from_resolver(mock_resolve, mock_cred_cls, mock_sync_cls, bind_ctx):
     ctx = bind_ctx
     if not ctx["unbound"]:
         pytest.skip("need two cursor accounts in catalog")

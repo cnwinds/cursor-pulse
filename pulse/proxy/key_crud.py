@@ -6,9 +6,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pulse.proxy import usage as usage_mod
 from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
 from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
-from pulse.proxy import usage as usage_mod
 from pulse.storage.models import ProxyEvent, ProxyKey
 from pulse.util.datetime_fmt import serialize_datetime
 
@@ -31,9 +31,7 @@ def cents_to_usd(cents: int | None) -> int | None:
 
 
 def find_key_by_plaintext(session: Session, plaintext: str) -> ProxyKey | None:
-    return session.execute(
-        select(ProxyKey).where(ProxyKey.key_hash == hash_proxy_key(plaintext))
-    ).scalar_one_or_none()
+    return session.execute(select(ProxyKey).where(ProxyKey.key_hash == hash_proxy_key(plaintext))).scalar_one_or_none()
 
 
 def create_key(
@@ -87,10 +85,7 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
     url = proxy_url.rstrip("/")
     if shell == "powershell":
         # cmd 子进程隔离环境变量；可在 PowerShell / cmd 中直接粘贴
-        return (
-            f'cmd /c "set HTTPS_PROXY={url}&& '
-            f'set CURSOR_API_KEY={plaintext_key}&& agent -k"'
-        )
+        return f'cmd /c "set HTTPS_PROXY={url}&& set CURSOR_API_KEY={plaintext_key}&& agent -k"'
     # bash / linux / macos：前缀赋值仅作用于该命令
     return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
@@ -108,17 +103,13 @@ def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:
                     "proxy_url": proxy_url,
                     "proxy_name": display_name,
                     "shell": sh,
-                    "command": build_client_command(
-                        shell=sh, proxy_url=proxy_url, plaintext_key=plaintext_key
-                    ),
+                    "command": build_client_command(shell=sh, proxy_url=proxy_url, plaintext_key=plaintext_key),
                 }
             )
     return commands
 
 
-def pick_client_setup_command(
-    commands: list[dict], *, shell: str, proxy_url: str | None = None
-) -> dict:
+def pick_client_setup_command(commands: list[dict], *, shell: str, proxy_url: str | None = None) -> dict:
     if proxy_url:
         wanted = proxy_url.rstrip("/")
         for item in commands:
@@ -179,10 +170,7 @@ def record_event(
     )
 
 
-
-def key_summaries(
-    session: Session, keys: list[ProxyKey], *, now: datetime | None = None
-) -> list[dict]:
+def key_summaries(session: Session, keys: list[ProxyKey], *, now: datetime | None = None) -> list[dict]:
     now = now or utcnow()
     ids = [key.id for key in keys]
     totals = usage_mod.usage_totals_by_proxy_key(session, ids)

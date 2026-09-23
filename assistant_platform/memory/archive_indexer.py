@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Sequence
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
@@ -19,8 +19,8 @@ from assistant_platform.memory.archive_models import (
     SessionArchiveRow,
     resolve_archive_scope,
 )
-from assistant_platform.memory.vector_index import VectorIndex, VectorRecord
 from assistant_platform.memory.embedding import Embedder, HashingEmbedder
+from assistant_platform.memory.vector_index import VectorIndex, VectorRecord
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +85,12 @@ def is_indexable_message(message: ChatMessageRow | ArchiveMessageRow) -> bool:
 
 def _ensure_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
 def _message_sort_key(message: ChatMessageRow) -> tuple:
-    created = message.created_at or datetime.min.replace(tzinfo=timezone.utc)
+    created = message.created_at or datetime.min.replace(tzinfo=UTC)
     return (_ensure_aware(created), message.id or "")
 
 
@@ -180,7 +180,7 @@ def build_indexable_chunks(
         combined = "\n".join(parts)
         start_seq = min(seq for seq, _ in turn)
         end_seq = max(seq for seq, _ in turn)
-        occurred_from = min(times) if times else datetime.now(timezone.utc)
+        occurred_from = min(times) if times else datetime.now(UTC)
         occurred_to = max(times) if times else occurred_from
         windows = _split_text_windows(
             combined,
@@ -208,9 +208,7 @@ def build_indexable_chunks(
 
 def purge_session_index(session: Session, session_id: str) -> None:
     """Remove archive messages, chunks, FTS entries and vector embeddings for a session."""
-    chunk_ids = session.scalars(
-        select(ArchiveChunkRow.id).where(ArchiveChunkRow.session_id == session_id)
-    ).all()
+    chunk_ids = session.scalars(select(ArchiveChunkRow.id).where(ArchiveChunkRow.session_id == session_id)).all()
     if chunk_ids:
         for chunk_id in chunk_ids:
             session.execute(
@@ -254,10 +252,8 @@ def _get_or_create_archive_header(
         user_id=session_row.user_id,
         conversation_id=session_row.conversation_id,
     )
-    row = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-    )
-    now = datetime.now(timezone.utc)
+    row = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
+    now = datetime.now(UTC)
     if row is None:
         row = SessionArchiveRow(
             session_id=session_row.id,
@@ -294,7 +290,7 @@ def archive_session_messages(
 ) -> SessionArchiveRow:
     """Copy ledger messages into permanent archive (idempotent on content hash)."""
     archive = _get_or_create_archive_header(session, session_row, index_version=index_version)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages = list(
         session.scalars(
             select(ChatMessageRow)
@@ -362,7 +358,7 @@ def index_archived_session(
     if archive.archive_status != "ready":
         raise RuntimeError(f"archive not ready for session {session_row.id}")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages = list(
         session.scalars(
             select(ArchiveMessageRow)
@@ -394,9 +390,7 @@ def index_archived_session(
             if key not in precomputed:
                 precomputed[key] = list(active_embedder.embed(item.text))
 
-    chunk_ids = session.scalars(
-        select(ArchiveChunkRow.id).where(ArchiveChunkRow.session_id == session_row.id)
-    ).all()
+    chunk_ids = session.scalars(select(ArchiveChunkRow.id).where(ArchiveChunkRow.session_id == session_row.id)).all()
     if chunk_ids:
         for chunk_id in chunk_ids:
             session.execute(
@@ -483,7 +477,7 @@ def archive_and_index_session(
     for the session inside the caller's transaction.
     """
     archive = _get_or_create_archive_header(session, session_row, index_version=index_version)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     try:
         archive_session_messages(session, session_row, index_version=index_version)
         index_archived_session(
@@ -497,14 +491,10 @@ def archive_and_index_session(
             embedding_enabled=embedding_enabled,
             embedding_model=embedding_model,
         )
-        return session.scalar(
-            select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id)
-        )
+        return session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_row.id))
     except Exception as exc:
         archive.status = "failed"
-        archive.archive_status = (
-            "failed" if archive.archive_status != "ready" else archive.archive_status
-        )
+        archive.archive_status = "failed" if archive.archive_status != "ready" else archive.archive_status
         archive.index_status = "failed"
         archive.last_error = str(exc)[:500]
         archive.updated_at = now

@@ -5,10 +5,11 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("fastapi")
 
+from tests.assistant_actor_helpers import signed_actor_headers
+
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-prompts-api"

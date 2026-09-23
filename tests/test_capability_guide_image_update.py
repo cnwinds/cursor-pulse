@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def _msg(result):
     data = result.result or {}
     return result.user_message or data.get("text") or data.get("answer") or ""
@@ -9,11 +10,10 @@ import base64
 from pathlib import Path
 
 import pytest
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.guide_image_update import handle_guide_image_update
 from pulse.capabilities.invoke import HANDLERS
-from pulse.config import AppConfig, AdminConfig, StorageConfig, TenantConfig
+from pulse.config import AdminConfig, AppConfig, StorageConfig, TenantConfig
 from pulse.storage.db import init_db
 from tests.conftest import make_team_repo
 
@@ -88,9 +88,7 @@ def test_confirmation_required_without_confirmed_by(session, guide_env):
         actor_member_id=guide_env["owner"].id,
         confirmed_by=None,
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "confirmation_required"
@@ -101,9 +99,7 @@ def test_forbidden_for_normal_member(session, guide_env):
         team_id=guide_env["team"].id,
         actor_member_id=guide_env["member"].id,
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "forbidden"
@@ -115,9 +111,7 @@ def test_invalid_arguments_for_empty_image(session, guide_env):
         actor_member_id=guide_env["owner"].id,
         arguments={"image_base64": base64.standard_b64encode(b"").decode("ascii")},
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "invalid_arguments"
@@ -128,9 +122,7 @@ def test_success_for_owner_with_image_base64(session, guide_env):
         team_id=guide_env["team"].id,
         actor_member_id=guide_env["owner"].id,
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -148,9 +140,7 @@ def test_success_for_owner_with_image_path(session, guide_env, tmp_path):
         actor_member_id=guide_env["owner"].id,
         arguments={"image_path": str(source)},
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "succeeded"
     saved = guide_env["raw_files_dir"] / "assets" / "cursor_bind_key_guide.png"
@@ -167,9 +157,7 @@ def test_success_for_operator_with_image_base64(session, guide_env):
         team_id=team.id,
         actor_member_id=operator.id,
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -185,16 +173,12 @@ def test_success_for_dingtalk_admin_without_portal_role(session, guide_env):
     admin_member.portal_role = "ai_member"
     repo.commit()
 
-    config = guide_env["config"].model_copy(
-        update={"admin": AdminConfig(channel_user_ids=["dingtalk-admin-user"])}
-    )
+    config = guide_env["config"].model_copy(update={"admin": AdminConfig(channel_user_ids=["dingtalk-admin-user"])})
     request = _request(
         team_id=team.id,
         actor_member_id=admin_member.id,
     )
-    result = handle_guide_image_update(
-        session, request=request, config=config, op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=config, op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -209,14 +193,9 @@ def test_invalid_arguments_for_non_image_magic_bytes(session, guide_env):
     request = _request(
         team_id=guide_env["team"].id,
         actor_member_id=guide_env["owner"].id,
-        arguments={
-            "image_base64": base64.standard_b64encode(invalid_bytes).decode("ascii")
-        },
+        arguments={"image_base64": base64.standard_b64encode(invalid_bytes).decode("ascii")},
     )
-    result = handle_guide_image_update(
-        session, request=request, config=guide_env["config"], op={}
-    )
+    result = handle_guide_image_update(session, request=request, config=guide_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "invalid_arguments"
-

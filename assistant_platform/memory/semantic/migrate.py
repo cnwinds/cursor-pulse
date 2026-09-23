@@ -82,9 +82,7 @@ def _copy_table(engine: Engine, *, source: str, target: str, columns: tuple[str,
     placeholders = ", ".join(f":{c}" for c in columns)
     copied = 0
     with engine.begin() as conn:
-        existing_ids = {
-            row[0] for row in conn.execute(text(f"SELECT id FROM {target}")).fetchall()
-        }
+        existing_ids = {row[0] for row in conn.execute(text(f"SELECT id FROM {target}")).fetchall()}
         rows = conn.execute(text(f"SELECT {col_list} FROM {source}")).mappings().all()
         for row in rows:
             if row["id"] in existing_ids:

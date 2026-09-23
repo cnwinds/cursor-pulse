@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, JSON, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from assistant_platform.storage.models import Base
@@ -14,7 +14,7 @@ def _uuid() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class CapabilityDefinitionRow(Base):
@@ -31,9 +31,7 @@ class CapabilityDefinitionRow(Base):
 
 class CapabilityVersionRow(Base):
     __tablename__ = "ap_capability_versions"
-    __table_args__ = (
-        UniqueConstraint("definition_id", "version", name="uq_ap_cap_ver_def_version"),
-    )
+    __table_args__ = (UniqueConstraint("definition_id", "version", name="uq_ap_cap_ver_def_version"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     definition_id: Mapped[str] = mapped_column(String(36), index=True)
@@ -52,9 +50,7 @@ class CapabilityVersionRow(Base):
 
 class CapabilityPackRow(Base):
     __tablename__ = "ap_capability_packs"
-    __table_args__ = (
-        UniqueConstraint("team_id", "key", name="uq_ap_cap_pack_team_key"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "key", name="uq_ap_cap_pack_team_key"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str] = mapped_column(String(36), index=True)
@@ -65,9 +61,7 @@ class CapabilityPackRow(Base):
 
 class CapabilityPackItemRow(Base):
     __tablename__ = "ap_capability_pack_items"
-    __table_args__ = (
-        UniqueConstraint("pack_id", "capability_key", name="uq_ap_cap_pack_item"),
-    )
+    __table_args__ = (UniqueConstraint("pack_id", "capability_key", name="uq_ap_cap_pack_item"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     pack_id: Mapped[str] = mapped_column(String(36), index=True)

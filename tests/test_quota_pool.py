@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from pulse.tool_center.quota_pool import quota_pool_for_model
 
 

@@ -16,14 +16,7 @@ def _actor_payload(
     permissions: str,
     ts: int,
 ) -> bytes:
-    return (
-        f"{ACTOR_CLAIM_VERSION}\n"
-        f"{member_id}\n"
-        f"{role}\n"
-        f"{channel_user_id}\n"
-        f"{permissions}\n"
-        f"{ts}"
-    ).encode()
+    return (f"{ACTOR_CLAIM_VERSION}\n{member_id}\n{role}\n{channel_user_id}\n{permissions}\n{ts}").encode()
 
 
 def sign_actor_headers(

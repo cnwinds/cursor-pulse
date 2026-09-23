@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from pulse.ingestion.on_demand import (
     resolve_on_demand_notify_dingtalk_ids,
 )
 from pulse.ingestion.sync import CursorSyncService
-from pulse.ingestion.sync_errors import FatalSyncError, RetryableSyncError, classify_sync_error
+from pulse.ingestion.sync_errors import FatalSyncError, classify_sync_error
 from pulse.ingestion.sync_schedule import (
     account_jitter_sec,
     apply_sync_failure,
@@ -41,9 +41,7 @@ def _make_on_demand_notify(session: Session, config: AppConfig, send_private_mes
             # GetHardLimit 失败：只通知平台管理员，不发给业务通知名单/主使用人
             recipients = resolve_admin_dingtalk_ids(config)
         else:
-            recipients = resolve_on_demand_notify_dingtalk_ids(
-                session, config, account
-            )
+            recipients = resolve_on_demand_notify_dingtalk_ids(session, config, account)
         if not recipients:
             logger.warning(
                 "on-demand notify: no recipients for account %s (status=%s)",
@@ -55,9 +53,7 @@ def _make_on_demand_notify(session: Session, config: AppConfig, send_private_mes
             try:
                 send_private_message(user_id, text)
             except Exception:
-                logger.exception(
-                    "Failed to notify %s about on-demand enforce", user_id
-                )
+                logger.exception("Failed to notify %s about on-demand enforce", user_id)
 
     return _notify
 
@@ -72,7 +68,7 @@ def run_sync_tick(
     if not encryption_key or not config.cursor_sync.enabled:
         return 0
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     creds = list(
         session.scalars(
             select(AiAccountCredential).where(
@@ -114,7 +110,7 @@ def run_sync_tick(
         try:
             sync.sync_account(cred.account_id, channel="scheduler")
             cred = session.get(AiAccountCredential, cred.id) or cred
-            apply_sync_success(cred, config, now=datetime.now(timezone.utc))
+            apply_sync_success(cred, config, now=datetime.now(UTC))
             synced += 1
         except Exception as exc:
             session.rollback()
@@ -125,12 +121,10 @@ def run_sync_tick(
             classified = classify_sync_error(exc)
             cred.last_sync_status = "failed"
             cred.last_sync_error = str(classified)
-            apply_sync_failure(cred, classified, config, now=datetime.now(timezone.utc))
+            apply_sync_failure(cred, classified, config, now=datetime.now(UTC))
             session.commit()
             if isinstance(classified, FatalSyncError):
-                logger.warning(
-                    "cursor sync fatal for account %s: %s", cred.account_id, classified
-                )
+                logger.warning("cursor sync fatal for account %s: %s", cred.account_id, classified)
             else:
                 logger.warning(
                     "cursor sync retryable for account %s (retry=%s): %s",

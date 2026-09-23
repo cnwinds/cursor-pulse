@@ -206,9 +206,7 @@ def _accounts_for(session: Session, credential_ids: list[str]) -> dict[str, str]
     if not ids:
         return {}
     rows = session.execute(
-        select(AiAccountCredential.id, AiAccountCredential.account_id).where(
-            AiAccountCredential.id.in_(ids)
-        )
+        select(AiAccountCredential.id, AiAccountCredential.account_id).where(AiAccountCredential.id.in_(ids))
     ).all()
     return {row[0]: row[1] for row in rows if row[1]}
 
@@ -220,6 +218,4 @@ def _pool_ranked(session: Session, loan_selection, jev, config) -> list[tuple[st
     # 只在账号池顺序上用 Jev（与打分表同一缓存）。借用白名单仍不问 Jev。
     if jev is None and config is not None:
         jev = build_jev_client(config)
-    return ranked_pool_credential_pairs(
-        session, loan_selection=loan_selection, jev=jev
-    )
+    return ranked_pool_credential_pairs(session, loan_selection=loan_selection, jev=jev)

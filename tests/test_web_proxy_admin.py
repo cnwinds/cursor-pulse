@@ -8,6 +8,8 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from datetime import UTC
+
 from pulse.config import AppConfig, CredentialConfig, ProxyConfig, TenantConfig, WebConfig
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.storage.models import (
@@ -46,15 +48,17 @@ def env(_proxy_admin_app):
     proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin", display_name="Admin", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     vendor = AiVendor(slug="cursor", name="Cursor")
     s.add(vendor)
     s.flush()
     plan = AiPlan(
-        vendor_id=vendor.id, plan_name="Pro", slug="pro",
-        billing_type="subscription", price_amount=20, price_currency="USD",
+        vendor_id=vendor.id,
+        plan_name="Pro",
+        slug="pro",
+        billing_type="subscription",
+        price_amount=20,
+        price_currency="USD",
     )
     s.add(plan)
     s.flush()
@@ -68,8 +72,11 @@ def env(_proxy_admin_app):
     s.add(account)
     s.flush()
     cred = AiAccountCredential(
-        account_id=account.id, vendor_id=vendor.id, credential_type="api_key",
-        encrypted_value=encrypt_secret("cursor-key-1", TEST_KEY), key_hint="cur...y-1",
+        account_id=account.id,
+        vendor_id=vendor.id,
+        credential_type="api_key",
+        encrypted_value=encrypt_secret("cursor-key-1", TEST_KEY),
+        key_hint="cur...y-1",
         bound_by_member_id=owner.id,
     )
     s.add(cred)
@@ -95,9 +102,7 @@ def _create_key(env, **extra):
 
 
 def _seed_proxy_addresses(env, addresses=None):
-    addresses = addresses or [
-        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
-    ]
+    addresses = addresses or [{"url": "http://proxy.example.com:8317", "display_name": "示例代理"}]
     s = env["sf"]()
     s.add(
         TeamSetting(
@@ -284,7 +289,7 @@ def test_pool_ranking_board(env):
     from datetime import date, datetime, timedelta, timezone
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s = env["sf"]()
     account = s.get(AiAccount, env["account_id"])
     account.proxy_enabled = True
@@ -395,7 +400,7 @@ def test_pool_ranking_ignores_loan_cap(env):
     from pulse.storage.models import KeyLoan
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s = env["sf"]()
     account = s.get(AiAccount, env["account_id"])
     account.proxy_enabled = True
@@ -450,7 +455,7 @@ def test_reserve_and_score_adjust_do_not_clobber_each_other(env):
     from datetime import date, datetime, timedelta, timezone
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s = env["sf"]()
     default = s.get(AiAccount, env["account_id"])
     default.proxy_enabled = True
@@ -526,7 +531,7 @@ def test_set_and_clear_pool_score_adjust(env):
     from datetime import date, datetime, timedelta, timezone
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s = env["sf"]()
     default = s.get(AiAccount, env["account_id"])
     default.proxy_enabled = True
@@ -705,9 +710,9 @@ def test_usages_by_day_groups_china_calendar(env):
     key_id = _create_key(env).json()["id"]
     s = env["sf"]()
     for ts, tokens, cost in [
-        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=timezone.utc), 100, 10),
-        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=timezone.utc), 200, 20),
-        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=timezone.utc), 50, 5),
+        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=UTC), 100, 10),
+        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=UTC), 200, 20),
+        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=UTC), 50, 5),
     ]:
         s.add(
             ProxyKeyUsage(
@@ -829,11 +834,15 @@ def test_client_setup_admin_and_owner(env):
     _seed_proxy_addresses(env)
     headers, member_id = _member_headers(env, ["proxy:read"], display_name="借款人")
     # 管理员为该成员创建 key
-    created = env["client"].post(
-        "/api/v2/proxy-keys",
-        json={"member_id": member_id, "mode": "unlimited"},
-        headers=_admin(env),
-    ).json()
+    created = (
+        env["client"]
+        .post(
+            "/api/v2/proxy-keys",
+            json={"member_id": member_id, "mode": "unlimited"},
+            headers=_admin(env),
+        )
+        .json()
+    )
     key_id = created["id"]
     plaintext = created["plaintext_key"]
 
@@ -959,9 +968,7 @@ def test_revoke_writes_audit_event_and_blocks_patch(env):
     client = env["client"]
     key_id = _create_key(env).json()["id"]
     client.post(f"/api/v2/proxy-keys/{key_id}/revoke", headers=_admin(env))
-    resp = client.patch(
-        f"/api/v2/proxy-keys/{key_id}", json={"name": "k2"}, headers=_admin(env)
-    )
+    resp = client.patch(f"/api/v2/proxy-keys/{key_id}", json={"name": "k2"}, headers=_admin(env))
     assert resp.status_code == 409
     s = env["sf"]()
     from pulse.storage.models import ProxyEvent

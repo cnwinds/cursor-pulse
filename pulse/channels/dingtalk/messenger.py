@@ -5,8 +5,9 @@ import logging
 import platform
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -16,10 +17,7 @@ logger = logging.getLogger(__name__)
 
 DINGTALK_OPENAPI = "https://api.dingtalk.com"
 DINGTALK_OAPI = "https://oapi.dingtalk.com"
-USER_AGENT = (
-    f"CursorPulse/0.1 Python/{platform.python_version()} "
-    "(+https://github.com/cursor-pulse)"
-)
+USER_AGENT = f"CursorPulse/0.1 Python/{platform.python_version()} (+https://github.com/cursor-pulse)"
 _MARKDOWN_TABLE_RE = re.compile(r"^\|.+\|\s*$", re.MULTILINE)
 _MARKDOWN_HEADING_RE = re.compile(r"^#{1,3}\s+\S", re.MULTILINE)
 _MARKDOWN_BLOCKQUOTE_RE = re.compile(r"^>\s+", re.MULTILINE)

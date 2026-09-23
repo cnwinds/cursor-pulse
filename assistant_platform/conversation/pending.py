@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from pulse.util.datetime_fmt import serialize_datetime
 
 from assistant_platform.conversation.models import ChatSessionRow
 
@@ -24,7 +25,7 @@ def set_pending_capability(
         "capability_key": capability_key,
         "arguments": arguments,
         "display_name": display_name,
-        "created_at": serialize_datetime(datetime.now(timezone.utc)),
+        "created_at": serialize_datetime(datetime.now(UTC)),
     }
     session_row.session_state_json = state
 
@@ -47,7 +48,7 @@ def get_pending_capability(
     created_raw = pending.get("created_at")
     if created_raw:
         created = datetime.fromisoformat(created_raw)
-        if datetime.now(timezone.utc) - created > timedelta(seconds=ttl_seconds):
+        if datetime.now(UTC) - created > timedelta(seconds=ttl_seconds):
             clear_pending_capability(session_row)
             return None
     return pending

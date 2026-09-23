@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 
 from pulse.storage.models import AiPlan
 
@@ -15,7 +15,7 @@ def _ms_to_datetime(value: object) -> datetime | None:
         ms = int(value)
     except (TypeError, ValueError):
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 def _ms_to_date(value: object) -> date | None:
@@ -72,11 +72,7 @@ def infer_plan_from_period_usage(
         return None
     limit_usd = limit_cents / 100.0
 
-    exact = [
-        p
-        for p in plans
-        if (pool := _plan_pool_usd(p)) is not None and abs(pool - limit_usd) < 0.01
-    ]
+    exact = [p for p in plans if (pool := _plan_pool_usd(p)) is not None and abs(pool - limit_usd) < 0.01]
     if exact:
         return sorted(exact, key=lambda p: p.slug)[0]
 

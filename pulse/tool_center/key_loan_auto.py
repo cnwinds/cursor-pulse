@@ -15,25 +15,20 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from sqlalchemy.orm import Session
 
 from pulse.config import LoanSelectionConfig
-from pulse.storage.models import AiAccount
 from pulse.tool_center.auto_lender import PICKED_BY_JEV, rank_lenders
-from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO
 from pulse.tool_center.key_loan_lender import build_lender_candidates
 from pulse.tool_center.quota_pool import quota_pool_for_model
 
 logger = logging.getLogger(__name__)
 
 
-
-def own_cursor_account_ids(
-    session: Session, team_id: str, borrower_member_id: str | None
-) -> set[str]:
+def own_cursor_account_ids(session: Session, team_id: str, borrower_member_id: str | None) -> set[str]:
     """借用人自己名下的 Cursor 账号：借用不借自己的号。"""
     if not borrower_member_id:
         return set()
@@ -73,9 +68,7 @@ def resolve_auto_lender(
         exclude |= own_account_ids
     else:
         exclude |= own_cursor_account_ids(session, team_id, borrower_member_id)
-    candidates = build_lender_candidates(
-        session, team_id, exclude_account_ids=exclude
-    )
+    candidates = build_lender_candidates(session, team_id, exclude_account_ids=exclude)
     board = rank_lenders(
         candidates,
         loan_selection=loan_selection,
@@ -110,9 +103,7 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         return
     if reason in ("auto_mode_off", "jev_unavailable"):
         return
-    picked = next(
-        (row for row in (result.get("ranked") or []) if row.get("picked")), None
-    )
+    picked = next((row for row in (result.get("ranked") or []) if row.get("picked")), None)
     detail = {
         "picked_by": picked_by,
         "fallback_reason": reason,
@@ -134,5 +125,3 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         )
     except Exception:
         logger.warning("auto lender: audit event failed", exc_info=True)
-
-

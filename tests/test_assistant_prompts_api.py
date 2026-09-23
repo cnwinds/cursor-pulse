@@ -38,9 +38,7 @@ def api_env(_prompts_app):
     proxy.bind(sf)
     session = sf()
     _, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin", display_name="Admin", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     repo.commit()
     session.close()
 
@@ -65,9 +63,7 @@ def test_prompts_list_proxies_file_readonly_endpoint(mock_client_cls, api_env):
     mock_client.request.return_value = mock_response
 
     token = create_access_token(api_env["config"], api_env["owner"])
-    response = api_env["client"].get(
-        "/api/v2/assistant/prompts", headers=_headers(token)
-    )
+    response = api_env["client"].get("/api/v2/assistant/prompts", headers=_headers(token))
 
     assert response.status_code == 200
     assert response.json() == {"fragments": []}
@@ -87,9 +83,7 @@ def test_prompts_preview_proxies_file_readonly_endpoint(mock_client_cls, api_env
     mock_client.request.return_value = mock_response
 
     token = create_access_token(api_env["config"], api_env["owner"])
-    response = api_env["client"].get(
-        "/api/v2/assistant/prompts/preview", headers=_headers(token)
-    )
+    response = api_env["client"].get("/api/v2/assistant/prompts/preview", headers=_headers(token))
 
     assert response.status_code == 200
     assert response.json() == {"markdown": "# preview"}

@@ -26,9 +26,7 @@ class TavilySearchProvider:
 
     def __init__(self, config: Any, *, client: httpx.Client | None = None):
         self._api_key = str(getattr(config, "api_key", "") or "")
-        self._search_url = str(
-            getattr(config, "search_url", "") or "https://api.tavily.com/search"
-        ).rstrip("/")
+        self._search_url = str(getattr(config, "search_url", "") or "https://api.tavily.com/search").rstrip("/")
         self._timeout = float(getattr(config, "timeout_seconds", 10.0) or 10.0)
         self._default_max_results = int(getattr(config, "max_results", 5) or 5)
         self._client = client

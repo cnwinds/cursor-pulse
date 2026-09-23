@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
@@ -148,9 +148,7 @@ def _drop_column(engine: Engine, table_name: str, column_name: str) -> None:
         with engine.begin() as conn:
             try:
                 if dialect == "postgresql":
-                    conn.execute(
-                        text(f'ALTER TABLE {table_name} DROP COLUMN IF EXISTS "{column_name}"')
-                    )
+                    conn.execute(text(f'ALTER TABLE {table_name} DROP COLUMN IF EXISTS "{column_name}"'))
                 else:
                     conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
                 logger.info("Dropped %s from %s (%s)", column_name, table_name, dialect)
@@ -192,15 +190,8 @@ def _drop_column(engine: Engine, table_name: str, column_name: str) -> None:
                 col_defs.append(definition)
 
             quoted_cols = ", ".join(f'"{name}"' for name in col_names)
-            conn.execute(
-                text(f'CREATE TABLE {table_name}__new ({", ".join(col_defs)})')
-            )
-            conn.execute(
-                text(
-                    f"INSERT INTO {table_name}__new ({quoted_cols}) "
-                    f"SELECT {quoted_cols} FROM {table_name}"
-                )
-            )
+            conn.execute(text(f"CREATE TABLE {table_name}__new ({', '.join(col_defs)})"))
+            conn.execute(text(f"INSERT INTO {table_name}__new ({quoted_cols}) SELECT {quoted_cols} FROM {table_name}"))
             conn.execute(text(f"DROP TABLE {table_name}"))
             conn.execute(text(f"ALTER TABLE {table_name}__new RENAME TO {table_name}"))
             logger.info("Rebuilt %s without %s", table_name, column_name)
@@ -263,9 +254,7 @@ def _sqlite_rebuild_without_unique_account(engine: Engine) -> None:
     if "ai_account_credentials" not in inspector.get_table_names():
         return
     unique_constraints = inspector.get_unique_constraints("ai_account_credentials")
-    has_uq = any(
-        uc.get("name") == "uq_credential_account" for uc in unique_constraints
-    )
+    has_uq = any(uc.get("name") == "uq_credential_account" for uc in unique_constraints)
     if not has_uq:
         return
 
@@ -287,9 +276,7 @@ def _sqlite_rebuild_without_unique_account(engine: Engine) -> None:
                 col_defs.append(definition)
 
             quoted_cols = ", ".join(f'"{name}"' for name in col_names)
-            conn.execute(
-                text(f'CREATE TABLE ai_account_credentials__new ({", ".join(col_defs)})')
-            )
+            conn.execute(text(f"CREATE TABLE ai_account_credentials__new ({', '.join(col_defs)})"))
             conn.execute(
                 text(
                     f"INSERT INTO ai_account_credentials__new ({quoted_cols}) "
@@ -297,9 +284,7 @@ def _sqlite_rebuild_without_unique_account(engine: Engine) -> None:
                 )
             )
             conn.execute(text("DROP TABLE ai_account_credentials"))
-            conn.execute(
-                text("ALTER TABLE ai_account_credentials__new RENAME TO ai_account_credentials")
-            )
+            conn.execute(text("ALTER TABLE ai_account_credentials__new RENAME TO ai_account_credentials"))
             logger.info("Rebuilt ai_account_credentials without uq_credential_account")
         finally:
             conn.execute(text("PRAGMA foreign_keys=ON"))
@@ -332,19 +317,12 @@ def _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine: Engine) -> None:
                 col_defs.append(definition)
 
             quoted_cols = ", ".join(f'"{name}"' for name in col_names)
+            conn.execute(text(f"CREATE TABLE proxy_key_usages__new ({', '.join(col_defs)})"))
             conn.execute(
-                text(f'CREATE TABLE proxy_key_usages__new ({", ".join(col_defs)})')
-            )
-            conn.execute(
-                text(
-                    f"INSERT INTO proxy_key_usages__new ({quoted_cols}) "
-                    f"SELECT {quoted_cols} FROM proxy_key_usages"
-                )
+                text(f"INSERT INTO proxy_key_usages__new ({quoted_cols}) SELECT {quoted_cols} FROM proxy_key_usages")
             )
             conn.execute(text("DROP TABLE proxy_key_usages"))
-            conn.execute(
-                text("ALTER TABLE proxy_key_usages__new RENAME TO proxy_key_usages")
-            )
+            conn.execute(text("ALTER TABLE proxy_key_usages__new RENAME TO proxy_key_usages"))
             logger.info("Rebuilt proxy_key_usages with nullable proxy_key_id")
         finally:
             conn.execute(text("PRAGMA foreign_keys=ON"))
@@ -364,19 +342,14 @@ def _migrate_member_channel_identity(engine: Engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE members ADD COLUMN channel_user_id VARCHAR(64)"))
                 conn.execute(
-                    text(
-                        "UPDATE members SET channel_user_id = dingtalk_user_id "
-                        "WHERE channel_user_id IS NULL"
-                    )
+                    text("UPDATE members SET channel_user_id = dingtalk_user_id WHERE channel_user_id IS NULL")
                 )
             logger.info("Migrated members.dingtalk_user_id -> channel_user_id")
 
             columns = {col["name"] for col in inspect(engine).get_columns("members")}
             if "channel" not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text("ALTER TABLE members ADD COLUMN channel VARCHAR(32) DEFAULT 'dingtalk'")
-                    )
+                    conn.execute(text("ALTER TABLE members ADD COLUMN channel VARCHAR(32) DEFAULT 'dingtalk'"))
                 logger.info("Added channel column to members")
             with engine.begin() as conn:
                 conn.execute(text("UPDATE members SET channel = 'dingtalk' WHERE channel IS NULL"))
@@ -384,9 +357,7 @@ def _migrate_member_channel_identity(engine: Engine) -> None:
             columns = {col["name"] for col in inspect(engine).get_columns("members")}
             if "manager_channel_user_id" not in columns and "manager_dingtalk_user_id" in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text("ALTER TABLE members ADD COLUMN manager_channel_user_id VARCHAR(64)")
-                    )
+                    conn.execute(text("ALTER TABLE members ADD COLUMN manager_channel_user_id VARCHAR(64)"))
                     conn.execute(
                         text(
                             "UPDATE members SET manager_channel_user_id = manager_dingtalk_user_id "
@@ -422,10 +393,7 @@ def _migrate_member_channel_identity(engine: Engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE reminder_logs ADD COLUMN channel_msg_id VARCHAR(128)"))
                 conn.execute(
-                    text(
-                        "UPDATE reminder_logs SET channel_msg_id = dingtalk_msg_id "
-                        "WHERE channel_msg_id IS NULL"
-                    )
+                    text("UPDATE reminder_logs SET channel_msg_id = dingtalk_msg_id WHERE channel_msg_id IS NULL")
                 )
             logger.info("Migrated reminder_logs.dingtalk_msg_id -> channel_msg_id")
             _sqlite_drop_column(engine, "reminder_logs", "dingtalk_msg_id")
@@ -457,9 +425,7 @@ def _relax_key_loan_account_nulls(engine: Engine) -> None:
         return
     with engine.begin() as conn:
         conn.execute(text("PRAGMA foreign_keys=OFF"))
-        row = conn.execute(
-            text("SELECT sql FROM sqlite_master WHERE type='table' AND name='key_loans'")
-        ).one()
+        row = conn.execute(text("SELECT sql FROM sqlite_master WHERE type='table' AND name='key_loans'")).one()
         create_sql = row[0]
         for name in targets:
             create_sql, n = re.subn(
@@ -473,10 +439,7 @@ def _relax_key_loan_account_nulls(engine: Engine) -> None:
                 logger.warning("key_loans rebuild: NOT NULL not removed for %s", name)
         create_sql = create_sql.replace("CREATE TABLE key_loans", "CREATE TABLE key_loans__pool_null", 1)
         indexes = conn.execute(
-            text(
-                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='key_loans' "
-                "AND sql IS NOT NULL"
-            )
+            text("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='key_loans' AND sql IS NOT NULL")
         ).fetchall()
         conn.execute(text(create_sql))
         col_names = [col["name"] for col in columns.values()]
@@ -569,17 +532,14 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _AI_CREDENTIAL_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to ai_account_credentials", col_name)
         columns = {col["name"] for col in inspector.get_columns("ai_account_credentials")}
         if "key_role" in columns:
             with engine.begin() as conn:
                 conn.execute(
                     text(
-                        "UPDATE ai_account_credentials SET key_role = 'primary' "
-                        "WHERE key_role IS NULL OR key_role = ''"
+                        "UPDATE ai_account_credentials SET key_role = 'primary' WHERE key_role IS NULL OR key_role = ''"
                     )
                 )
         _sqlite_rebuild_without_unique_account(engine)
@@ -588,9 +548,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _AI_CREDENTIAL_SYNC_SCHEDULE_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to ai_account_credentials", col_name)
 
     if "usage_records" in tables:
@@ -632,9 +590,7 @@ def migrate_schema(engine: Engine) -> None:
             for col_name, col_type in _USAGE_RECORD_INGESTION_COLUMNS.items():
                 if col_name not in columns:
                     with engine.begin() as conn:
-                        conn.execute(
-                            text(f"ALTER TABLE usage_records ADD COLUMN {col_name} {col_type}")
-                        )
+                        conn.execute(text(f"ALTER TABLE usage_records ADD COLUMN {col_name} {col_type}"))
                     logger.info("Added %s column to usage_records", col_name)
 
     if "usage_summaries" in tables:
@@ -652,9 +608,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _CREDENTIAL_PROXY_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE ai_account_credentials ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to ai_account_credentials", col_name)
 
     if "ai_accounts" in tables:
@@ -662,9 +616,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _ACCOUNT_PROXY_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE ai_accounts ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE ai_accounts ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to ai_accounts", col_name)
                 columns.add(col_name)
         if "proxy_score_override" in columns:
@@ -706,9 +658,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _PROXY_USAGE_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE proxy_key_usages ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE proxy_key_usages ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to proxy_key_usages", col_name)
 
     if "proxy_keys" in tables:
@@ -716,30 +666,18 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _PROXY_KEY_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE proxy_keys ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE proxy_keys ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to proxy_keys", col_name)
         # Clear legacy lifetime/token limits once; empty windows = unlimited.
-        legacy_limit_cols = sorted(
-            {"token_limit", "cost_limit_cents", "window_5h_token_limit"} & columns
-        )
+        legacy_limit_cols = sorted({"token_limit", "cost_limit_cents", "window_5h_token_limit"} & columns)
         with engine.begin() as conn:
             need_clear = False
             if legacy_limit_cols:
                 cond = " OR ".join(f"{c} IS NOT NULL" for c in legacy_limit_cols)
-                need_clear = bool(
-                    conn.execute(
-                        text(f"SELECT 1 FROM proxy_keys WHERE {cond} LIMIT 1")
-                    ).first()
-                )
+                need_clear = bool(conn.execute(text(f"SELECT 1 FROM proxy_keys WHERE {cond} LIMIT 1")).first())
             if not need_clear and "mode" in columns:
                 need_clear = bool(
-                    conn.execute(
-                        text(
-                            "SELECT 1 FROM proxy_keys WHERE mode IS NULL OR mode != 'quota' LIMIT 1"
-                        )
-                    ).first()
+                    conn.execute(text("SELECT 1 FROM proxy_keys WHERE mode IS NULL OR mode != 'quota' LIMIT 1")).first()
                 )
             if need_clear:
                 sets = ["mode = 'quota'"] if "mode" in columns else []
@@ -752,17 +690,11 @@ def migrate_schema(engine: Engine) -> None:
             # Reactivate keys suspended only for removed lifetime/token limits.
             if "status" in columns and "suspended_reason" in columns:
                 legacy_suspend = (
-                    "status = 'suspended' AND suspended_reason IN "
-                    "('token_limit_exceeded', 'cost_limit_exceeded')"
+                    "status = 'suspended' AND suspended_reason IN ('token_limit_exceeded', 'cost_limit_exceeded')"
                 )
-                if conn.execute(
-                    text(f"SELECT 1 FROM proxy_keys WHERE {legacy_suspend} LIMIT 1")
-                ).first():
+                if conn.execute(text(f"SELECT 1 FROM proxy_keys WHERE {legacy_suspend} LIMIT 1")).first():
                     conn.execute(
-                        text(
-                            "UPDATE proxy_keys SET status = 'active', suspended_reason = NULL "
-                            f"WHERE {legacy_suspend}"
-                        )
+                        text(f"UPDATE proxy_keys SET status = 'active', suspended_reason = NULL WHERE {legacy_suspend}")
                     )
                     logger.info("Reactivated proxy_keys suspended for legacy limit reasons")
 
@@ -771,9 +703,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _PROXY_EVENT_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE proxy_events ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE proxy_events ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to proxy_events", col_name)
 
     if "key_loans" in tables:
@@ -784,9 +714,7 @@ def migrate_schema(engine: Engine) -> None:
         }.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(f"ALTER TABLE key_loans ADD COLUMN {col_name} {col_type}")
-                    )
+                    conn.execute(text(f"ALTER TABLE key_loans ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to key_loans", col_name)
                 columns.add(col_name)
         # 存量借用记录视为人工固定关系，绑定时刻回填为创建时刻（幂等）
@@ -803,10 +731,7 @@ def migrate_schema(engine: Engine) -> None:
         if "ix_key_loans_alias_key_hash" not in index_names:
             with engine.begin() as conn:
                 conn.execute(
-                    text(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_key_loans_alias_key_hash "
-                        "ON key_loans (alias_key_hash)"
-                    )
+                    text("CREATE UNIQUE INDEX IF NOT EXISTS ix_key_loans_alias_key_hash ON key_loans (alias_key_hash)")
                 )
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
         _relax_key_loan_account_nulls(engine)
@@ -816,11 +741,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in _QUOTA_SNAPSHOT_AT_COLUMNS.items():
             if col_name not in columns:
                 with engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE account_quota_snapshots ADD COLUMN {col_name} {col_type}"
-                        )
-                    )
+                    conn.execute(text(f"ALTER TABLE account_quota_snapshots ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to account_quota_snapshots", col_name)
 
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
@@ -906,11 +827,7 @@ def _sqlite_rebuild_daily_agg_kind_unique(engine: Engine) -> None:
                 )
             )
             conn.execute(text("DROP TABLE usage_daily_aggregates"))
-            conn.execute(
-                text(
-                    "ALTER TABLE usage_daily_aggregates__new RENAME TO usage_daily_aggregates"
-                )
-            )
+            conn.execute(text("ALTER TABLE usage_daily_aggregates__new RENAME TO usage_daily_aggregates"))
             conn.execute(
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_usage_daily_aggregates_account_id "
@@ -938,10 +855,7 @@ def _migrate_daily_agg_kind_family(engine: Engine) -> None:
     if "kind_family" not in columns and dialect != "sqlite":
         with engine.begin() as conn:
             conn.execute(
-                text(
-                    "ALTER TABLE usage_daily_aggregates "
-                    "ADD COLUMN kind_family VARCHAR(32) DEFAULT 'unknown'"
-                )
+                text("ALTER TABLE usage_daily_aggregates ADD COLUMN kind_family VARCHAR(32) DEFAULT 'unknown'")
             )
             conn.execute(
                 text(
@@ -964,9 +878,7 @@ def _migrate_daily_agg_kind_family(engine: Engine) -> None:
     else:
         with engine.begin() as conn:
             if dialect == "postgresql":
-                conn.execute(
-                    text("ALTER TABLE usage_daily_aggregates DROP CONSTRAINT IF EXISTS uq_daily_agg")
-                )
+                conn.execute(text("ALTER TABLE usage_daily_aggregates DROP CONSTRAINT IF EXISTS uq_daily_agg"))
                 conn.execute(
                     text(
                         "ALTER TABLE usage_daily_aggregates ADD CONSTRAINT uq_daily_agg "
@@ -977,9 +889,7 @@ def _migrate_daily_agg_kind_family(engine: Engine) -> None:
                 try:
                     conn.execute(text("ALTER TABLE usage_daily_aggregates DROP CONSTRAINT uq_daily_agg"))
                 except Exception:
-                    logger.info(
-                        "Could not drop uq_daily_agg on %s; creating new unique index", dialect
-                    )
+                    logger.info("Could not drop uq_daily_agg on %s; creating new unique index", dialect)
                 conn.execute(
                     text(
                         "CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_agg "
@@ -1051,9 +961,7 @@ def _migrate_member_identities_table(engine: Engine) -> None:
                     "channel": ch,
                     "external_id": ext,
                     # Match SQLAlchemy SQLite DateTime bind format (naive UTC).
-                    "created_at": datetime.now(timezone.utc)
-                    .replace(tzinfo=None)
-                    .strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    "created_at": datetime.now(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f"),
                 },
             )
             created += 1

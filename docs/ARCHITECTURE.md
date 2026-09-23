@@ -64,6 +64,8 @@ Cursor Pulse 是**自托管 monorepo**：Cursor 控制面 + 可选 IM + 可选 A
 
 ## HTTP 面
 
+门户与内部 API 的 `HTTPException.detail` 语言约定见 [API_ERRORS.md](API_ERRORS.md)。
+
 **门户（JWT / 门户登录）**
 
 - `/api/auth/providers` — 可用登录方式（password / dingtalk_oauth / feishu_oauth）

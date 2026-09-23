@@ -37,16 +37,12 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from watchfiles import run_process
             except ImportError as exc:
-                raise SystemExit(
-                    "请安装 web 依赖以启用热重载：pip install -e '.[web]'"
-                ) from exc
+                raise SystemExit("请安装 web 依赖以启用热重载：pip install -e '.[web]'") from exc
 
             from pulse.dev.reload import python_reload_dirs
 
             watch_dirs = python_reload_dirs()
-            logging.getLogger(__name__).info(
-                "开发模式：监视 %s，代码变更时自动重启 assistant", ", ".join(watch_dirs)
-            )
+            logging.getLogger(__name__).info("开发模式：监视 %s，代码变更时自动重启 assistant", ", ".join(watch_dirs))
             run_process(*watch_dirs, target=_assistant_reload_target)
         else:
             run_assistant(load_assistant_config())

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from pulse.config import AppConfig
+from pydantic import ValidationError
 
 
 def test_loan_selection_defaults():
@@ -46,21 +45,13 @@ def test_loan_selection_yaml_override():
 
 def test_loan_selection_rejects_invalid_values():
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"max_active_loans_per_account": 0}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"max_active_loans_per_account": 0}}})
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"weight_urgency": -0.1}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"weight_urgency": -0.1}}})
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"max_concurrent_users": 101}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"max_concurrent_users": 101}}})
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"concurrent_ttl_seconds": 10}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"concurrent_ttl_seconds": 10}}})
     with pytest.raises(ValidationError):
         AppConfig.model_validate(
             {

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
-
 from pulse.channels.reminders.scheduler import SyncSchedulerService, build_scheduler
 from pulse.config import AppConfig, CollectionConfig, CredentialConfig, CursorSyncConfig
 from pulse.storage.db import init_db
@@ -14,6 +12,7 @@ from pulse.tool_center.reminders import build_daily_nudge_targets, format_deadli
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.tool_center.usage import compute_quota_ratio, model_family
+from sqlalchemy import select
 from tests.conftest import ingest_cursor_fixture, make_team_repo
 
 
@@ -218,7 +217,7 @@ def test_aggregate_account_metrics_prefers_snapshot_api_pct(session):
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+            captured_at=datetime(2026, 6, 20, tzinfo=UTC),
             cycle_start=date(2026, 6, 1),
             cycle_end=date(2026, 7, 1),
             limit_cents=2000,
@@ -260,7 +259,7 @@ def test_aggregate_account_metrics_does_not_contaminate_earlier_cycle_month(sess
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            captured_at=datetime(2026, 8, 1, tzinfo=UTC),
             cycle_start=date(2026, 7, 9),
             cycle_end=date(2026, 8, 9),
             limit_cents=2000,
@@ -320,7 +319,7 @@ def test_evaluate_upgrade_ignores_live_snapshot_on_earlier_cycle_month(session):
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            captured_at=datetime(2026, 8, 1, tzinfo=UTC),
             cycle_start=date(2026, 7, 9),
             cycle_end=date(2026, 8, 9),
             limit_cents=2000,
@@ -361,7 +360,7 @@ def test_evaluate_upgrade_uses_live_api_pct_on_latest_cycle_month(session):
     session.add(
         AccountQuotaSnapshot(
             account_id=account.id,
-            captured_at=datetime(2026, 6, 20, tzinfo=timezone.utc),
+            captured_at=datetime(2026, 6, 20, tzinfo=UTC),
             cycle_start=date(2026, 6, 1),
             cycle_end=date(2026, 7, 1),
             limit_cents=2000,

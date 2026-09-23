@@ -149,15 +149,12 @@ def test_sync_updates_on_content_change_and_deletes(tmp_path: Path):
     index.sync()
     db.commit()
 
-    original = db.query(SkillEmbeddingRow).filter_by(
-        skill_id="chat.smalltalk/hello"
-    ).one()
+    original = db.query(SkillEmbeddingRow).filter_by(skill_id="chat.smalltalk/hello").one()
     original_hash = original.content_hash
 
     # Change content → hash + embedding update on resync.
     (tmp_path / "docs" / "chat.smalltalk" / "hello.md").write_text(
-        "---\nname: 闲聊\nsummary: 全新内容\naudience: [member]\n---\n"
-        "# 闲聊\n完全不同的正文 内容 更新 后 的 文本。\n",
+        "---\nname: 闲聊\nsummary: 全新内容\naudience: [member]\n---\n# 闲聊\n完全不同的正文 内容 更新 后 的 文本。\n",
         encoding="utf-8",
     )
     # Delete a file → row removed on resync.
@@ -192,9 +189,7 @@ def test_sync_reembeds_when_embedding_model_changes(tmp_path: Path):
     assert stats.upserted == 3
     assert stats.unchanged == 0
 
-    row = db.query(SkillEmbeddingRow).filter_by(
-        skill_id="chat.smalltalk/hello"
-    ).one()
+    row = db.query(SkillEmbeddingRow).filter_by(skill_id="chat.smalltalk/hello").one()
     assert row.embedding_model == "hashing-embedder"
 
     # Same file content, but the effective embedding model changed (e.g. a
@@ -212,9 +207,7 @@ def test_sync_reembeds_when_embedding_model_changes(tmp_path: Path):
     assert stats2.upserted == 3
     assert stats2.unchanged == 0
 
-    row2 = db.query(SkillEmbeddingRow).filter_by(
-        skill_id="chat.smalltalk/hello"
-    ).one()
+    row2 = db.query(SkillEmbeddingRow).filter_by(skill_id="chat.smalltalk/hello").one()
     assert row2.embedding_model == "hashing-embedder-v2"
 
     # A third sync with the same (already up to date) model is a no-op.

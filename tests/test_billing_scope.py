@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
-
 from pulse.domain import CostRaw, UsageEventRecord
 from pulse.pricing.billing_scope import (
     KIND_FAMILY_LABELS,
@@ -18,9 +17,7 @@ def test_classify_billing_scope():
     assert classify_billing_scope(kind="User API Key", model="GLM-5.1") == "external"
     assert classify_billing_scope(kind="USAGE_EVENT_KIND_USER_API_KEY", model="GLM-5.2") == "external"
     assert classify_billing_scope(kind="Errored, No Charge", model="auto") == "excluded"
-    assert classify_billing_scope(kind="USAGE_EVENT_KIND_ERRORED_NOT_CHARGED", model="GLM-5.2") == (
-        "excluded"
-    )
+    assert classify_billing_scope(kind="USAGE_EVENT_KIND_ERRORED_NOT_CHARGED", model="GLM-5.2") == ("excluded")
     assert classify_billing_scope(kind="Free", model="composer-2.5") == "excluded"
     assert classify_billing_scope(kind="USAGE_EVENT_KIND_FREE_CREDIT", model="default") == "excluded"
     assert classify_billing_scope(kind="Included", model="auto") == "auto_composer"
@@ -28,20 +25,13 @@ def test_classify_billing_scope():
     assert classify_billing_scope(kind="Included", model="composer-2.6") == "auto_composer"
     assert classify_billing_scope(kind="Included", model="grok-4.5-high") == "auto_composer"
     assert classify_billing_scope(kind="Included", model="cursor-grok-4.5-high") == "auto_composer"
-    assert (
-        classify_billing_scope(kind="Included", model="cursor-grok-4.5-high-fast")
-        == "auto_composer"
-    )
+    assert classify_billing_scope(kind="Included", model="cursor-grok-4.5-high-fast") == "auto_composer"
     assert classify_billing_scope(kind="Included", model="grok-4.5-fast-high") == "auto_composer"
     assert classify_billing_scope(kind="Included", model="default") == "auto_composer"
-    assert classify_billing_scope(kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO", model="composer-2.5") == (
-        "auto_composer"
-    )
+    assert classify_billing_scope(kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO", model="composer-2.5") == ("auto_composer")
     # Cursor catalog GLM is INCLUDED named/API, not BYOK.
     assert classify_billing_scope(kind="Included", model="glm-5.2-high") == "api"
-    assert classify_billing_scope(
-        kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO", model="glm-5.2-high"
-    ) == "api"
+    assert classify_billing_scope(kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO", model="glm-5.2-high") == "api"
     assert classify_billing_scope(kind="Included", model="GLM-5.2") == "api"
     assert classify_billing_scope(kind="Included", model="MiniMax-Text-01") == "api"
     assert classify_billing_scope(kind="Included", model="premium") == "api"
@@ -93,7 +83,7 @@ def test_is_likely_byok_model_uses_casing_heuristic():
 
 def _included_record(**kwargs) -> UsageEventRecord:
     defaults = dict(
-        event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        event_at=datetime(2026, 6, 1, tzinfo=UTC),
         event_date=datetime(2026, 6, 1).date(),
         kind="Included",
         model="auto",
@@ -130,15 +120,11 @@ def test_included_premium_uses_api_pool_rates():
 
 
 def test_user_api_key_rows_are_external_basis():
-    fields = resolve_cost_fields(
-        _included_record(kind="User API Key", model="GLM-5.1", cost_raw=CostRaw.NONE)
-    )
+    fields = resolve_cost_fields(_included_record(kind="User API Key", model="GLM-5.1", cost_raw=CostRaw.NONE))
     assert fields["cost_basis"] == "external"
     assert fields["cost_usd"] == 0.0
     proto = resolve_cost_fields(
-        _included_record(
-            kind="USAGE_EVENT_KIND_USER_API_KEY", model="GLM-5.2", cost_raw=CostRaw.NONE
-        )
+        _included_record(kind="USAGE_EVENT_KIND_USER_API_KEY", model="GLM-5.2", cost_raw=CostRaw.NONE)
     )
     assert proto["cost_basis"] == "external"
 
@@ -148,7 +134,7 @@ def test_aggregate_cursor_billing_splits_pools_and_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="Included",
             model="composer-2.5",
@@ -162,7 +148,7 @@ def test_aggregate_cursor_billing_splits_pools_and_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="Included",
             model="premium",
@@ -176,7 +162,7 @@ def test_aggregate_cursor_billing_splits_pools_and_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="User API Key",
             model="GLM-5.1",
@@ -189,7 +175,7 @@ def test_aggregate_cursor_billing_splits_pools_and_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="Errored, No Charge",
             model="auto",
@@ -215,7 +201,7 @@ def test_aggregate_cursor_billing_grok_in_auto_composer_pool():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="Included",
             model="grok-4.5-high",
@@ -229,7 +215,7 @@ def test_aggregate_cursor_billing_grok_in_auto_composer_pool():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 2, tzinfo=UTC),
             event_date=datetime(2026, 6, 2).date(),
             kind="Included",
             model="claude-opus-4-8-thinking-high",
@@ -253,7 +239,7 @@ def test_aggregate_cursor_billing_cursor_prefixed_grok_in_auto_composer_pool():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="Included",
             model="cursor-grok-4.5-high",
@@ -267,7 +253,7 @@ def test_aggregate_cursor_billing_cursor_prefixed_grok_in_auto_composer_pool():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 2, tzinfo=UTC),
             event_date=datetime(2026, 6, 2).date(),
             kind="Included",
             model="cursor-grok-4.5-high-fast",
@@ -281,7 +267,7 @@ def test_aggregate_cursor_billing_cursor_prefixed_grok_in_auto_composer_pool():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 3, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 3, tzinfo=UTC),
             event_date=datetime(2026, 6, 3).date(),
             kind="Included",
             model="claude-opus-4-8-thinking-high",
@@ -297,10 +283,7 @@ def test_aggregate_cursor_billing_cursor_prefixed_grok_in_auto_composer_pool():
     assert billing["cursor_pools"]["auto_composer"]["spend_usd"] == pytest.approx(7.01)
     assert billing["cursor_pools"]["api"]["spend_usd"] == pytest.approx(8.0)
     assert "cursor-grok-4.5-high" in billing["cursor_pools"]["auto_composer"]["breakdown_by_model"]
-    assert (
-        "cursor-grok-4.5-high-fast"
-        in billing["cursor_pools"]["auto_composer"]["breakdown_by_model"]
-    )
+    assert "cursor-grok-4.5-high-fast" in billing["cursor_pools"]["auto_composer"]["breakdown_by_model"]
     assert "cursor-grok-4.5-high" not in billing["cursor_pools"]["api"]["breakdown_by_model"]
 
 
@@ -309,7 +292,7 @@ def test_aggregate_cursor_billing_included_glm_counts_as_api():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO",
             model="glm-5.2-high",
@@ -323,7 +306,7 @@ def test_aggregate_cursor_billing_included_glm_counts_as_api():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 2, tzinfo=UTC),
             event_date=datetime(2026, 6, 2).date(),
             kind="Included",
             model="claude-opus-4-8-thinking-high",
@@ -347,7 +330,7 @@ def test_aggregate_cursor_billing_byok_glm_is_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="USAGE_EVENT_KIND_USER_API_KEY",
             model="GLM-5.2",
@@ -369,7 +352,7 @@ def test_aggregate_cursor_billing_missing_kind_pascalcase_glm_is_external():
         UsageRecord(
             ingestion_id="s1",
             member_id="m1",
-            event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            event_at=datetime(2026, 6, 1, tzinfo=UTC),
             event_date=datetime(2026, 6, 1).date(),
             kind="",
             model="GLM-5.2",

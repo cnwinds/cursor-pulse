@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason="DingTalk text path now uses AgentRuntime; see test_orchestrator_agent.py"
-)
+pytestmark = pytest.mark.skip(reason="DingTalk text path now uses AgentRuntime; see test_orchestrator_agent.py")
 
 from unittest.mock import MagicMock, patch
 
@@ -175,9 +173,7 @@ def test_clarify_does_not_call_memory(
         memory_enabled=True,
         llm=AssistantLlmConfig(enabled=True, api_key="k", model="m"),
     )
-    with patch(
-        "assistant_platform.conversation.orchestrator.try_memory_reply"
-    ) as mock_memory:
+    with patch("assistant_platform.conversation.orchestrator.try_memory_reply") as mock_memory:
         reply = generate_reply_text(
             db_session,
             config=config,

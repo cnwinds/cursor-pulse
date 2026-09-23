@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 import httpx
 from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client
@@ -12,9 +11,8 @@ from pulse.web.assistant_actor import sign_actor_headers
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import resolve_permissions
 
-_PROMPT_EDITING_RETIRED_DETAIL = (
-    "Prompt editing retired; edit files in assistant_platform/prompts/docs"
-)
+_PROMPT_EDITING_RETIRED_DETAIL = "Prompt editing retired; edit files in assistant_platform/prompts/docs"
+
 
 def _gone() -> None:
     raise HTTPException(status_code=410, detail=_PROMPT_EDITING_RETIRED_DETAIL)

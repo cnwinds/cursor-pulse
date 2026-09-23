@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
-from typing import Annotated, Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import Depends, HTTPException, Query
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -66,7 +67,7 @@ def register_profile_routes(
         actor: ActorContext = Depends(actor_dependency),
     ):
         _ensure_self_access(actor, user_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         rows = session.scalars(
             select(ProfileSignalRow)
             .where(
@@ -81,7 +82,7 @@ def register_profile_routes(
                 return True
             expires_at = row.expires_at
             if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                expires_at = expires_at.replace(tzinfo=UTC)
             return expires_at > now
 
         active = [row for row in rows if _is_active(row)]

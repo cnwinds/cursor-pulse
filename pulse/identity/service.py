@@ -170,9 +170,7 @@ def ensure_identity(
     )
     if existing is not None:
         if existing.member_id != member.id:
-            raise IdentityError(
-                f"身份 {channel}:{external_id} 已关联到其他成员，请先合并"
-            )
+            raise IdentityError(f"身份 {channel}:{external_id} 已关联到其他成员，请先合并")
         return existing
     row = MemberIdentity(
         team_id=member.team_id,
@@ -225,9 +223,7 @@ def link_identity(
         if other is not None:
             ensure_identity(session, other, channel=channel, external_id=external_id)
             if not merge_if_taken:
-                raise IdentityError(
-                    f"身份已被 {other.display_name} 占用；确认合并请传 merge=true"
-                )
+                raise IdentityError(f"身份已被 {other.display_name} 占用；确认合并请传 merge=true")
             return merge_members(session, keep=member, drop=other, actor=actor)
         ensure_identity(session, member, channel=channel, external_id=external_id)
         return member
@@ -241,9 +237,7 @@ def link_identity(
         ensure_identity(session, member, channel=channel, external_id=external_id)
         return member
     if not merge_if_taken:
-        raise IdentityError(
-            f"身份已被 {other.display_name} 占用；确认合并请传 merge=true"
-        )
+        raise IdentityError(f"身份已被 {other.display_name} 占用；确认合并请传 merge=true")
     return merge_members(session, keep=member, drop=other, actor=actor)
 
 
@@ -271,9 +265,7 @@ def _reassign_member_fks(session: Session, *, keep_id: str, drop_id: str) -> Non
 def _merge_account_memberships(session: Session, *, keep_id: str, drop_id: str) -> None:
     if not _meta_has_table("ai_account_members"):
         return
-    drop_rows = list(
-        session.scalars(select(AiAccountMember).where(AiAccountMember.member_id == drop_id)).all()
-    )
+    drop_rows = list(session.scalars(select(AiAccountMember).where(AiAccountMember.member_id == drop_id)).all())
     for row in drop_rows:
         exists = session.get(AiAccountMember, {"account_id": row.account_id, "member_id": keep_id})
         if exists is not None:
@@ -287,16 +279,10 @@ def _assert_merge_ledger_ok(session: Session, keep: Member, drop: Member) -> Non
     """Block merge when both are primary on different accounts."""
     if not _meta_has_table("ai_accounts"):
         return
-    keep_primary = list(
-        session.scalars(select(AiAccount).where(AiAccount.primary_member_id == keep.id)).all()
-    )
-    drop_primary = list(
-        session.scalars(select(AiAccount).where(AiAccount.primary_member_id == drop.id)).all()
-    )
+    keep_primary = list(session.scalars(select(AiAccount).where(AiAccount.primary_member_id == keep.id)).all())
+    drop_primary = list(session.scalars(select(AiAccount).where(AiAccount.primary_member_id == drop.id)).all())
     if keep_primary and drop_primary:
-        raise IdentityError(
-            "双方都是不同台账的主使用人，请先调整台账负责人后再合并"
-        )
+        raise IdentityError("双方都是不同台账的主使用人，请先调整台账负责人后再合并")
 
 
 def _count_active_owners(session: Session, team_id: str, *, exclude_id: str | None = None) -> int:
@@ -445,10 +431,7 @@ def set_member_password(session: Session, member: Member, password: str) -> None
 
 
 def identities_payload(session: Session, member: Member) -> list[dict]:
-    return [
-        {"channel": row.channel, "external_id": row.external_id}
-        for row in list_identities(session, member.id)
-    ]
+    return [{"channel": row.channel, "external_id": row.external_id} for row in list_identities(session, member.id)]
 
 
 def backfill_identities_for_team(session: Session, team_id: str) -> int:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,7 +30,7 @@ def db():
 
 
 def test_ensure_open_session_creates_and_reuses(db):
-    now = datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
     first = ensure_open_session(
         db,
         assistant_id="xiaomai",
@@ -57,7 +57,7 @@ def test_ensure_open_session_creates_and_reuses(db):
 
 
 def test_ensure_open_session_idle_creates_new(db):
-    now = datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
     first = ensure_open_session(
         db,
         assistant_id="xiaomai",

@@ -151,6 +151,7 @@ def test_persist_tool_and_thinking_events():
     assert any(item["content"] == "最终回复" for item in history)
     db.close()
 
+
 class _ScriptLlm:
     def __init__(self, script: list[dict]):
         self.script = list(script)

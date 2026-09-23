@@ -25,9 +25,7 @@ def _member_from_legacy_token(session: Session, config: AppConfig, token: str) -
         return None
     team, repo = team_repository(session, config)
     owners = [
-        m
-        for m in session.scalars(select(Member).where(Member.team_id == team.id)).all()
-        if m.portal_role == "owner"
+        m for m in session.scalars(select(Member).where(Member.team_id == team.id)).all() if m.portal_role == "owner"
     ]
     from pulse.web.portal import ADMIN_LOGIN_USERNAME
 

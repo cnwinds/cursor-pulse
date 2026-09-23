@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
-
 from pulse.ingestion.adapters.cursor_api import CursorApiAdapter
 from pulse.ingestion.daily import rebuild_daily_aggregates
 from pulse.ingestion.service import UsageIngestionService
@@ -16,6 +14,7 @@ from pulse.storage.db import init_db
 from pulse.storage.models import Member, UsageDailyAggregate, UsageIngestion, UsageRecord, UsageSummary
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import func, select
 from tests.conftest import make_team_repo
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -35,9 +34,7 @@ def test_ingest_writes_records_summary_and_daily_agg(session):
     session.commit()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_account = next(
-        a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor"
-    )
+    cursor_account = next(a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor")
 
     member = Member(
         team_id=team.id,
@@ -48,9 +45,7 @@ def test_ingest_writes_records_summary_and_daily_agg(session):
     session.add(member)
     session.flush()
 
-    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw)
 
     context = IngestionContext(
@@ -110,9 +105,7 @@ def test_confirmed_ingest_replaces_old_period_records(session):
     session.commit()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_account = next(
-        a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor"
-    )
+    cursor_account = next(a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor")
 
     member = Member(
         team_id=team.id,
@@ -123,9 +116,7 @@ def test_confirmed_ingest_replaces_old_period_records(session):
     session.add(member)
     session.flush()
 
-    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw)
 
     service = UsageIngestionService(session, team.id)
@@ -176,7 +167,7 @@ def test_daily_agg_splits_included_and_byok_same_model(session):
         status="confirmed",
         triggered_by=member.id,
         event_count=2,
-        confirmed_at=datetime.now(timezone.utc),
+        confirmed_at=datetime.now(UTC),
     )
     session.add(ingestion)
     session.flush()
@@ -186,7 +177,7 @@ def test_daily_agg_splits_included_and_byok_same_model(session):
             UsageRecord(
                 ingestion_id=ingestion.id,
                 member_id=member.id,
-                event_at=datetime(2026, 7, 8, tzinfo=timezone.utc),
+                event_at=datetime(2026, 7, 8, tzinfo=UTC),
                 event_date=day,
                 kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO",
                 model="GLM-5.2",
@@ -200,7 +191,7 @@ def test_daily_agg_splits_included_and_byok_same_model(session):
             UsageRecord(
                 ingestion_id=ingestion.id,
                 member_id=member.id,
-                event_at=datetime(2026, 7, 8, 1, tzinfo=timezone.utc),
+                event_at=datetime(2026, 7, 8, 1, tzinfo=UTC),
                 event_date=day,
                 kind="USAGE_EVENT_KIND_USER_API_KEY",
                 model="GLM-5.2",
@@ -216,9 +207,7 @@ def test_daily_agg_splits_included_and_byok_same_model(session):
     session.flush()
     rebuild_daily_aggregates(session, account.id, {day})
     session.flush()
-    rows = session.scalars(
-        select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)
-    ).all()
+    rows = session.scalars(select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)).all()
     by_family = {row.kind_family: row for row in rows}
     assert set(by_family) == {"included", "user_api_key"}
     assert by_family["included"].tokens_input == 100
@@ -245,7 +234,7 @@ def test_daily_agg_uses_effective_pool_cost_for_estimated_included(session):
         status="confirmed",
         triggered_by=member.id,
         event_count=1,
-        confirmed_at=datetime.now(timezone.utc),
+        confirmed_at=datetime.now(UTC),
     )
     session.add(ingestion)
     session.flush()
@@ -254,7 +243,7 @@ def test_daily_agg_uses_effective_pool_cost_for_estimated_included(session):
         UsageRecord(
             ingestion_id=ingestion.id,
             member_id=member.id,
-            event_at=datetime(2026, 7, 17, tzinfo=timezone.utc),
+            event_at=datetime(2026, 7, 17, tzinfo=UTC),
             event_date=day,
             kind="USAGE_EVENT_KIND_INCLUDED_IN_PRO",
             model="claude-opus-4-8-thinking-high",
@@ -271,9 +260,7 @@ def test_daily_agg_uses_effective_pool_cost_for_estimated_included(session):
     session.flush()
     rebuild_daily_aggregates(session, account.id, {day})
     session.flush()
-    row = session.scalars(
-        select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)
-    ).one()
+    row = session.scalars(select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)).one()
     assert float(row.total_cost_usd) == pytest.approx(23.5376)
 
 
@@ -298,7 +285,7 @@ def test_backfill_unknown_daily_kind_family_from_records(session):
         status="confirmed",
         triggered_by=member.id,
         event_count=1,
-        confirmed_at=datetime.now(timezone.utc),
+        confirmed_at=datetime.now(UTC),
     )
     session.add(ingestion)
     session.flush()
@@ -307,7 +294,7 @@ def test_backfill_unknown_daily_kind_family_from_records(session):
         UsageRecord(
             ingestion_id=ingestion.id,
             member_id=member.id,
-            event_at=datetime(2026, 7, 9, tzinfo=timezone.utc),
+            event_at=datetime(2026, 7, 9, tzinfo=UTC),
             event_date=day,
             kind="USAGE_EVENT_KIND_USER_API_KEY",
             model="GLM-5.2",
@@ -335,8 +322,6 @@ def test_backfill_unknown_daily_kind_family_from_records(session):
     updated = backfill_unknown_daily_kind_families(session)
     session.flush()
     assert updated == 1
-    rows = session.scalars(
-        select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)
-    ).all()
+    rows = session.scalars(select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == account.id)).all()
     assert len(rows) == 1
     assert rows[0].kind_family == "user_api_key"

@@ -65,6 +65,7 @@ class ObjectStorageConfig(BaseModel):
 
 class BotPlatformConfig(BaseModel):
     """群平台：none（默认，Web-only）| dingtalk | feishu | wecom。"""
+
     name: str = "none"
 
 
@@ -79,6 +80,7 @@ class FeishuConfig(BaseModel):
 
 class CursorTeamsConfig(BaseModel):
     """Cursor Teams/Enterprise Admin API（可选）。"""
+
     enabled: bool = False
     api_base_url: str = "https://api.cursor.com"
     admin_api_key: str = ""
@@ -218,13 +220,8 @@ class LoanSelectionConfig(BaseModel):
     concurrent_ttl_seconds: int = Field(default=180, ge=30, le=3600)
 
     @model_validator(mode="after")
-    def _validate_weight_sums(self) -> "LoanSelectionConfig":
-        loan_total = (
-            self.weight_urgency
-            + self.weight_surplus
-            + self.weight_load
-            + self.weight_freshness
-        )
+    def _validate_weight_sums(self) -> LoanSelectionConfig:
+        loan_total = self.weight_urgency + self.weight_surplus + self.weight_load + self.weight_freshness
         if loan_total <= 0:
             raise ValueError("loan selection weights must sum to a positive value")
         proxy_total = (
@@ -412,6 +409,7 @@ _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 def _expand_env(value: Any) -> Any:
     if isinstance(value, str):
+
         def repl(match: re.Match[str]) -> str:
             return os.environ.get(match.group(1), "")
 
@@ -437,9 +435,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if isinstance(admin_data, dict):
         if "channel_user_ids" not in admin_data and "dingtalk_user_ids" in admin_data:
             admin_data["channel_user_ids"] = admin_data.pop("dingtalk_user_ids")
-            logger.warning(
-                "config admin.dingtalk_user_ids is deprecated; use admin.channel_user_ids"
-            )
+            logger.warning("config admin.dingtalk_user_ids is deprecated; use admin.channel_user_ids")
     cfg = AppConfig.model_validate(data)
 
     env = EnvSettings()
@@ -454,16 +450,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if env.dingtalk_chat_id:
         cfg.dingtalk.chat_id = env.dingtalk_chat_id
     if env.admin_channel_user_ids:
-        cfg.admin.channel_user_ids = [
-            uid.strip() for uid in env.admin_channel_user_ids.split(",") if uid.strip()
-        ]
+        cfg.admin.channel_user_ids = [uid.strip() for uid in env.admin_channel_user_ids.split(",") if uid.strip()]
     elif env.dingtalk_admin_user_ids:
-        logger.warning(
-            "DINGTALK_ADMIN_USER_IDS is deprecated; use ADMIN_CHANNEL_USER_IDS instead"
-        )
-        cfg.admin.channel_user_ids = [
-            uid.strip() for uid in env.dingtalk_admin_user_ids.split(",") if uid.strip()
-        ]
+        logger.warning("DINGTALK_ADMIN_USER_IDS is deprecated; use ADMIN_CHANNEL_USER_IDS instead")
+        cfg.admin.channel_user_ids = [uid.strip() for uid in env.dingtalk_admin_user_ids.split(",") if uid.strip()]
     if env.feishu_app_id:
         cfg.feishu.app_id = env.feishu_app_id
     if env.feishu_app_secret:
@@ -513,9 +503,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if env.dingtalk_oauth_redirect_uri:
         cfg.web.dingtalk_oauth_redirect_uri = env.dingtalk_oauth_redirect_uri
     if env.web_cors_origins:
-        cfg.web.cors_origins = [
-            o.strip() for o in env.web_cors_origins.split(",") if o.strip()
-        ]
+        cfg.web.cors_origins = [o.strip() for o in env.web_cors_origins.split(",") if o.strip()]
     if env.pulse_team_slug:
         cfg.tenant.slug = env.pulse_team_slug
     if env.database_url:

@@ -9,7 +9,6 @@ from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
-
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import Base
 from pulse.web.app import create_app, resolve_admin_static_dir
@@ -22,9 +21,7 @@ def _session_factory():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 def test_resolve_admin_static_dir_override(tmp_path, monkeypatch):

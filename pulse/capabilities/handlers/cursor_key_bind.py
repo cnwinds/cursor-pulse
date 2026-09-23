@@ -1,8 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.channels.admin_gate import is_channel_admin
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
 from pulse.ingestion.sync import CursorSyncService
@@ -53,9 +54,7 @@ def _format_success_message(
     lines: list[str] = []
     if note:
         lines.append(note)
-    lines.append(
-        f"已绑定 Cursor 账号 {account.account_identifier}（{cred.key_hint}）"
-    )
+    lines.append(f"已绑定 Cursor 账号 {account.account_identifier}（{cred.key_hint}）")
     if sync_ok and event_count is not None:
         lines.append(f"同步完成，写入 {event_count} 条事件。")
     elif not sync_ok:
@@ -145,10 +144,7 @@ def handle_cursor_key_bind(
         return CapabilityInvokeResult(
             status="failed",
             error_code="account_email_mismatch",
-            user_message=(
-                f"API Key 对应 Cursor 账号 {exc.key_email}，"
-                f"与台账账号 {exc.ledger_email} 不一致。"
-            ),
+            user_message=(f"API Key 对应 Cursor 账号 {exc.key_email}，与台账账号 {exc.ledger_email} 不一致。"),
         )
     except Exception as exc:
         session.rollback()

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import httpx
-
 from pulse.http_clients import outbound_client
 
 
@@ -73,11 +71,7 @@ class AssistantLlmClient:
                     "arguments": fn.get("arguments") or "{}",
                 }
             )
-        reasoning = (
-            message.get("reasoning_content")
-            or message.get("reasoning")
-            or ""
-        )
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
         if isinstance(reasoning, str):
             reasoning = reasoning.strip()
         else:

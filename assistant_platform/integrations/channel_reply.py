@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from assistant_platform.config import AssistantConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         session_id,
         message_id,
         kind,
-        serialize_datetime(datetime.now(timezone.utc)),
+        serialize_datetime(datetime.now(UTC)),
     )
     http_t0 = time.monotonic()
     try:
@@ -42,8 +42,7 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         body = response.json()
         status = body.get("status") if isinstance(body, dict) else "unknown"
         logger.info(
-            "reply.timing stage=reply_send_http_done session_id=%s message_id=%s kind=%s "
-            "elapsed_ms=%d status=%s",
+            "reply.timing stage=reply_send_http_done session_id=%s message_id=%s kind=%s elapsed_ms=%d status=%s",
             session_id,
             message_id,
             kind,

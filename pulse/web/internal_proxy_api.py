@@ -49,9 +49,7 @@ class EventsBody(BaseModel):
 def register_internal_proxy_routes(app, get_db, config) -> None:
     def require_internal_service(
         authorization: Annotated[str | None, Header()] = None,
-        x_pulse_internal_token: Annotated[
-            str | None, Header(alias="X-Pulse-Internal-Token")
-        ] = None,
+        x_pulse_internal_token: Annotated[str | None, Header(alias="X-Pulse-Internal-Token")] = None,
     ) -> None:
         expected = (config.internal.service_token or "").strip()
         if not expected:
@@ -111,9 +109,7 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         dependencies=[Depends(require_internal_service)],
     )
     def proxy_usage(body: UsageBody, session: Session = Depends(get_db)):
-        result = proxy_service.record_usages(
-            session, [item.model_dump() for item in body.items]
-        )
+        result = proxy_service.record_usages(session, [item.model_dump() for item in body.items])
         session.commit()
         return result
 

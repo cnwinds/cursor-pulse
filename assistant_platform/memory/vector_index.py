@@ -95,9 +95,7 @@ class LocalVectorIndex:
             self._session.add(row)
 
     def delete_by_session(self, session_id: str) -> None:
-        rows = self._session.scalars(
-            select(ArchiveChunkRow).where(ArchiveChunkRow.session_id == session_id)
-        ).all()
+        rows = self._session.scalars(select(ArchiveChunkRow).where(ArchiveChunkRow.session_id == session_id)).all()
         for row in rows:
             row.embedding_json = None
             row.embedding_model = None

@@ -1,5 +1,4 @@
 import pytest
-
 from pulse.config import CursorTeamsConfig
 from pulse.integrations.cursor_teams import CursorTeamsClient
 

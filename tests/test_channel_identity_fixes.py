@@ -18,9 +18,7 @@ def test_identity_channel_for_config():
 def test_sync_portal_owners_uses_bot_channel():
     session = init_db("sqlite://")()
     team, _repo = make_team_repo(session)
-    n = sync_portal_owners_from_config(
-        session, team.id, ["im-admin-1"], channel="dingtalk"
-    )
+    n = sync_portal_owners_from_config(session, team.id, ["im-admin-1"], channel="dingtalk")
     session.flush()
     assert n == 1
     member = get_team_member(session, team.id, "im-admin-1", channel="dingtalk")

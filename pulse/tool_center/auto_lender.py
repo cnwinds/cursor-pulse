@@ -11,9 +11,9 @@ import hashlib
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from typing import Callable
+from datetime import UTC, date, datetime
 
 from pulse.config import LoanSelectionConfig
 from pulse.llm.jev import (
@@ -82,9 +82,7 @@ def reset_auto_lender_state() -> None:
         _breaker_state["open_until"] = 0.0
 
 
-def _feature_key(
-    rows: list[dict], pool: QuotaPoolKind | None, cfg: LoanSelectionConfig
-) -> str:
+def _feature_key(rows: list[dict], pool: QuotaPoolKind | None, cfg: LoanSelectionConfig) -> str:
     """候选特征指纹：特征没变就不重复问 Jev。
 
     刻意不含 minutes_since_switch —— 它每分钟都在变，会让缓存永不命中。
@@ -166,17 +164,14 @@ def _candidate_summary(row: dict) -> str:
     )
 
 
-def _build_state(
-    rows: list[dict], *, pool: QuotaPoolKind | None, cfg: LoanSelectionConfig
-) -> dict:
+def _build_state(rows: list[dict], *, pool: QuotaPoolKind | None, cfg: LoanSelectionConfig) -> dict:
     """压缩后的候选特征，不是原始 DB 行。"""
     return {
         "task": "Choose the best Cursor account to lend to a borrower right now.",
         "quota_pool": pool or "unknown",
         "policy": {
             "goal": (
-                "Use up quota that would otherwise be reset unused, while not "
-                "harming the account's primary owner."
+                "Use up quota that would otherwise be reset unused, while not harming the account's primary owner."
             ),
             "prefer": [
                 "accounts whose pool headroom is projected to go unused before reset",
@@ -195,9 +190,7 @@ def _build_state(
                 "primary_owner": r.get("primary_member_name"),
                 "quota_pool": r.get("pool"),
                 "pool_headroom_pct": r.get("pool_headroom_pct"),
-                "pool_idle_surplus_usd": round(
-                    (r.get("pool_surplus_cents") or 0) / 100.0, 2
-                ),
+                "pool_idle_surplus_usd": round((r.get("pool_surplus_cents") or 0) / 100.0, 2),
                 "total_pct": r.get("total_pct"),
                 "auto_pct": r.get("auto_pct"),
                 "api_pct": r.get("api_pct"),
@@ -227,8 +220,7 @@ def _build_questions(rows: list[dict]) -> dict[str, dict]:
     }
     for row in rows:
         questions[f"{OWNER_QUESTION_PREFIX}{row['account_id']}"] = build_noul_question(
-            "Would lending this account right now risk the primary owner's "
-            "remaining quota on the requested pool?",
+            "Would lending this account right now risk the primary owner's remaining quota on the requested pool?",
             yes=(
                 "The primary owner is on track to consume this pool up to or past "
                 "its reset, so the loan would take quota they still need."
@@ -255,9 +247,7 @@ def _owner_safety(decision: JevDecision, account_ids: list[str]) -> dict[str, bo
     return out
 
 
-def _margin_ok(
-    probabilities: dict[str, float], picked: str, min_margin: float
-) -> bool:
+def _margin_ok(probabilities: dict[str, float], picked: str, min_margin: float) -> bool:
     """首选概率与次优之间的差距是否够大；概率缺失时不拦。"""
     if len(probabilities) < 2 or picked not in probabilities:
         return True
@@ -337,9 +327,9 @@ def rank_lenders(
     ``ranked[0]`` 即最终选定账号（Jev 通过护栏时是 Jev 的选择，否则是算法首选）。
     """
     cfg = loan_selection or LoanSelectionConfig()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     if today is None:
         today = now.date()
 
@@ -414,9 +404,7 @@ def rank_lenders(
         )
 
     _record_success()
-    picked, reason, confidence, probabilities, owner_safe = _evaluate_jev(
-        jev_decision, top, cfg
-    )
+    picked, reason, confidence, probabilities, owner_safe = _evaluate_jev(jev_decision, top, cfg)
     decision = AutoLenderDecision(
         picked_by=PICKED_BY_JEV if picked else PICKED_BY_ALGORITHM,
         fallback_reason=reason,

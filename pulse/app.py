@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 
@@ -24,10 +24,7 @@ def run_app(config: AppConfig) -> None:
             "请在 config.yaml 或 ADMIN_CHANNEL_USER_IDS 中设置至少一个管理员。"
         )
     if platform == "dingtalk" and not config.dingtalk.group_open_conversation_id:
-        logger.warning(
-            "group_open_conversation_id 未配置：群消息将无法发送。"
-            "请在目标群内 @机器人 一次以自动绑定。"
-        )
+        logger.warning("group_open_conversation_id 未配置：群消息将无法发送。请在目标群内 @机器人 一次以自动绑定。")
 
     session_factory = init_db(config.storage.database_url)
     messenger = create_messenger(config)
@@ -91,9 +88,7 @@ def run_app(config: AppConfig) -> None:
                 )
         return result
 
-    scheduler = build_scheduler(
-        config, session_factory, send_group_message, send_private_message, messenger=messenger
-    )
+    scheduler = build_scheduler(config, session_factory, send_group_message, send_private_message, messenger=messenger)
     scheduler.start()
     logger.info("Sync scheduler started (cursor sync + key loan expiry)")
 

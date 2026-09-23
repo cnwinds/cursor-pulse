@@ -145,40 +145,22 @@ def load_assistant_config() -> AssistantConfig:
         pulse_internal_token=os.environ.get("PULSE_INTERNAL_TOKEN", ""),
         secret_key=os.environ.get("ASSISTANT_SECRET_KEY", ""),
         memory_database_url=_load_memory_database_url(),
-        memory_enabled=os.environ.get("ASSISTANT_MEMORY_ENABLED", "false").lower()
-        in ("1", "true", "yes", "on"),
+        memory_enabled=os.environ.get("ASSISTANT_MEMORY_ENABLED", "false").lower() in ("1", "true", "yes", "on"),
         chat_memory=_load_chat_memory_config(),
         llm=AssistantLlmConfig(
-            enabled=os.environ.get("ASSISTANT_LLM_ENABLED", "false").lower()
-            in ("1", "true", "yes", "on"),
+            enabled=os.environ.get("ASSISTANT_LLM_ENABLED", "false").lower() in ("1", "true", "yes", "on"),
             api_key=os.environ.get("ASSISTANT_LLM_API_KEY", "").strip(),
-            base_url=os.environ.get(
-                "ASSISTANT_LLM_BASE_URL", "https://api.openai.com/v1"
-            ).strip(),
+            base_url=os.environ.get("ASSISTANT_LLM_BASE_URL", "https://api.openai.com/v1").strip(),
             model=os.environ.get("ASSISTANT_LLM_MODEL", "").strip(),
-            agent_max_tool_rounds=int(
-                os.environ.get("ASSISTANT_AGENT_MAX_TOOL_ROUNDS", "20")
-            ),
-            agent_history_max_messages=int(
-                os.environ.get("ASSISTANT_AGENT_HISTORY_MAX_MESSAGES", "40")
-            ),
-            agent_total_timeout_seconds=float(
-                os.environ.get("ASSISTANT_AGENT_TOTAL_TIMEOUT_SECONDS", "120")
-            ),
-            agent_max_interim_replies=int(
-                os.environ.get("ASSISTANT_AGENT_MAX_INTERIM_REPLIES", "3")
-            ),
-            turn_timeout_seconds=int(
-                os.environ.get("ASSISTANT_TURN_TIMEOUT_SECONDS", "300")
-            ),
-            inbox_max_per_drain=int(
-                os.environ.get("ASSISTANT_INBOX_MAX_PER_DRAIN", "5")
-            ),
+            agent_max_tool_rounds=int(os.environ.get("ASSISTANT_AGENT_MAX_TOOL_ROUNDS", "20")),
+            agent_history_max_messages=int(os.environ.get("ASSISTANT_AGENT_HISTORY_MAX_MESSAGES", "40")),
+            agent_total_timeout_seconds=float(os.environ.get("ASSISTANT_AGENT_TOTAL_TIMEOUT_SECONDS", "120")),
+            agent_max_interim_replies=int(os.environ.get("ASSISTANT_AGENT_MAX_INTERIM_REPLIES", "3")),
+            turn_timeout_seconds=int(os.environ.get("ASSISTANT_TURN_TIMEOUT_SECONDS", "300")),
+            inbox_max_per_drain=int(os.environ.get("ASSISTANT_INBOX_MAX_PER_DRAIN", "5")),
             job_worker_count=int(os.environ.get("ASSISTANT_JOB_WORKER_COUNT", "4")),
             job_bg_worker_count=int(os.environ.get("ASSISTANT_JOB_BG_WORKER_COUNT", "1")),
-            job_processing_timeout_seconds=int(
-                os.environ.get("ASSISTANT_JOB_PROCESSING_TIMEOUT_SECONDS", "90")
-            ),
+            job_processing_timeout_seconds=int(os.environ.get("ASSISTANT_JOB_PROCESSING_TIMEOUT_SECONDS", "90")),
         ),
     )
     return _apply_team_assistant_llm_overrides(cfg)
@@ -317,25 +299,17 @@ def _load_chat_memory_config() -> AssistantChatMemoryConfig:
         archive=MemoryArchiveConfig(
             enabled=_env_bool("ASSISTANT_CHAT_MEMORY_ARCHIVE_ENABLED", False),
             index_version=int(os.environ.get("ASSISTANT_CHAT_MEMORY_ARCHIVE_INDEX_VERSION", "2")),
-            ledger_retention_days=int(
-                os.environ.get("ASSISTANT_CHAT_MEMORY_LEDGER_RETENTION_DAYS", "180")
-            ),
+            ledger_retention_days=int(os.environ.get("ASSISTANT_CHAT_MEMORY_LEDGER_RETENTION_DAYS", "180")),
         ),
         chunking=MemoryChunkingConfig(
-            max_tokens_per_chunk=int(
-                os.environ.get("ASSISTANT_CHAT_MEMORY_CHUNK_MAX_TOKENS", "512")
-            ),
+            max_tokens_per_chunk=int(os.environ.get("ASSISTANT_CHAT_MEMORY_CHUNK_MAX_TOKENS", "512")),
             overlap_tokens=int(os.environ.get("ASSISTANT_CHAT_MEMORY_CHUNK_OVERLAP_TOKENS", "64")),
         ),
         embedding=MemoryEmbeddingConfig(
             enabled=_env_bool("ASSISTANT_CHAT_MEMORY_EMBEDDING_ENABLED", True),
-            model=os.environ.get(
-                "ASSISTANT_CHAT_MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"
-            ).strip(),
+            model=os.environ.get("ASSISTANT_CHAT_MEMORY_EMBEDDING_MODEL", "text-embedding-3-small").strip(),
             batch_size=int(os.environ.get("ASSISTANT_CHAT_MEMORY_EMBEDDING_BATCH_SIZE", "32")),
-            dedupe_by_content_hash=_env_bool(
-                "ASSISTANT_CHAT_MEMORY_EMBEDDING_DEDUPE_BY_HASH", True
-            ),
+            dedupe_by_content_hash=_env_bool("ASSISTANT_CHAT_MEMORY_EMBEDDING_DEDUPE_BY_HASH", True),
         ),
         recall=MemoryRecallBudgetConfig(
             fragment_top_k=int(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_FRAGMENT_TOP_K", "3")),
@@ -343,12 +317,8 @@ def _load_chat_memory_config() -> AssistantChatMemoryConfig:
             max_fragments_per_session=int(
                 os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_MAX_FRAGMENTS_PER_SESSION", "2")
             ),
-            context_token_budget=int(
-                os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_CONTEXT_TOKEN_BUDGET", "1500")
-            ),
-            expand_neighbor_count=int(
-                os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_EXPAND_NEIGHBOR_COUNT", "2")
-            ),
+            context_token_budget=int(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_CONTEXT_TOKEN_BUDGET", "1500")),
+            expand_neighbor_count=int(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_EXPAND_NEIGHBOR_COUNT", "2")),
             timeout_ms=int(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_TIMEOUT_MS", "500")),
             fts_weight=float(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_FTS_WEIGHT", "0.5")),
             vector_weight=float(os.environ.get("ASSISTANT_CHAT_MEMORY_RECALL_VECTOR_WEIGHT", "0.5")),
@@ -494,9 +464,7 @@ def validate_runtime_config(config: AssistantConfig, *, strict: bool = False) ->
 
     if insecure:
         joined = ", ".join(insecure)
-        raise SystemExit(
-            f"Assistant Platform insecure placeholder configuration: {joined}"
-        )
+        raise SystemExit(f"Assistant Platform insecure placeholder configuration: {joined}")
     if missing:
         joined = ", ".join(missing)
         raise SystemExit(f"Assistant Platform missing required configuration: {joined}")

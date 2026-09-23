@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from assistant_platform.capabilities.resolve import ResolvedCapability
+from assistant_platform.contracts.provider import CapabilityInvokeResult
 from assistant_platform.conversation.agent_runtime import AgentRuntime
 from assistant_platform.conversation.agent_tools import tools_from_capabilities
-from assistant_platform.contracts.provider import CapabilityInvokeResult
 from assistant_platform.skills.models import SkillActorContext
 from assistant_platform.skills.registry import SkillRegistry
 
@@ -57,18 +57,14 @@ def test_runtime_invokes_load_skill_docs_locally():
                     {
                         "id": "c1",
                         "name": "load_skill_docs",
-                        "arguments": json.dumps(
-                            {"skill_id": "cursor.self/overview", "section": "overview"}
-                        ),
+                        "arguments": json.dumps({"skill_id": "cursor.self/overview", "section": "overview"}),
                     }
                 ],
                 "raw_assistant_message": {},
             },
             {
                 "content": "好的，我来查额度",
-                "tool_calls": [
-                    {"id": "c2", "name": "quota_self_read", "arguments": "{}"}
-                ],
+                "tool_calls": [{"id": "c2", "name": "quota_self_read", "arguments": "{}"}],
                 "raw_assistant_message": {
                     "role": "assistant",
                     "content": "好的，我来查额度",
@@ -134,9 +130,7 @@ def test_invoke_load_skill_docs_continuation(tmp_path: Path):
     docs.mkdir()
     body_lines = [f"line-{i}" for i in range(1, 251)]
     (docs / "long.md").write_text(
-        "---\nname: Long\naudience: [member]\nwhen_to_use:\n  - t\n---\n"
-        + "\n".join(body_lines)
-        + "\n",
+        "---\nname: Long\naudience: [member]\nwhen_to_use:\n  - t\n---\n" + "\n".join(body_lines) + "\n",
         encoding="utf-8",
     )
     reg = SkillRegistry(root=tmp_path)

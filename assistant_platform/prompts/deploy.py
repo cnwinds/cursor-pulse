@@ -44,9 +44,7 @@ def resolve_prompt_release_for_new_session(
     deployment = _active_canary_deployment(db_session)
     if deployment is not None:
         canary = db_session.get(PromptReleaseRow, deployment.release_id)
-        if canary is not None and session_in_canary_bucket(
-            session_id, percent=deployment.percent
-        ):
+        if canary is not None and session_in_canary_bucket(session_id, percent=deployment.percent):
             return canary
     return production
 
@@ -64,9 +62,9 @@ def deploy_canary(
         raise ValueError("cannot canary a production release")
 
     for other in db_session.scalars(
-        select(PromptDeploymentRow).join(
-            PromptReleaseRow, PromptReleaseRow.id == PromptDeploymentRow.release_id
-        ).where(
+        select(PromptDeploymentRow)
+        .join(PromptReleaseRow, PromptReleaseRow.id == PromptDeploymentRow.release_id)
+        .where(
             PromptReleaseRow.status == "canary",
             PromptDeploymentRow.status == "active",
         )

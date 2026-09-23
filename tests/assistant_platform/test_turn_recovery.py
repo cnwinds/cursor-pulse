@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -24,7 +24,7 @@ def _session(db) -> ChatSessionRow:
         conversation_id="u1",
         user_id="u1",
         status="open",
-        last_activity_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(UTC),
     )
     db.add(row)
     db.flush()
@@ -47,7 +47,7 @@ def test_recover_stale_turn_resets_and_requeues():
     db.flush()
     begin_turn(db, row, trigger_message_id="msg-1")
     state = dict(row.session_state_json or {})
-    started = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    started = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
     state["turn"]["started_at"] = started
     row.session_state_json = state
     msg = ChatMessageRow(
@@ -66,9 +66,7 @@ def test_recover_stale_turn_resets_and_requeues():
     db.commit()
 
     db.refresh(row)
-    job = db.scalar(
-        select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")
-    )
+    job = db.scalar(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process"))
     assert job is not None
     assert job.payload_json["message_id"] == "msg-2"
     assert is_turn_running(row)

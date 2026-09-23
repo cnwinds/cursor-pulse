@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
-from pulse.web.passwords import hash_password
 from pulse.web.dingtalk_oauth import looks_like_open_id
-
+from pulse.web.passwords import hash_password
 
 ADMIN_LOGIN_USERNAME = "admin"
 ADMIN_DISPLAY_NAME = "超级管理员"
@@ -39,13 +38,9 @@ def get_team_member(
     from pulse.identity.service import resolve_member
 
     if channel is not None:
-        return resolve_member(
-            session, team_id, channel=channel, external_id=channel_user_id
-        )
+        return resolve_member(session, team_id, channel=channel, external_id=channel_user_id)
     for preferred in ("web", "dingtalk", "feishu"):
-        member = resolve_member(
-            session, team_id, channel=preferred, external_id=channel_user_id
-        )
+        member = resolve_member(session, team_id, channel=preferred, external_id=channel_user_id)
         if member is not None:
             return member
     return session.scalar(
@@ -128,9 +123,7 @@ def reconcile_oauth_member(
 
     legacy[0].channel_user_id = enterprise_userid
     legacy[0].channel = "dingtalk"
-    ensure_identity(
-        repo.session, legacy[0], channel="dingtalk", external_id=enterprise_userid
-    )
+    ensure_identity(repo.session, legacy[0], channel="dingtalk", external_id=enterprise_userid)
     repo.session.flush()
     return legacy[0]
 
@@ -165,16 +158,12 @@ def _cleanup_legacy_oauth_duplicates(
 def ensure_admin_member(repo: Repository) -> Member:
     from pulse.identity.service import ensure_identity, refresh_member_primary_cache
 
-    member = repo.get_or_create_member(
-        ADMIN_LOGIN_USERNAME, ADMIN_DISPLAY_NAME, channel="web"
-    )
+    member = repo.get_or_create_member(ADMIN_LOGIN_USERNAME, ADMIN_DISPLAY_NAME, channel="web")
     member.channel = "web"
     member.status = "active"
     member.portal_status = "active"
     member.portal_role = "owner"
-    ensure_identity(
-        repo.session, member, channel="web", external_id=ADMIN_LOGIN_USERNAME
-    )
+    ensure_identity(repo.session, member, channel="web", external_id=ADMIN_LOGIN_USERNAME)
     refresh_member_primary_cache(repo.session, member)
     return member
 
@@ -195,10 +184,8 @@ def bootstrap_portal_owner(
     member.portal_status = "active"
     member.portal_role = "owner"
     member.password_hash = hash_password(password)
-    member.last_portal_login_at = datetime.now(timezone.utc)
-    ensure_identity(
-        repo.session, member, channel=channel, external_id=channel_user_id
-    )
+    member.last_portal_login_at = datetime.now(UTC)
+    ensure_identity(repo.session, member, channel=channel, external_id=channel_user_id)
     refresh_member_primary_cache(repo.session, member)
     return member
 
@@ -227,9 +214,7 @@ def grant_portal_role(
         )
         session.add(member)
         session.flush()
-        ensure_identity(
-            session, member, channel="web", external_id=channel_user_id
-        )
+        ensure_identity(session, member, channel="web", external_id=channel_user_id)
     member.portal_role = role
     member.portal_permissions = permissions if role == "custom" else None
     member.portal_status = "active"
@@ -313,8 +298,7 @@ def list_directory_portal_candidates(session: Session, team_id: str) -> list[Mem
             .where(
                 Member.team_id == team_id,
                 Member.channel_user_id != ADMIN_LOGIN_USERNAME,
-                Member.portal_status.is_(None)
-                | (Member.portal_status == "rejected"),
+                Member.portal_status.is_(None) | (Member.portal_status == "rejected"),
                 Member.department_name.is_not(None),
             )
             .order_by(Member.display_name)

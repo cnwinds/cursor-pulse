@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pulse.util.datetime_fmt import serialize_datetime
-
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import Depends, HTTPException
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -167,11 +167,7 @@ def register_capability_routes(
         packs = session.scalars(query.order_by(CapabilityPackRow.key.asc())).all()
         result: list[dict[str, Any]] = []
         for pack in packs:
-            items = session.scalars(
-                select(CapabilityPackItemRow).where(
-                    CapabilityPackItemRow.pack_id == pack.id
-                )
-            ).all()
+            items = session.scalars(select(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack.id)).all()
             result.append(
                 {
                     "id": pack.id,
@@ -195,9 +191,7 @@ def register_capability_routes(
         query = select(CapabilityAssignmentRow)
         if team_id:
             query = query.where(CapabilityAssignmentRow.team_id == team_id)
-        rows = session.scalars(
-            query.order_by(CapabilityAssignmentRow.created_at.desc())
-        ).all()
+        rows = session.scalars(query.order_by(CapabilityAssignmentRow.created_at.desc())).all()
         return [
             {
                 "id": row.id,

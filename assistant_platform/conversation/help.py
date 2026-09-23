@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, Literal
+from collections.abc import Iterable
+from typing import Literal
 
 from assistant_platform.capabilities.resolve import ResolvedCapability
 from assistant_platform.skills.help_render import (
     build_help_message as _build_help_message,
+)
+from assistant_platform.skills.help_render import (
     build_help_message_from_keys as _build_help_message_from_keys,
+)
+from assistant_platform.skills.help_render import (
     resolve_help_topic,
 )
 

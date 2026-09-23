@@ -5,17 +5,17 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
+
 from pulse.config import AppConfig, AssistantMirrorConfig
 from pulse.http_clients import internal_async_client, internal_client
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +25,7 @@ _MIRROR_MIN_TIMEOUT_SECONDS = 10.0
 _DEADLETTER_PATH = Path("data/assistant_mirror_deadletter.jsonl")
 
 
-def _post_to_assistant(
-    url: str, payload: dict, headers: dict, mirror
-) -> httpx.Response:
+def _post_to_assistant(url: str, payload: dict, headers: dict, mirror) -> httpx.Response:
     """POST to assistant ingest with retries so transient failures don't drop messages."""
     timeout = max(float(mirror.timeout_seconds), _MIRROR_MIN_TIMEOUT_SECONDS)
     last_exc: Exception | None = None
@@ -45,9 +43,7 @@ def _post_to_assistant(
     raise last_exc
 
 
-async def _post_to_assistant_async(
-    url: str, payload: dict, headers: dict, mirror
-) -> httpx.Response:
+async def _post_to_assistant_async(url: str, payload: dict, headers: dict, mirror) -> httpx.Response:
     """Async POST to assistant ingest with retries (non-blocking for event loop)."""
     timeout = max(float(mirror.timeout_seconds), _MIRROR_MIN_TIMEOUT_SECONDS)
     last_exc: Exception | None = None
@@ -71,7 +67,7 @@ def _write_deadletter(kind: str, payload: dict, error: Exception) -> None:
         _DEADLETTER_PATH.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "kind": kind,
-            "failed_at": serialize_datetime(datetime.now(timezone.utc)),
+            "failed_at": serialize_datetime(datetime.now(UTC)),
             "error": repr(error),
             "payload": payload,
         }
@@ -120,7 +116,7 @@ def build_event_from_dingtalk(
         text_redacted=redacted,
         secret_refs=safe_refs,
         attachments=[],
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         raw_metadata_redacted={
             "conversation_title": getattr(incoming, "conversation_title", None),
         },
@@ -200,9 +196,7 @@ async def mirror_dingtalk_message(
     except Exception as exc:
         _write_deadletter("dingtalk", payload, exc)
         if mirror.fail_open:
-            logger.exception(
-                "Assistant mirror failed after retries (fail-open); wrote dead-letter"
-            )
+            logger.exception("Assistant mirror failed after retries (fail-open); wrote dead-letter")
             return
         raise
 
@@ -235,9 +229,7 @@ def mirror_dingtalk_message_sync(
     except Exception as exc:
         _write_deadletter("dingtalk", payload, exc)
         if mirror.fail_open:
-            logger.exception(
-                "Assistant mirror failed after retries (fail-open); wrote dead-letter"
-            )
+            logger.exception("Assistant mirror failed after retries (fail-open); wrote dead-letter")
             return
         raise
 
@@ -277,7 +269,7 @@ def build_event_from_web(
         text_redacted=redacted,
         secret_refs=safe_refs,
         attachments=[],
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         raw_metadata_redacted={"portal": True},
     )
 
@@ -337,8 +329,6 @@ def mirror_web_message(
     except Exception as exc:
         _write_deadletter("web", payload, exc)
         if mirror.fail_open:
-            logger.exception(
-                "Assistant web mirror failed after retries (fail-open); wrote dead-letter"
-            )
+            logger.exception("Assistant web mirror failed after retries (fail-open); wrote dead-letter")
             return {"session_id": None, "message_id": None}
         raise

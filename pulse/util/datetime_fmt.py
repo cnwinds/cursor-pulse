@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
-from pulse.util.timezone_ctx import DEFAULT_DISPLAY_TIMEZONE, display_zone
+from pulse.util.timezone_ctx import display_zone
 
 _UTC = ZoneInfo("UTC")
 
@@ -80,7 +80,7 @@ def format_data_updated_line(value: datetime | str | None) -> str:
 
 def display_now_iso() -> str:
     """Current instant in display timezone as ISO-8601."""
-    return format_display_datetime_iso(datetime.now(timezone.utc)) or ""
+    return format_display_datetime_iso(datetime.now(UTC)) or ""
 
 
 def serialize_datetime(value: datetime | str | None) -> str | None:

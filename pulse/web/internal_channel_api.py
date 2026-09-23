@@ -1,10 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import threading
 import time
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException
@@ -13,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from pulse.channels.base import messenger_delivered, outbound_messenger_or_none
 from pulse.config import AppConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,7 @@ def _already_delivered(dedupe_key: str | None) -> bool:
 
     now = time.monotonic()
     with _dedupe_lock:
-        expired = [
-            key
-            for key, ts in _recent_channel_deliveries.items()
-            if now - ts > _DEDUPE_TTL_SECONDS
-        ]
+        expired = [key for key, ts in _recent_channel_deliveries.items() if now - ts > _DEDUPE_TTL_SECONDS]
         for key in expired:
             _recent_channel_deliveries.pop(key, None)
         if dedupe_key in _recent_channel_deliveries:
@@ -143,21 +139,18 @@ def deliver_channel_reply(
         assistant_message_id,
         kind,
         channel,
-        serialize_datetime(datetime.now(timezone.utc)),
+        serialize_datetime(datetime.now(UTC)),
     )
     deliver_t0 = time.monotonic()
 
     effective_messenger = messenger if messenger is not None else _get_channel_messenger(config)
     if effective_messenger is None:
-        logger.warning(
-            "channel reply skipped: messenger unavailable (BOT_PLATFORM / credentials)"
-        )
+        logger.warning("channel reply skipped: messenger unavailable (BOT_PLATFORM / credentials)")
         return {"status": "queued", "reason": "messenger_unavailable"}
 
     def _log_deliver_done(status: str, reason: str = "") -> dict[str, str]:
         logger.info(
-            "reply.timing stage=channel_deliver_done message_id=%s kind=%s status=%s "
-            "reason=%s elapsed_ms=%d",
+            "reply.timing stage=channel_deliver_done message_id=%s kind=%s status=%s reason=%s elapsed_ms=%d",
             assistant_message_id,
             kind,
             status,
@@ -195,9 +188,7 @@ def deliver_channel_reply(
                     return _log_deliver_done("queued", "group_send_skipped")
                 return _log_deliver_done("sent")
             except Exception:
-                logger.exception(
-                    "group reply failed for feishu conversation_id=%s", conversation_id
-                )
+                logger.exception("group reply failed for feishu conversation_id=%s", conversation_id)
                 return _log_deliver_done("queued", "group_send_failed")
 
         # dingtalk: only allow reply into the configured work group

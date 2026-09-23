@@ -71,16 +71,10 @@ def enforce_on_demand_disabled(
     )
 
 
-def format_on_demand_admin_alert(
-    account: AiAccount, result: OnDemandEnforceResult
-) -> str:
+def format_on_demand_admin_alert(account: AiAccount, result: OnDemandEnforceResult) -> str:
     email = (account.account_identifier or "").strip() or "-"
     if result.status == "disabled_now":
-        prev = (
-            f"${result.previous_hard_limit}"
-            if result.previous_hard_limit is not None
-            else "开启"
-        )
+        prev = f"${result.previous_hard_limit}" if result.previous_hard_limit is not None else "开启"
         return (
             "⚠️ On-Demand Spending 已自动关闭\n\n"
             f"邮箱：{email}\n"
@@ -104,11 +98,7 @@ def format_on_demand_admin_alert(
             "请尽快到 Dashboard → Spending 确认 On-Demand 为 Disabled，"
             "并检查 cursor-pulse 的 HardLimit 对接是否仍有效。"
         )
-    return (
-        f"On-Demand 检查异常 · {email}\n"
-        f"状态：{result.status}\n"
-        f"错误：{result.error or '-'}"
-    )
+    return f"On-Demand 检查异常 · {email}\n状态：{result.status}\n错误：{result.error or '-'}"
 
 
 def resolve_admin_dingtalk_ids(config: AppConfig) -> list[str]:
@@ -125,9 +115,7 @@ def resolve_admin_dingtalk_ids(config: AppConfig) -> list[str]:
 
 
 def admin_fallback_member_ids(session: Session, config: AppConfig) -> list[str]:
-    admin_dt = {
-        uid.strip() for uid in (config.admin.channel_user_ids or []) if uid and uid.strip()
-    }
+    admin_dt = {uid.strip() for uid in (config.admin.channel_user_ids or []) if uid and uid.strip()}
     if not admin_dt:
         return []
     members = session.scalars(
@@ -169,16 +157,10 @@ def resolve_on_demand_notify_dingtalk_ids(
         uid = (
             external_id_for(session, member, "dingtalk")
             or external_id_for(session, member, "feishu")
-            or (
-                (member.channel_user_id or "").strip()
-                if (member.channel or "") in ("dingtalk", "feishu")
-                else ""
-            )
+            or ((member.channel_user_id or "").strip() if (member.channel or "") in ("dingtalk", "feishu") else "")
         )
         if not uid:
-            logger.warning(
-                "on-demand notify: member %s has no IM identity", mid
-            )
+            logger.warning("on-demand notify: member %s has no IM identity", mid)
             continue
         if uid in seen:
             continue

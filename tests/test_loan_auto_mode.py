@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
-
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.auto_lender import reset_auto_lender_state
@@ -20,9 +18,10 @@ from pulse.tool_center.key_loan_delivery import (
     LENDER_MODE_MANUAL,
     VALID_LENDER_MODES,
 )
+from sqlalchemy import select
 from tests.conftest import make_team_repo, make_test_session_factory
 
-NOW = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
 
 def _snapshot(account_id: str, total_pct: float) -> AccountQuotaSnapshot:
@@ -124,9 +123,7 @@ def test_lender_mode_constants():
 def test_resolve_auto_lender_prefers_roomier_account(env):
     """余量更宽的账号应排在最前并被选中。"""
     session = env["session"]
-    resolved = resolve_auto_lender(
-        session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW
-    )
+    resolved = resolve_auto_lender(session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW)
     # acc-a 余量更宽 → 首选
     assert [row["account_id"] for row in resolved["ranked"]] == ["acc-a", "acc-b"]
     assert resolved["best"]["account_id"] == "acc-a"
@@ -165,13 +162,9 @@ def test_resolve_auto_lender_requires_both_buckets_when_model_unknown(env):
     )
     session.commit()
 
-    resolved = resolve_auto_lender(
-        session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW
-    )
+    resolved = resolve_auto_lender(session, env["team"].id, borrower_member_id=env["borrower"].id, now=NOW)
     assert [row["account_id"] for row in resolved["ranked"]] == ["acc-b"]
-    assert {e["account_id"]: e["reason"] for e in resolved["excluded"]} == {
-        "acc-a": "exhausted"
-    }
+    assert {e["account_id"]: e["reason"] for e in resolved["excluded"]} == {"acc-a": "exhausted"}
 
     # 明确指定 api 桶时该账号可用
     resolved_api = resolve_auto_lender(
@@ -217,11 +210,7 @@ def test_audit_event_recorded_for_jev_pick(env):
     record_auto_lender_decision(session, _picked_result())
     session.commit()
 
-    events = list(
-        session.scalars(
-            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
-        )
-    )
+    events = list(session.scalars(select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")))
     assert len(events) == 1
     detail = json.loads(events[0].detail)
     assert detail["picked_by"] == "jev"
@@ -241,11 +230,7 @@ def test_audit_event_recorded_for_fallback_reason(env):
     )
     session.commit()
 
-    events = list(
-        session.scalars(
-            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
-        )
-    )
+    events = list(session.scalars(select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")))
     assert len(events) == 1
     assert json.loads(events[0].detail)["fallback_reason"] == "low_confidence"
 
@@ -261,11 +246,7 @@ def test_audit_event_skipped_when_jev_unavailable(env):
     )
     session.commit()
 
-    events = list(
-        session.scalars(
-            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
-        )
-    )
+    events = list(session.scalars(select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")))
     assert events == []
 
 
@@ -274,14 +255,8 @@ def test_audit_event_skipped_for_plain_algorithm_pick(env):
     from pulse.storage.models import ProxyEvent
 
     session = env["session"]
-    record_auto_lender_decision(
-        session, _picked_result(picked_by="algorithm", fallback_reason=None)
-    )
+    record_auto_lender_decision(session, _picked_result(picked_by="algorithm", fallback_reason=None))
     session.commit()
 
-    events = list(
-        session.scalars(
-            select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")
-        )
-    )
+    events = list(session.scalars(select(ProxyEvent).where(ProxyEvent.event_type == "lender_auto_pick")))
     assert events == []

@@ -1,8 +1,7 @@
 """Existing SQLite key_loans can drop NOT NULL on source account and credential."""
 
-from sqlalchemy import create_engine, inspect, text
-
 from pulse.storage.migrate import _relax_key_loan_account_nulls
+from sqlalchemy import create_engine, inspect, text
 
 
 def test_sqlite_rebuild_allows_null_source_account():
@@ -22,10 +21,7 @@ def test_sqlite_rebuild_allows_null_source_account():
             )
         )
         conn.execute(
-            text(
-                "INSERT INTO key_loans (id, source_account_id, credential_id) "
-                "VALUES ('keep', 'acct', 'cred')"
-            )
+            text("INSERT INTO key_loans (id, source_account_id, credential_id) VALUES ('keep', 'acct', 'cred')")
         )
     _relax_key_loan_account_nulls(engine)
     cols = {col["name"]: col for col in inspect(engine).get_columns("key_loans")}

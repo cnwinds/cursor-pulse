@@ -32,9 +32,7 @@ def chat_client(_chat_app):
     proxy.bind(sf)
     session = sf()
     _team, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin1", display_name="Admin", password="pass1234"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin1", display_name="Admin", password="pass1234")
     repo.commit()
     session.close()
     yield client, config, owner

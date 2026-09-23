@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 
 import pytest
-
 from pulse.config import LoanSelectionConfig
 from pulse.llm.jev import JevAnswer, JevDecision, JevError
 from pulse.storage.models import AccountQuotaSnapshot
@@ -16,7 +15,7 @@ from pulse.tool_center.auto_lender import (
 from pulse.tool_center.burn_rate import LenderCandidate
 
 TODAY = date(2026, 7, 10)
-NOW = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
 
 def _snapshot(*, account_id: str, total_pct: float, api_pct: float) -> AccountQuotaSnapshot:
@@ -76,9 +75,7 @@ def _decision(choice, *, confidence=0.9, probabilities=None, owner=None):
             raw={
                 "choice": choice,
                 "confidence": confidence,
-                "probabilities": probabilities
-                if probabilities is not None
-                else {"acc-a": 0.3, "acc-b": 0.7},
+                "probabilities": probabilities if probabilities is not None else {"acc-a": 0.3, "acc-b": 0.7},
             },
         )
     }
@@ -118,18 +115,14 @@ def test_legacy_auto_mode_flag_does_not_gate_jev():
 
 
 def test_jev_unavailable_falls_back():
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=None
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=None)
     assert board["decision"]["picked_by"] == "algorithm"
     assert board["decision"]["fallback_reason"] == "jev_unavailable"
 
 
 def test_jev_pick_is_promoted_to_front():
     jev = FakeJev(decision=_decision("acc-b"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert [r["account_id"] for r in board["ranked"]] == ["acc-b", "acc-a"]
     assert board["ranked"][0]["picked"] is True
     assert board["ranked"][1]["picked"] is False
@@ -141,9 +134,7 @@ def test_jev_pick_is_promoted_to_front():
 
 def test_state_and_questions_carry_candidate_features():
     jev = FakeJev(decision=_decision("acc-a"))
-    rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     state = jev.last_state
     assert state["quota_pool"] == "unknown"
     assert {c["account_id"] for c in state["candidates"]} == {"acc-a", "acc-b"}
@@ -173,11 +164,7 @@ def test_low_confidence_falls_back():
 
 
 def test_narrow_margin_falls_back():
-    jev = FakeJev(
-        decision=_decision(
-            "acc-b", probabilities={"acc-a": 0.48, "acc-b": 0.52}, confidence=0.9
-        )
-    )
+    jev = FakeJev(decision=_decision("acc-b", probabilities={"acc-a": 0.48, "acc-b": 0.52}, confidence=0.9))
     board = rank_lenders(
         _two_candidates(),
         loan_selection=_auto_cfg(auto_min_margin=0.05),
@@ -190,26 +177,20 @@ def test_narrow_margin_falls_back():
 
 def test_unknown_account_falls_back():
     jev = FakeJev(decision=_decision("acc-zzz"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "unknown_account"
 
 
 def test_missing_pick_answer_falls_back():
     jev = FakeJev(decision=JevDecision(answers={}, model="m"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "no_pick_answer"
 
 
 def test_owner_unsafe_blocks_the_pick():
     """Jev 选中 b，但 b 被判定会侵占主负责人预留 → 回落算法首选。"""
     jev = FakeJev(decision=_decision("acc-b", owner={"acc-b": 0.9, "acc-a": 0.05}))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
     assert board["decision"]["fallback_reason"] == "owner_unsafe"
     assert board["decision"]["owner_safe"] == {"acc-b": False, "acc-a": True}
@@ -217,9 +198,7 @@ def test_owner_unsafe_blocks_the_pick():
 
 def test_jev_error_falls_back():
     jev = FakeJev(error=JevError("boom"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "jev_error"
     assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
 
@@ -306,9 +285,7 @@ def test_excluded_candidates_are_not_sent_to_jev():
         jev=jev,
     )
     assert set(jev.last_questions[PICK_QUESTION]["criteria"]) == {"acc-a", "acc-b"}
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "acc-full": "exhausted"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"acc-full": "exhausted"}
 
 
 def test_pool_argument_is_forwarded_to_state_and_scoring():

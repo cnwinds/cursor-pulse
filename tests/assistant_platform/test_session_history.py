@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.conversation.session_history import load_session_history_messages
@@ -27,7 +27,7 @@ def test_history_only_loads_named_session_user_assistant():
         conversation_id="u-a",
         user_id="u-a",
         status="open",
-        last_activity_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(UTC),
     )
     s_b = ChatSessionRow(
         id=str(uuid.uuid4()),
@@ -38,7 +38,7 @@ def test_history_only_loads_named_session_user_assistant():
         conversation_id="u-b",
         user_id="u-b",
         status="open",
-        last_activity_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(UTC),
     )
     db.add_all([s_a, s_b])
     db.add_all(

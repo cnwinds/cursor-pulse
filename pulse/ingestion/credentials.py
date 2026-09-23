@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.crypto import decrypt_secret, encrypt_secret, mask_api_key
-from pulse.proxy.keys import hash_proxy_key
 from pulse.ingestion.sync_schedule import init_schedule_on_bind
 from pulse.integrations.cursor_api import CursorApiClient
+from pulse.proxy.keys import hash_proxy_key
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, ProxyKey
 
 
@@ -16,9 +16,7 @@ class AccountEmailMismatchError(ValueError):
     def __init__(self, *, ledger_email: str, key_email: str):
         self.ledger_email = ledger_email
         self.key_email = key_email
-        super().__init__(
-            f"API Key 对应账号 {key_email} 与台账账号 {ledger_email} 不一致"
-        )
+        super().__init__(f"API Key 对应账号 {key_email} 与台账账号 {ledger_email} 不一致")
 
 
 def _ledger_identifier(account: AiAccount) -> str | None:
@@ -26,9 +24,7 @@ def _ledger_identifier(account: AiAccount) -> str | None:
     return text.lower() if text else None
 
 
-def _apply_key_account_identifier(
-    account: AiAccount, key_email: str | None
-) -> None:
+def _apply_key_account_identifier(account: AiAccount, key_email: str | None) -> None:
     ledger_id = _ledger_identifier(account)
     if not ledger_id:
         if not key_email:
@@ -85,12 +81,10 @@ class CredentialService:
             raise ValueError("account not found")
 
         exchange = self.cursor_client.exchange_user_api_key_response(api_key)
-        key_email = self.cursor_client.resolve_api_key_account_email(
-            api_key, exchange=exchange
-        )
+        key_email = self.cursor_client.resolve_api_key_account_email(api_key, exchange=exchange)
         _apply_key_account_identifier(account, key_email)
         encrypted = encrypt_secret(api_key, self.encryption_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         cred = self.get_primary_credential(account_id)
         key_hash = hash_proxy_key(api_key)
@@ -136,7 +130,7 @@ class CredentialService:
             raise ValueError("account not found")
 
         encrypted = encrypt_secret(api_key, self.encryption_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cred = AiAccountCredential(
             account_id=account_id,
             vendor_id=account.vendor_id,
@@ -189,9 +183,7 @@ def rotate_credential_encryption(
 
     stats = {"credentials": 0, "loan_aliases": 0, "proxy_keys": 0, "skipped": 0}
 
-    for cred in session.scalars(
-        select(AiAccountCredential).where(AiAccountCredential.encrypted_value != "")
-    ).all():
+    for cred in session.scalars(select(AiAccountCredential).where(AiAccountCredential.encrypted_value != "")).all():
         try:
             plain = decrypt_secret(cred.encrypted_value, old)
         except Exception:
@@ -231,9 +223,7 @@ def rotate_credential_encryption(
             pk.encrypted_key = encrypt_secret(plain, new)
         stats["proxy_keys"] += 1
 
-    if not dry_run and (
-        stats["credentials"] or stats["loan_aliases"] or stats["proxy_keys"]
-    ):
+    if not dry_run and (stats["credentials"] or stats["loan_aliases"] or stats["proxy_keys"]):
         session.commit()
     return stats
 

@@ -191,9 +191,7 @@ class JevClient:
             raise JevError(f"jev request failed: {exc}") from exc
 
         if response.status_code != 200:
-            raise JevError(
-                f"jev HTTP {response.status_code}: {_error_message(response)}"
-            )
+            raise JevError(f"jev HTTP {response.status_code}: {_error_message(response)}")
         try:
             data = response.json()
         except Exception as exc:
@@ -207,10 +205,7 @@ class JevClient:
             raise JevError(f"jev response has no answers: {data!r}")
 
         return JevDecision(
-            answers={
-                name: JevAnswer(name=name, raw=raw)
-                for name, raw in answers_raw.items()
-            },
+            answers={name: JevAnswer(name=name, raw=raw) for name, raw in answers_raw.items()},
             model=data.get("model"),
             provider=data.get("provider"),
             usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},

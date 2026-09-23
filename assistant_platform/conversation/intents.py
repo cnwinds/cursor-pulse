@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 
 from pulse.channels.commands import BIND_CURSOR_RE, UNBIND_CURSOR_RE
+
 from assistant_platform.conversation.help import (
     _DETAIL_PREFIX_RE,
     _GENERAL_HELP_EXACT,

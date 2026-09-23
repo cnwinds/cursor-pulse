@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
-
 from pulse.storage.db import init_db
 from pulse.storage.models import KnowledgeEntry, Member
 from pulse.tool_center.knowledge import KnowledgeService, extract_tip_body, looks_like_tip, organize_tip
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 

@@ -54,9 +54,7 @@ def _period_for_effective(config: AppConfig, effective: dict) -> str:
         update={
             "collection": CollectionConfig(
                 timezone=str(collection.get("timezone") or config.collection.timezone),
-                period_format=str(
-                    collection.get("period_format") or config.collection.period_format
-                ),
+                period_format=str(collection.get("period_format") or config.collection.period_format),
             )
         }
     )
@@ -158,9 +156,7 @@ def build_integrations_status(config: AppConfig, session: Session, team_id: str)
         },
         "chat_memory": {
             "archive_enabled": bool(effective.get("chat_memory", {}).get("archive", {}).get("enabled")),
-            "auto_recall": bool(
-                effective.get("chat_memory", {}).get("features", {}).get("auto_recall_per_turn")
-            ),
+            "auto_recall": bool(effective.get("chat_memory", {}).get("features", {}).get("auto_recall_per_turn")),
         },
         "web_search": {
             "enabled": bool(effective_raw.get("web_search", {}).get("enabled")),
@@ -353,23 +349,15 @@ def build_dashboard_sections(
     sections: dict[str, dict | None] = {}
     if has_permission(actor, "accounts:read"):
         sections["quota"] = _safe_section("quota", _quota_section, session, team_id)
-        sections["usage"] = _safe_section(
-            "usage", _usage_section, config, session, team_id, period, timezone_name
-        )
+        sections["usage"] = _safe_section("usage", _usage_section, config, session, team_id, period, timezone_name)
         sections["loans"] = _safe_section("loans", _loans_section, session, team_id)
-        sections["sync"] = _safe_section(
-            "sync", _sync_section, session, team_id, period, actor
-        )
+        sections["sync"] = _safe_section("sync", _sync_section, session, team_id, period, actor)
     if has_permission(actor, "proxy:read"):
         sections["proxy"] = _safe_section("proxy", _proxy_section, session)
     if has_permission(actor, "settings:read"):
-        sections["integrations"] = _safe_section(
-            "integrations", _integrations_section, config, session, team_id
-        )
+        sections["integrations"] = _safe_section("integrations", _integrations_section, config, session, team_id)
     if has_permission(actor, "audit:read"):
-        sections["recent_activity"] = _safe_section(
-            "recent_activity", _activity_section, session, team_id
-        )
+        sections["recent_activity"] = _safe_section("recent_activity", _activity_section, session, team_id)
     return sections
 
 
@@ -409,9 +397,7 @@ def build_dashboard_overview(
         merged_for_im = {
             "bot": {"name": (effective_raw.get("bot") or {}).get("name") or config.bot.name},
             "dingtalk": {
-                "group_open_conversation_id": (effective_raw.get("dingtalk") or {}).get(
-                    "group_open_conversation_id"
-                )
+                "group_open_conversation_id": (effective_raw.get("dingtalk") or {}).get("group_open_conversation_id")
                 or config.dingtalk.group_open_conversation_id,
             },
             "feishu": {

@@ -6,6 +6,23 @@ on:
   pull_request:
 
 jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,web]"
+      - name: Ruff format
+        run: ruff format --check pulse assistant_platform tests
+      - name: Ruff lint
+        run: ruff check pulse assistant_platform tests
+
   pytest:
     runs-on: ubuntu-latest
     steps:
@@ -19,7 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,web]"
       - name: Test
-        run: pytest --tb=short -q
+        run: pytest -n auto --tb=short -q
 
   go-test:
     runs-on: ubuntu-latest
@@ -46,7 +63,8 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: web-admin/package-lock.json
-      - name: Build
+      - name: Typecheck and build
         run: |
           npm ci
+          npm run typecheck
           npm run build

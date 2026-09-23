@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AccountQuotaSnapshot
@@ -18,7 +18,7 @@ from pulse.tool_center.burn_rate import (
 )
 
 TODAY = date(2026, 7, 10)
-NOW = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
 
 def _snapshot(
@@ -37,7 +37,7 @@ def _snapshot(
 ) -> AccountQuotaSnapshot:
     return AccountQuotaSnapshot(
         account_id=account_id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
         cycle_start_at=cycle_start_at,
@@ -297,7 +297,7 @@ def test_recommend_filters_when_under_one_hour_to_deadline():
         used_cents=1000,
         remaining_cents=6000,
     )
-    now = datetime(2026, 7, 10, 23, 30, tzinfo=timezone.utc)  # 距当天作废仅 30 分钟
+    now = datetime(2026, 7, 10, 23, 30, tzinfo=UTC)  # 距当天作废仅 30 分钟
     ranked = recommend_lenders([_candidate(snap, account_id="a1")], today=TODAY, now=now)
     assert ranked == []
 
@@ -393,7 +393,7 @@ def test_weight_override_shifts_priority_to_surplus():
 
 
 def test_tie_break_by_account_id():
-    fixed = datetime(2026, 7, 10, 8, 0, tzinfo=timezone.utc)
+    fixed = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
     snap_b = _snapshot(
         cycle_start=date(2026, 7, 1),
         cycle_end=date(2026, 8, 1),
@@ -481,7 +481,7 @@ def test_same_day_deadline_over_one_hour_passes():
         used_cents=1000,
         remaining_cents=6000,
     )
-    now = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
     ranked = recommend_lenders([_candidate(snap, account_id="a1")], today=TODAY, now=now)
     assert len(ranked) == 1
     assert ranked[0]["days_to_deadline"] == 0
@@ -496,8 +496,8 @@ def test_hours_to_deadline_uses_exact_cycle_end_at_not_utc_eod():
     """
     from pulse.tool_center.burn_rate import hours_until_deadline
 
-    end_at = datetime(2026, 8, 24, 10, 18, 51, tzinfo=timezone.utc)
-    now = datetime(2026, 8, 24, 5, 24, tzinfo=timezone.utc)
+    end_at = datetime(2026, 8, 24, 10, 18, 51, tzinfo=UTC)
+    now = datetime(2026, 8, 24, 5, 24, tzinfo=UTC)
     assert round(hours_until_deadline(end_at, now), 1) == 4.9
 
     snap = _snapshot(
@@ -534,7 +534,7 @@ def test_shorter_deadline_gets_more_urgency_weight():
         used_cents=0,
         remaining_cents=6000,
     )
-    now = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
     ranked = recommend_lenders(
         [
             _candidate(five_day, account_id="five-day"),
@@ -557,10 +557,8 @@ def test_zero_min_coverage_with_deadline_today_uses_hour_floor():
         remaining_cents=6000,
     )
     selection = LoanSelectionConfig(min_coverage_hours=0)
-    now = datetime(2026, 7, 10, 23, 30, tzinfo=timezone.utc)  # 仅剩 0.5h → 触发 1h 下限
-    ranked = recommend_lenders(
-        [_candidate(snap, account_id="a1")], today=TODAY, now=now, loan_selection=selection
-    )
+    now = datetime(2026, 7, 10, 23, 30, tzinfo=UTC)  # 仅剩 0.5h → 触发 1h 下限
+    ranked = recommend_lenders([_candidate(snap, account_id="a1")], today=TODAY, now=now, loan_selection=selection)
     assert len(ranked) == 1
     surplus = ranked[0]["surplus_cents"]
     assert ranked[0]["urgency_cents_per_day"] == round(
@@ -640,7 +638,7 @@ def test_explain_lender_selection_matches_recommend_and_reasons():
         total_pct=20.0,
     )
     # 距当天作废仅 30 分钟 → coverage_too_short
-    near_eod = datetime(2026, 7, 10, 23, 30, tzinfo=timezone.utc)
+    near_eod = datetime(2026, 7, 10, 23, 30, tzinfo=UTC)
     cands = [
         _candidate(healthy, account_id="ok"),
         _candidate(exhausted, account_id="ex"),
@@ -680,9 +678,7 @@ def test_explain_pool_mode_ignores_loan_cap():
         _candidate(idle, account_id="idle", active_loans=0),
         _candidate(busy, account_id="busy", active_loans=5),
     ]
-    board = explain_lender_selection(
-        cands, today=TODAY, now=NOW, enforce_loan_cap=False
-    )
+    board = explain_lender_selection(cands, today=TODAY, now=NOW, enforce_loan_cap=False)
     assert {e["reason"] for e in board["excluded"]} == set()
     ranked_ids = [r["account_id"] for r in board["ranked"]]
     assert set(ranked_ids) == {"idle", "busy"}
@@ -820,10 +816,8 @@ def test_proxy_pool_defers_low_headroom_even_when_sooner():
 
 
 def test_snapshot_freshness_decays_and_floors():
-    snap = _snapshot(
-        cycle_start=date(2026, 7, 1), cycle_end=date(2026, 8, 1), account_id="a1"
-    )
-    now = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    snap = _snapshot(cycle_start=date(2026, 7, 1), cycle_end=date(2026, 8, 1), account_id="a1")
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
     snap.captured_at = now - timedelta(hours=12)
     assert snapshot_freshness(snap, 24.0, now) == 0.5
     snap.captured_at = now - timedelta(hours=36)
@@ -849,12 +843,8 @@ def test_proxy_pool_keeps_total_exhausted_when_one_bucket_has_headroom():
     )
     cands = [_candidate(snap, account_id="mixed")]
     loan_board = explain_lender_selection(cands, today=TODAY, now=NOW)
-    assert {e["account_id"]: e["reason"] for e in loan_board["excluded"]} == {
-        "mixed": "exhausted"
-    }
-    pool_board = explain_lender_selection(
-        cands, today=TODAY, now=NOW, enforce_loan_cap=False
-    )
+    assert {e["account_id"]: e["reason"] for e in loan_board["excluded"]} == {"mixed": "exhausted"}
+    pool_board = explain_lender_selection(cands, today=TODAY, now=NOW, enforce_loan_cap=False)
     assert pool_board["excluded"] == []
     assert [r["account_id"] for r in pool_board["ranked"]] == ["mixed"]
 
@@ -876,9 +866,7 @@ def test_proxy_pool_excludes_when_both_buckets_full():
         now=NOW,
         enforce_loan_cap=False,
     )
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "full": "exhausted"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"full": "exhausted"}
 
 
 def test_score_adjust_adds_to_computed_score_and_can_reorder():
@@ -968,9 +956,7 @@ def test_score_adjust_does_not_bypass_hard_filter():
         enforce_loan_cap=False,
     )
     assert [r["account_id"] for r in board["ranked"]] == ["ok"]
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "full": "exhausted"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"full": "exhausted"}
     assert board["excluded"][0]["score_adjust"] == 9.0
 
 
@@ -1010,9 +996,7 @@ def test_unknown_pool_requires_both_buckets():
         used_cents=1400,
         remaining_cents=5600,
     )
-    board = explain_lender_selection(
-        [_candidate(snap, account_id="a")], today=TODAY, now=NOW, pool="unknown"
-    )
+    board = explain_lender_selection([_candidate(snap, account_id="a")], today=TODAY, now=NOW, pool="unknown")
     assert board["ranked"] == []
     assert board["excluded"][0]["reason"] == "exhausted"
 
@@ -1090,9 +1074,7 @@ def test_owner_reserve_excludes_heavy_primary():
         pool="api",
     )
     assert [r["account_id"] for r in board["ranked"]] == ["idle"]
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "heavy": "owner_reserve"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"heavy": "owner_reserve"}
 
 
 def test_owner_reserve_falls_back_to_config_default():
@@ -1114,9 +1096,7 @@ def test_owner_reserve_falls_back_to_config_default():
         pool="api",
         loan_selection=cfg,
     )
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "heavy": "owner_reserve"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"heavy": "owner_reserve"}
 
 
 def test_owner_reserve_disabled_by_default():
@@ -1130,9 +1110,7 @@ def test_owner_reserve_disabled_by_default():
         used_cents=1820,
         remaining_cents=5180,
     )
-    ranked = recommend_lenders(
-        [_candidate(heavy, account_id="heavy")], TODAY, now=NOW, pool="api"
-    )
+    ranked = recommend_lenders([_candidate(heavy, account_id="heavy")], TODAY, now=NOW, pool="api")
     assert [r["account_id"] for r in ranked] == ["heavy"]
 
 
@@ -1236,19 +1214,11 @@ def test_excluded_payload_echoes_reserve_state():
 def test_effective_reserve_pct_prefers_account_value():
     from pulse.tool_center.burn_rate import effective_reserve_pct
 
-    snap = _snapshot(
-        cycle_start=date(2026, 7, 1), cycle_end=date(2026, 8, 1), account_id="a"
-    )
+    snap = _snapshot(cycle_start=date(2026, 7, 1), cycle_end=date(2026, 8, 1), account_id="a")
     cfg = LoanSelectionConfig(owner_reserve_pct=10.0)
     assert effective_reserve_pct(_candidate(snap, account_id="a"), cfg) == 10.0
-    assert (
-        effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=0.0), cfg)
-        == 0.0
-    )
-    assert (
-        effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=30.0), cfg)
-        == 30.0
-    )
+    assert effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=0.0), cfg) == 0.0
+    assert effective_reserve_pct(_candidate(snap, account_id="a", reserve_pct=30.0), cfg) == 30.0
 
 
 def test_recency_penalty_does_not_exclude_last_candidate():
@@ -1270,4 +1240,3 @@ def test_recency_penalty_does_not_exclude_last_candidate():
         pool="api",
     )
     assert [r["account_id"] for r in ranked] == ["only"]
-

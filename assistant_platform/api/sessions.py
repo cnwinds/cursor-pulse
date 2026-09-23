@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
-from typing import Annotated, Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import Depends, HTTPException, Query
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -174,9 +175,7 @@ def register_session_routes(
             if not effective_user:
                 raise HTTPException(status_code=403, detail="缺少用户标识，无法限定 self 范围")
             stmt = stmt.where(ChatSessionRow.user_id == effective_user)
-        count_stmt = select(func.count()).select_from(ChatSessionRow).where(
-            ChatSessionRow.team_id == team_id
-        )
+        count_stmt = select(func.count()).select_from(ChatSessionRow).where(ChatSessionRow.team_id == team_id)
         if status:
             count_stmt = count_stmt.where(ChatSessionRow.status == status)
         if _has_permission(actor, "assistant:sessions:read:all"):
@@ -189,9 +188,7 @@ def register_session_routes(
             count_stmt = count_stmt.where(ChatSessionRow.user_id == effective_user)
         total = session.scalar(count_stmt) or 0
         rows = list(
-            session.scalars(
-                stmt.order_by(ChatSessionRow.last_activity_at.desc()).offset(offset).limit(limit)
-            ).all()
+            session.scalars(stmt.order_by(ChatSessionRow.last_activity_at.desc()).offset(offset).limit(limit)).all()
         )
         first_texts = _first_user_texts_by_session(session, [row.id for row in rows])
         return {
@@ -275,7 +272,7 @@ def register_session_routes(
             .order_by(ChatMessageRow.created_at.asc())
         ).all()
         return {
-            "exported_at": serialize_datetime(datetime.now(timezone.utc)),
+            "exported_at": serialize_datetime(datetime.now(UTC)),
             "session": _session_json(row),
             "messages": [_message_json(message) for message in messages],
         }
@@ -292,9 +289,7 @@ def register_session_routes(
         row = session.get(ChatSessionRow, session_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        if not _can_delete_session(actor, row) and not _has_permission(
-            actor, "assistant:sessions:read:all"
-        ):
+        if not _can_delete_session(actor, row) and not _has_permission(actor, "assistant:sessions:read:all"):
             raise HTTPException(status_code=403, detail="无权删除该会话")
         if (
             not _can_delete_session(actor, row)
@@ -303,9 +298,7 @@ def register_session_routes(
         ):
             raise HTTPException(status_code=403, detail="仅 owner 可删除他人会话")
 
-        messages = session.scalars(
-            select(ChatMessageRow).where(ChatMessageRow.session_id == session_id)
-        ).all()
+        messages = session.scalars(select(ChatMessageRow).where(ChatMessageRow.session_id == session_id)).all()
         for message in messages:
             message.text_redacted = "[redacted]"
             message.secret_refs_json = []

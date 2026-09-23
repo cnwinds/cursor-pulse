@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 
+from pulse.util.datetime_fmt import serialize_datetime
 from sqlalchemy.orm import Session
 
 from assistant_platform.conversation.session_store import attach_user_message
-from assistant_platform.conversation.turn_inbox import try_schedule_next_turn, is_turn_running
+from assistant_platform.conversation.turn_inbox import is_turn_running, try_schedule_next_turn
 from assistant_platform.conversation.turn_recovery import recover_stale_turn_if_needed
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.secrets.redact import redact_text
@@ -71,7 +71,7 @@ class EventIngestService:
             text_redacted=text,
             secret_refs_json=safe_refs,
             attachments_json=event.attachments,
-            occurred_at=event.occurred_at or datetime.now(timezone.utc),
+            occurred_at=event.occurred_at or datetime.now(UTC),
             raw_metadata_json=event.raw_metadata_redacted,
         )
         saved = self.repo.add_incoming(row)
@@ -95,12 +95,11 @@ class EventIngestService:
         scheduled = try_schedule_next_turn(self.repo.session, session_row, self.repo)
         if scheduled:
             logger.info(
-                "reply.timing stage=ingest_queued session_id=%s message_id=%s "
-                "channel_message_id=%s at=%s",
+                "reply.timing stage=ingest_queued session_id=%s message_id=%s channel_message_id=%s at=%s",
                 session_row.id,
                 message_row.id,
                 event.channel_message_id,
-                serialize_datetime(datetime.now(timezone.utc)),
+                serialize_datetime(datetime.now(UTC)),
             )
             self.repo.add_audit(
                 assistant_id=event.assistant_id,

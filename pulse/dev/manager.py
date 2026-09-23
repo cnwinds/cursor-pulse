@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,7 @@ class DevManagerError(RuntimeError):
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_cursor_mitm_proxy_url(url: str, *, proxy_public_url: str = "") -> bool:
@@ -328,7 +328,7 @@ def _iter_process_rows() -> list[tuple[int, str]]:
                 "-Command",
                 "Get-CimInstance Win32_Process | "
                 "Where-Object { $_.Name -match 'pulse|python' } | "
-                "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }",
+                'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }',
             ],
             check=False,
             capture_output=True,
@@ -430,18 +430,13 @@ def _resolve_services(names: list[str] | None) -> list[str]:
 
 def _dingtalk_configured(env: dict[str, str]) -> bool:
     """True if Stream credentials exist in .env or team_settings.dingtalk (DB)."""
-    if (env.get("DINGTALK_APP_KEY") or "").strip() and (
-        env.get("DINGTALK_APP_SECRET") or ""
-    ).strip():
+    if (env.get("DINGTALK_APP_KEY") or "").strip() and (env.get("DINGTALK_APP_SECRET") or "").strip():
         return True
     try:
         from pulse.config import load_config
 
         cfg = load_config("config.yaml")
-        return bool(
-            (cfg.dingtalk.app_key or "").strip()
-            and (cfg.dingtalk.app_secret or "").strip()
-        )
+        return bool((cfg.dingtalk.app_key or "").strip() and (cfg.dingtalk.app_secret or "").strip())
     except Exception:
         return False
 
@@ -450,11 +445,7 @@ def _resolve_existing_services(names: list[str] | None) -> list[str]:
     if names:
         return _resolve_services(names)
     running = [name for name in SERVICES if is_running(name)]
-    port_bound = [
-        name
-        for name, meta in SERVICES.items()
-        if meta.port is not None and _port_open(meta.port)
-    ]
+    port_bound = [name for name, meta in SERVICES.items() if meta.port is not None and _port_open(meta.port)]
     targets = list(dict.fromkeys([*running, *port_bound]))
     if targets:
         return targets
@@ -573,10 +564,7 @@ def start(services: list[str] | None = None, *, config_path: str = "config.yaml"
             if proc.poll() is not None:
                 _clear_state(name)
                 started.remove(name)
-                print(
-                    f"[dev] 错误: {name} 启动后立即退出 (code={proc.returncode})，"
-                    f"请查看 {log_path}"
-                )
+                print(f"[dev] 错误: {name} 启动后立即退出 (code={proc.returncode})，请查看 {log_path}")
 
     if started:
         _wait_for_ports(started)
@@ -584,11 +572,7 @@ def start(services: list[str] | None = None, *, config_path: str = "config.yaml"
 
 
 def _wait_for_ports(services: list[str], timeout: float = 20.0) -> None:
-    pending = {
-        name: SERVICES[name].port
-        for name in services
-        if SERVICES[name].port is not None
-    }
+    pending = {name: SERVICES[name].port for name in services if SERVICES[name].port is not None}
     if not pending:
         return
 

@@ -8,6 +8,11 @@ dependency. See ``docs/requirements/chat-memory-web-search.md`` §3.3.
 
 from __future__ import annotations
 
+from assistant_platform.memory.semantic.distill import (
+    LlmDistiller,
+    RuleBasedDistiller,
+    distill_conversation,
+)
 from assistant_platform.memory.semantic.domain import (
     AtomKind,
     Commitment,
@@ -24,11 +29,6 @@ from assistant_platform.memory.semantic.domain import (
     SourceVisibility,
     VisibilityContext,
     team_id_to_namespace,
-)
-from assistant_platform.memory.semantic.distill import (
-    LlmDistiller,
-    RuleBasedDistiller,
-    distill_conversation,
 )
 from assistant_platform.memory.semantic.gate import apply_disclosure_gate
 from assistant_platform.memory.semantic.recall import recall_memories

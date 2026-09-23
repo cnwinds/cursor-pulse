@@ -18,9 +18,7 @@ def can_bind_account(config, member, account) -> bool:
     return account.primary_member_id == member.id
 
 
-def channel_admin(
-    user_id: str, config, repo: Repository, *, channel: str | None = None
-) -> bool:
+def channel_admin(user_id: str, config, repo: Repository, *, channel: str | None = None) -> bool:
     member = repo.get_member_by_channel_user_id(user_id, channel=channel)
     if member is not None:
         return is_channel_admin(member, config)
@@ -34,9 +32,7 @@ def channel_member(
     *,
     channel: str = "dingtalk",
 ):
-    return repo.get_or_create_member(
-        user_id, display_name or user_id, channel=channel
-    )
+    return repo.get_or_create_member(user_id, display_name or user_id, channel=channel)
 
 
 # Backward-compatible alias (defaults to dingtalk channel).

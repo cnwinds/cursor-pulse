@@ -11,7 +11,6 @@ from pathlib import Path
 
 from pulse.dev.services import ensure_proxy_binary, npm_executable, project_root
 
-
 _HOST_OVERRIDES = {
     "ASSISTANT_MIRROR_BASE_URL": "http://127.0.0.1:8090",
     "PULSE_BASE_URL": "http://127.0.0.1:8080",
@@ -107,10 +106,7 @@ def ensure_data_link(root: Path) -> None:
         local_db = data / "pulse.db"
         # Avoid clobbering a large local DB; only replace empty/small scratch DBs.
         if local_db.is_file() and local_db.stat().st_size > 1_000_000:
-            print(
-                f"[prepare] keep existing data/pulse.db "
-                f"({local_db.stat().st_size} bytes); not linking docker/data"
-            )
+            print(f"[prepare] keep existing data/pulse.db ({local_db.stat().st_size} bytes); not linking docker/data")
             return
         from datetime import datetime
 
@@ -121,7 +117,7 @@ def ensure_data_link(root: Path) -> None:
         data.unlink()
 
     data.symlink_to("docker/data")
-    print(f"[prepare] data/ → docker/data")
+    print("[prepare] data/ → docker/data")
 
 
 def ensure_env_file(root: Path) -> dict[str, str]:
@@ -137,11 +133,7 @@ def ensure_env_file(root: Path) -> dict[str, str]:
 
     merged.update(_HOST_OVERRIDES)
 
-    cors = {
-        part.strip()
-        for part in (merged.get("WEB_CORS_ORIGINS") or "").split(",")
-        if part.strip()
-    }
+    cors = {part.strip() for part in (merged.get("WEB_CORS_ORIGINS") or "").split(",") if part.strip()}
     cors.update(_default_cors_origins())
     merged["WEB_CORS_ORIGINS"] = ",".join(sorted(cors))
 
@@ -169,10 +161,10 @@ def ensure_web_listen_all(root: Path) -> None:
         docker_cfg = root / "docker" / "config.yaml"
         if docker_cfg.is_file():
             shutil.copy(docker_cfg, path)
-            print(f"[prepare] copied docker/config.yaml → config.yaml")
+            print("[prepare] copied docker/config.yaml → config.yaml")
         elif example.is_file():
             shutil.copy(example, path)
-            print(f"[prepare] copied config.example.yaml → config.yaml")
+            print("[prepare] copied config.example.yaml → config.yaml")
         else:
             print("[prepare] warn: no config.yaml found")
             return
@@ -299,9 +291,7 @@ def prepare(*, stop_docker: bool = True) -> dict[str, str]:
             from pulse.config import load_config
 
             cfg = load_config(str(root / "config.yaml"))
-            if (cfg.dingtalk.app_key or "").strip() and (
-                cfg.dingtalk.app_secret or ""
-            ).strip():
+            if (cfg.dingtalk.app_key or "").strip() and (cfg.dingtalk.app_secret or "").strip():
                 print("[prepare] DingTalk credentials: ok (team_settings / DB)")
                 return env
         except Exception:

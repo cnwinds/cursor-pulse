@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -18,7 +18,7 @@ def _record(*, event_date: date, model: str, cost: float, hash_suffix: str) -> U
     return UsageRecord(
         ingestion_id="ing-test",
         member_id="m1",
-        event_at=datetime(event_date.year, event_date.month, event_date.day, tzinfo=timezone.utc),
+        event_at=datetime(event_date.year, event_date.month, event_date.day, tzinfo=UTC),
         event_date=event_date,
         kind="On-Demand",
         model=model,

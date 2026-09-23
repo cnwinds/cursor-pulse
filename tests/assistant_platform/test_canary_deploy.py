@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -20,11 +22,10 @@ from assistant_platform.prompts.deploy import (
     rollback_production,
     session_in_canary_bucket,
 )
-from assistant_platform.prompts.models import PromptDeploymentRow, PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.fragments import canonical_fragments
+from assistant_platform.prompts.models import PromptDeploymentRow, PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.seed import DEFAULT_RELEASE_NAME, get_production_release
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-canary"
@@ -42,7 +43,7 @@ def _event(*, conversation_id: str = "u1") -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id=conversation_id,
         text_redacted="hello",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -176,9 +177,7 @@ def test_deploy_canary_creates_deployment_row():
     release = session.get(PromptReleaseRow, draft.id)
     assert release is not None
     assert release.status == "canary"
-    deployment = session.scalar(
-        select(PromptDeploymentRow).where(PromptDeploymentRow.release_id == draft.id)
-    )
+    deployment = session.scalar(select(PromptDeploymentRow).where(PromptDeploymentRow.release_id == draft.id))
     assert deployment is not None
     assert deployment.percent == 10
     assert deployment.status == "active"
@@ -213,6 +212,4 @@ def test_api_canary_promote_rollback_are_retired(api_client):
     ):
         response = test_client.post(path, headers=_headers())
         assert response.status_code == 410
-        assert response.json()["detail"] == (
-            "Prompt editing retired; edit files in assistant_platform/prompts/docs"
-        )
+        assert response.json()["detail"] == ("Prompt editing retired; edit files in assistant_platform/prompts/docs")

@@ -4,11 +4,13 @@ import logging
 import re
 
 from pulse.channels.admin_gate import is_channel_admin as _is_admin
-from pulse.storage.repository import Repository
-
 from pulse.channels.commands_common import (
     can_bind_account as _can_bind_account,
+)
+from pulse.channels.commands_common import (
     channel_member as _channel_member,
+)
+from pulse.channels.commands_common import (
     encryption_key as _encryption_key,
 )
 from pulse.channels.commands_loans import (  # noqa: F401 — re-export for tests
@@ -16,6 +18,8 @@ from pulse.channels.commands_loans import (  # noqa: F401 — re-export for test
     _looks_like_loan_usage_query,
     _looks_like_self_loan_read,
 )
+from pulse.storage.repository import Repository
+
 logger = logging.getLogger(__name__)
 
 BIND_CURSOR_RE = re.compile(
@@ -87,9 +91,7 @@ def _handle_quota_command(
                 confirmed=True,
             )
         except Exception:
-            logger.exception(
-                "Capability bridge failed for quota.self.read; falling back to local invoke"
-            )
+            logger.exception("Capability bridge failed for quota.self.read; falling back to local invoke")
             return invoke_capability_local(
                 repo.session,
                 config=config,
@@ -147,9 +149,7 @@ def handle_bind_cursor_command(
                 confirmed=True,
             )
         except Exception:
-            logger.exception(
-                "Capability bridge failed for cursor.key.bind; falling back to legacy bind"
-            )
+            logger.exception("Capability bridge failed for cursor.key.bind; falling back to legacy bind")
 
     from pulse.tool_center.cursor_bind import resolve_bind_cursor_account
     from pulse.tool_center.repository import ToolCenterRepository
@@ -237,9 +237,7 @@ def handle_unbind_cursor_command(
             return f"未找到 Cursor 账号 {email}"
         account = matches[0]
     else:
-        cursor_accounts = filter_cursor_accounts(
-            tool_repo.get_primary_accounts_for_member(member.id)
-        )
+        cursor_accounts = filter_cursor_accounts(tool_repo.get_primary_accounts_for_member(member.id))
         if not cursor_accounts:
             return "未找到您名下的 Cursor 账号。"
         if len(cursor_accounts) > 1:

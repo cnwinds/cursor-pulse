@@ -1,12 +1,13 @@
-from sqlalchemy import select
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from datetime import UTC
 from unittest.mock import MagicMock
 
 from pulse.config import AppConfig
 from pulse.storage.db import make_engine
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base, Team
+from sqlalchemy import select
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 
 class SessionFactoryProxy:
@@ -40,7 +41,6 @@ def make_test_session_factory(database_url: str = "sqlite://"):
 def make_module_web_client(config: AppConfig):
     """Build one TestClient per module; rebind DB via returned proxy per test."""
     from fastapi.testclient import TestClient
-
     from pulse.web.app import create_app
 
     proxy = SessionFactoryProxy()
@@ -130,7 +130,7 @@ def ensure_synced_primary_credential(
         session.add(cred)
     cred.status = "active"
     cred.last_sync_status = "success"
-    cred.last_sync_at = datetime.now(timezone.utc)
+    cred.last_sync_at = datetime.now(UTC)
     cred.retry_count = 0
     session.flush()
     return cred
@@ -175,9 +175,7 @@ def ingest_cursor_fixture(
     from pulse.ingestion.types import IngestionContext
     from pulse.integrations.cursor_api import map_usage_event
 
-    raw = json.loads((Path(__file__).parent / "fixtures" / fixture_name).read_text())[
-        "usageEventsDisplay"
-    ][event_index]
+    raw = json.loads((Path(__file__).parent / "fixtures" / fixture_name).read_text())["usageEventsDisplay"][event_index]
     dto = map_usage_event(raw)
     context = IngestionContext(
         account_id=account_id,

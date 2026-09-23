@@ -18,6 +18,15 @@ source .venv/bin/activate   # macOS/Linux
 
 若 `.venv` 不存在，按根目录 [README.md](README.md) 的「本地开发启动」创建并安装依赖。
 
+## 静态检查
+
+Python 使用 Ruff（见 `pyproject.toml`）：
+
+```bash
+ruff format pulse assistant_platform tests
+ruff check pulse assistant_platform tests
+```
+
 ## 测试
 
 跑测试时默认使用并行，以缩短全量耗时：

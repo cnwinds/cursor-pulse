@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -219,7 +219,7 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
                 apply_sync_success(
                     cred,
                     effective_config(config, session, team.id),
-                    now=datetime.now(timezone.utc),
+                    now=datetime.now(UTC),
                 )
             log_admin_action(
                 session,

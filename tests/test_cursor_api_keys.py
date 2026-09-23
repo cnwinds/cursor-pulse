@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from pulse.integrations.cursor_api import CursorApiClient
 
 
@@ -17,9 +16,7 @@ def test_create_user_api_key(client):
     with patch.object(client, "_post_dashboard", return_value={"apiKey": "crsr_newkey"}) as mock_post:
         result = client.create_user_api_key("token", "pulse-loan-test", api_key="crsr_primary")
     assert result["apiKey"] == "crsr_newkey"
-    mock_post.assert_called_once_with(
-        "token", "CreateUserApiKey", {"name": "pulse-loan-test"}, api_key="crsr_primary"
-    )
+    mock_post.assert_called_once_with("token", "CreateUserApiKey", {"name": "pulse-loan-test"}, api_key="crsr_primary")
 
 
 def test_list_user_api_keys(client):
@@ -36,9 +33,7 @@ def test_list_user_api_keys(client):
 def test_revoke_user_api_key(client):
     with patch.object(client, "_post_dashboard", return_value={}) as mock_post:
         client.revoke_user_api_key("token", 42, api_key="crsr_primary")
-    mock_post.assert_called_once_with(
-        "token", "RevokeUserApiKey", {"id": 42}, api_key="crsr_primary"
-    )
+    mock_post.assert_called_once_with("token", "RevokeUserApiKey", {"id": 42}, api_key="crsr_primary")
 
 
 def test_post_dashboard_retries_on_401(client):

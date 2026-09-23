@@ -40,9 +40,7 @@ def register_usage_analytics_routes(app, get_db, require_capability, team_repo_f
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         effective = effective_config_dict(config, session, team.id)
-        timezone = str(
-            (effective.get("collection") or {}).get("timezone") or config.collection.timezone
-        )
+        timezone = str((effective.get("collection") or {}).get("timezone") or config.collection.timezone)
         return build_usage_analytics_overview(
             session,
             team.id,

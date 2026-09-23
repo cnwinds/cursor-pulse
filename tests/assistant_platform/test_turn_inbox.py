@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select
 
@@ -31,7 +31,7 @@ def _session_row(db) -> ChatSessionRow:
         conversation_id="u1",
         user_id="u1",
         status="open",
-        last_activity_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(UTC),
     )
     db.add(row)
     db.flush()
@@ -145,9 +145,7 @@ def test_try_schedule_next_turn_when_idle():
     db.commit()
 
     assert is_turn_running(row)
-    job = db.scalar(
-        select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")
-    )
+    job = db.scalar(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process"))
     assert job is not None
     assert job.payload_json["message_id"] == "msg-1"
 
@@ -202,8 +200,6 @@ def test_reschedule_after_turn_commit_closes_race_window():
     assert reschedule_session_after_turn(Session, row.id) is True
 
     db3 = Session()
-    job = db3.scalar(
-        select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")
-    )
+    job = db3.scalar(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process"))
     assert job is not None
     assert job.payload_json["message_id"] == "msg-late"

@@ -9,10 +9,10 @@ import pytest
 pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
+from pulse.pricing.billing_scope import pool_for_model, pool_for_row
 from pulse.storage.models import UsageDailyAggregate
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-from pulse.pricing.billing_scope import pool_for_model, pool_for_row
 from pulse.tool_center.usage import model_family
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
@@ -361,12 +361,8 @@ def test_kpi_and_series_matches_overview_totals(analytics_env):
     account = s.get(AiAccount, analytics_env["cursor_account"].id)
     assert account is not None
     start, end = date(2026, 7, 1), date(2026, 7, 2)
-    full = build_usage_analytics_overview(
-        s, account.team_id, start=start, end=end, timezone="Asia/Shanghai"
-    )
-    light = build_usage_kpi_and_series(
-        s, account.team_id, start=start, end=end, timezone="Asia/Shanghai"
-    )
+    full = build_usage_analytics_overview(s, account.team_id, start=start, end=end, timezone="Asia/Shanghai")
+    light = build_usage_kpi_and_series(s, account.team_id, start=start, end=end, timezone="Asia/Shanghai")
     s.close()
     assert light["kpi"] == full["kpi"]
     assert light["series_by_day"] == full["series_by_day"]

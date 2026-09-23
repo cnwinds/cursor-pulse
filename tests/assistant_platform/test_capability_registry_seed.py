@@ -23,12 +23,8 @@ def test_seed_is_idempotent():
     seed_phase1_capabilities(session, "team-seed")
     session.commit()
 
-    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(
-        CAPABILITY_OPERATIONS
-    )
-    assert session.scalar(select(func.count()).select_from(CapabilityVersionRow)) == len(
-        CAPABILITY_OPERATIONS
-    )
+    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(CAPABILITY_OPERATIONS)
+    assert session.scalar(select(func.count()).select_from(CapabilityVersionRow)) == len(CAPABILITY_OPERATIONS)
     assert session.scalar(select(func.count()).select_from(CapabilityPackRow)) == 2
     assert session.scalar(select(func.count()).select_from(CapabilityAssignmentRow)) == 3
 
@@ -37,9 +33,7 @@ def test_init_assistant_db_seeds_with_default_team():
     Session = init_assistant_db("sqlite://")
     session = Session()
 
-    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(
-        CAPABILITY_OPERATIONS
-    )
+    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(CAPABILITY_OPERATIONS)
     packs = session.scalars(select(CapabilityPackRow)).all()
     assert {p.team_id for p in packs} == {"default"}
 
@@ -53,9 +47,7 @@ def test_packs_contain_expected_keys():
 
     def pack_keys(pack_key: str) -> set[str]:
         pack_id = packs[pack_key]
-        rows = session.scalars(
-            select(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack_id)
-        ).all()
+        rows = session.scalars(select(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack_id)).all()
         return {r.capability_key for r in rows}
 
     assert pack_keys("cursor_self_service") == set(SELF_SERVICE_KEYS)
@@ -75,9 +67,7 @@ def test_assignments_seed_team_default_and_owner_role():
     assert team_default.pack_id == packs["cursor_self_service"]
     assert team_default.capability_key is None
 
-    owner_role = next(
-        a for a in assignments if a.scope_type == "role_pack" and a.scope_id == "owner"
-    )
+    owner_role = next(a for a in assignments if a.scope_type == "role_pack" and a.scope_id == "owner")
     assert owner_role.pack_id == packs["assistant_owner"]
 
 
@@ -100,9 +90,7 @@ def _allow_duplicate_pack_keys(session) -> None:
     session.execute(text("INSERT INTO ap_capability_packs_legacy SELECT * FROM ap_capability_packs"))
     session.execute(text("DROP TABLE ap_capability_packs"))
     session.execute(text("ALTER TABLE ap_capability_packs_legacy RENAME TO ap_capability_packs"))
-    session.execute(
-        text("CREATE INDEX ix_ap_capability_packs_team_id ON ap_capability_packs (team_id)")
-    )
+    session.execute(text("CREATE INDEX ix_ap_capability_packs_team_id ON ap_capability_packs (team_id)"))
     session.execute(text("PRAGMA foreign_keys=ON"))
     session.commit()
 
@@ -120,15 +108,11 @@ def test_seed_dedupes_duplicate_packs():
     )
     assert seeded is not None
     seeded_item_count = session.scalar(
-        select(func.count())
-        .select_from(CapabilityPackItemRow)
-        .where(CapabilityPackItemRow.pack_id == seeded.id)
+        select(func.count()).select_from(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == seeded.id)
     )
     assert seeded_item_count == len(SELF_SERVICE_KEYS)
 
-    thin = CapabilityPackRow(
-        team_id="team-dup", key="cursor_self_service", display_name="old thin"
-    )
+    thin = CapabilityPackRow(team_id="team-dup", key="cursor_self_service", display_name="old thin")
     session.add(thin)
     session.flush()
     session.add(
@@ -187,8 +171,6 @@ def test_seed_dedupes_duplicate_packs():
 def test_seed_counts_match_catalog():
     Session = init_assistant_db("sqlite://", team_id="team-full")
     session = Session()
-    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(
-        CAPABILITY_OPERATIONS
-    )
+    assert session.scalar(select(func.count()).select_from(CapabilityDefinitionRow)) == len(CAPABILITY_OPERATIONS)
     assert session.scalar(select(func.count()).select_from(CapabilityPackRow)) == 2
     assert session.scalar(select(func.count()).select_from(CapabilityAssignmentRow)) == 3

@@ -32,10 +32,7 @@ def migrate(database_url: str) -> int:
         ],
     )
     summary = migrate_pm_to_semantic(engine)
-    print(
-        "semantic memory tables ready; "
-        f"copied atoms={summary['atoms']} commitments={summary['commitments']}"
-    )
+    print(f"semantic memory tables ready; copied atoms={summary['atoms']} commitments={summary['commitments']}")
     return 0
 
 

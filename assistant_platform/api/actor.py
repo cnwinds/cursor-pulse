@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
-from typing import Annotated, Callable
+from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import Header
 from pydantic import BaseModel, Field
@@ -34,14 +35,7 @@ def _actor_payload(
     permissions: str,
     ts: int,
 ) -> bytes:
-    return (
-        f"{ACTOR_CLAIM_VERSION}\n"
-        f"{member_id}\n"
-        f"{role}\n"
-        f"{channel_user_id}\n"
-        f"{permissions}\n"
-        f"{ts}"
-    ).encode()
+    return (f"{ACTOR_CLAIM_VERSION}\n{member_id}\n{role}\n{channel_user_id}\n{permissions}\n{ts}").encode()
 
 
 def verify_and_build_actor(
@@ -91,12 +85,8 @@ def build_actor_dependency(service_token: str) -> Callable[..., ActorContext]:
     def dependency(
         x_pulse_actor_member_id: Annotated[str | None, Header(alias="X-Pulse-Actor-Member-Id")] = None,
         x_pulse_actor_role: Annotated[str | None, Header(alias="X-Pulse-Actor-Role")] = None,
-        x_pulse_actor_channel_user_id: Annotated[
-            str | None, Header(alias="X-Pulse-Actor-Channel-User-Id")
-        ] = None,
-        x_pulse_actor_permissions: Annotated[
-            str | None, Header(alias="X-Pulse-Actor-Permissions")
-        ] = None,
+        x_pulse_actor_channel_user_id: Annotated[str | None, Header(alias="X-Pulse-Actor-Channel-User-Id")] = None,
+        x_pulse_actor_permissions: Annotated[str | None, Header(alias="X-Pulse-Actor-Permissions")] = None,
         x_pulse_actor_ts: Annotated[str | None, Header(alias="X-Pulse-Actor-Ts")] = None,
         x_pulse_actor_signature: Annotated[str | None, Header(alias="X-Pulse-Actor-Signature")] = None,
     ) -> ActorContext:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,11 +17,11 @@ _SIGNAL_TTL = timedelta(days=90)
 _CONTENT_MAX = 240
 
 _EXPLICIT_MARKERS = (
-  re.compile(r"^偏好[:：]", re.IGNORECASE),
-  re.compile(r"请用", re.IGNORECASE),
-  re.compile(r"我喜欢", re.IGNORECASE),
-  re.compile(r"不要", re.IGNORECASE),
-  re.compile(r"以后请", re.IGNORECASE),
+    re.compile(r"^偏好[:：]", re.IGNORECASE),
+    re.compile(r"请用", re.IGNORECASE),
+    re.compile(r"我喜欢", re.IGNORECASE),
+    re.compile(r"不要", re.IGNORECASE),
+    re.compile(r"以后请", re.IGNORECASE),
 )
 
 _DIMENSION_RULES: tuple[tuple[ProfileDimension, re.Pattern[str]], ...] = (
@@ -124,12 +124,10 @@ def persist_profile_signals(
             ProfileSignalRow.status == "active",
         )
     ).all()
-    existing_by_key = {
-        (row.dimension or "verbosity", row.content.strip().lower()): row for row in existing
-    }
+    existing_by_key = {(row.dimension or "verbosity", row.content.strip().lower()): row for row in existing}
 
     saved: list[ProfileSignalRow] = []
-    expires_at = datetime.now(timezone.utc) + _SIGNAL_TTL
+    expires_at = datetime.now(UTC) + _SIGNAL_TTL
     for signal in signals:
         key = (signal.dimension.value, signal.content.strip().lower())
         prior = existing_by_key.get(key)

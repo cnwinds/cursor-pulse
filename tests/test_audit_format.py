@@ -1,8 +1,4 @@
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from pulse.storage.models import AiAccount, Base, KeyLoan, Member, Team
 from pulse.web.audit import (
     _AuditContext,
@@ -11,6 +7,9 @@ from pulse.web.audit import (
     list_admin_audit_logs,
     log_admin_action,
 )
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
@@ -21,9 +20,7 @@ def audit_session():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    session_factory = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
     session = session_factory()
     try:
         yield session
@@ -69,22 +66,21 @@ def test_format_quota_loan_and_revoke():
         members_by_id={borrower_id: borrower},
         loans={loan_id: loan},
     )
-    assert format_audit_detail(
-        "quota.loan_key",
-        f"{account_id}->陆宗博",
-        ctx,
-    ) == "将 shared-key 的密钥借给 陆宗博"
-    assert format_audit_detail("quota.revoke_loan", loan_id, ctx) == (
-        "收回 从 shared-key 借给 陆宗博"
+    assert (
+        format_audit_detail(
+            "quota.loan_key",
+            f"{account_id}->陆宗博",
+            ctx,
+        )
+        == "将 shared-key 的密钥借给 陆宗博"
     )
+    assert format_audit_detail("quota.revoke_loan", loan_id, ctx) == ("收回 从 shared-key 借给 陆宗博")
 
 
 def test_format_portal_user_actions():
     member = Member(id="m1", display_name="陈新志", channel_user_id="dt-001")
     ctx = _ctx(members_by_channel_user={"dt-001": member})
-    assert format_audit_detail("portal.user.approve", "dt-001 -> operator", ctx) == (
-        "批准 陈新志，角色设为 运营员"
-    )
+    assert format_audit_detail("portal.user.approve", "dt-001 -> operator", ctx) == ("批准 陈新志，角色设为 运营员")
     assert format_audit_detail("portal.user.disable", "dt-001", ctx) == "禁用门户用户 陈新志"
 
 

@@ -1,8 +1,5 @@
-﻿import pytest
-from sqlalchemy import select
-
-from pulse.storage.models import AiAccount, UsageIngestion
-from pulse.storage.models import Member
+import pytest
+from pulse.storage.models import AiAccount, Member, UsageIngestion
 from pulse.tool_center.account_pick import (
     filter_cursor_accounts,
     format_cursor_account_choice_prompt,
@@ -13,6 +10,7 @@ from pulse.tool_center.account_pick import (
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 
