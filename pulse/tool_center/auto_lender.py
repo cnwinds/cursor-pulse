@@ -89,6 +89,9 @@ CACHE_MAX_ENTRIES = 512
 _decision_cache = TTLCache(CACHE_MAX_ENTRIES)
 _breaker_lock = threading.Lock()
 _breaker_state = {"failures": 0, "open_until": 0.0}
+_force_refresh_lock = threading.Lock()
+_force_refresh_last: dict[str, float] = {}
+FORCE_JEV_REFRESH_COOLDOWN_SECONDS = 30.0
 
 
 def reset_auto_lender_state() -> None:
@@ -97,6 +100,22 @@ def reset_auto_lender_state() -> None:
     with _breaker_lock:
         _breaker_state["failures"] = 0
         _breaker_state["open_until"] = 0.0
+    with _force_refresh_lock:
+        _force_refresh_last.clear()
+
+
+def try_force_jev_refresh(team_id: str, *, cooldown_seconds: float = FORCE_JEV_REFRESH_COOLDOWN_SECONDS) -> float | None:
+    """管理员强制再打 Jev 时的进程内限流。成功返回 None，否则返回建议等待秒数。"""
+    if cooldown_seconds <= 0:
+        return None
+    now = time.monotonic()
+    with _force_refresh_lock:
+        last = _force_refresh_last.get(team_id, 0.0)
+        wait = cooldown_seconds - (now - last)
+        if wait > 0:
+            return wait
+        _force_refresh_last[team_id] = now
+    return None
 
 
 def _feature_key(rows: list[dict], pool: QuotaPoolKind | None, cfg: LoanSelectionConfig) -> str:
@@ -218,6 +237,16 @@ def _build_jev_trace(
     if guards is not None:
         trace["guards"] = guards
     return trace
+
+
+def mark_jev_trace_force_refresh(trace: dict | None) -> dict | None:
+    if trace is None:
+        return trace
+    meta = dict(trace.get("meta") or {})
+    meta["force_refresh"] = True
+    out = dict(trace)
+    out["meta"] = meta
+    return out
 
 
 def _breaker_open() -> bool:
@@ -390,13 +419,18 @@ def _result(
     excluded: list[dict],
     decision: AutoLenderDecision,
     on_decision: Callable[[dict], None] | None,
+    *,
+    force_refresh: bool = False,
 ) -> dict:
     out: list[dict] = []
     for index, row in enumerate(ranked):
         item = dict(row)
         item["picked"] = index == 0
         out.append(item)
-    result = {"ranked": out, "excluded": excluded, "decision": decision.as_dict()}
+    decision_dict = decision.as_dict()
+    if force_refresh:
+        decision_dict["jev_trace"] = mark_jev_trace_force_refresh(decision_dict.get("jev_trace"))
+    result = {"ranked": out, "excluded": excluded, "decision": decision_dict}
     if on_decision is not None:
         try:
             on_decision(result)
@@ -417,6 +451,7 @@ def rank_lenders(
     jev: JevClient | None = None,
     jev_config=None,
     on_decision: Callable[[dict], None] | None = None,
+    jev_bypass_cache: bool = False,
 ) -> dict:
     """完整选号：返回 ``{"ranked", "excluded", "decision"}``。
 
@@ -453,6 +488,7 @@ def rank_lenders(
                 ),
             ),
             on_decision,
+            force_refresh=jev_bypass_cache,
         )
 
     top = ranked[: cfg.auto_top_n]
@@ -473,10 +509,11 @@ def rank_lenders(
                 ),
             ),
             on_decision,
+            force_refresh=jev_bypass_cache,
         )
 
     key = _feature_key(top, pool, cfg)
-    cached = _cache_get(key, cfg.auto_cache_seconds)
+    cached = None if jev_bypass_cache else _cache_get(key, cfg.auto_cache_seconds)
     if cached is not None:
         picked = cached.account_id
         confidence = cached.confidence
@@ -513,6 +550,7 @@ def rank_lenders(
                 ),
             ),
             on_decision,
+            force_refresh=jev_bypass_cache,
         )
 
     if _breaker_open():
@@ -530,6 +568,7 @@ def rank_lenders(
                 ),
             ),
             on_decision,
+            force_refresh=jev_bypass_cache,
         )
 
     try:
@@ -558,6 +597,7 @@ def rank_lenders(
                 ),
             ),
             on_decision,
+            force_refresh=jev_bypass_cache,
         )
 
     _record_success()
@@ -590,7 +630,7 @@ def rank_lenders(
         ),
     )
     if picked is None:
-        return _result(ranked, excluded, decision, on_decision)
+        return _result(ranked, excluded, decision, on_decision, force_refresh=jev_bypass_cache)
 
     _cache_put(
         key,
@@ -605,4 +645,4 @@ def rank_lenders(
         ),
         ttl_seconds=cfg.auto_cache_seconds,
     )
-    return _result(_promote(ranked, picked), excluded, decision, on_decision)
+    return _result(_promote(ranked, picked), excluded, decision, on_decision, force_refresh=jev_bypass_cache)

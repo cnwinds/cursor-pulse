@@ -231,6 +231,22 @@ def test_decision_cache_avoids_repeat_calls():
     assert [r["account_id"] for r in second["ranked"]] == ["acc-b", "acc-a"]
 
 
+def test_jev_bypass_cache_forces_repeat_call():
+    jev = FakeJev(decision=_decision("acc-b"))
+    cfg = _auto_cfg()
+    rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    second = rank_lenders(
+        _two_candidates(),
+        loan_selection=cfg,
+        today=TODAY,
+        now=NOW,
+        jev=jev,
+        jev_bypass_cache=True,
+    )
+    assert jev.calls == 2
+    assert second["decision"]["jev_trace"]["meta"]["force_refresh"] is True
+
+
 def test_decision_cache_includes_jev_output_in_trace():
     jev = FakeJev(decision=_decision("acc-b"))
     cfg = _auto_cfg()

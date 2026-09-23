@@ -53,6 +53,7 @@ def resolve_auto_lender(
     exclude_account_ids: set[str] | None = None,
     own_account_ids: set[str] | None = None,
     now: datetime | None = None,
+    jev_bypass_cache: bool = False,
 ) -> dict:
     """按 Auto Lender 规则选出借账号。
 
@@ -79,6 +80,7 @@ def resolve_auto_lender(
         jev=jev,
         jev_config=jev_config,
         on_decision=on_decision,
+        jev_bypass_cache=jev_bypass_cache,
     )
     ranked = board["ranked"]
     return {
@@ -104,6 +106,8 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
     if reason in ("auto_mode_off", "jev_unavailable"):
         return
     picked = next((row for row in (result.get("ranked") or []) if row.get("picked")), None)
+    trace = decision.get("jev_trace") or {}
+    trace_meta = trace.get("meta") if isinstance(trace, dict) else {}
     detail = {
         "picked_by": picked_by,
         "fallback_reason": reason,
@@ -114,6 +118,8 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         "account_identifier": (picked or {}).get("account_identifier"),
         "probabilities": decision.get("probabilities") or {},
         "owner_safe": decision.get("owner_safe") or {},
+        "jev_status": trace_meta.get("status") if isinstance(trace_meta, dict) else None,
+        "jev_skip_reason": trace_meta.get("skip_reason") if isinstance(trace_meta, dict) else None,
     }
     try:
         from pulse.proxy.key_crud import record_event
