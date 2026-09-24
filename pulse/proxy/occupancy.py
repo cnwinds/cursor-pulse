@@ -61,6 +61,7 @@ class OccupancyBook:
         account_by_credential: dict[str, str],
         current_credential_id: str | None,
         release_current: bool,
+        skip_credential_ids: set[str] | None = None,
         pinned: bool,
         pinned_credential_id: str | None,
         max_concurrent: int,
@@ -76,6 +77,7 @@ class OccupancyBook:
         """
         now = time.monotonic() if now is None else now
         current = (current_credential_id or "").strip() or None
+        skip_ids = {cid.strip() for cid in (skip_credential_ids or set()) if (cid or "").strip()}
         with self._lock:
             self._expire_unlocked(now, ttl_seconds)
             accounts = dict(account_by_credential)
@@ -148,12 +150,15 @@ class OccupancyBook:
                 current = None
 
             if max_concurrent <= 0:
-                keep = current if current and accounts.get(current) else None
+                keep = current if current and accounts.get(current) and current not in skip_ids else None
                 if keep is None:
-                    for cred, _account_id in ranked:
-                        if cred != released:
-                            keep = cred
-                            break
+                    for cred, account_id in ranked:
+                        if cred in skip_ids:
+                            continue
+                        if release_current and cred == released:
+                            continue
+                        keep = cred
+                        break
                 if keep:
                     occupy(keep)
                 return SeatChoice(keep, [])
@@ -162,12 +167,18 @@ class OccupancyBook:
                 occupy(current)
                 return SeatChoice(current, blocked_ids())
 
-            for cred, account_id in ranked:
+            def seat_eligible(cred: str, account_id: str) -> bool:
+                if cred in skip_ids:
+                    return False
                 if release_current and cred == released:
+                    return False
+                return not full(account_id) or holder_on(account_id)
+
+            for cred, account_id in ranked:
+                if not seat_eligible(cred, account_id):
                     continue
-                if not full(account_id) or holder_on(account_id):
-                    occupy(cred)
-                    return SeatChoice(cred, blocked_ids())
+                occupy(cred)
+                return SeatChoice(cred, blocked_ids())
 
             return SeatChoice(None, blocked_ids())
 

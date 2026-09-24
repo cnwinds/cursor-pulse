@@ -547,7 +547,7 @@ func TestStickyAdvisorAssignsOnRotation(t *testing.T) {
 	sticky := NewStickySelect(p, sessions)
 	var current string
 	var release bool
-	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, _ map[string]bool) (string, []string, bool, error) {
 		current = cur
 		release = rel
 		return "c2", []string{"c1"}, true, nil
@@ -577,7 +577,7 @@ func TestStickyAdvisorFailClosedDoesNotPickLocal(t *testing.T) {
 	p.keys[0].setFullyQuotaExhausted()
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
-	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, _ map[string]bool) (string, []string, bool, error) {
 		return "", []string{"c2"}, true, nil
 	})
 	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok", StickyCredentialID: "c1"}
@@ -598,7 +598,7 @@ func TestStickyAdvisorFailOpenSkipsBlocked(t *testing.T) {
 	p.keys[0].setFullyQuotaExhausted()
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
-	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool) (string, []string, bool, error) {
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, _ map[string]bool) (string, []string, bool, error) {
 		return "", nil, false, errors.New("web down")
 	})
 	binding := SessionBinding{

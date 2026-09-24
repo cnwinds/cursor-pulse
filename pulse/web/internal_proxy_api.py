@@ -18,6 +18,8 @@ class AuthorizeBody(BaseModel):
     current_credential_id: str | None = None
     # 当前凭证已不可用（额度耗尽、要换号）。不要把这个凭证再分回去。
     release_current: bool = False
+    # Go 已因 Quota Pool 余量拒绝的凭证；选下一座时一并跳过（与 release 叠加）。
+    skip_credential_ids: list[str] = Field(default_factory=list)
 
 
 class UsageItem(BaseModel):
@@ -82,6 +84,7 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             result,
             current_credential_id=body.current_credential_id,
             release_current=body.release_current,
+            skip_credential_ids=body.skip_credential_ids,
             config=config,
         )
 

@@ -143,11 +143,11 @@ func TestAuthorizeReportSendsCurrentAndBypassesCache(t *testing.T) {
 	if _, err := c.Authorize("pk_abc"); err != nil || hits.Load() != 1 {
 		t.Fatalf("cache hits=%d", hits.Load())
 	}
-	res, err := c.AuthorizeReport("pk_abc", "cred-9", false)
+	res, err := c.AuthorizeReport("pk_abc", "cred-9", false, nil)
 	if err != nil || !res.SeatAdvised || res.AssignedCredentialID != "cred-9" || hits.Load() != 2 {
 		t.Fatalf("report res=%+v hits=%d err=%v", res, hits.Load(), err)
 	}
-	if _, err := c.AuthorizeReport("pk_abc", "cred-9", true); err != nil || hits.Load() != 3 {
+	if _, err := c.AuthorizeReport("pk_abc", "cred-9", true, nil); err != nil || hits.Load() != 3 {
 		t.Fatalf("release hits=%d err=%v", hits.Load(), err)
 	}
 }

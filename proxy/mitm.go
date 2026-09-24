@@ -85,7 +85,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			if current == "" {
 				current = b.CredentialID
 			}
-			res, err := s.pulse.AuthorizeReport(b.PulseKey, current, false)
+			res, err := s.pulse.AuthorizeReport(b.PulseKey, current, false, nil)
 			if err != nil {
 				log.Printf("[mitm] session re-authorize fail-closed: %v", err)
 				http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
@@ -355,7 +355,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "pulse client not configured", http.StatusServiceUnavailable)
 		return
 	}
-	res, err := s.pulse.AuthorizeReport(pulseKey, "", false)
+	res, err := s.pulse.AuthorizeReport(pulseKey, "", false, nil)
 	if err != nil {
 		log.Printf("[mitm] authorize fail-closed: %v", err)
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
@@ -567,15 +567,35 @@ func (s *Server) exchangeAdvised(ctx context.Context, res *AuthResult, pulseKey 
 		return nil, "", errAllExhausted
 	}
 	seen := map[string]bool{}
+	quotaSkip := map[string]bool{}
 	maxTries := s.pool.size()
 	if maxTries < 1 {
 		maxTries = 1
 	}
 	for tries := 0; tries < maxTries; tries++ {
 		if current == "" || seen[current] {
+			if entry, token, err := s.exchangeQuotaFallback(ctx, res, seen, quotaSkip); entry != nil || err != nil {
+				return entry, token, err
+			}
 			return nil, "", errAllExhausted
 		}
 		seen[current] = true
+		entry := s.pool.findEntry(current)
+		if entry != nil && !entry.availableFor(quotaPoolUnknown) {
+			log.Printf("[mitm] exchange seat %s lacks unknown quota (auto_pct=%s api_pct=%s) — next seat",
+				current, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
+			quotaSkip[current] = true
+			if s.pulse == nil {
+				return s.exchangeUnadvised(ctx, *res, mergeSkip(seen, quotaSkip))
+			}
+			next, err := s.pulse.AuthorizeReport(pulseKey, current, true, quotaSkip)
+			if err != nil || !next.SeatAdvised {
+				return s.exchangeUnadvised(ctx, *res, mergeSkip(seen, quotaSkip))
+			}
+			res.BlockedCredentialIDs = next.BlockedCredentialIDs
+			current = strings.TrimSpace(next.AssignedCredentialID)
+			continue
+		}
 		entry, token, err := s.pool.tokenForCredential(ctx, current)
 		if err != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
 			return entry, "", err
@@ -595,15 +615,43 @@ func (s *Server) exchangeAdvised(ctx context.Context, res *AuthResult, pulseKey 
 		if s.pulse == nil {
 			return s.exchangeUnadvised(ctx, *res, seen)
 		}
-		next, err := s.pulse.AuthorizeReport(pulseKey, current, true)
+		next, err := s.pulse.AuthorizeReport(pulseKey, current, true, quotaSkip)
 		if err != nil || !next.SeatAdvised {
 			log.Printf("[mitm] seat reassignment unavailable: %v", err)
-			return s.exchangeUnadvised(ctx, *res, seen)
+			return s.exchangeUnadvised(ctx, *res, mergeSkip(seen, quotaSkip))
 		}
 		res.BlockedCredentialIDs = next.BlockedCredentialIDs
 		current = strings.TrimSpace(next.AssignedCredentialID)
 	}
 	return nil, "", errPoolSessionCollision
+}
+
+func mergeSkip(a, b map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for k, v := range a {
+		if v {
+			out[k] = true
+		}
+	}
+	for k, v := range b {
+		if v {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+func (s *Server) exchangeQuotaFallback(ctx context.Context, res *AuthResult, seen, quotaSkip map[string]bool) (*keyEntry, string, error) {
+	if len(quotaSkip) == 0 {
+		return nil, "", nil
+	}
+	skip := mergeSkip(seen, quotaSkip)
+	entry, token, err := s.pool.tokenForQuotaPool(ctx, quotaPoolUnknown, skip)
+	if err != nil {
+		return nil, "", err
+	}
+	res.AssignedCredentialID = entry.credentialID
+	return entry, token, nil
 }
 
 func (s *Server) exchangeUnadvised(ctx context.Context, res AuthResult, skip map[string]bool) (*keyEntry, string, error) {

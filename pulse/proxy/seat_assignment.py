@@ -64,6 +64,7 @@ def apply_seat(
     *,
     current_credential_id: str | None,
     release_current: bool,
+    skip_credential_ids: list[str] | None = None,
     config,
     jev=None,
     now: float | None = None,
@@ -77,6 +78,7 @@ def apply_seat(
             auth,
             current_credential_id=(current_credential_id or "").strip() or None,
             release_current=bool(release_current),
+            skip_credential_ids=skip_credential_ids or [],
             config=config,
             jev=jev,
             now=now,
@@ -93,6 +95,7 @@ def _advise(
     *,
     current_credential_id: str | None,
     release_current: bool,
+    skip_credential_ids: list[str],
     config,
     jev,
     now: float | None,
@@ -126,12 +129,14 @@ def _advise(
     for cid, account_id in ranked:
         accounts.setdefault(cid, account_id)
 
+    skip_ids = {cid.strip() for cid in skip_credential_ids if (cid or "").strip()}
     choice = get_occupancy().choose(
         holder_id=holder,
         ranked=ranked,
         account_by_credential=accounts,
         current_credential_id=current_credential_id,
         release_current=release_current,
+        skip_credential_ids=skip_ids,
         pinned=pinned,
         pinned_credential_id=pinned_credential_id,
         max_concurrent=int(selection.max_concurrent_users),

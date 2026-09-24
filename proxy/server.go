@@ -53,11 +53,11 @@ func (s *Server) useSeatAdvisor() {
 	if s == nil || s.sticky == nil || s.pulse == nil {
 		return
 	}
-	s.sticky.SetAdvisor(func(binding *SessionBinding, current string, release bool) (string, []string, bool, error) {
+	s.sticky.SetAdvisor(func(binding *SessionBinding, current string, release bool, quotaSkip map[string]bool) (string, []string, bool, error) {
 		if binding == nil || strings.TrimSpace(binding.PulseKey) == "" {
 			return "", nil, false, nil
 		}
-		res, err := s.pulse.AuthorizeReport(binding.PulseKey, current, release)
+		res, err := s.pulse.AuthorizeReport(binding.PulseKey, current, release, quotaSkip)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -196,7 +196,7 @@ func (s *Server) passthroughToken(ctx context.Context, binding SessionBinding) (
 		if s.pulse == nil || strings.TrimSpace(binding.PulseKey) == "" {
 			return nil, "", fmt.Errorf("loan_alias re-authorize unavailable")
 		}
-		res, err := s.pulse.AuthorizeReport(binding.PulseKey, binding.CredentialID, false)
+		res, err := s.pulse.AuthorizeReport(binding.PulseKey, binding.CredentialID, false, nil)
 		if err != nil {
 			return nil, "", err
 		}

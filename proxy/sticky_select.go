@@ -11,7 +11,7 @@ import (
 // SeatAdvisor asks Pulse which credential to move to. release is true when
 // current is being left (quota exhaustion). advised false or a non-nil error
 // means fail open. advised true with an empty assignment means fail closed.
-type SeatAdvisor func(binding *SessionBinding, current string, release bool) (assigned string, blocked []string, advised bool, err error)
+type SeatAdvisor func(binding *SessionBinding, current string, release bool, quotaSkip map[string]bool) (assigned string, blocked []string, advised bool, err error)
 
 // StickySelect picks and rotates the sticky credential for a CLI session JWT
 // within a known quota pool. Callers resolve the pool kind (auto vs api)
@@ -187,12 +187,13 @@ func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, r
 	released := strings.TrimSpace(current)
 	askRelease := release
 	seen := map[string]bool{}
+	quotaSkip := map[string]bool{}
 	limit := s.pool.size()
 	if limit < 1 {
 		limit = 1
 	}
 	for i := 0; i < limit; i++ {
-		assigned, blocked, advised, err := s.advisor(binding, released, askRelease)
+		assigned, blocked, advised, err := s.advisor(binding, released, askRelease, quotaSkip)
 		if advised {
 			binding.BlockedCredentialIDs = blocked
 		}
@@ -201,7 +202,18 @@ func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, r
 			return "", false, nil
 		}
 		assigned = strings.TrimSpace(assigned)
-		if assigned == "" || seen[assigned] {
+		if assigned == "" {
+			if id := s.quotaFallbackPick(current, pool, allowed, binding.blockedSet(), quotaSkip); id != "" {
+				log.Printf("[pool] seat advice empty for quota pool %s — local quota pick %s", pool, id)
+				return id, true, nil
+			}
+			return "", true, errAllExhausted
+		}
+		if seen[assigned] {
+			if id := s.quotaFallbackPick(current, pool, allowed, binding.blockedSet(), quotaSkip); id != "" {
+				log.Printf("[pool] seat advice loop on %s — local quota pick %s", assigned, id)
+				return id, true, nil
+			}
 			return "", true, errAllExhausted
 		}
 		seen[assigned] = true
@@ -212,11 +224,37 @@ func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, r
 		}
 		got := s.pool.findEntry(assigned)
 		if got == nil || !got.availableFor(pool) {
+			quotaSkip[assigned] = true
 			released = assigned
 			askRelease = true
 			continue
 		}
 		return assigned, true, nil
 	}
+	if id := s.quotaFallbackPick(current, pool, allowed, binding.blockedSet(), quotaSkip); id != "" {
+		log.Printf("[pool] seat advice exhausted quota retries — local quota pick %s", id)
+		return id, true, nil
+	}
 	return "", true, errAllExhausted
+}
+
+// quotaFallbackPick runs when Pulse seat advice cannot yield a credential that
+// still has Quota Pool headroom. It does not override concurrency fail-closed
+// (empty advice with no quotaSkip is handled above).
+func (s *StickySelect) quotaFallbackPick(current string, pool quotaPoolKind, allowed, blocked, quotaSkip map[string]bool) string {
+	if s == nil || s.pool == nil || len(quotaSkip) == 0 {
+		return ""
+	}
+	skip := map[string]bool{}
+	for id := range quotaSkip {
+		skip[id] = true
+	}
+	for id := range blocked {
+		skip[id] = true
+	}
+	next := s.pool.nextAvailableForQuotaWithin(strings.TrimSpace(current), pool, allowed, skip)
+	if next == nil {
+		return ""
+	}
+	return next.credentialID
 }

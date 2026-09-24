@@ -78,6 +78,23 @@ def test_already_seated_holder_is_not_evicted_when_account_fills():
     assert _choose(book, holder_id="member:4", now=10).assigned_credential_id == "c2"
 
 
+def test_skip_credential_ids_steers_past_quota_rejected_rank():
+    book = OccupancyBook()
+    ranked = [("c1", "a1"), ("c2", "a2"), ("c3", "a3")]
+    _choose(book, holder_id="member:1", ranked=ranked, current_credential_id="c1")
+    moved = _choose(
+        book,
+        holder_id="member:1",
+        ranked=ranked,
+        account_by_credential={"c1": "a1", "c2": "a2", "c3": "a3"},
+        current_credential_id="c1",
+        release_current=True,
+        skip_credential_ids={"c1", "c2"},
+        now=5,
+    )
+    assert moved.assigned_credential_id == "c3"
+
+
 def test_release_does_not_return_the_credential_just_left():
     book = OccupancyBook()
     _choose(book, holder_id="member:1", current_credential_id="c1")

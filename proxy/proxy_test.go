@@ -100,7 +100,7 @@ func newFakeUpstreamSession(t *testing.T) *fakeUpstream {
 
 	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if key != "keyA" && key != "keyB" {
+		if key != "keyA" && key != "keyB" && key != "keyC" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

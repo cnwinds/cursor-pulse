@@ -152,7 +152,9 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 ## 同时在线人数
 
-换票、会话续期，以及 sticky 因为额度耗尽要换号时，代理把当前凭证报给 `POST /api/internal/v1/proxy/authorize`（`current_credential_id`，离开时再带 `release_current: true`）。Web 按人计座：同一成员在同一个账号上只占一席，同时用两个账号则各占一席。默认同一账号不超过 3 个经代理的同时使用者（`max_concurrent_users`，0 为不限制）。心跳超过 `concurrent_ttl_seconds`（默认 180s，长于会话 TTL）视为离开。
+换票、会话续期，以及 sticky 因为额度耗尽要换号时，代理把当前凭证报给 `POST /api/internal/v1/proxy/authorize`（`current_credential_id`，离开时再带 `release_current: true`；因 **Quota Pool 余量** 已拒绝的凭证 ID 放在 `skip_credential_ids`，避免座位顾问只在单次 release 下仍回到排名靠前的半满账号）。Web 按人计座：同一成员在同一个账号上只占一席，同时用两个账号则各占一席。默认同一账号不超过 3 个经代理的同时使用者（`max_concurrent_users`，0 为不限制）。心跳超过 `concurrent_ttl_seconds`（默认 180s，长于会话 TTL）视为离开。
+
+分层说明见仓库根目录 [`docs/proxy-account-selection.md`](../docs/proxy-account-selection.md)。
 
 - 响应里 `seat_advised=true` 且 `assigned_credential_id` 有值：用这个凭证，不要在每次心跳时改选全局第一名。
 - `seat_advised=true` 且分配为空：没有可去的未满账号（或正在离开的凭证不能再选回去）。换号或新加入时不要再塞进满员账号。

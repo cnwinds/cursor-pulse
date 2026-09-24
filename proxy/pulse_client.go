@@ -172,18 +172,18 @@ func (c *PulseClient) Stop() {
 }
 
 func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
-	return c.authorize(pulseKey, "", false)
+	return c.authorize(pulseKey, "", false, nil)
 }
 
 // AuthorizeReport is Authorize plus the credential this session is on.
 // A non-empty current credential or release=true bypasses the auth cache:
 // session reauth and rotation must refresh the occupancy seat.
-func (c *PulseClient) AuthorizeReport(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
-	return c.authorize(pulseKey, strings.TrimSpace(currentCredentialID), releaseCurrent)
+func (c *PulseClient) AuthorizeReport(pulseKey, currentCredentialID string, releaseCurrent bool, quotaSkip map[string]bool) (AuthResult, error) {
+	return c.authorize(pulseKey, strings.TrimSpace(currentCredentialID), releaseCurrent, quotaSkip)
 }
 
-func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
-	report := currentCredentialID != "" || releaseCurrent
+func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCurrent bool, quotaSkip map[string]bool) (AuthResult, error) {
+	report := currentCredentialID != "" || releaseCurrent || len(quotaSkip) > 0
 	if !report {
 		c.authMu.Lock()
 		if e, ok := c.authCache[pulseKey]; ok && time.Now().Before(e.expiry) {
@@ -200,6 +200,18 @@ func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCur
 	}
 	if releaseCurrent {
 		payload["release_current"] = true
+	}
+	if len(quotaSkip) > 0 {
+		skip := make([]string, 0, len(quotaSkip))
+		for id := range quotaSkip {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				skip = append(skip, id)
+			}
+		}
+		if len(skip) > 0 {
+			payload["skip_credential_ids"] = skip
+		}
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/authorize", bytes.NewReader(body))
