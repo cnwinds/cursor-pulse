@@ -96,7 +96,9 @@ class AutoPickBody(BaseModel):
 
 
 class ReassignLoanBody(BaseModel):
-    source_account_id: str
+    lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
+    source_account_id: str | None = None
+    auto_revoke_on_reset: bool | None = None
 
 
 class LoanPatchBody(BaseModel):
@@ -666,13 +668,11 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("accounts:write")),
     ):
-        """更换出借账号，保持同一 pka_ 不变。"""
+        """调整出借方式或出借账号，保持同一 pka_ 不变。"""
         team, _ = team_repo_fn(session)
         loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
-        if loan.routing_mode == ROUTING_POOL:
-            raise HTTPException(status_code=400, detail="账号池轮换借用没有单一出借账号，不能换号")
 
         enc_key = _encryption_key(config)
         try:
@@ -685,6 +685,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 bound_by_member_id=user.member.id,
                 loan_selection=effective_loan_selection(session, config, team.id),
                 enforce_loan_cap=False,
+                lender_mode=body.lender_mode,
+                auto_revoke_on_reset=body.auto_revoke_on_reset,
             )
             # Commit loan→new credential before remote-revoking the old Cursor key,
             # so a failed commit cannot leave pka_ pointing at a revoked remote key.

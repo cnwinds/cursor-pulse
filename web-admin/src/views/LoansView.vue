@@ -110,11 +110,11 @@
               :setup-url="`/api/v2/loans/${row.id}/client-setup`"
             />
             <el-tooltip
-              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
-              content="换出借账号"
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+              content="调整出借方式"
               placement="top"
             >
-              <el-button link type="primary" aria-label="换出借账号" @click="openReassignDialog(row)">
+              <el-button link type="primary" aria-label="调整出借方式" @click="openReassignDialog(row)">
                 <el-icon><Switch /></el-icon>
               </el-button>
             </el-tooltip>
@@ -252,20 +252,30 @@
       :accounts="loanJevTraceAccountsActive"
     />
 
-    <el-dialog v-model="reassignDialogVisible" title="更换出借账号" width="520px">
+    <el-dialog v-model="reassignDialogVisible" title="调整出借方式" width="520px">
       <p class="manual-hint">
         借用人：{{ reassignLoan?.borrower_name || '—' }} ·
-        当前账号：{{ reassignLoan?.source_account_identifier || '—' }}
+        当前：{{
+          reassignLoan?.routing_mode === 'pool'
+            ? '账号池（使用中轮换）'
+            : reassignLoan?.source_account_identifier || '—'
+        }}
       </p>
       <p class="manual-hint">
-        pka_ 别名保持不变，借用人无需改本地配置；将在新账号创建底层 Key，并撤销旧账号远端 Key。
+        pka_ 别名保持不变，借用人无需改本地配置。切到指定账号时会在该账号创建底层 Key 并撤销旧远端 Key；切到自动分配则走账号池轮换。
       </p>
       <el-form label-width="100px">
-        <el-form-item label="新出借账号" required>
+        <el-form-item label="分配方式">
+          <el-radio-group v-model="reassignForm.lender_mode">
+            <el-radio value="manual">指定账号</el-radio>
+            <el-radio value="auto">自动（账号池轮换）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="借出账号" required>
           <el-select
             v-model="reassignForm.source_account_id"
             filterable
-            placeholder="选择新的出借账号"
+            placeholder="选择出借账号"
             style="width: 100%"
           >
             <el-option
@@ -276,11 +286,27 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="重置日回收">
+          <el-switch v-model="reassignForm.auto_revoke_on_reset" />
+        </el-form-item>
+        <div v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
+          <p>
+            自动分配使用账号池：使用过程中在已入池账号之间轮换，确认时不锁定某一个账号。
+          </p>
+          <p v-if="poolPreview.length">当前优先（会变，不是锁定）：</p>
+          <ol v-if="poolPreview.length" class="pool-preview">
+            <li v-for="(row, index) in poolPreview" :key="row.account_id">
+              {{ index + 1 }}. {{ row.account_identifier }}
+              <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+            </li>
+          </ol>
+          <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="reassignDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="reassignSubmitting" @click="submitReassign">
-          确认更换
+          确认调整
         </el-button>
       </template>
     </el-dialog>
@@ -587,7 +613,11 @@ const loanJevTraceAccountsActive = computed(() =>
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
 const reassignLoan = ref<LoanRow | null>(null)
-const reassignForm = ref({ source_account_id: '' })
+const reassignForm = ref({
+  lender_mode: 'manual' as 'manual' | 'auto',
+  source_account_id: '',
+  auto_revoke_on_reset: true,
+})
 const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
 
@@ -849,32 +879,64 @@ async function loadManualAutoPickPreview() {
 
 async function openReassignDialog(row: LoanRow) {
   reassignLoan.value = row
-  reassignForm.value.source_account_id = ''
+  reassignForm.value = {
+    lender_mode: row.routing_mode === 'pool' ? 'auto' : 'manual',
+    source_account_id: row.source_account_id || '',
+    auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
+  }
   await loadLoanDialogData()
-  reassignOptions.value = recommend.value.filter(
-    (r) => r.account_id !== row.source_account_id,
-  )
-  if (reassignOptions.value.length) {
+  reassignOptions.value = recommend.value
+  if (
+    reassignForm.value.lender_mode === 'manual' &&
+    !reassignForm.value.source_account_id &&
+    reassignOptions.value.length
+  ) {
     reassignForm.value.source_account_id = reassignOptions.value[0].account_id
   }
+  if (reassignForm.value.lender_mode === 'auto') void loadPoolPreview()
   reassignDialogVisible.value = true
 }
 
+watch(
+  () => reassignForm.value.lender_mode,
+  (mode) => {
+    if (mode === 'auto' && reassignDialogVisible.value) void loadPoolPreview()
+  },
+)
+
 async function submitReassign() {
-  if (!reassignLoan.value || !reassignForm.value.source_account_id) {
-    ElMessage.warning('请选择新的出借账号')
+  if (!reassignLoan.value) return
+  const form = reassignForm.value
+  if (form.lender_mode === 'manual' && !form.source_account_id) {
+    ElMessage.warning('请选择出借账号')
+    return
+  }
+  if (
+    form.lender_mode === 'manual' &&
+    reassignLoan.value.routing_mode !== 'pool' &&
+    reassignLoan.value.lender_mode === 'manual' &&
+    form.source_account_id === reassignLoan.value.source_account_id
+  ) {
+    ElMessage.warning('指定账号与当前相同，请更换账号或改为自动分配')
+    return
+  }
+  if (form.lender_mode === 'auto' && reassignLoan.value.routing_mode === 'pool') {
+    ElMessage.warning('已是账号池轮换，无需调整')
     return
   }
   reassignSubmitting.value = true
   try {
     await client.post(`/api/v2/loans/${reassignLoan.value.id}/reassign-source`, {
-      source_account_id: reassignForm.value.source_account_id,
+      lender_mode: form.lender_mode,
+      source_account_id: form.lender_mode === 'manual' ? form.source_account_id : null,
+      auto_revoke_on_reset:
+        form.lender_mode === 'manual' ? form.auto_revoke_on_reset : undefined,
     })
-    ElMessage.success('已更换出借账号（pka_ 不变）')
+    ElMessage.success('已调整出借方式（pka_ 不变）')
     reassignDialogVisible.value = false
     await loadLoans()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '更换失败')
+    ElMessage.error(e.response?.data?.detail || '调整失败')
   } finally {
     reassignSubmitting.value = false
   }

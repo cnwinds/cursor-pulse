@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import select
+
 from pulse.ingestion.credentials import CredentialService
 from pulse.proxy.keys import hash_proxy_key
 from pulse.storage.models import AccountQuotaSnapshot, AiAccountCredential, KeyLoan
@@ -36,6 +38,50 @@ def _add_snapshot(session, account_id: str, *, used_cents: int = 1000) -> None:
             used_cents=used_cents,
             remaining_cents=7000 - used_cents,
             total_pct=round(used_cents / 70.0, 1),
+        )
+    )
+
+
+def _enable_account_for_pool(session, account, owner_id: str) -> None:
+    from datetime import date
+
+    from pulse.ingestion.crypto import encrypt_secret
+
+    account.proxy_enabled = True
+    snap = session.scalar(
+        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
+    )
+    if snap is None:
+        session.add(
+            AccountQuotaSnapshot(
+                account_id=account.id,
+                captured_at=datetime.now(UTC),
+                cycle_start=date(2026, 7, 1),
+                cycle_end=date(2026, 12, 31),
+                limit_cents=7000,
+                used_cents=100,
+                remaining_cents=6900,
+                total_pct=1.0,
+                auto_pct=10.0,
+                api_pct=10.0,
+            )
+        )
+    else:
+        snap.cycle_end = date(2026, 12, 31)
+        snap.auto_pct = 10.0
+        snap.api_pct = 10.0
+        snap.used_cents = 100
+        snap.remaining_cents = 6900
+    session.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=account.vendor_id,
+            credential_type="cursor_api_key",
+            encrypted_value=encrypt_secret(f"crsr_pool_primary_{account.id}", TEST_KEY),
+            key_hint="crsr...pool",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=owner_id,
         )
     )
 
@@ -238,4 +284,99 @@ def test_reassign_source_api_allows_over_cap(mock_client_cls, quota_env):
         )
         assert reassigned.status_code == 200, reassigned.text
         assert reassigned.json()["source_account_id"] == source_b.id
+    session.close()
+
+
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
+def test_reassign_pinned_to_pool_keeps_pka(mock_client_cls, quota_env):
+    from pulse.storage.models import AiAccount
+
+    env = quota_env
+    session = env["session_factory"]()
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    source_a, _source_b = _prepare_two_lenders(session, env, mock_client)
+
+    issued = issue_loan_key(
+        session,
+        TEST_KEY,
+        team_id=env["owner"].team_id,
+        source_account_id=source_a.id,
+        borrower_member_id=env["borrower"].id,
+        bound_by_member_id=env["owner"].id,
+        cursor_client=mock_client,
+    )
+    pka = issued["api_key"]
+    loan_id = issued["loan_id"]
+
+    account = session.get(AiAccount, source_a.id)
+    _enable_account_for_pool(session, account, env["owner"].id)
+    session.flush()
+
+    result = reassign_loan_source(
+        session,
+        TEST_KEY,
+        team_id=env["owner"].team_id,
+        loan_id=loan_id,
+        bound_by_member_id=env["owner"].id,
+        lender_mode="auto",
+        cursor_client=mock_client,
+    )
+    finalize_reassign_old_remote_revoke(session, TEST_KEY, result, cursor_client=mock_client)
+
+    loan = session.get(KeyLoan, loan_id)
+    assert loan.routing_mode == "pool"
+    assert loan.source_account_id is None
+    assert loan.credential_id is None
+    assert reveal_loan_user_key(loan, TEST_KEY, session) == pka
+    assert result["old_remote_revoked"] is True
+    session.close()
+
+
+@patch("pulse.tool_center.key_loan_store.CursorApiClient")
+def test_reassign_pool_to_pinned_keeps_pka(mock_client_cls, quota_env):
+    from pulse.storage.models import AiAccount
+    from pulse.tool_center.key_loans import issue_pool_loan
+
+    env = quota_env
+    session = env["session_factory"]()
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    source_a, source_b = _prepare_two_lenders(session, env, mock_client)
+
+    account = session.get(AiAccount, source_a.id)
+    _enable_account_for_pool(session, account, env["owner"].id)
+    session.flush()
+
+    issued = issue_pool_loan(
+        session,
+        TEST_KEY,
+        team_id=env["owner"].team_id,
+        borrower_member_id=env["borrower"].id,
+    )
+    pka = issued["api_key"]
+    loan_id = issued["loan_id"]
+
+    mock_client.create_user_api_key.return_value = {"apiKey": "crsr_loan_key_after_pool_xxxxx"}
+    mock_client.list_user_api_keys.return_value = [{"id": 99, "name": "pulse-loan-Borrower"}]
+
+    result = reassign_loan_source(
+        session,
+        TEST_KEY,
+        team_id=env["owner"].team_id,
+        loan_id=loan_id,
+        new_source_account_id=source_b.id,
+        bound_by_member_id=env["owner"].id,
+        lender_mode="manual",
+        cursor_client=mock_client,
+    )
+
+    loan = session.get(KeyLoan, loan_id)
+    assert loan.routing_mode == "pinned"
+    assert loan.lender_mode == "manual"
+    assert loan.source_account_id == source_b.id
+    assert loan.credential_id is not None
+    assert reveal_loan_user_key(loan, TEST_KEY, session) == pka
+    assert result["source_account_id"] == source_b.id
+    mock_client.create_user_api_key.assert_called()
     session.close()
