@@ -340,7 +340,7 @@ def format_admin_reassigned(
             f"借用编号：{(loan_id or '')[:8] or '—'}",
             f"别名提示：{alias_key_hint or '—'}",
             f"原账号：{old_source_identifier or '—'}",
-            f"新账号：{new_source_identifier or '—'}",
+            f"新账号：{new_source_identifier or '账号池（使用中轮换）'}",
             f"自动回收日：{loan_expires_on or '—'}",
             "借用人 pka_ 不变，可透明继续使用。",
         ]

@@ -388,40 +388,197 @@ def _forget_loan_candidate_cache(loan_id: str) -> None:
         logger.warning("loan %s: candidate cache invalidation failed", loan_id, exc_info=True)
 
 
+def _validate_reassign_loan(loan: KeyLoan | None) -> KeyLoan:
+    if not loan:
+        raise KeyLoanError("借用记录不存在")
+    if loan.status != "active":
+        raise KeyLoanError("仅进行中的借用可更换出借账号")
+    mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+    if mode != DELIVERY_PROXY_ALIAS:
+        raise KeyLoanError("仅代理别名 Key 支持更换出借账号")
+    if not loan.alias_key_hash or not loan.alias_encrypted_key:
+        raise KeyLoanError("别名 Key 缺失，无法安全换绑")
+    return loan
+
+
+def _pending_revoke_for_loan_credential(
+    session: Session, loan: KeyLoan
+) -> tuple[dict | None, AiAccountCredential | None]:
+    old_cred = session.get(AiAccountCredential, loan.credential_id) if loan.credential_id else None
+    pending = None
+    if old_cred and old_cred.remote_key_id and old_cred.status == "active" and loan.source_account_id:
+        pending = {
+            "old_source_account_id": loan.source_account_id,
+            "old_cred_id": old_cred.id,
+            "remote_key_id": old_cred.remote_key_id,
+        }
+    return pending, old_cred
+
+
+def _convert_pinned_loan_to_pool(
+    session: Session,
+    loan: KeyLoan,
+    *,
+    team_id: str,
+    loan_id: str,
+    loan_selection: LoanSelectionConfig | None,
+    encryption_key: str,
+) -> dict:
+    from pulse.proxy.pool_board import list_pool_credentials
+
+    pooled = list_pool_credentials(
+        session,
+        encryption_key=encryption_key,
+        loan_selection=loan_selection,
+    )
+    if not pooled:
+        raise KeyLoanError("账号池里没有可轮换的账号，请先在账号池开启入池")
+
+    repo = ToolCenterRepository(session, team_id)
+    old_account = repo.get_account(loan.source_account_id) if loan.source_account_id else None
+    old_identifier = old_account.account_identifier if old_account else None
+    pending, old_cred = _pending_revoke_for_loan_credential(session, loan)
+    if old_cred:
+        old_cred.status = "revoked"
+        old_cred.sync_enabled = False
+        old_cred.encrypted_value = ""
+
+    borrower = session.get(Member, loan.borrower_member_id) if loan.borrower_member_id else None
+    loan.source_account_id = None
+    loan.credential_id = None
+    loan.routing_mode = ROUTING_POOL
+    loan.lender_mode = LENDER_MODE_AUTO
+    loan.auto_revoke_on_reset = False
+    loan.expires_on = None
+    loan.baseline_used_cents = 0
+    loan.source_bound_at = datetime.now(UTC)
+    _forget_loan_candidate_cache(loan_id)
+    session.flush()
+
+    return {
+        "loan_id": loan.id,
+        "delivery_mode": DELIVERY_PROXY_ALIAS,
+        "borrower_member_id": loan.borrower_member_id,
+        "borrower_name": borrower.display_name if borrower else None,
+        "old_source_account_id": old_account.id if old_account else None,
+        "old_source_account_identifier": old_identifier,
+        "source_account_id": None,
+        "source_account_identifier": None,
+        "loan_expires_on": None,
+        "alias_key_hint": loan.alias_key_hint,
+        "old_remote_revoked": False,
+        "key_hint": loan.alias_key_hint,
+        "lender_mode": loan.lender_mode,
+        "routing_mode": loan.routing_mode,
+        "_pending_old_remote_revoke": pending,
+    }
+
+
+def _pin_auto_wander_on_current_account(
+    session: Session,
+    loan: KeyLoan,
+    *,
+    team_id: str,
+    auto_revoke_on_reset: bool | None,
+) -> dict:
+    if not loan.source_account_id:
+        raise KeyLoanError("当前借用未绑定出借账号")
+    repo = ToolCenterRepository(session, team_id)
+    account = repo.get_account(loan.source_account_id)
+    if not account:
+        raise KeyLoanError("出借账号不存在")
+
+    old_auto = (loan.lender_mode or LENDER_MODE_MANUAL) == LENDER_MODE_AUTO
+    if not old_auto and auto_revoke_on_reset is None:
+        raise KeyLoanError("新出借账号与当前相同")
+
+    if auto_revoke_on_reset is not None:
+        loan.auto_revoke_on_reset = bool(auto_revoke_on_reset)
+    deadline = account_loan_deadline(account) if loan.auto_revoke_on_reset else None
+    loan.expires_on = deadline
+    loan.lender_mode = LENDER_MODE_MANUAL
+    loan.routing_mode = "pinned"
+    loan.source_bound_at = datetime.now(UTC)
+    _forget_loan_candidate_cache(loan.id)
+    session.flush()
+
+    borrower = session.get(Member, loan.borrower_member_id) if loan.borrower_member_id else None
+    return {
+        "loan_id": loan.id,
+        "delivery_mode": DELIVERY_PROXY_ALIAS,
+        "borrower_member_id": loan.borrower_member_id,
+        "borrower_name": borrower.display_name if borrower else None,
+        "old_source_account_id": account.id,
+        "old_source_account_identifier": account.account_identifier,
+        "source_account_id": account.id,
+        "source_account_identifier": account.account_identifier,
+        "loan_expires_on": deadline.isoformat() if deadline else None,
+        "alias_key_hint": loan.alias_key_hint,
+        "old_remote_revoked": False,
+        "key_hint": loan.alias_key_hint,
+        "lender_mode": loan.lender_mode,
+        "routing_mode": loan.routing_mode,
+    }
+
+
 def reassign_loan_source(
     session: Session,
     encryption_key: str,
     *,
     team_id: str,
     loan_id: str,
-    new_source_account_id: str,
+    new_source_account_id: str | None = None,
     bound_by_member_id: str,
     cursor_client: CursorApiClient | None = None,
     loan_selection: LoanSelectionConfig | None = None,
     enforce_loan_cap: bool = True,
+    lender_mode: str = LENDER_MODE_MANUAL,
+    auto_revoke_on_reset: bool | None = None,
 ) -> dict:
-    """更换出借账号，保持同一 pka_ / loan id；新建远端 Key。
+    """调整出借方式或出借账号，保持同一 pka_ / loan id。
+
+    ``lender_mode=auto`` 表示账号池轮换（与创建时的自动分配一致）；
+    ``manual`` 表示指定账号并在该账号建独立 Cursor Key。
 
     远端撤销旧 Key 延后到 DB commit 之后，由
     :func:`finalize_reassign_old_remote_revoke` 执行，避免 commit 失败时
     旧 Key 已在 Cursor 侧被吊销而本地仍指向旧 credential。
     """
+    if lender_mode not in VALID_LENDER_MODES:
+        raise KeyLoanError(f"未知的借用模式：{lender_mode}")
+
     loan_svc = KeyLoanService(session, encryption_key, cursor_client=cursor_client)
     _lock_loan_for_update(session, loan_id)
-    loan = loan_svc.get_loan(loan_id)
-    if not loan:
-        raise KeyLoanError("借用记录不存在")
-    if loan.status != "active":
-        raise KeyLoanError("仅进行中的借用可更换出借账号")
-    if getattr(loan, "routing_mode", None) == ROUTING_POOL:
-        raise KeyLoanError("账号池轮换借用没有单一出借账号，不能换号")
-    mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
-    if mode != DELIVERY_PROXY_ALIAS:
-        raise KeyLoanError("仅代理别名 Key 支持更换出借账号")
-    if not loan.alias_key_hash or not loan.alias_encrypted_key:
-        raise KeyLoanError("别名 Key 缺失，无法安全换绑")
-    if loan.source_account_id == new_source_account_id:
-        raise KeyLoanError("新出借账号与当前相同")
+    loan = _validate_reassign_loan(loan_svc.get_loan(loan_id))
+
+    current_pool = getattr(loan, "routing_mode", None) == ROUTING_POOL
+    target_pool = lender_mode == LENDER_MODE_AUTO
+
+    if target_pool:
+        if current_pool:
+            raise KeyLoanError("已是账号池轮换，无需更换")
+        return _convert_pinned_loan_to_pool(
+            session,
+            loan,
+            team_id=team_id,
+            loan_id=loan_id,
+            loan_selection=loan_selection,
+            encryption_key=encryption_key,
+        )
+
+    if not new_source_account_id:
+        raise KeyLoanError("请选择出借账号")
+
+    if current_pool:
+        # 从账号池轮换切到指定账号：与换号相同，但没有旧 Cursor Key 需撤销。
+        pass
+    elif loan.source_account_id == new_source_account_id:
+        return _pin_auto_wander_on_current_account(
+            session,
+            loan,
+            team_id=team_id,
+            auto_revoke_on_reset=auto_revoke_on_reset,
+        )
 
     repo = ToolCenterRepository(session, team_id)
     old_account = repo.get_account(loan.source_account_id)
@@ -483,18 +640,22 @@ def reassign_loan_source(
         old_cred_id = loan.credential_id
         old_identifier = old_account.account_identifier if old_account else None
 
+        if auto_revoke_on_reset is not None:
+            loan.auto_revoke_on_reset = bool(auto_revoke_on_reset)
         deadline = account_loan_deadline(new_account) if loan.auto_revoke_on_reset else None
         loan.source_account_id = new_source_account_id
         loan.credential_id = new_cred.id
         loan.baseline_used_cents = snapshot.used_cents
         loan.expires_on = deadline
+        loan.lender_mode = LENDER_MODE_MANUAL
+        loan.routing_mode = "pinned"
         # 驻留窗口基准：换绑即重置，Auto Lender 在 min_switch_minutes 内不再动它
         loan.source_bound_at = datetime.now(UTC)
         # 白名单把当前 source 账号插在首位，改绑后必须立即失效，否则 600s 内
         # 仍会把流量游走回旧账号
         _forget_loan_candidate_cache(loan_id)
         pending_remote_revoke = None
-        old_cred = session.get(AiAccountCredential, old_cred_id)
+        old_cred = session.get(AiAccountCredential, old_cred_id) if old_cred_id else None
         if old_cred:
             if old_cred.remote_key_id and old_cred.status == "active":
                 pending_remote_revoke = {
@@ -529,6 +690,8 @@ def reassign_loan_source(
         "alias_key_hint": loan.alias_key_hint,
         "old_remote_revoked": False,
         "key_hint": loan.alias_key_hint,
+        "lender_mode": loan.lender_mode,
+        "routing_mode": loan.routing_mode,
         "_pending_old_remote_revoke": pending_remote_revoke,
     }
 
