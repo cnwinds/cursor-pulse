@@ -170,34 +170,6 @@
           <p v-if="loanForm.lender_mode === 'manual'" class="manual-hint">
             指定账号：发放时在该账号建一把独立 Cursor Key，使用过程中不换号。
           </p>
-          <div v-else class="manual-hint">
-            <p>
-              自动分配使用账号池：成员拿到的 Key 会在已入池账号之间轮换（同一会话先用尽当前额度桶，再换下一个高分账号，间隔至少 30 分钟）。确认时不锁定账号。
-            </p>
-            <p v-if="poolPreview.length">当前优先（会变，不是锁定）：</p>
-            <ol v-if="poolPreview.length" class="pool-preview">
-              <li v-for="(row, index) in poolPreview" :key="row.account_id">
-                {{ index + 1 }}. {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-            <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
-            <router-link v-if="embedded" :to="{ path: '/borrow-management', query: { tab: 'pool' } }">
-              前往入池账号
-            </router-link>
-            <router-link v-else :to="{ path: '/borrow-management', query: { tab: 'pool' } }">
-              打开借用管理 · 入池账号
-            </router-link>
-            <el-button
-              v-if="poolJevTrace"
-              link
-              type="primary"
-              class="jev-trace-link"
-              @click="loanJevTraceOpen = true"
-            >
-              查看 Jev 报文
-            </el-button>
-          </div>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="借出账号" required>
           <el-select
@@ -238,7 +210,6 @@
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
-        <p class="manual-hint">交付为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。</p>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
@@ -569,20 +540,12 @@ const loanForm = ref({
   model: '',
   auto_revoke_on_reset: true,
 })
-const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>([])
-const poolPreviewLoaded = ref(false)
-const poolJevTrace = ref<JevTrace | null>(null)
-const poolJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
 const manualJevTrace = ref<JevTrace | null>(null)
 const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
 const loanJevTraceOpen = ref(false)
 
-const loanJevTraceActive = computed(() =>
-  loanForm.value.lender_mode === 'auto' ? poolJevTrace.value : manualJevTrace.value,
-)
-const loanJevTraceAccountsActive = computed(() =>
-  loanForm.value.lender_mode === 'auto' ? poolJevTraceAccounts.value : manualJevTraceAccounts.value,
-)
+const loanJevTraceActive = computed(() => manualJevTrace.value)
+const loanJevTraceAccountsActive = computed(() => manualJevTraceAccounts.value)
 
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
@@ -782,35 +745,10 @@ async function submitLoan() {
   }
 }
 
-async function loadPoolPreview() {
-  if (loanForm.value.lender_mode !== 'auto') return
-  poolPreviewLoaded.value = false
-  try {
-    const res = await client.get('/api/v2/proxy-pool/ranking')
-    const ranked = res.data.ranked || []
-    poolPreview.value = ranked.slice(0, 3)
-    poolJevTrace.value = res.data.decision?.jev_trace ?? null
-    poolJevTraceAccounts.value = ranked.map(
-      (row: { account_id: string; account_identifier?: string; primary_member_name?: string | null }) => ({
-        account_id: row.account_id,
-        account_identifier: row.account_identifier,
-        primary_member_name: row.primary_member_name,
-      }),
-    )
-  } catch {
-    poolPreview.value = []
-    poolJevTrace.value = null
-    poolJevTraceAccounts.value = []
-  } finally {
-    poolPreviewLoaded.value = true
-  }
-}
-
 watch(
   () => loanForm.value.lender_mode,
   (mode) => {
-    if (mode === 'auto') void loadPoolPreview()
-    else void loadManualAutoPickPreview()
+    if (mode === 'manual') void loadManualAutoPickPreview()
   },
 )
 
@@ -1188,9 +1126,5 @@ onMounted(loadLoans)
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.5;
-}
-.pool-preview {
-  margin: 4px 0 8px;
-  padding-left: 1.2em;
 }
 </style>
