@@ -489,6 +489,9 @@ def _pin_auto_wander_on_current_account(
         raise KeyLoanError("出借账号不存在")
 
     old_auto = (loan.lender_mode or LENDER_MODE_MANUAL) == LENDER_MODE_AUTO
+    if not old_auto and auto_revoke_on_reset is None:
+        raise KeyLoanError("新出借账号与当前相同")
+
     if auto_revoke_on_reset is not None:
         loan.auto_revoke_on_reset = bool(auto_revoke_on_reset)
     deadline = account_loan_deadline(account) if loan.auto_revoke_on_reset else None
@@ -500,8 +503,6 @@ def _pin_auto_wander_on_current_account(
     session.flush()
 
     borrower = session.get(Member, loan.borrower_member_id) if loan.borrower_member_id else None
-    if not old_auto and auto_revoke_on_reset is None:
-        raise KeyLoanError("新出借账号与当前相同")
     return {
         "loan_id": loan.id,
         "delivery_mode": DELIVERY_PROXY_ALIAS,
