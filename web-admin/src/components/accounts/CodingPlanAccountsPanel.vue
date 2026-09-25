@@ -1,7 +1,9 @@
 <template>
   <div class="coding-plan-accounts" v-loading="loading">
     <el-table :data="accounts" stripe>
-      <el-table-column label="账号标识" min-width="200" prop="account_identifier" />
+      <el-table-column label="账号标识" min-width="200">
+        <template #default="{ row }">{{ accountLabel(row) }}</template>
+      </el-table-column>
       <el-table-column label="套餐" width="120" prop="plan_name" />
       <el-table-column v-if="vendorSlug !== 'kimi'" label="站点/区域" width="140">
         <template #default="{ row }">{{ regionLabel(row) }}</template>
@@ -70,8 +72,11 @@
             <el-input :model-value="editing.glm_project_id || '—'" disabled />
           </el-form-item>
         </template>
-        <el-form-item label="账号标识" required>
-          <el-input v-model="form.account_identifier" placeholder="邮箱或备注名" />
+        <el-form-item label="账号标识">
+          <el-input
+            v-model="form.account_identifier"
+            placeholder="选填；留空保存后用 API Key 脱敏标识（不参与鉴权）"
+          />
         </el-form-item>
         <el-form-item v-if="vendorSlug === 'glm' && editing && canWrite" label="套餐">
           <el-select v-model="form.plan_id" style="width: 100%">
@@ -231,6 +236,12 @@ function memberName(id: string | null) {
   return members.value.find((m) => m.id === id)?.display_name || ''
 }
 
+function accountLabel(row: Account) {
+  const id = (row.account_identifier || '').trim()
+  if (id) return id
+  return credentialMap.value[row.id]?.key_hint || row.id.slice(0, 8)
+}
+
 function statusLabel(s: string) {
   const map: Record<string, string> = {
     trial: '试用',
@@ -364,7 +375,7 @@ async function syncCredential() {
 
 async function removeAccount() {
   if (!editing.value) return
-  await ElMessageBox.confirm(`确定删除账号 ${editing.value.account_identifier}？`, '删除账号', {
+  await ElMessageBox.confirm(`确定删除账号 ${accountLabel(editing.value)}？`, '删除账号', {
     type: 'warning',
   })
   deleting.value = true
@@ -389,11 +400,12 @@ async function save() {
       }
       if (canWrite.value) {
         const patch: Record<string, unknown> = {
-          account_identifier: form.account_identifier.trim(),
           status: form.status,
           primary_member_id: form.primary_member_id,
           shared_note: form.shared_note || null,
         }
+        const idLabel = form.account_identifier.trim()
+        if (idLabel) patch.account_identifier = idLabel
         if (props.vendorSlug === 'glm' && form.plan_id) patch.plan_id = form.plan_id
         await client.patch(`/api/v2/accounts/${editing.value.id}`, patch)
       }
@@ -415,7 +427,6 @@ async function save() {
       const payload: Record<string, unknown> = {
         vendor_id: vendor.value.id,
         api_region: form.api_region,
-        account_identifier: form.account_identifier.trim(),
         status: form.status,
         primary_member_id: form.primary_member_id,
         shared_note: form.shared_note || null,
@@ -427,6 +438,8 @@ async function save() {
         payload.glm_organization_id = form.glm_organization_id.trim()
         payload.glm_project_id = form.glm_project_id.trim()
       }
+      const idLabel = form.account_identifier.trim()
+      if (idLabel) payload.account_identifier = idLabel
       await client.post('/api/v2/accounts', payload)
     }
     dialogVisible.value = false
