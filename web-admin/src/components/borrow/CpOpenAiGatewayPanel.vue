@@ -43,35 +43,39 @@
       <el-tab-pane label="Kimi" name="kimi" />
     </el-tabs>
 
-    <div class="section">
-      <div class="section-head">
-        <h3>入池账号</h3>
-        <el-button size="small" @click="loadAccounts">刷新</el-button>
-      </div>
-      <el-table :data="accounts" stripe size="small">
-        <el-table-column label="账号" prop="account_identifier" min-width="160" />
-        <el-table-column label="区域" prop="api_region" width="100" />
-        <el-table-column label="额度压力" width="100">
-          <template #default="{ row }">{{ row.tier_pressure_pct?.toFixed?.(1) ?? row.tier_pressure_pct }}%</template>
-        </el-table-column>
-        <el-table-column label="就绪" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.pool_ready ? 'success' : 'danger'" size="small">
-              {{ row.pool_ready ? '就绪' : '未就绪' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="入池" width="88" align="center">
-          <template #default="{ row }">
-            <el-switch
-              :model-value="row.cp_proxy_enabled"
-              :disabled="!canWrite || (!row.cp_proxy_enabled && !row.pool_ready)"
-              @change="(v: boolean) => togglePool(row, v)"
-            />
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
+    <el-collapse v-model="poolSectionOpen" class="section pool-collapse">
+      <el-collapse-item name="pool">
+        <template #title>
+          <div class="pool-collapse-head">
+            <h3 class="pool-collapse-title">{{ poolAccountsTitle }}</h3>
+            <el-button size="small" @click.stop="loadAccounts">刷新</el-button>
+          </div>
+        </template>
+        <el-table :data="accounts" stripe size="small">
+          <el-table-column label="账号" prop="account_identifier" min-width="160" />
+          <el-table-column label="区域" prop="api_region" width="100" />
+          <el-table-column label="额度压力" width="100">
+            <template #default="{ row }">{{ row.tier_pressure_pct?.toFixed?.(1) ?? row.tier_pressure_pct }}%</template>
+          </el-table-column>
+          <el-table-column label="就绪" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.pool_ready ? 'success' : 'danger'" size="small">
+                {{ row.pool_ready ? '就绪' : '未就绪' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="入池" width="88" align="center">
+            <template #default="{ row }">
+              <el-switch
+                :model-value="row.cp_proxy_enabled"
+                :disabled="!canWrite || (!row.cp_proxy_enabled && !row.pool_ready)"
+                @change="(v: boolean) => togglePool(row, v)"
+              />
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-collapse-item>
+    </el-collapse>
 
     <div class="section">
       <div class="section-head">
@@ -368,7 +372,14 @@ const router = useRouter()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const loading = ref(false)
 const vendorTab = ref('glm')
+/** 默认折叠；展开时包含 "pool" */
+const poolSectionOpen = ref<string[]>([])
 const accounts = ref<CpAccount[]>([])
+const poolAccountsTitle = computed(() => {
+  const total = accounts.value.length
+  const enabled = accounts.value.filter((a) => a.cp_proxy_enabled).length
+  return `入池账号（${enabled}/${total}）`
+})
 const keys = ref<CpKey[]>([])
 const openaiEndpoints = ref<OpenAiEndpoint[]>([])
 const members = ref<MemberOption[]>([])
@@ -691,6 +702,34 @@ defineExpose({
 }
 .section {
   margin-top: 16px;
+}
+.pool-collapse {
+  border: none;
+}
+.pool-collapse :deep(.el-collapse-item__header) {
+  height: auto;
+  line-height: 1.4;
+  border: none;
+  background: transparent;
+}
+.pool-collapse :deep(.el-collapse-item__wrap) {
+  border: none;
+}
+.pool-collapse :deep(.el-collapse-item__content) {
+  padding-bottom: 0;
+}
+.pool-collapse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  gap: 12px;
+  padding-right: 8px;
+}
+.pool-collapse-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 .section-head {
   display: flex;
