@@ -620,6 +620,17 @@ class ProxyKeyUsage(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
+class CpOpenAiStickyBinding(Base):
+    """Per pkcp_ key: bound Coding Plan credential for Switch dwell stickiness."""
+
+    __tablename__ = "cp_openai_sticky_bindings"
+
+    proxy_key_id: Mapped[str] = mapped_column(ForeignKey("proxy_keys.id"), primary_key=True)
+    credential_id: Mapped[str] = mapped_column(String(36), index=True)
+    sticky_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class ProxyEvent(Base):
     __tablename__ = "proxy_events"
 

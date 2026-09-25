@@ -240,6 +240,76 @@ def test_cp_key_usage_summary_and_usages_endpoint():
     session.close()
 
 
+def test_cp_sticky_reuses_credential_within_dwell(session):
+    from pulse.config import AppConfig, LoanSelectionConfig, TenantConfig, ToolCenterConfig
+    from pulse.openai_proxy.sticky_pick import resolve_cp_credential
+    from pulse.storage.models import CpOpenAiStickyBinding
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-st", display_name="MSt")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    vendor = session.scalar(select(AiVendor).where(AiVendor.slug == "glm"))
+    plan = session.scalar(select(AiPlan).where(AiPlan.vendor_id == vendor.id))
+    for ident in ("glm-a@test", "glm-b@test"):
+        acc = AiAccount(
+            team_id=team.id,
+            vendor_id=vendor.id,
+            plan_id=plan.id,
+            account_identifier=ident,
+            api_region="zai",
+            cp_proxy_enabled=True,
+        )
+        session.add(acc)
+        session.flush()
+        session.add(
+            AiAccountCredential(
+                account_id=acc.id,
+                vendor_id=vendor.id,
+                credential_type="coding_plan_api_key",
+                encrypted_value=encrypt_secret(f"key-{ident}", TEST_KEY),
+                key_hint="k…",
+                key_role="primary",
+                bound_by_member_id=member.id,
+                last_sync_status="success",
+                last_sync_at=datetime.now(UTC),
+            )
+        )
+    key, _plain = create_coding_plan_key(
+        session,
+        name="sticky",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        tool_center=ToolCenterConfig(loan_selection=LoanSelectionConfig(min_switch_minutes=30)),
+    )
+    first = resolve_cp_credential(
+        session,
+        proxy_key_id=key.id,
+        vendor_slug="glm",
+        encryption_key=TEST_KEY,
+        config=config,
+        team_id=team.id,
+    )
+    assert first and first["account_identifier"] == "glm-a@test"
+    session.commit()
+    second = resolve_cp_credential(
+        session,
+        proxy_key_id=key.id,
+        vendor_slug="glm",
+        encryption_key=TEST_KEY,
+        config=config,
+        team_id=team.id,
+    )
+    assert second and second["credential_id"] == first["credential_id"]
+    binding = session.get(CpOpenAiStickyBinding, key.id)
+    assert binding is not None
+
+
 def test_cp_key_revoke_endpoint():
     from fastapi.testclient import TestClient
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig

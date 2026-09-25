@@ -249,10 +249,21 @@ type OpenAIResolveResult struct {
 	Reason           string `json:"reason"`
 }
 
-func (c *PulseClient) ResolveOpenAI(pulseKey string, excludeCredentialIDs []string) (OpenAIResolveResult, error) {
+func (c *PulseClient) ResolveOpenAI(
+	pulseKey string,
+	excludeCredentialIDs []string,
+	currentCredentialID string,
+	releaseCurrent bool,
+) (OpenAIResolveResult, error) {
 	payload := map[string]any{
 		"pulse_key":                pulseKey,
 		"exclude_credential_ids": excludeCredentialIDs,
+	}
+	if currentCredentialID != "" {
+		payload["current_credential_id"] = currentCredentialID
+	}
+	if releaseCurrent {
+		payload["release_current"] = true
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/openai-proxy/resolve", bytes.NewReader(body))
