@@ -148,6 +148,8 @@ class ToolCenterRepository:
         shared_note: str | None = None,
         ownership: str = "company",
         usage_resets_on: date | None = None,
+        api_region: str | None = None,
+        proxy_enabled: bool = False,
     ) -> AiAccount:
         now = datetime.now(UTC)
         account = AiAccount(
@@ -160,6 +162,8 @@ class ToolCenterRepository:
             shared_note=shared_note,
             ownership=ownership,
             usage_resets_on=usage_resets_on,
+            api_region=api_region,
+            proxy_enabled=proxy_enabled,
             created_at=now,
             updated_at=now,
         )

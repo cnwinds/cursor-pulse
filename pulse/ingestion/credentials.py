@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from pulse.ingestion.crypto import decrypt_secret, encrypt_secret, mask_api_key
 from pulse.ingestion.sync_schedule import init_schedule_on_bind
@@ -103,6 +103,56 @@ class CredentialService:
                 account_id=account_id,
                 vendor_id=account.vendor_id,
                 credential_type="cursor_api_key",
+                encrypted_value=encrypted,
+                key_hint=mask_api_key(api_key),
+                key_hash=key_hash,
+                key_role="primary",
+                bound_by_member_id=member_id,
+                last_validated_at=now,
+            )
+            self.session.add(cred)
+        init_schedule_on_bind(cred)
+        self.session.commit()
+        return cred
+
+    def bind_coding_plan_api_key(
+        self,
+        *,
+        account_id: str,
+        api_key: str,
+        member_id: str,
+    ) -> AiAccountCredential:
+        account = self.session.scalar(
+            select(AiAccount)
+            .options(joinedload(AiAccount.vendor))
+            .where(AiAccount.id == account_id)
+        )
+        if not account:
+            raise ValueError("account not found")
+        if not account.vendor or account.vendor.slug not in ("glm", "minimax"):
+            raise ValueError("not a coding plan account")
+
+        encrypted = encrypt_secret(api_key, self.encryption_key)
+        now = datetime.now(UTC)
+        cred = self.get_primary_credential(account_id)
+        key_hash = hash_proxy_key(api_key)
+        cred_type = "glm_api_key" if account.vendor.slug == "glm" else "minimax_api_key"
+        if cred:
+            cred.key_role = "primary"
+            cred.encrypted_value = encrypted
+            cred.key_hint = mask_api_key(api_key)
+            cred.key_hash = key_hash
+            cred.credential_type = cred_type
+            cred.status = "active"
+            cred.bound_by_member_id = member_id
+            cred.bound_at = now
+            cred.last_validated_at = now
+            cred.sync_enabled = True
+        else:
+            cred = AiAccountCredential(
+                account_id=account_id,
+                vendor_id=account.vendor_id,
+                credential_type=cred_type,
                 encrypted_value=encrypted,
                 key_hint=mask_api_key(api_key),
                 key_hash=key_hash,

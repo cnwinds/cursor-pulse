@@ -13,7 +13,8 @@ from pulse.ingestion.on_demand import (
     resolve_admin_dingtalk_ids,
     resolve_on_demand_notify_dingtalk_ids,
 )
-from pulse.ingestion.sync import CursorSyncService
+from pulse.ingestion.sync_dispatch import sync_account_by_vendor
+from pulse.integrations.cursor_api import CursorApiClient
 from pulse.ingestion.sync_errors import FatalSyncError, classify_sync_error
 from pulse.ingestion.sync_schedule import (
     account_jitter_sec,
@@ -99,16 +100,24 @@ def run_sync_tick(
         batch_size = max(batch_size, config.cursor_sync.pre_publish_batch_size)
 
     synced = 0
-    sync = CursorSyncService(
-        session,
-        encryption_key,
-        on_demand_notify=_make_on_demand_notify(session, config, notify_admins),
-        enforce_on_demand_disabled=config.cursor_sync.enforce_on_demand_disabled,
-        app_config=config,
-    )
+    on_demand_notify = _make_on_demand_notify(session, config, notify_admins)
+    cursor_client = CursorApiClient()
     for cred in due[:batch_size]:
+        account = session.get(AiAccount, cred.account_id)
+        if not account:
+            continue
         try:
-            sync.sync_account(cred.account_id, channel="scheduler")
+            sync_account_by_vendor(
+                session,
+                encryption_key,
+                account,
+                cred.account_id,
+                channel="scheduler",
+                cursor_client=cursor_client,
+                on_demand_notify=on_demand_notify,
+                enforce_on_demand_disabled=config.cursor_sync.enforce_on_demand_disabled,
+                app_config=config,
+            )
             cred = session.get(AiAccountCredential, cred.id) or cred
             apply_sync_success(cred, config, now=datetime.now(UTC))
             synced += 1
