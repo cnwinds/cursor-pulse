@@ -10,8 +10,8 @@ import pytest
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.openai_proxy.authorize import authorize_pkcp
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries, pick_cp_credential
-from pulse.openai_proxy.usage import parse_openai_usage
 from pulse.openai_proxy.upstream import coding_plan_gateway_public_base, openai_base_url
+from pulse.openai_proxy.usage import parse_openai_usage
 from pulse.proxy.key_crud import create_coding_plan_key
 from pulse.storage.db import init_db
 from pulse.storage.models import AiAccount, AiAccountCredential, AiPlan, AiVendor, Member, Team
@@ -108,7 +108,6 @@ def test_parse_openai_usage():
 
 def test_internal_openai_resolve():
     from fastapi.testclient import TestClient
-
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
     from pulse.web.app import create_app
 
