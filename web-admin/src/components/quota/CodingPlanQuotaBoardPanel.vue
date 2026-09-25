@@ -1,8 +1,5 @@
 <template>
   <div class="coding-plan-quota" v-loading="loading">
-    <div class="panel-toolbar">
-      <el-button @click="loadAll">刷新</el-button>
-    </div>
     <p class="desc muted">
       与 {{ vendorLabel }} Coding Plan 官方窗口额度对齐（无历史用量明细）。
     </p>
@@ -155,14 +152,11 @@ async function syncAccount(item: BoardItem) {
 }
 
 onMounted(loadAll)
+
+defineExpose({ loadAll })
 </script>
 
 <style scoped>
-.panel-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
 .desc {
   margin: 0 0 16px;
   font-size: 13px;

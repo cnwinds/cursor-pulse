@@ -21,11 +21,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import CursorAccountsPanel from '@/components/accounts/CursorAccountsPanel.vue'
 import CodingPlanAccountsPanel from '@/components/accounts/CodingPlanAccountsPanel.vue'
 
+const route = useRoute()
 const activeTab = ref('cursor')
+
+const TAB_NAMES = new Set(['cursor', 'glm', 'minimax'])
+
+function syncTabFromRoute() {
+  const tab = route.query.tab
+  if (typeof tab === 'string' && TAB_NAMES.has(tab)) {
+    activeTab.value = tab
+  }
+}
+
+onMounted(syncTabFromRoute)
+watch(() => route.query.tab, syncTabFromRoute)
 </script>
 
 <style scoped>
