@@ -121,7 +121,10 @@
           </el-select>
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="createForm.name" placeholder="可选，便于区分密钥用途" />
+          <el-input
+            v-model="createForm.name"
+            placeholder="可选；留空则备注列显示密钥 Hint（如 pkcp_…）"
+          />
         </el-form-item>
       </el-form>
       <template v-if="createdKey">

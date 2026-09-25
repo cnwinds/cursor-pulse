@@ -105,23 +105,26 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         member = session.get(Member, body.member_id)
         if member is None:
             raise HTTPException(status_code=400, detail="归属成员不存在")
-        name = (body.name or "").strip() or f"{body.coding_plan_vendor.upper()} OpenAI"
+        user_name = (body.name or "").strip()
         enc = (config.credentials.encryption_key or "").strip()
         key, plaintext = key_crud.create_coding_plan_key(
             session,
-            name=name,
+            name=user_name or "pkcp",
             member_id=member.id,
             coding_plan_vendor=body.coding_plan_vendor,
             window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
             window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
             encryption_key=enc,
         )
+        if not user_name:
+            key.name = key.key_hint
         session.commit()
         row = proxy_service.key_summary(session, key)
         row["plaintext_key"] = plaintext
         row["member_name"] = member.display_name
         row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
         row["usage_hint"] = "OpenAI SDK: base_url + api_key=pkcp_…；走 Coding Plan 账号池转发"
+        row["name_auto_from_hint"] = not bool(user_name)
         return row
 
     @app.get(
