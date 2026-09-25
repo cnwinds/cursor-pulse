@@ -181,6 +181,52 @@ def test_internal_openai_resolve():
     session.close()
 
 
+def test_create_cp_proxy_key_empty_remark_leaves_name_blank():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.web.app import create_app
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-empty", display_name="Empty")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    session.commit()
+
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    resp = client.post(
+        "/api/v2/openai-proxy/keys",
+        headers=headers,
+        json={
+            "member_id": member.id,
+            "coding_plan_vendor": "glm",
+            "name": "   ",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == ""
+    assert body["key_hint"].startswith("pkcp_")
+    assert body["name"] != body["key_hint"]
+    session.close()
+
+
 def test_cp_key_usage_summary_and_usages_endpoint():
     from fastapi.testclient import TestClient
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
