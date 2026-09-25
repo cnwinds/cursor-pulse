@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from pulse.proxy import usage as usage_mod
 from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
+from pulse.proxy.keys import generate_coding_plan_proxy_key, generate_proxy_key, hash_proxy_key
 from pulse.storage.models import ProxyEvent, ProxyKey
 from pulse.util.datetime_fmt import serialize_datetime
 
@@ -59,6 +59,44 @@ def create_key(
         name=name,
         member_id=member_id,
         mode="quota",
+        window_5h_cost_limit_cents=window_5h_cost_limit_cents,
+        window_7d_cost_limit_cents=window_7d_cost_limit_cents,
+        expires_at=expires_at,
+    )
+    session.add(key)
+    session.flush()
+    return key, plaintext
+
+
+def create_coding_plan_key(
+    session: Session,
+    *,
+    name: str,
+    member_id: str,
+    coding_plan_vendor: str,
+    window_5h_cost_limit_cents: int | None = None,
+    window_7d_cost_limit_cents: int | None = None,
+    expires_at: datetime | None = None,
+    encryption_key: str = "",
+) -> tuple[ProxyKey, str]:
+    from pulse.openai_proxy.upstream import CP_VENDORS
+    from pulse.ingestion.crypto import encrypt_secret
+
+    vendor = coding_plan_vendor.strip().lower()
+    if vendor not in CP_VENDORS:
+        raise ValueError(f"unsupported coding_plan_vendor: {coding_plan_vendor}")
+    plaintext, key_hash, hint = generate_coding_plan_proxy_key()
+    encrypted = None
+    if encryption_key.strip():
+        encrypted = encrypt_secret(plaintext, encryption_key.strip())
+    key = ProxyKey(
+        key_hash=key_hash,
+        key_hint=hint,
+        encrypted_key=encrypted,
+        name=name,
+        member_id=member_id,
+        mode="coding_plan",
+        coding_plan_vendor=vendor,
         window_5h_cost_limit_cents=window_5h_cost_limit_cents,
         window_7d_cost_limit_cents=window_7d_cost_limit_cents,
         expires_at=expires_at,
@@ -202,6 +240,7 @@ def _key_summary_row(
         "name": key.name,
         "member_id": key.member_id,
         "mode": key.mode,
+        "coding_plan_vendor": key.coding_plan_vendor,
         "window_5h_cost_limit_cents": key.window_5h_cost_limit_cents,
         "window_7d_cost_limit_cents": key.window_7d_cost_limit_cents,
         "window_5h_cost_usd": cents_to_usd(key.window_5h_cost_limit_cents),

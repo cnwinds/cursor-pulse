@@ -309,6 +309,8 @@ class AiAccount(Base):
     proxy_score_adjust: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比（None/0 = 不保留）
     proxy_reserve_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Coding Plan OpenAI 网关专用池（与 Cursor MITM proxy_enabled 分离）
+    cp_proxy_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # glm: zai | bigmodel — minimax: cn | global
     api_region: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # 智谱团队版（国内）：与 api_key 一并用于 ?type=2 额度查询
@@ -584,7 +586,8 @@ class ProxyKey(Base):
     encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str] = mapped_column(String(128))
     member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
-    mode: Mapped[str] = mapped_column(String(16), default="quota")  # always quota; empty windows = unlimited
+    mode: Mapped[str] = mapped_column(String(16), default="quota")  # quota | coding_plan
+    coding_plan_vendor: Mapped[str | None] = mapped_column(String(16), nullable=True)
     window_5h_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     window_7d_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")  # active|suspended|revoked

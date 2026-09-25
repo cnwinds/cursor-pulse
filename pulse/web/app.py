@@ -49,6 +49,8 @@ from pulse.web.schemas import ChatBody
 from pulse.web.settings_api import register_settings_routes
 from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
 from pulse.web.usage_analytics_api import register_usage_analytics_routes
+from pulse.openai_proxy.gateway import register_openai_gateway_routes
+from pulse.web.openai_proxy_api import register_openai_proxy_admin_routes
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +282,8 @@ def create_app(
     register_assistant_sessions_routes(app, get_db, require_capability, _team_repo, config)
     register_assistant_skills_routes(app, get_db, require_capability, _team_repo, config)
     register_assistant_prompts_routes(app, get_db, require_capability, _team_repo, config)
+    register_openai_gateway_routes(app, get_db, config)
+    register_openai_proxy_admin_routes(app, get_db, require_capability, config)
 
     if admin_spa_dir is not None:
         _mount_admin_static(app, admin_spa_dir)

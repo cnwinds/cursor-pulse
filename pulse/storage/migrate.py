@@ -31,6 +31,7 @@ _ACCOUNT_PROXY_COLUMNS: dict[str, str] = {
     "proxy_enabled": "BOOLEAN DEFAULT 0",
     "proxy_score_adjust": "FLOAT",
     "proxy_reserve_pct": "FLOAT",
+    "cp_proxy_enabled": "BOOLEAN DEFAULT 0",
 }
 
 _PROXY_USAGE_COLUMNS: dict[str, str] = {
@@ -41,6 +42,7 @@ _PROXY_KEY_COLUMNS: dict[str, str] = {
     "encrypted_key": "TEXT",
     "window_5h_cost_limit_cents": "INTEGER",
     "window_7d_cost_limit_cents": "INTEGER",
+    "coding_plan_vendor": "VARCHAR(16)",
 }
 _PROXY_EVENT_COLUMNS: dict[str, str] = {"loan_id": "VARCHAR(36)"}
 
