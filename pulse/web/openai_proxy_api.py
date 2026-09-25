@@ -26,6 +26,13 @@ class CreateCpProxyKeyBody(BaseModel):
     window_7d_cost_usd: int | None = Field(default=None, ge=1)
 
 
+def _get_cp_proxy_key(session: Session, key_id: str) -> ProxyKey:
+    key = session.get(ProxyKey, key_id)
+    if key is None or key.mode != "coding_plan":
+        raise HTTPException(status_code=404, detail="Coding Plan 密钥不存在")
+    return key
+
+
 def register_openai_proxy_admin_routes(app, get_db, require_capability, config) -> None:
     @app.get(
         "/api/v2/openai-proxy/pool",
@@ -148,9 +155,7 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         limit: int = Query(default=50, ge=1, le=200),
         session: Session = Depends(get_db),
     ):
-        key = session.get(ProxyKey, key_id)
-        if key is None or key.mode != "coding_plan":
-            raise HTTPException(status_code=404, detail="Coding Plan 密钥不存在")
+        key = _get_cp_proxy_key(session, key_id)
         rows = (
             session.execute(
                 select(ProxyKeyUsage).where(ProxyKeyUsage.proxy_key_id == key_id).order_by(ProxyKeyUsage.ts.desc())
@@ -170,3 +175,28 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
             "window_7d_tokens": summary.get("window_7d_tokens", 0),
         }
         return rollup
+
+    @app.post(
+        "/api/v2/openai-proxy/keys/{key_id}/revoke",
+        dependencies=[Depends(require_capability("proxy:write"))],
+    )
+    def revoke_cp_proxy_key(key_id: str, session: Session = Depends(get_db)):
+        key = _get_cp_proxy_key(session, key_id)
+        if key.status == "revoked":
+            return proxy_service.key_summary(session, key)
+        key.status = "revoked"
+        key.updated_at = proxy_service.utcnow()
+        proxy_service.record_event(session, event_type="revoked", proxy_key_id=key.id)
+        session.commit()
+        return proxy_service.key_summary(session, key)
+
+    @app.post(
+        "/api/v2/openai-proxy/keys/{key_id}/resume",
+        dependencies=[Depends(require_capability("proxy:write"))],
+    )
+    def resume_cp_proxy_key(key_id: str, session: Session = Depends(get_db)):
+        key = _get_cp_proxy_key(session, key_id)
+        if not proxy_service.resume_key(session, key):
+            raise HTTPException(status_code=409, detail="该 key 非 suspended 状态，无法恢复")
+        session.commit()
+        return proxy_service.key_summary(session, key)

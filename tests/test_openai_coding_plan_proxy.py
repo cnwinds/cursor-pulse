@@ -240,6 +240,50 @@ def test_cp_key_usage_summary_and_usages_endpoint():
     session.close()
 
 
+def test_cp_key_revoke_endpoint():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.openai_proxy.authorize import authorize_pkcp
+    from pulse.web.app import create_app
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-rev", display_name="MRev")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    _key, plain = create_coding_plan_key(
+        session,
+        name="revoke-me",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    assert authorize_pkcp(session, plain)["status"] == "ok"
+    resp = client.post(f"/api/v2/openai-proxy/keys/{_key.id}/revoke", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "revoked"
+    session.expire_all()
+    assert authorize_pkcp(session, plain)["status"] == "invalid"
+    session.close()
+
+
 def test_cp_admin_accounts_list(session):
     team, _repo = make_team_repo(session)
     member = Member(team_id=team.id, channel_user_id="m3", display_name="M3")

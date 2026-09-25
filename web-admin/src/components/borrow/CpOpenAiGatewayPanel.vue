@@ -52,7 +52,11 @@
         <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
         <el-table-column label="归属" prop="member_name" width="100" />
         <el-table-column label="Hint" prop="key_hint" width="120" />
-        <el-table-column label="状态" prop="status" width="88" />
+        <el-table-column label="状态" width="96">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="累计用量" min-width="140">
           <template #default="{ row }">
             <div class="usage-cell">
@@ -67,9 +71,27 @@
         <el-table-column label="近 7d" width="88" align="right">
           <template #default="{ row }">{{ formatTokens(row.window_7d_tokens ?? 0) }}</template>
         </el-table-column>
-        <el-table-column label="" width="88" align="center">
+        <el-table-column label="操作" width="120" align="center" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click.stop="openUsages(row)">用量</el-button>
+            <el-button
+              v-if="canWrite && row.status === 'active'"
+              link
+              type="danger"
+              size="small"
+              @click.stop="confirmRevoke(row)"
+            >
+              吊销
+            </el-button>
+            <el-button
+              v-if="canWrite && row.status === 'suspended'"
+              link
+              type="warning"
+              size="small"
+              @click.stop="resumeKey(row)"
+            >
+              恢复
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -177,7 +199,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { formatTokens, formatTokensM } from '@/utils/usage'
@@ -366,8 +388,55 @@ async function submitCreate() {
   }
 }
 
+function statusLabel(status: string) {
+  const map: Record<string, string> = {
+    active: '有效',
+    revoked: '已吊销',
+    suspended: '已停用',
+  }
+  return map[status] || status
+}
+
+function statusTagType(status: string) {
+  if (status === 'active') return 'success'
+  if (status === 'suspended') return 'warning'
+  if (status === 'revoked') return 'info'
+  return 'info'
+}
+
 function onKeyRowClick(row: CpKey) {
   openUsages(row)
+}
+
+async function confirmRevoke(row: CpKey) {
+  try {
+    await ElMessageBox.confirm(
+      `吊销后客户端将无法再使用该密钥（${row.key_hint}）。此操作不可撤销。`,
+      '吊销 pkcp_ 密钥',
+      { type: 'warning', confirmButtonText: '吊销', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await client.post(`/api/v2/openai-proxy/keys/${row.id}/revoke`)
+    ElMessage.success('已吊销')
+    await loadKeys()
+  } catch (err: unknown) {
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '吊销失败')
+  }
+}
+
+async function resumeKey(row: CpKey) {
+  try {
+    await client.post(`/api/v2/openai-proxy/keys/${row.id}/resume`)
+    ElMessage.success('已恢复')
+    await loadKeys()
+  } catch (err: unknown) {
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '恢复失败')
+  }
 }
 
 async function openUsages(row: CpKey) {
