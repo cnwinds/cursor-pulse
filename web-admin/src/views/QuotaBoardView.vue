@@ -8,14 +8,25 @@
     </header>
     <div class="tabs-row">
       <el-tabs v-model="activeTab" class="vendor-tabs">
-        <el-tab-pane label="Cursor" name="cursor">
-          <CursorQuotaBoardPanel ref="cursorPanelRef" />
+        <el-tab-pane name="cursor">
+          <template #label>Cursor ({{ tabCounts.cursor }})</template>
+          <CursorQuotaBoardPanel ref="cursorPanelRef" @count-change="tabCounts.cursor = $event" />
         </el-tab-pane>
-        <el-tab-pane label="GLM" name="glm">
-          <CodingPlanQuotaBoardPanel ref="glmPanelRef" vendor="glm" />
+        <el-tab-pane name="glm">
+          <template #label>GLM ({{ tabCounts.glm }})</template>
+          <CodingPlanQuotaBoardPanel
+            ref="glmPanelRef"
+            vendor="glm"
+            @count-change="tabCounts.glm = $event"
+          />
         </el-tab-pane>
-        <el-tab-pane label="MiniMax" name="minimax">
-          <CodingPlanQuotaBoardPanel ref="minimaxPanelRef" vendor="minimax" />
+        <el-tab-pane name="minimax">
+          <template #label>MiniMax ({{ tabCounts.minimax }})</template>
+          <CodingPlanQuotaBoardPanel
+            ref="minimaxPanelRef"
+            vendor="minimax"
+            @count-change="tabCounts.minimax = $event"
+          />
         </el-tab-pane>
       </el-tabs>
       <div class="tabs-actions">
@@ -27,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import CursorQuotaBoardPanel from '@/components/quota/CursorQuotaBoardPanel.vue'
 import CodingPlanQuotaBoardPanel from '@/components/quota/CodingPlanQuotaBoardPanel.vue'
@@ -36,6 +47,7 @@ import { useAuthStore } from '@/stores/auth'
 type QuotaPanelRef = { loadAll: () => void | Promise<void> }
 
 const activeTab = ref('cursor')
+const tabCounts = reactive({ cursor: 0, glm: 0, minimax: 0 })
 const router = useRouter()
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))

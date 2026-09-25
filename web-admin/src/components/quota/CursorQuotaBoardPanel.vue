@@ -290,6 +290,8 @@ import {
   type UsageSummary,
 } from '@/utils/usage'
 import { formatChinaTime, formatResetCountdown } from '@/utils/time'
+const emit = defineEmits<{ countChange: [count: number] }>()
+
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 
@@ -494,6 +496,7 @@ async function loadAll() {
       if (item.usage_summary) merged[item.account_id] = item.usage_summary
     }
     summaryMap.value = merged
+    emit('countChange', board.value.length)
   } finally {
     loading.value = false
   }

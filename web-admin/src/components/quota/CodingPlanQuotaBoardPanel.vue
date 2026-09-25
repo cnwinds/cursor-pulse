@@ -65,6 +65,8 @@ const props = defineProps<{
   vendor: 'glm' | 'minimax'
 }>()
 
+const emit = defineEmits<{ countChange: [count: number] }>()
+
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 const vendorLabel = computed(() => (props.vendor === 'glm' ? 'GLM' : 'MiniMax'))
@@ -132,6 +134,7 @@ async function loadAll() {
   try {
     const res = await client.get('/api/v2/quota-board', { params: { vendor: props.vendor } })
     board.value = res.data
+    emit('countChange', board.value.length)
   } finally {
     loading.value = false
   }
