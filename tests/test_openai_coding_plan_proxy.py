@@ -10,11 +10,11 @@ import pytest
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.openai_proxy.authorize import authorize_pkcp
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries, pick_cp_credential
-from pulse.openai_proxy.upstream import coding_plan_gateway_public_base, openai_base_url
+from pulse.openai_proxy.upstream import coding_plan_gateway_public_base, cp_gateway_endpoints, openai_base_url
 from pulse.openai_proxy.usage import parse_openai_usage
 from pulse.proxy.key_crud import create_coding_plan_key
 from pulse.storage.db import init_db
-from pulse.storage.models import AiAccount, AiAccountCredential, AiPlan, AiVendor, Member, Team
+from pulse.storage.models import AiAccount, AiAccountCredential, AiPlan, AiVendor, Member, Team, TeamSetting
 from pulse.tool_center.seed import seed_v2_catalog
 from sqlalchemy import select
 from tests.conftest import make_team_repo
@@ -178,6 +178,71 @@ def test_internal_openai_resolve():
     assert body["status"] == "ok"
     assert body["api_key"] == "resolve-key"
     assert body["upstream_chat_url"].endswith("/chat/completions")
+    session.close()
+
+
+def test_cp_gateway_endpoints_uses_team_proxy_addresses(session):
+    from pulse.config import AppConfig, ProxyConfig, TenantConfig
+
+    team, _repo = make_team_repo(session)
+    session.add(
+        TeamSetting(
+            team_id=team.id,
+            section="proxy_addresses",
+            data={
+                "addresses": [
+                    {"url": "http://192.168.11.39:8317", "display_name": "公司"},
+                    {"url": "http://116.236.221.185:8317", "display_name": "外网"},
+                ]
+            },
+        )
+    )
+    session.commit()
+    config = AppConfig(
+        tenant=TenantConfig(slug="test", name="T"),
+        proxy=ProxyConfig(public_url="http://127.0.0.1:8317"),
+    )
+    endpoints = cp_gateway_endpoints(session=session, config=config)
+    assert len(endpoints) == 2
+    assert endpoints[0]["display_name"] == "公司"
+    assert endpoints[0]["openai_base_url"] == "http://192.168.11.39:8317/openai/v1"
+    assert endpoints[1]["openai_base_url"] == "http://116.236.221.185:8317/openai/v1"
+
+
+def test_cp_openai_endpoints_api():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.web.app import create_app
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, repo = make_team_repo(session)
+    session.add(
+        TeamSetting(
+            team_id=team.id,
+            section="proxy_addresses",
+            data={"addresses": [{"url": "http://proxy.example.com:8317", "display_name": "示例"}]},
+        )
+    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    resp = client.get("/api/v2/openai-proxy/endpoints", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["endpoints"][0]["openai_base_url"] == "http://proxy.example.com:8317/openai/v1"
     session.close()
 
 
