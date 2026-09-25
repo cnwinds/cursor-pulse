@@ -47,9 +47,9 @@
         <el-button v-if="canWrite" type="primary" size="small" @click="openCreateKey">签发密钥</el-button>
       </div>
       <el-table :data="keys" stripe size="small">
-        <el-table-column label="名称" prop="name" min-width="120" />
+        <el-table-column label="归属" prop="member_name" min-width="140" />
+        <el-table-column label="备注" prop="name" min-width="120" />
         <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
-        <el-table-column label="归属" prop="member_name" width="100" />
         <el-table-column label="Hint" prop="key_hint" width="120" />
         <el-table-column label="状态" prop="status" width="88" />
         <el-table-column label="Tokens" prop="total_tokens" width="88" />
@@ -71,8 +71,8 @@
             <el-option v-for="m in members" :key="m.id" :label="m.display_name" :value="m.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="名称">
-          <el-input v-model="createForm.name" placeholder="可选" />
+        <el-form-item label="备注">
+          <el-input v-model="createForm.name" placeholder="可选，便于区分密钥用途" />
         </el-form-item>
       </el-form>
       <template v-if="createdKey">
