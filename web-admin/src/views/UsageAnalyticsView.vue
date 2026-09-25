@@ -5,11 +5,25 @@
         <h2>用量分析</h2>
         <p class="desc">
           选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。
+          GLM / MiniMax Coding Plan 无历史用量，不在此页统计。
           <span v-if="overview?.timezone" class="tz">时区 {{ overview.timezone }}</span>
         </p>
       </div>
       <el-button @click="loadOverview">刷新</el-button>
     </header>
+
+    <el-alert
+      v-if="codingPlanAccountCount > 0"
+      type="info"
+      :closable="false"
+      show-icon
+      class="cp-hint"
+    >
+      团队内有 {{ codingPlanAccountCount }} 个 GLM / MiniMax Coding Plan 账号：仅同步窗口额度快照，无按日用量。
+      请前往
+      <router-link to="/quota-board">额度看板</router-link>
+      查看 5h / 周额度。
+    </el-alert>
 
     <el-card shadow="never" class="filter-card">
       <div class="filters">
@@ -230,6 +244,7 @@ interface AccountRow {
   id: string
   account_identifier: string
   primary_member_id?: string | null
+  vendor_slug?: string | null
 }
 
 interface MemberRow {
@@ -307,6 +322,7 @@ const loading = ref(false)
 const overview = ref<Overview | null>(null)
 const accounts = ref<AccountRow[]>([])
 const members = ref<MemberRow[]>([])
+const codingPlanAccountCount = ref(0)
 const rangePreset = ref<RangePreset>('this_month')
 const dateRange = ref<[string, string] | null>(null)
 const filterAccountIds = ref<string[]>([])
@@ -541,12 +557,15 @@ async function openDrill(row: TableRow) {
 }
 
 async function loadFilters() {
-  const [accRes, memberRes] = await Promise.all([
-    client.get('/api/v2/accounts'),
+  const [accRes, memberRes, glmRes, minimaxRes] = await Promise.all([
+    client.get('/api/v2/accounts', { params: { vendor_slug: 'cursor' } }),
     client.get('/api/v2/members'),
+    client.get('/api/v2/accounts', { params: { vendor_slug: 'glm' } }),
+    client.get('/api/v2/accounts', { params: { vendor_slug: 'minimax' } }),
   ])
   accounts.value = accRes.data
   members.value = memberRes.data
+  codingPlanAccountCount.value = (glmRes.data?.length || 0) + (minimaxRes.data?.length || 0)
 }
 
 async function loadOverview() {
@@ -596,6 +615,16 @@ onMounted(async () => {
 .page-header h2 {
   margin: 0 0 4px;
   font-size: 20px;
+}
+.cp-hint {
+  margin-bottom: 12px;
+}
+.cp-hint a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.cp-hint a:hover {
+  text-decoration: underline;
 }
 .desc {
   margin: 0;

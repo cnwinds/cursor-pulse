@@ -98,6 +98,8 @@ const props = defineProps<{
   vendorSlug: 'glm' | 'minimax'
 }>()
 
+const emit = defineEmits<{ countChange: [count: number] }>()
+
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 
@@ -235,10 +237,13 @@ async function loadAll() {
     vendor.value =
       vendorRes.data.find((v: { slug?: string }) => v.slug === props.vendorSlug) || null
     applyCredentialMap(accounts.value)
+    emit('countChange', accounts.value.length)
   } finally {
     loading.value = false
   }
 }
+
+defineExpose({ loadAll })
 
 function resetForm() {
   form.api_region = regionOptions.value[0]?.value || ''

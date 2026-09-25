@@ -186,6 +186,8 @@ import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { formatChinaTime } from '@/utils/time'
 
+const emit = defineEmits<{ countChange: [count: number] }>()
+
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 
@@ -444,10 +446,13 @@ async function loadAll() {
     plans.value = planRes.data
     members.value = memberRes.data
     applyCredentialMapFromAccounts(accounts.value)
+    emit('countChange', accounts.value.length)
   } finally {
     loading.value = false
   }
 }
+
+defineExpose({ loadAll })
 
 function resetForm() {
   form.vendor_id = cursorVendor.value?.id || ''
