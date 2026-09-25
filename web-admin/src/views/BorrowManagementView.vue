@@ -13,9 +13,6 @@
       <el-tab-pane v-if="canProxy" label="入池账号" name="pool" lazy>
         <PoolAccountsPanel />
       </el-tab-pane>
-      <el-tab-pane v-if="canProxy" label="OpenAI 网关" name="openai-gateway" lazy>
-        <CpOpenAiGatewayPanel />
-      </el-tab-pane>
       <el-tab-pane v-if="canProxy" label="打分表" name="ranking" lazy>
         <PoolRankingPanel />
       </el-tab-pane>
@@ -24,6 +21,18 @@
       </el-tab-pane>
       <el-tab-pane v-if="canRules" label="Jev 决策" name="jev" lazy>
         <PoolJevSettingsPanel />
+      </el-tab-pane>
+      <el-tab-pane v-if="canProxy" name="openai-divider" disabled class="tab-divider-pane">
+        <template #label>
+          <span class="tab-group-divider" aria-hidden="true" />
+        </template>
+        <template #default><span /></template>
+      </el-tab-pane>
+      <el-tab-pane v-if="canProxy" name="openai-gateway" lazy class="openai-gateway-pane">
+        <template #label>
+          <span class="openai-tab-label">OpenAI 网关</span>
+        </template>
+        <CpOpenAiGatewayPanel />
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -109,5 +118,31 @@ function onTabChange(name: string | number) {
 }
 .main-tabs :deep(.el-tabs__header) {
   margin-bottom: 16px;
+}
+.main-tabs :deep(.el-tabs__item.tab-divider-pane),
+.main-tabs :deep(#tab-openai-divider) {
+  cursor: default;
+  padding: 0 4px !important;
+  pointer-events: none;
+}
+.main-tabs :deep(#tab-openai-divider.is-disabled) {
+  color: inherit;
+}
+.tab-group-divider {
+  display: inline-block;
+  width: 2px;
+  height: 18px;
+  margin: 0 12px;
+  vertical-align: middle;
+  border-radius: 1px;
+  background: var(--el-border-color-darker, #c0c4cc);
+  box-shadow: 1px 0 0 var(--el-border-color-lighter, #e4e7ed);
+}
+.openai-tab-label {
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+.main-tabs :deep(#tab-openai-gateway) {
+  padding-left: 4px;
 }
 </style>
