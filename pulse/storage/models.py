@@ -309,6 +309,8 @@ class AiAccount(Base):
     proxy_score_adjust: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比（None/0 = 不保留）
     proxy_reserve_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # glm: zai | bigmodel — minimax: cn | global
+    api_region: Mapped[str | None] = mapped_column(String(16), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -427,6 +429,8 @@ class AccountQuotaSnapshot(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    sync_kind: Mapped[str] = mapped_column(String(16), default="cursor")
+    quota_extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cycle_start: Mapped[date] = mapped_column(Date)
     cycle_end: Mapped[date] = mapped_column(Date)
     # Exact Cursor billingCycleStart/End (ms→UTC). Prefer over date-only EOD for hours_to_deadline.

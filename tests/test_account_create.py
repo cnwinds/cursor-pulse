@@ -108,7 +108,7 @@ def test_create_account_rejects_non_cursor_vendor(create_env):
         },
     )
     assert res.status_code == 400
-    assert "Cursor" in res.json()["detail"]
+    assert "不支持" in res.json()["detail"]
 
 
 def test_create_account_rejects_available_status(create_env):
@@ -127,7 +127,7 @@ def test_create_account_rejects_available_status(create_env):
     assert "类型无效" in res.json()["detail"]
 
 
-@patch("pulse.web.accounts_api.CursorApiClient")
+@patch("pulse.web.account_create_handlers.CursorApiClient")
 def test_create_account_autofills_from_key(mock_client_cls, create_env):
     client = create_env["client"]
     token = create_access_token(create_env["config"], create_env["owner"])
