@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
-from pulse.ingestion.sync import CursorSyncService
+from pulse.ingestion.sync_dispatch import sync_account_by_vendor
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
@@ -30,8 +30,8 @@ def _get_team_account(session: Session, team_id: str, account_id: str):
     account = repo.get_account(account_id)
     if not account or account.team_id != team_id:
         raise HTTPException(status_code=404, detail="账号不存在")
-    if not account.vendor or account.vendor.slug != "cursor":
-        raise HTTPException(status_code=400, detail="仅 Cursor 账号支持 API Key 绑定")
+    if not account.vendor or account.vendor.slug not in ("cursor", "glm", "minimax"):
+        raise HTTPException(status_code=400, detail="该账号类型不支持 API Key 绑定")
     return account, repo
 
 
@@ -91,19 +91,29 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
             raise HTTPException(status_code=403, detail="仅主使用人或管理员可绑定 API Key")
 
         api_key = body.api_key.strip()
-        if not api_key.startswith("crsr_"):
+        slug = account.vendor.slug if account.vendor else ""
+        if slug == "cursor" and not api_key.startswith("crsr_"):
             raise HTTPException(status_code=400, detail="API Key 须以 crsr_ 开头")
 
         enc_key = _encryption_key(config)
         cred_service = CredentialService(session, enc_key)
         try:
-            cred = cred_service.bind_cursor_api_key(
-                account_id=account_id,
-                api_key=api_key,
-                member_id=user.member.id,
-            )
-            sync_service = CursorSyncService(session, enc_key)
-            sync_result = sync_service.sync_account(
+            if slug == "cursor":
+                cred = cred_service.bind_cursor_api_key(
+                    account_id=account_id,
+                    api_key=api_key,
+                    member_id=user.member.id,
+                )
+            else:
+                cred = cred_service.bind_coding_plan_api_key(
+                    account_id=account_id,
+                    api_key=api_key,
+                    member_id=user.member.id,
+                )
+            sync_result = sync_account_by_vendor(
+                session,
+                enc_key,
+                account,
                 account_id,
                 channel="web",
                 member_id=user.member.id,
@@ -209,8 +219,13 @@ def register_credentials_routes(app, get_db, require_capability, team_repo_fn, c
             raise HTTPException(status_code=400, detail="账号未绑定有效的 API Key")
 
         try:
-            sync_service = CursorSyncService(session, enc_key)
-            result = sync_service.sync_account(account_id, channel="web")
+            result = sync_account_by_vendor(
+                session,
+                enc_key,
+                account,
+                account_id,
+                channel="web",
+            )
             cred = cred_service.get_credential(account_id)
             if cred and result.status == "success":
                 from pulse.ingestion.sync_schedule import apply_sync_success

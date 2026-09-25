@@ -30,6 +30,7 @@ from pulse.tool_center.burn_rate import (
     display_api_remaining_cents,
     display_remaining_cents,
 )
+from pulse.tool_center.coding_plan_board import analyze_coding_plan_burn, quota_tiers_for_board
 from pulse.tool_center.key_loan_auto import (
     record_auto_lender_decision,
     resolve_auto_lender,
@@ -129,13 +130,19 @@ def _board_item(
     primary_member_name = None
     if account.primary_member_id and member_names:
         primary_member_name = member_names.get(account.primary_member_id)
+    vendor_slug = account.vendor.slug if account.vendor else None
     base = {
         "account_id": account.id,
         "account_identifier": account.account_identifier,
         "primary_member_id": account.primary_member_id,
         "primary_member_name": primary_member_name,
         "vendor_name": account.vendor.name if account.vendor else None,
+        "vendor_slug": vendor_slug,
+        "display_mode": "coding_plan_tiers"
+        if vendor_slug in ("glm", "minimax")
+        else "cursor",
         "plan_name": account.plan.plan_name if account.plan else None,
+        "has_usage_detail": vendor_slug == "cursor",
         "usage_resets_on": account.usage_resets_on.isoformat() if account.usage_resets_on else None,
         "resets_on_source": account.resets_on_source,
         "has_snapshot": snapshot is not None,
@@ -165,7 +172,13 @@ def _board_item(
             "display_api_remaining_cents": None,
         }
     else:
-        analysis = analyze_burn_rate(snapshot, today)
+        is_coding_plan = getattr(snapshot, "sync_kind", "cursor") == "coding_plan" or base["display_mode"] == (
+            "coding_plan_tiers"
+        )
+        if is_coding_plan:
+            analysis = analyze_coding_plan_burn(snapshot, today)
+        else:
+            analysis = analyze_burn_rate(snapshot, today)
         item = {
             **base,
             "status": analysis.status,
@@ -176,7 +189,9 @@ def _board_item(
             "api_limit_usd": analysis.api_limit_usd,
             "quota_progress": analysis.quota_progress,
             "projected_exhaustion_date": (
-                analysis.projected_exhaustion_date.isoformat() if analysis.projected_exhaustion_date else None
+                analysis.projected_exhaustion_date.isoformat()
+                if analysis.projected_exhaustion_date
+                else None
             ),
             "exhausts_before_reset": analysis.exhausts_before_reset,
             "days_until_reset": analysis.days_until_reset,
@@ -186,9 +201,14 @@ def _board_item(
             "limit_cents": snapshot.limit_cents,
             "used_cents": snapshot.used_cents,
             "remaining_cents": snapshot.remaining_cents,
-            "display_remaining_cents": display_remaining_cents(snapshot),
-            "display_api_remaining_cents": display_api_remaining_cents(snapshot),
+            "display_remaining_cents": display_remaining_cents(snapshot)
+            if not is_coding_plan
+            else None,
+            "display_api_remaining_cents": display_api_remaining_cents(snapshot)
+            if not is_coding_plan
+            else None,
             "captured_at": serialize_datetime(snapshot.captured_at),
+            "quota_tiers": quota_tiers_for_board(snapshot) if is_coding_plan else [],
         }
     if sync_blocker:
         item["status"] = sync_blocker
@@ -205,11 +225,12 @@ def build_quota_board_items(
     session: Session,
     team_id: str,
     *,
+    vendor_slug: str | None = "cursor",
     include_usage_summaries: bool = False,
 ) -> list[dict]:
     repo = ToolCenterRepository(session, team_id)
     today = date.today()
-    accounts = repo.list_active_accounts(vendor_slug="cursor")
+    accounts = repo.list_active_accounts(vendor_slug=vendor_slug)
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
@@ -232,7 +253,7 @@ def build_quota_board_items(
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
-    if include_usage_summaries:
+    if include_usage_summaries and vendor_slug == "cursor":
         attach_board_usage_summaries(session, items)
     return items
 
@@ -253,10 +274,19 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     )
     def quota_board(
         include_summaries: bool = Query(default=False),
+        vendor: str | None = Query(default="cursor", alias="vendor"),
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        return build_quota_board_items(session, team.id, include_usage_summaries=include_summaries)
+        vendor_slug = (vendor or "cursor").strip().lower()
+        if vendor_slug not in ("cursor", "glm", "minimax"):
+            raise HTTPException(status_code=400, detail="vendor 须为 cursor、glm 或 minimax")
+        return build_quota_board_items(
+            session,
+            team.id,
+            vendor_slug=vendor_slug,
+            include_usage_summaries=include_summaries,
+        )
 
     @app.get(
         "/api/v2/quota-board/recommend",
