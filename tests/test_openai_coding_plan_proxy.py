@@ -181,6 +181,179 @@ def test_internal_openai_resolve():
     session.close()
 
 
+def test_cp_key_usage_summary_and_usages_endpoint():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.openai_proxy.usage import record_cp_gateway_usage
+    from pulse.web.app import create_app
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-u", display_name="MU")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    key, _plain = create_coding_plan_key(
+        session,
+        name="usage-key",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    record_cp_gateway_usage(
+        session,
+        proxy_key_id=key.id,
+        credential_id=None,
+        model="glm-5.2",
+        tokens={"input": 10, "output": 5, "total": 15},
+    )
+    session.commit()
+
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    owner = bootstrap_portal_owner(_repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    listed = client.get("/api/v2/openai-proxy/keys", headers=headers)
+    assert listed.status_code == 200
+    row = next(r for r in listed.json() if r["id"] == key.id)
+    assert row["total_tokens"] == 15
+    assert row["request_count"] == 1
+    assert row["window_5h_tokens"] == 15
+
+    detail = client.get(f"/api/v2/openai-proxy/keys/{key.id}/usages", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["summary"]["total_tokens"] == 15
+    assert body["by_model"][0]["model"] == "glm-5.2"
+    session.close()
+
+
+def test_cp_sticky_reuses_credential_within_dwell(session):
+    from pulse.config import AppConfig, LoanSelectionConfig, TenantConfig, ToolCenterConfig
+    from pulse.openai_proxy.sticky_pick import resolve_cp_credential
+    from pulse.storage.models import CpOpenAiStickyBinding
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-st", display_name="MSt")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    vendor = session.scalar(select(AiVendor).where(AiVendor.slug == "glm"))
+    plan = session.scalar(select(AiPlan).where(AiPlan.vendor_id == vendor.id))
+    for ident in ("glm-a@test", "glm-b@test"):
+        acc = AiAccount(
+            team_id=team.id,
+            vendor_id=vendor.id,
+            plan_id=plan.id,
+            account_identifier=ident,
+            api_region="zai",
+            cp_proxy_enabled=True,
+        )
+        session.add(acc)
+        session.flush()
+        session.add(
+            AiAccountCredential(
+                account_id=acc.id,
+                vendor_id=vendor.id,
+                credential_type="coding_plan_api_key",
+                encrypted_value=encrypt_secret(f"key-{ident}", TEST_KEY),
+                key_hint="k…",
+                key_role="primary",
+                bound_by_member_id=member.id,
+                last_sync_status="success",
+                last_sync_at=datetime.now(UTC),
+            )
+        )
+    key, _plain = create_coding_plan_key(
+        session,
+        name="sticky",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        tool_center=ToolCenterConfig(loan_selection=LoanSelectionConfig(min_switch_minutes=30)),
+    )
+    first = resolve_cp_credential(
+        session,
+        proxy_key_id=key.id,
+        vendor_slug="glm",
+        encryption_key=TEST_KEY,
+        config=config,
+        team_id=team.id,
+    )
+    assert first and first["account_identifier"] == "glm-a@test"
+    session.commit()
+    second = resolve_cp_credential(
+        session,
+        proxy_key_id=key.id,
+        vendor_slug="glm",
+        encryption_key=TEST_KEY,
+        config=config,
+        team_id=team.id,
+    )
+    assert second and second["credential_id"] == first["credential_id"]
+    binding = session.get(CpOpenAiStickyBinding, key.id)
+    assert binding is not None
+
+
+def test_cp_key_revoke_endpoint():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.openai_proxy.authorize import authorize_pkcp
+    from pulse.web.app import create_app
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-rev", display_name="MRev")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    _key, plain = create_coding_plan_key(
+        session,
+        name="revoke-me",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    assert authorize_pkcp(session, plain)["status"] == "ok"
+    resp = client.post(f"/api/v2/openai-proxy/keys/{_key.id}/revoke", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "revoked"
+    session.expire_all()
+    assert authorize_pkcp(session, plain)["status"] == "invalid"
+    session.close()
+
+
 def test_cp_admin_accounts_list(session):
     team, _repo = make_team_repo(session)
     member = Member(team_id=team.id, channel_user_id="m3", display_name="M3")

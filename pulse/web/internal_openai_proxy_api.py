@@ -10,14 +10,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from pulse.openai_proxy.authorize import authorize_pkcp
-from pulse.openai_proxy.pool import pick_cp_credential
+from pulse.openai_proxy.sticky_pick import resolve_cp_credential
 from pulse.openai_proxy.upstream import openai_base_url
 from pulse.openai_proxy.usage import parse_openai_usage, record_cp_gateway_usage
+from pulse.storage.models import Member, ProxyKey
 
 
 class OpenAIResolveBody(BaseModel):
     pulse_key: str = Field(min_length=1)
     exclude_credential_ids: list[str] = Field(default_factory=list)
+    current_credential_id: str | None = None
+    release_current: bool = False
 
 
 class OpenAIUsageBody(BaseModel):
@@ -56,12 +59,21 @@ def register_internal_openai_proxy_routes(app, get_db, config) -> None:
         if auth["status"] != "ok":
             return auth
         vendor = auth["coding_plan_vendor"]
-        assert vendor
-        entry = pick_cp_credential(
+        proxy_key_id = auth["proxy_key_id"]
+        assert vendor and proxy_key_id
+        key = session.get(ProxyKey, proxy_key_id)
+        member = session.get(Member, key.member_id) if key else None
+        team_id = member.team_id if member else None
+        entry = resolve_cp_credential(
             session,
+            proxy_key_id=proxy_key_id,
             vendor_slug=vendor,
             encryption_key=enc,
             exclude_credential_ids=set(body.exclude_credential_ids or []),
+            current_credential_id=(body.current_credential_id or "").strip() or None,
+            release_current=bool(body.release_current),
+            config=config,
+            team_id=team_id,
         )
         if entry is None:
             return {
@@ -70,6 +82,7 @@ def register_internal_openai_proxy_routes(app, get_db, config) -> None:
                 "coding_plan_vendor": vendor,
                 "reason": "empty_pool",
             }
+        session.commit()
         base = openai_base_url(vendor_slug=vendor, api_region=entry.get("api_region"))
         chat_url = f"{base.rstrip('/')}/chat/completions"
         return {

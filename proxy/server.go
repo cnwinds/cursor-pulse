@@ -27,6 +27,9 @@ type Server struct {
 	passthroughMu sync.Mutex
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
 
+	cpStickyMu  sync.Mutex
+	cpStickyCred map[string]string // pkcp_ pulse key → last credential id
+
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
 	// (true for Cursor backends); other allowlisted hosts are tunneled blindly.
 	shouldMITM func(authority string) bool

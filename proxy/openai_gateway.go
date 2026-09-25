@@ -42,9 +42,16 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 	model, _ := payload["model"].(string)
 
 	excluded := []string{}
+	releaseCurrent := false
+	var currentCred string
+	s.cpStickyMu.Lock()
+	currentCred = s.cpStickyCred[pulseKey]
+	s.cpStickyMu.Unlock()
+
 	const maxAttempts = 8
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		res, err := s.pulse.ResolveOpenAI(pulseKey, excluded)
+		res, err := s.pulse.ResolveOpenAI(pulseKey, excluded, currentCred, releaseCurrent)
+		releaseCurrent = false
 		if err != nil {
 			log.Printf("[openai] resolve error: %v", err)
 			writeOpenAIError(w, http.StatusBadGateway, "Control plane unavailable")
@@ -66,13 +73,18 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 		if upErr != nil {
 			log.Printf("[openai] upstream error: %v", upErr)
 			excluded = append(excluded, res.CredentialID)
+			currentCred = res.CredentialID
+			releaseCurrent = true
 			continue
 		}
 		if upResp.StatusCode == 429 || upResp.StatusCode == 502 || upResp.StatusCode == 503 || upResp.StatusCode == 529 {
 			upResp.Body.Close()
 			excluded = append(excluded, res.CredentialID)
+			currentCred = res.CredentialID
+			releaseCurrent = true
 			continue
 		}
+		s.rememberCpSticky(pulseKey, res.CredentialID)
 		if stream {
 			copyOpenAIUpstream(w, upResp)
 			return
@@ -169,6 +181,18 @@ func writeOpenAIModels(w http.ResponseWriter) {
 		`{"id":"glm-5.2","object":"model","owned_by":"glm"},` +
 		`{"id":"MiniMax-M2.5","object":"model","owned_by":"minimax"},` +
 		`{"id":"kimi-k2.5","object":"model","owned_by":"kimi"}]}`))
+}
+
+func (s *Server) rememberCpSticky(pulseKey, credentialID string) {
+	if pulseKey == "" || credentialID == "" {
+		return
+	}
+	s.cpStickyMu.Lock()
+	if s.cpStickyCred == nil {
+		s.cpStickyCred = map[string]string{}
+	}
+	s.cpStickyCred[pulseKey] = credentialID
+	s.cpStickyMu.Unlock()
 }
 
 func isOpenAICompatPath(r *http.Request) bool {
