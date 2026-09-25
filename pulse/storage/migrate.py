@@ -681,25 +681,22 @@ def migrate_schema(engine: Engine) -> None:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE proxy_keys ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to proxy_keys", col_name)
-        # Clear legacy lifetime/token limits once; empty windows = unlimited.
+        # Clear legacy lifetime/token limits on Cursor quota keys only; never rewrite coding_plan.
         legacy_limit_cols = sorted({"token_limit", "cost_limit_cents", "window_5h_token_limit"} & columns)
         with engine.begin() as conn:
-            need_clear = False
             if legacy_limit_cols:
                 cond = " OR ".join(f"{c} IS NOT NULL" for c in legacy_limit_cols)
-                need_clear = bool(conn.execute(text(f"SELECT 1 FROM proxy_keys WHERE {cond} LIMIT 1")).first())
-            if not need_clear and "mode" in columns:
-                need_clear = bool(
-                    conn.execute(text("SELECT 1 FROM proxy_keys WHERE mode IS NULL OR mode != 'quota' LIMIT 1")).first()
-                )
-            if need_clear:
-                sets = ["mode = 'quota'"] if "mode" in columns else []
-                sets.extend(f"{c} = NULL" for c in legacy_limit_cols)
-                conn.execute(text(f"UPDATE proxy_keys SET {', '.join(sets)}"))
-                logger.info(
-                    "Cleared legacy proxy_keys limits (%s)",
-                    ", ".join(legacy_limit_cols) or "mode only",
-                )
+                scope = "mode IS NULL OR mode = 'quota'" if "mode" in columns else "1=1"
+                sets = [f"{c} = NULL" for c in legacy_limit_cols]
+                n = conn.execute(
+                    text(f"UPDATE proxy_keys SET {', '.join(sets)} WHERE ({cond}) AND ({scope})")
+                ).rowcount
+                if n:
+                    logger.info("Cleared legacy proxy_keys limits on %d row(s)", n)
+            if "mode" in columns:
+                n = conn.execute(text("UPDATE proxy_keys SET mode = 'quota' WHERE mode IS NULL")).rowcount
+                if n:
+                    logger.info("Normalized %d proxy_keys with NULL mode to quota", n)
             # Reactivate keys suspended only for removed lifetime/token limits.
             if "status" in columns and "suspended_reason" in columns:
                 legacy_suspend = (
