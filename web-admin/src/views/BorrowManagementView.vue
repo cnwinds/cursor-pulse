@@ -140,7 +140,11 @@ function onTabChange(name: string | number) {
 }
 .openai-tab-label {
   font-weight: 600;
-  color: var(--el-color-primary);
+}
+/* 未选中时与其它 Tab 同色；选中态由 Element Plus .is-active 控制 */
+.main-tabs :deep(#tab-openai-gateway:not(.is-active) .openai-tab-label) {
+  color: var(--el-text-color-regular);
+  font-weight: 400;
 }
 .main-tabs :deep(#tab-openai-gateway) {
   padding-left: 4px;
