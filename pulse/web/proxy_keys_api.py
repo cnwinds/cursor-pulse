@@ -34,6 +34,8 @@ class CreateProxyKeyBody(BaseModel):
     expires_at: datetime | None = None
     # Accepted but ignored (compat): always quota; empty windows = unlimited.
     mode: str | None = None
+    # M4：glm | minimax | kimi → 签发 pkcp_（OpenAI 网关）
+    coding_plan_vendor: str | None = Field(default=None, pattern="^(glm|minimax|kimi)$")
 
 
 class UpdateProxyKeyBody(BaseModel):
@@ -139,21 +141,40 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             raise HTTPException(status_code=400, detail="归属成员不存在")
         name = (body.name or "").strip() or member.display_name
         enc = (config.credentials.encryption_key or "").strip()
-        key, plaintext = proxy_service.create_key(
-            session,
-            name=name,
-            member_id=member.id,
-            window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
-            window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
-            expires_at=body.expires_at,
-            encryption_key=enc,
-        )
+        if body.coding_plan_vendor:
+            from pulse.proxy.key_crud import create_coding_plan_key
+
+            key, plaintext = create_coding_plan_key(
+                session,
+                name=name,
+                member_id=member.id,
+                coding_plan_vendor=body.coding_plan_vendor,
+                window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
+                window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
+                expires_at=body.expires_at,
+                encryption_key=enc,
+            )
+            host = config.web.host if config.web.host not in ("0.0.0.0", "::") else "127.0.0.1"
+            openai_base = f"http://{host}:{config.web.port}/openai/v1"
+        else:
+            key, plaintext = proxy_service.create_key(
+                session,
+                name=name,
+                member_id=member.id,
+                window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
+                window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
+                expires_at=body.expires_at,
+                encryption_key=enc,
+            )
+            openai_base = None
         session.commit()
         row = proxy_service.key_summary(session, key)
         row["plaintext_key"] = plaintext  # 仅此一次随创建响应
         row["member_name"] = member.display_name
         row["recoverable"] = bool(key.encrypted_key)
         row["proxy_url"] = (config.proxy.public_url or "http://127.0.0.1:8317").rstrip("/")
+        if openai_base:
+            row["openai_base_url"] = openai_base
         return row
 
     @app.get("/api/v2/proxy-addresses")

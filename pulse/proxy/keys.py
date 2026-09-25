@@ -16,6 +16,12 @@ def generate_alias_key() -> tuple[str, str, str]:
     return plaintext, hash_proxy_key(plaintext), plaintext[:12]
 
 
+def generate_coding_plan_proxy_key() -> tuple[str, str, str]:
+    """Coding Plan OpenAI 网关：pkcp_…，与 Cursor pk_ 分离。"""
+    plaintext = "pkcp_" + secrets.token_urlsafe(32)
+    return plaintext, hash_proxy_key(plaintext), plaintext[:13]
+
+
 def hash_proxy_key(plaintext: str) -> str:
     """鉴权查询时将入参明文转为 DB 查询用的哈希值。"""
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()

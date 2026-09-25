@@ -80,7 +80,19 @@ Pulse 台账字段：`glm_organization_id`、`glm_project_id`（均非空时走�
 | 台账 | `POST /api/v2/accounts`（vendor 分支 + `api_region` + API Key） |
 | 快照 | `AccountQuotaSnapshot.quota_extra.tiers`（归一化 `five_hour` / `weekly_limit`） |
 
-**不在范围**：Credential Pool、Key Loan、Cursor MITM；用量分析仅 Cursor 事件聚合。
+**不在范围（M1–M3）**：Cursor MITM Credential Pool、Key Loan。
+
+**M4 OpenAI 网关**（见 [ADR 0003](./adr/0003-openai-coding-plan-proxy.md)）：
+
+| 能力 | 说明 |
+|------|------|
+| 客户端 | `base_url={Pulse}/openai/v1`，`Authorization: Bearer pkcp_…` |
+| 签发 | `POST /api/v2/proxy-keys`，body 含 `coding_plan_vendor` |
+| 入池 | `POST /api/v2/openai-proxy/accounts/{id}`，`cp_proxy_enabled` |
+| 池列表 | `GET /api/v2/openai-proxy/pool?vendor=glm` |
+| 转发 | `POST /openai/v1/chat/completions` → 厂家 OpenAI 兼容 upstream |
+
+用量分析仍仅 Cursor 事件聚合；CP 网关用量后续可写 `proxy_key_usages`。
 
 ## 变更风险
 
