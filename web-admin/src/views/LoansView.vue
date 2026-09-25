@@ -266,8 +266,8 @@
           </p>
           <p v-if="poolPreview.length">当前优先（会变，不是锁定）：</p>
           <ol v-if="poolPreview.length" class="pool-preview">
-            <li v-for="(row, index) in poolPreview" :key="row.account_id">
-              {{ index + 1 }}. {{ row.account_identifier }}
+            <li v-for="row in poolPreview" :key="row.account_id">
+              {{ row.account_identifier }}
               <span v-if="row.score != null"> · 分 {{ row.score }}</span>
             </li>
           </ol>
