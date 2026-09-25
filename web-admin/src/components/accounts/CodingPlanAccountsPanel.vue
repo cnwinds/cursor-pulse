@@ -315,9 +315,14 @@ function resetForm() {
   form.api_key = ''
 }
 
-function openCreate() {
+async function openCreate() {
   if (!vendor.value) {
-    ElMessage.warning('未找到厂家，请先执行 seed')
+    await loadAll()
+  }
+  if (!vendor.value) {
+    ElMessage.warning(
+      `未找到 ${vendorLabel.value} 厂家记录。请重启服务或执行：pulse init-v2 --seed`,
+    )
     return
   }
   editing.value = null

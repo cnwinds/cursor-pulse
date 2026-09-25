@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -52,6 +53,36 @@ from pulse.web.usage_analytics_api import register_usage_analytics_routes
 logger = logging.getLogger(__name__)
 
 
+def _run_startup_db_tasks(config: AppConfig, session_factory: sessionmaker[Session]) -> None:
+    session = session_factory()
+    try:
+        enc = (config.credentials.encryption_key or "").strip()
+        if enc:
+            from pulse.ingestion.credentials import backfill_credential_key_hashes
+
+            n = backfill_credential_key_hashes(session, enc)
+            if n:
+                logger.info("Backfilled key_hash on %d credential(s)", n)
+
+        team, _ = team_repository(session, config)
+        from pulse.tool_center.seed import seed_v2_catalog
+
+        counts = seed_v2_catalog(session, team)
+        if counts["vendors"] or counts["plans"] or counts["accounts"]:
+            logger.info(
+                "Ensured v2 catalog (vendors=%s plans=%s accounts=%s)",
+                counts["vendors"],
+                counts["plans"],
+                counts["accounts"],
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Startup DB maintenance failed")
+    finally:
+        session.close()
+
+
 def create_app(
     config: AppConfig,
     session_factory: sessionmaker[Session],
@@ -68,7 +99,13 @@ def create_app(
     assert_jwt_secret_configured(config)
     set_default_display_timezone(config.collection.timezone)
     configure_display_timezone_resolver(config, session_factory)
-    app = FastAPI(title="Cursor Pulse Admin", version="0.2.0")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        _run_startup_db_tasks(config, session_factory)
+        yield
+
+    app = FastAPI(title="Cursor Pulse Admin", version="0.2.0", lifespan=lifespan)
 
     app.add_middleware(
         DisplayTimezoneMiddleware,
@@ -246,20 +283,6 @@ def create_app(
 
     if admin_spa_dir is not None:
         _mount_admin_static(app, admin_spa_dir)
-
-    enc = (config.credentials.encryption_key or "").strip()
-    if enc:
-        from pulse.ingestion.credentials import backfill_credential_key_hashes
-
-        session = session_factory()
-        try:
-            n = backfill_credential_key_hashes(session, enc)
-            if n:
-                logger.info("Backfilled key_hash on %d credential(s)", n)
-        except Exception:
-            logger.exception("Failed to backfill credential key_hash")
-        finally:
-            session.close()
 
     return app
 

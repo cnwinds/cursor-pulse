@@ -461,9 +461,12 @@ function resetForm() {
   form.usage_resets_on = null
 }
 
-function openCreate() {
+async function openCreate() {
   if (!cursorVendor.value) {
-    ElMessage.warning('未找到 Cursor 厂家，请先执行数据库初始化（seed）')
+    await loadAll()
+  }
+  if (!cursorVendor.value) {
+    ElMessage.warning('未找到 Cursor 厂家记录。请重启服务或执行：pulse init-v2 --seed')
     return
   }
   editing.value = null

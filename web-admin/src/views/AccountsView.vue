@@ -57,7 +57,7 @@ import CursorAccountsPanel from '@/components/accounts/CursorAccountsPanel.vue'
 import CodingPlanAccountsPanel from '@/components/accounts/CodingPlanAccountsPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 
-type AccountsPanelRef = { openCreate: () => void }
+type AccountsPanelRef = { openCreate: () => void | Promise<void> }
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -79,18 +79,18 @@ const createLabel = computed(() => {
 
 function openCreateActive() {
   if (activeTab.value === 'glm') {
-    glmPanelRef.value?.openCreate()
+    void glmPanelRef.value?.openCreate()
     return
   }
   if (activeTab.value === 'minimax') {
-    minimaxPanelRef.value?.openCreate()
+    void minimaxPanelRef.value?.openCreate()
     return
   }
   if (activeTab.value === 'kimi') {
-    kimiPanelRef.value?.openCreate()
+    void kimiPanelRef.value?.openCreate()
     return
   }
-  cursorPanelRef.value?.openCreate()
+  void cursorPanelRef.value?.openCreate()
 }
 
 const TAB_NAMES = new Set(['cursor', 'glm', 'minimax', 'kimi'])
