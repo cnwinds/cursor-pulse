@@ -203,8 +203,13 @@ function credentialTagType(c?: CredentialStatus | null) {
   return 'warning'
 }
 
+function canManageCredential(row: Account) {
+  if (canWrite.value) return true
+  return row.primary_member_id === auth.user?.id
+}
+
 function canOpenEdit(row: Account) {
-  return canWrite.value || row.primary_member_id === auth.member?.id
+  return canWrite.value || canManageCredential(row)
 }
 
 function applyCredentialMap(list: Account[]) {
@@ -304,17 +309,30 @@ async function save() {
   saving.value = true
   try {
     if (editing.value) {
-      const patch: Record<string, unknown> = {
-        account_identifier: form.account_identifier.trim(),
-        status: form.status,
-        primary_member_id: form.primary_member_id,
-        shared_note: form.shared_note || null,
+      const apiKey = form.api_key.trim()
+      if (!canWrite.value && !apiKey) {
+        ElMessage.warning('请填写新的 API Key')
+        return
       }
-      if (props.vendorSlug === 'glm' && form.plan_id) patch.plan_id = form.plan_id
-      await client.patch(`/api/v2/accounts/${editing.value.id}`, patch)
-      const key = form.api_key.trim()
-      if (key) {
-        await client.post(`/api/v2/accounts/${editing.value.id}/credentials`, { api_key: key })
+      if (canWrite.value) {
+        const patch: Record<string, unknown> = {
+          account_identifier: form.account_identifier.trim(),
+          status: form.status,
+          primary_member_id: form.primary_member_id,
+          shared_note: form.shared_note || null,
+        }
+        if (props.vendorSlug === 'glm' && form.plan_id) patch.plan_id = form.plan_id
+        await client.patch(`/api/v2/accounts/${editing.value.id}`, patch)
+      }
+      if (apiKey) {
+        if (!canManageCredential(editing.value)) {
+          ElMessage.error('无权更换 API Key')
+          return
+        }
+        await client.post(`/api/v2/accounts/${editing.value.id}/credentials`, { api_key: apiKey })
+        ElMessage.success(canWrite.value ? '已更新并更换 API Key' : 'API Key 已更换')
+      } else if (canWrite.value) {
+        ElMessage.success('已更新')
       }
     } else {
       if (!form.api_key.trim()) {
@@ -334,7 +352,9 @@ async function save() {
     }
     dialogVisible.value = false
     await loadAll()
-    ElMessage.success('已保存')
+    if (!editing.value) {
+      ElMessage.success('已创建并同步账号')
+    }
   } catch (e: unknown) {
     const err = e as { response?: { data?: { detail?: string } } }
     ElMessage.error(err.response?.data?.detail || '保存失败')

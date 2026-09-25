@@ -132,6 +132,20 @@ class CredentialService:
         if not account.vendor or account.vendor.slug not in ("glm", "minimax"):
             raise ValueError("not a coding plan account")
 
+        region = (account.api_region or "").strip()
+        if account.vendor.slug == "glm":
+            if region not in ("zai", "bigmodel"):
+                raise ValueError("GLM 账号须配置 api_region（zai 或 bigmodel）")
+            from pulse.integrations.coding_plan.zhipu import fetch_zhipu_quota
+
+            fetch_zhipu_quota(api_key, region=region)
+        else:
+            if region not in ("cn", "global"):
+                raise ValueError("MiniMax 账号须配置 api_region（cn 或 global）")
+            from pulse.integrations.coding_plan.minimax import fetch_minimax_quota
+
+            fetch_minimax_quota(api_key, region=region)
+
         encrypted = encrypt_secret(api_key, self.encryption_key)
         now = datetime.now(UTC)
         cred = self.get_primary_credential(account_id)
