@@ -8,9 +8,6 @@
         </p>
       </div>
       <div class="header-actions">
-        <el-button v-if="canProxyRead" :loading="quotaJevLoading" @click="openQuotaJevTrace">
-          Jev 报文
-        </el-button>
         <el-button @click="loadAll">刷新</el-button>
       </div>
     </header>
@@ -229,12 +226,6 @@
       </el-col>
     </el-row>
 
-    <JevTraceDrawer
-      v-model="quotaJevTraceOpen"
-      :trace="quotaJevTrace"
-      :accounts="quotaJevTraceAccounts"
-    />
-
     <el-dialog v-model="dailyVisible" title="按日用量明细" width="720px">
       <p class="manual-hint">账号：{{ dailyAccount?.account_identifier }}</p>
       <div class="daily-toolbar">
@@ -284,12 +275,6 @@
         <el-button @click="dailyVisible = false">关闭</el-button>
       </template>
     </el-dialog>
-
-    <JevTraceDrawer
-      v-model="quotaJevTraceOpen"
-      :trace="quotaJevTrace"
-      :accounts="quotaJevTraceAccounts"
-    />
   </div>
 </template>
 
@@ -317,12 +302,9 @@ import {
   type UsageSummary,
 } from '@/utils/usage'
 import { formatChinaTime, formatResetCountdown } from '@/utils/time'
-import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
-import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
-const canProxyRead = computed(() => auth.hasPermission('proxy:read'))
 
 interface BoardItem {
   account_id: string
@@ -365,10 +347,6 @@ const autoPick = ref<{
   byJev: boolean
   score: number
 } | null>(null)
-const quotaJevTraceOpen = ref(false)
-const quotaJevTrace = ref<JevTrace | null>(null)
-const quotaJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
-const quotaJevLoading = ref(false)
 
 function toggleSpendExpand(accountId: string) {
   spendExpanded.value[accountId] = !spendExpanded.value[accountId]
@@ -536,38 +514,7 @@ async function loadAll() {
   void loadAutoPick()
 }
 
-/**
- * Auto Lender 当前会选中的账号（含 Jev / 算法分来源）。
- * 与借用发放同源，便于判断「这个号会不会被借出去」。
- */
-async function fetchQuotaJevTrace() {
-  quotaJevLoading.value = true
-  try {
-    const res = await client.get('/api/v2/proxy-pool/ranking')
-    const ranked = res.data.ranked || []
-    quotaJevTrace.value = res.data.decision?.jev_trace ?? null
-    quotaJevTraceAccounts.value = ranked.map(
-      (row: { account_id: string; account_identifier?: string; primary_member_name?: string | null }) => ({
-        account_id: row.account_id,
-        account_identifier: row.account_identifier,
-        primary_member_name: row.primary_member_name,
-      }),
-    )
-  } catch (e: unknown) {
-    const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-    ElMessage.error(detail || '加载 Jev 报文失败')
-    quotaJevTrace.value = null
-    quotaJevTraceAccounts.value = []
-  } finally {
-    quotaJevLoading.value = false
-  }
-}
-
-async function openQuotaJevTrace() {
-  await fetchQuotaJevTrace()
-  if (quotaJevTrace.value) quotaJevTraceOpen.value = true
-}
-
+/** Auto Lender 当前会选中的账号，便于判断「这个号会不会被借出去」。 */
 async function loadAutoPick() {
   try {
     const res = await client.get('/api/v2/quota-board/recommend', {

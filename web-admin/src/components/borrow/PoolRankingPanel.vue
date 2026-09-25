@@ -25,16 +25,12 @@
           </el-table-column>
           <el-table-column min-width="140" fixed>
             <template #header>
-              <ColHeader
-                label="账号"
-                tip="已入池账号。绿色「选用」为当前排序首选（Jev 通过时为 Jev 选择，否则为算法第一名）。"
-              />
+              <ColHeader label="账号" tip="已入池账号；当前排序见左侧名次与页头决策提示。" />
             </template>
             <template #default="{ row }">
               <div class="account-cell">
                 <div class="account-line1">
                   <span class="account-id">{{ row.account_identifier }}</span>
-                  <el-tag v-if="row.picked" size="small" type="success" effect="dark">选用</el-tag>
                 </div>
                 <span v-if="row.primary_member_name" class="account-owner">
                   {{ row.primary_member_name }}
