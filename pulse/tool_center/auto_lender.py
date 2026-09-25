@@ -106,7 +106,9 @@ def reset_auto_lender_state() -> None:
         _force_refresh_last.clear()
 
 
-def try_force_jev_refresh(team_id: str, *, cooldown_seconds: float = FORCE_JEV_REFRESH_COOLDOWN_SECONDS) -> float | None:
+def try_force_jev_refresh(
+    team_id: str, *, cooldown_seconds: float = FORCE_JEV_REFRESH_COOLDOWN_SECONDS
+) -> float | None:
     """管理员强制再打 Jev 时的进程内限流。成功返回 None，否则返回建议等待秒数。"""
     if cooldown_seconds <= 0:
         return None
@@ -173,9 +175,7 @@ def _cache_put(
 
 
 def _serialize_jev_output(decision: JevDecision) -> dict:
-    answers = {
-        name: answer.raw for name, answer in decision.answers.items()
-    }
+    answers = {name: answer.raw for name, answer in decision.answers.items()}
     out: dict = {"answers": answers}
     if decision.model:
         out["model"] = decision.model
@@ -548,9 +548,7 @@ def rank_lenders(
         probabilities = cached.probabilities
         owner_safe = cached.owner_safe
         pick_answer = cached.output.get("answers", {}).get(PICK_QUESTION)
-        pick_choice = (
-            pick_answer.get("choice") if isinstance(pick_answer, dict) else None
-        )
+        pick_choice = pick_answer.get("choice") if isinstance(pick_answer, dict) else None
         return _result(
             _promote(ranked, picked),
             excluded,
@@ -611,9 +609,7 @@ def rank_lenders(
     except JevError as exc:
         duration_ms = (time.perf_counter() - call_started) * 1000
         _record_failure(jev_config)
-        logger.warning(
-            "auto lender: jev call failed after %.0fms: %s", duration_ms, exc
-        )
+        logger.warning("auto lender: jev call failed after %.0fms: %s", duration_ms, exc)
         msg = str(exc)
         if len(msg) > 200:
             msg = msg[:200]

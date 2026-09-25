@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>AI 账号台账</h2>
-        <p class="desc">按平台分 Tab 管理 Cursor、GLM、MiniMax 账号（Coding Plan 无历史用量，仅额度同步）。</p>
+        <p class="desc">按平台分 Tab 管理 Cursor、GLM、MiniMax、Kimi 账号（Coding Plan 无历史用量，仅额度同步）。</p>
       </div>
     </header>
     <el-tabs v-model="activeTab" class="vendor-tabs">
@@ -19,6 +19,10 @@
         <template #label>MiniMax ({{ tabCounts.minimax }})</template>
         <CodingPlanAccountsPanel vendor-slug="minimax" @count-change="tabCounts.minimax = $event" />
       </el-tab-pane>
+      <el-tab-pane name="kimi">
+        <template #label>Kimi ({{ tabCounts.kimi }})</template>
+        <CodingPlanAccountsPanel vendor-slug="kimi" @count-change="tabCounts.kimi = $event" />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -31,9 +35,9 @@ import CodingPlanAccountsPanel from '@/components/accounts/CodingPlanAccountsPan
 
 const route = useRoute()
 const activeTab = ref('cursor')
-const tabCounts = reactive({ cursor: 0, glm: 0, minimax: 0 })
+const tabCounts = reactive({ cursor: 0, glm: 0, minimax: 0, kimi: 0 })
 
-const TAB_NAMES = new Set(['cursor', 'glm', 'minimax'])
+const TAB_NAMES = new Set(['cursor', 'glm', 'minimax', 'kimi'])
 
 function syncTabFromRoute() {
   const tab = route.query.tab

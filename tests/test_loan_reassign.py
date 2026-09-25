@@ -48,9 +48,7 @@ def _enable_account_for_pool(session, account, owner_id: str) -> None:
     from pulse.ingestion.crypto import encrypt_secret
 
     account.proxy_enabled = True
-    snap = session.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
-    )
+    snap = session.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     if snap is None:
         session.add(
             AccountQuotaSnapshot(

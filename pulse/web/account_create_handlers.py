@@ -10,7 +10,7 @@ from pulse.ingestion.plan_infer import (
     infer_plan_from_period_usage,
 )
 from pulse.ingestion.sync_dispatch import sync_account_by_vendor
-from pulse.integrations.coding_plan import fetch_glm_quota, fetch_minimax_quota
+from pulse.integrations.coding_plan import fetch_glm_quota, fetch_kimi_quota, fetch_minimax_quota
 from pulse.integrations.coding_plan.zhipu import is_glm_team_account
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AiVendor
@@ -33,6 +33,14 @@ def _minimax_default_plan(repo: ToolCenterRepository, vendor_id: str):
     plans = repo.list_plans(vendor_id)
     if not plans:
         raise HTTPException(status_code=400, detail="未配置 MiniMax 套餐，请先初始化目录")
+    plan = next((p for p in plans if p.slug == "coding_plan"), None)
+    return plan or plans[0]
+
+
+def _kimi_default_plan(repo: ToolCenterRepository, vendor_id: str):
+    plans = repo.list_plans(vendor_id)
+    if not plans:
+        raise HTTPException(status_code=400, detail="未配置 Kimi 套餐，请先初始化目录")
     plan = next((p for p in plans if p.slug == "coding_plan"), None)
     return plan or plans[0]
 
@@ -157,6 +165,8 @@ def create_coding_plan_account(
             raise HTTPException(status_code=400, detail="GLM 须选择站点：zai（国际）或 bigmodel（国内）")
     if slug == "minimax" and region not in ("cn", "global"):
         raise HTTPException(status_code=400, detail="MiniMax 须选择区域：cn 或 global")
+    if slug == "kimi" and region:
+        raise HTTPException(status_code=400, detail="Kimi 无需选择站点/区域")
 
     identifier = (body.account_identifier or "").strip()
     if not identifier:
@@ -172,7 +182,7 @@ def create_coding_plan_account(
             project_id=proj_id or None,
         )
         plan = _glm_plan_for_level(repo, vendor.id, quota.plan_level)
-    else:
+    elif slug == "minimax":
         quota = fetch_minimax_quota(api_key, region=region)
         if body.plan_id:
             plan = next((p for p in repo.list_plans(vendor.id) if p.id == body.plan_id), None)
@@ -180,6 +190,14 @@ def create_coding_plan_account(
                 raise HTTPException(status_code=400, detail="套餐不存在")
         else:
             plan = _minimax_default_plan(repo, vendor.id)
+    else:
+        quota = fetch_kimi_quota(api_key)
+        if body.plan_id:
+            plan = next((p for p in repo.list_plans(vendor.id) if p.id == body.plan_id), None)
+            if plan is None:
+                raise HTTPException(status_code=400, detail="套餐不存在")
+        else:
+            plan = _kimi_default_plan(repo, vendor.id)
 
     account = repo.create_account(
         vendor_id=vendor.id,
@@ -189,7 +207,7 @@ def create_coding_plan_account(
         primary_member_id=body.primary_member_id,
         shared_note=body.shared_note,
         ownership=body.ownership,
-        api_region=region,
+        api_region=region or None,
         glm_organization_id=org_id or None,
         glm_project_id=proj_id or None,
         proxy_enabled=False,

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync_errors import classify_sync_error
 from pulse.ingestion.types import IngestionResult
-from pulse.integrations.coding_plan import CodingPlanExtra, fetch_glm_quota, fetch_minimax_quota
+from pulse.integrations.coding_plan import CodingPlanExtra, fetch_glm_quota, fetch_kimi_quota, fetch_minimax_quota
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.integrations.coding_plan.types import CodingPlanQuotaResult, QuotaTier
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiPlan
@@ -17,7 +17,7 @@ from pulse.tool_center.quota_reads import prune_quota_snapshots_for_account
 
 logger = logging.getLogger(__name__)
 
-CODING_PLAN_VENDORS = frozenset({"glm", "minimax"})
+CODING_PLAN_VENDORS = frozenset({"glm", "minimax", "kimi"})
 
 
 def _parse_reset_datetime(iso: str | None) -> datetime | None:
@@ -158,6 +158,8 @@ class CodingPlanQuotaSyncService:
             if region not in ("cn", "global"):
                 raise ValueError("MiniMax 账号须配置 api_region（cn 或 global）")
             return fetch_minimax_quota(api_key, region=region)
+        if slug == "kimi":
+            return fetch_kimi_quota(api_key)
         raise ValueError(f"unsupported coding plan vendor: {slug}")
 
     def sync_account(

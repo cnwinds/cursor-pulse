@@ -30,7 +30,7 @@ def _get_team_account(session: Session, team_id: str, account_id: str):
     account = repo.get_account(account_id)
     if not account or account.team_id != team_id:
         raise HTTPException(status_code=404, detail="账号不存在")
-    if not account.vendor or account.vendor.slug not in ("cursor", "glm", "minimax"):
+    if not account.vendor or account.vendor.slug not in ("cursor", "glm", "minimax", "kimi"):
         raise HTTPException(status_code=400, detail="该账号类型不支持 API Key 绑定")
     return account, repo
 

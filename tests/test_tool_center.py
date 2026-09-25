@@ -51,8 +51,8 @@ def test_seed_v2_catalog_idempotent(session):
     first = seed_v2_catalog(session, team)
     session.flush()
     second = seed_v2_catalog(session, team)
-    assert first["vendors"] == 3
-    assert first["plans"] == 7
+    assert first["vendors"] == 4
+    assert first["plans"] == 8
     assert first["accounts"] == 3
     assert second == {"vendors": 0, "plans": 0, "accounts": 0}
 

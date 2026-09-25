@@ -38,6 +38,21 @@ Pulse 台账字段：`glm_organization_id`、`glm_project_id`（均非空时走�
 
 同步时若 API `data.level` 与台账 plan slug 不一致，会调用 `change_account_plan` 并写入 `AiAccountPlanHistory`（note 含 `GLM API level=…`）。
 
+## Kimi Coding Plan（M3）
+
+| 项 | 值 |
+|----|-----|
+| 路径 | `GET https://api.kimi.com/coding/v1/usages` |
+| Authorization | `Bearer <api_key>` |
+| 区域 | 无分站（`api_region` 留空） |
+
+响应要点（cc-switch `query_kimi`）：
+
+- `limits[].detail`：`limit` / `remaining` / `resetTime` → **5h** 桶（已用% = `(limit-remaining)/limit`）
+- `usage`：总体 **周** 限额，映射 `weekly_limit`
+
+实现：`pulse/integrations/coding_plan/kimi.py`（`fetch_kimi_quota` / `parse_kimi_tiers`）。
+
 ## MiniMax Coding Plan
 
 | 项 | 值 |

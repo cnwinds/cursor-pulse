@@ -7,8 +7,11 @@
     <el-table :data="accounts" stripe>
       <el-table-column label="账号标识" min-width="200" prop="account_identifier" />
       <el-table-column label="套餐" width="120" prop="plan_name" />
-      <el-table-column label="站点/区域" width="140">
+      <el-table-column v-if="vendorSlug !== 'kimi'" label="站点/区域" width="140">
         <template #default="{ row }">{{ regionLabel(row) }}</template>
+      </el-table-column>
+      <el-table-column v-else label="端点" width="140">
+        <template #default>api.kimi.com</template>
       </el-table-column>
       <el-table-column v-if="vendorSlug === 'glm'" label="版本" width="88">
         <template #default="{ row }">
@@ -124,7 +127,7 @@ import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
-  vendorSlug: 'glm' | 'minimax'
+  vendorSlug: 'glm' | 'minimax' | 'kimi'
 }>()
 
 const emit = defineEmits<{ countChange: [count: number] }>()
@@ -132,19 +135,27 @@ const emit = defineEmits<{ countChange: [count: number] }>()
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 
-const vendorLabel = computed(() => (props.vendorSlug === 'glm' ? 'GLM' : 'MiniMax'))
+const vendorLabel = computed(() => {
+  if (props.vendorSlug === 'glm') return 'GLM'
+  if (props.vendorSlug === 'kimi') return 'Kimi'
+  return 'MiniMax'
+})
 
-const regionOptions = computed(() =>
-  props.vendorSlug === 'glm'
-    ? [
-        { value: 'zai', label: '国际 (api.z.ai)' },
-        { value: 'bigmodel', label: '国内 (bigmodel.cn)' },
-      ]
-    : [
-        { value: 'cn', label: '国内 (minimaxi.com)' },
-        { value: 'global', label: '国际 (minimax.io)' },
-      ],
-)
+const regionOptions = computed(() => {
+  if (props.vendorSlug === 'glm') {
+    return [
+      { value: 'zai', label: '国际 (api.z.ai)' },
+      { value: 'bigmodel', label: '国内 (bigmodel.cn)' },
+    ]
+  }
+  if (props.vendorSlug === 'kimi') {
+    return []
+  }
+  return [
+    { value: 'cn', label: '国内 (minimaxi.com)' },
+    { value: 'global', label: '国际 (minimax.io)' },
+  ]
+})
 
 interface Account {
   id: string
@@ -197,6 +208,7 @@ const form = reactive({
 })
 
 const showRegionSelect = computed(() => {
+  if (props.vendorSlug === 'kimi') return false
   if (props.vendorSlug !== 'glm') return true
   if (editing.value) return !isTeamRow(editing.value)
   return glmAccountKind.value === 'personal'

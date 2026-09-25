@@ -165,7 +165,7 @@ def register_accounts_v2_routes(
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
         accounts = list(repo.list_accounts(status=status, vendor_slug=vendor_slug))
-        key_vendor_slugs = frozenset({"cursor", "glm", "minimax"})
+        key_vendor_slugs = frozenset({"cursor", "glm", "minimax", "kimi"})
         keyed_ids = [a.id for a in accounts if a.vendor is not None and a.vendor.slug in key_vendor_slugs]
         cred_by_account: dict[str, AiAccountCredential] = {}
         if keyed_ids:
@@ -221,7 +221,7 @@ def register_accounts_v2_routes(
             vendor = repo.get_vendor_by_slug("cursor")
         if vendor is None:
             raise HTTPException(status_code=400, detail="厂家不存在")
-        if vendor.slug not in ("cursor", "glm", "minimax"):
+        if vendor.slug not in ("cursor", "glm", "minimax", "kimi"):
             raise HTTPException(status_code=400, detail="不支持的账号厂家")
         if vendor.slug == "cursor" and not api_key.startswith("crsr_"):
             raise HTTPException(status_code=400, detail="API Key 须以 crsr_ 开头")

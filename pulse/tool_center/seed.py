@@ -9,13 +9,14 @@ from pulse.storage.models import AiAccount, AiPlan, AiVendor, Team
 
 
 def seed_v2_catalog(session: Session, team: Team) -> dict[str, int]:
-    """预置 Cursor / GLM / MiniMax 厂家与套餐，以及 Cursor 试用账号。幂等：按 slug 跳过已存在记录。"""
+    """预置 Cursor / GLM / MiniMax / Kimi 厂家与套餐，以及 Cursor 试用账号。幂等：按 slug 跳过已存在记录。"""
     counts = {"vendors": 0, "plans": 0, "accounts": 0}
 
     vendors_spec = [
         ("cursor", "Cursor", "https://cursor.com/docs/models-and-pricing"),
         ("glm", "GLM", "https://open.bigmodel.cn"),
         ("minimax", "MiniMax", "https://www.minimax.io"),
+        ("kimi", "Kimi", "https://www.kimi.com"),
     ]
     vendor_ids: dict[str, str] = {}
     for slug, name, website in vendors_spec:
@@ -72,6 +73,18 @@ def seed_v2_catalog(session: Session, team: Team) -> dict[str, int]:
         ("glm", "max", "Max", "coding_plan_window", 0, "CNY", {}, False, None, ["api_key"]),
         (
             "minimax",
+            "coding_plan",
+            "Coding Plan",
+            "coding_plan_window",
+            0,
+            "CNY",
+            {},
+            False,
+            None,
+            ["api_key"],
+        ),
+        (
+            "kimi",
             "coding_plan",
             "Coding Plan",
             "coding_plan_window",

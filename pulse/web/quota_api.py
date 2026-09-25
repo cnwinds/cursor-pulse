@@ -140,9 +140,7 @@ def _board_item(
         "primary_member_name": primary_member_name,
         "vendor_name": account.vendor.name if account.vendor else None,
         "vendor_slug": vendor_slug,
-        "display_mode": "coding_plan_tiers"
-        if vendor_slug in ("glm", "minimax")
-        else "cursor",
+        "display_mode": "coding_plan_tiers" if vendor_slug in ("glm", "minimax", "kimi") else "cursor",
         "plan_name": account.plan.plan_name if account.plan else None,
         "has_usage_detail": vendor_slug == "cursor",
         "usage_resets_on": account.usage_resets_on.isoformat() if account.usage_resets_on else None,
@@ -191,9 +189,7 @@ def _board_item(
             "api_limit_usd": analysis.api_limit_usd,
             "quota_progress": analysis.quota_progress,
             "projected_exhaustion_date": (
-                analysis.projected_exhaustion_date.isoformat()
-                if analysis.projected_exhaustion_date
-                else None
+                analysis.projected_exhaustion_date.isoformat() if analysis.projected_exhaustion_date else None
             ),
             "exhausts_before_reset": analysis.exhausts_before_reset,
             "days_until_reset": analysis.days_until_reset,
@@ -203,12 +199,8 @@ def _board_item(
             "limit_cents": snapshot.limit_cents,
             "used_cents": snapshot.used_cents,
             "remaining_cents": snapshot.remaining_cents,
-            "display_remaining_cents": display_remaining_cents(snapshot)
-            if not is_coding_plan
-            else None,
-            "display_api_remaining_cents": display_api_remaining_cents(snapshot)
-            if not is_coding_plan
-            else None,
+            "display_remaining_cents": display_remaining_cents(snapshot) if not is_coding_plan else None,
+            "display_api_remaining_cents": display_api_remaining_cents(snapshot) if not is_coding_plan else None,
             "captured_at": serialize_datetime(snapshot.captured_at),
             "quota_tiers": quota_tiers_for_board(snapshot) if is_coding_plan else [],
         }
@@ -281,8 +273,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         team, _ = team_repo_fn(session)
         vendor_slug = (vendor or "cursor").strip().lower()
-        if vendor_slug not in ("cursor", "glm", "minimax"):
-            raise HTTPException(status_code=400, detail="vendor 须为 cursor、glm 或 minimax")
+        if vendor_slug not in ("cursor", "glm", "minimax", "kimi"):
+            raise HTTPException(status_code=400, detail="vendor 须为 cursor、glm、minimax 或 kimi")
         return build_quota_board_items(
             session,
             team.id,

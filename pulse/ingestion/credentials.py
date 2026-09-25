@@ -123,17 +123,19 @@ class CredentialService:
         member_id: str,
     ) -> AiAccountCredential:
         account = self.session.scalar(
-            select(AiAccount)
-            .options(joinedload(AiAccount.vendor))
-            .where(AiAccount.id == account_id)
+            select(AiAccount).options(joinedload(AiAccount.vendor)).where(AiAccount.id == account_id)
         )
         if not account:
             raise ValueError("account not found")
-        if not account.vendor or account.vendor.slug not in ("glm", "minimax"):
+        if not account.vendor or account.vendor.slug not in ("glm", "minimax", "kimi"):
             raise ValueError("not a coding plan account")
 
         region = (account.api_region or "").strip()
-        if account.vendor.slug == "glm":
+        if account.vendor.slug == "kimi":
+            from pulse.integrations.coding_plan import fetch_kimi_quota
+
+            fetch_kimi_quota(api_key)
+        elif account.vendor.slug == "glm":
             if region not in ("zai", "bigmodel"):
                 raise ValueError("GLM 账号须配置 api_region（zai 或 bigmodel）")
             from pulse.integrations.coding_plan import fetch_glm_quota
@@ -155,7 +157,11 @@ class CredentialService:
         now = datetime.now(UTC)
         cred = self.get_primary_credential(account_id)
         key_hash = hash_proxy_key(api_key)
-        cred_type = "glm_api_key" if account.vendor.slug == "glm" else "minimax_api_key"
+        cred_type = {
+            "glm": "glm_api_key",
+            "minimax": "minimax_api_key",
+            "kimi": "kimi_api_key",
+        }[account.vendor.slug]
         if cred:
             cred.key_role = "primary"
             cred.encrypted_value = encrypted

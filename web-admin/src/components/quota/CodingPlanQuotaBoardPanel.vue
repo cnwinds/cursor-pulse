@@ -62,14 +62,18 @@ import { useAuthStore } from '@/stores/auth'
 import { formatChinaTime } from '@/utils/time'
 
 const props = defineProps<{
-  vendor: 'glm' | 'minimax'
+  vendor: 'glm' | 'minimax' | 'kimi'
 }>()
 
 const emit = defineEmits<{ countChange: [count: number] }>()
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
-const vendorLabel = computed(() => (props.vendor === 'glm' ? 'GLM' : 'MiniMax'))
+const vendorLabel = computed(() => {
+  if (props.vendor === 'glm') return 'GLM'
+  if (props.vendor === 'kimi') return 'Kimi'
+  return 'MiniMax'
+})
 
 interface QuotaTierRow {
   name: string

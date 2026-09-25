@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <h2>额度看板</h2>
-        <p class="desc">各平台独立卡片：Cursor 对齐 Plan &amp; Usage；GLM / MiniMax 对齐 Coding Plan 窗口额度。</p>
+        <p class="desc">各平台独立卡片：Cursor 对齐 Plan &amp; Usage；GLM / MiniMax / Kimi 对齐 Coding Plan 窗口额度。</p>
       </div>
     </header>
     <div class="tabs-row">
@@ -28,6 +28,14 @@
             @count-change="tabCounts.minimax = $event"
           />
         </el-tab-pane>
+        <el-tab-pane name="kimi">
+          <template #label>Kimi ({{ tabCounts.kimi }})</template>
+          <CodingPlanQuotaBoardPanel
+            ref="kimiPanelRef"
+            vendor="kimi"
+            @count-change="tabCounts.kimi = $event"
+          />
+        </el-tab-pane>
       </el-tabs>
       <div class="tabs-actions">
         <el-button v-if="canWrite" type="primary" @click="goCreateAccount">{{ createLabel }}</el-button>
@@ -47,7 +55,7 @@ import { useAuthStore } from '@/stores/auth'
 type QuotaPanelRef = { loadAll: () => void | Promise<void> }
 
 const activeTab = ref('cursor')
-const tabCounts = reactive({ cursor: 0, glm: 0, minimax: 0 })
+const tabCounts = reactive({ cursor: 0, glm: 0, minimax: 0, kimi: 0 })
 const router = useRouter()
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
@@ -55,10 +63,12 @@ const canWrite = computed(() => auth.hasPermission('accounts:write'))
 const cursorPanelRef = ref<QuotaPanelRef | null>(null)
 const glmPanelRef = ref<QuotaPanelRef | null>(null)
 const minimaxPanelRef = ref<QuotaPanelRef | null>(null)
+const kimiPanelRef = ref<QuotaPanelRef | null>(null)
 
 const createLabel = computed(() => {
   if (activeTab.value === 'glm') return '新增 GLM 账号'
   if (activeTab.value === 'minimax') return '新增 MiniMax 账号'
+  if (activeTab.value === 'kimi') return '新增 Kimi 账号'
   return '新增 Cursor 账号'
 })
 
@@ -68,7 +78,9 @@ function refreshActive() {
       ? glmPanelRef.value
       : activeTab.value === 'minimax'
         ? minimaxPanelRef.value
-        : cursorPanelRef.value
+        : activeTab.value === 'kimi'
+          ? kimiPanelRef.value
+          : cursorPanelRef.value
   void panel?.loadAll()
 }
 
