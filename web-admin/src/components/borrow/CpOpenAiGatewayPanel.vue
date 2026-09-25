@@ -49,7 +49,11 @@
       </div>
       <el-table :data="keys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
         <el-table-column label="归属" prop="member_name" min-width="140" />
-        <el-table-column label="备注" prop="name" min-width="120" />
+        <el-table-column label="备注" min-width="120">
+          <template #default="{ row }">
+            <span :class="{ muted: !row.name?.trim() }">{{ row.name?.trim() || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
         <el-table-column label="状态" width="96">
           <template #default="{ row }">
@@ -123,7 +127,7 @@
         <el-form-item label="备注">
           <el-input
             v-model="createForm.name"
-            placeholder="可选；留空则备注列显示密钥 Hint（如 pkcp_…）"
+            placeholder="可选；留空则备注列为 —"
           />
         </el-form-item>
       </el-form>
