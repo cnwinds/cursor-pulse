@@ -73,15 +73,12 @@ const createLabel = computed(() => {
 })
 
 function refreshActive() {
-  const panel =
-    activeTab.value === 'glm'
-      ? glmPanelRef.value
-      : activeTab.value === 'minimax'
-        ? minimaxPanelRef.value
-        : activeTab.value === 'kimi'
-          ? kimiPanelRef.value
-          : cursorPanelRef.value
-  void panel?.loadAll()
+  void Promise.all([
+    cursorPanelRef.value?.loadAll(),
+    glmPanelRef.value?.loadAll(),
+    minimaxPanelRef.value?.loadAll(),
+    kimiPanelRef.value?.loadAll(),
+  ])
 }
 
 function goCreateAccount() {

@@ -35,8 +35,8 @@ def format_capability_reply(result: CapabilityInvokeResult) -> str:
         if val is not None and str(val).strip():
             return str(val)
     empty_reason = data.get("empty_reason")
-    if empty_reason == "no_cursor_account":
-        return "尚未绑定 Cursor 账号"
+    if empty_reason in ("no_account", "no_cursor_account"):
+        return "尚未绑定 AI 账号（Cursor / GLM / MiniMax / Kimi）"
     if empty_reason == "no_cursor_or_loan":
         return "尚未绑定 Cursor 账号，且当前无进行中的 Key 借用。"
     accounts = data.get("accounts")

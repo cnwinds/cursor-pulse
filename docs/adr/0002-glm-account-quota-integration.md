@@ -1,6 +1,6 @@
 # ADR 0002：Coding Plan 账号（GLM / MiniMax）台账与额度看板
 
-- **状态**：**M3 进行中**（M1/M2 已落地；M3：Kimi Coding Plan 已接入；M4 见「实施阶段」）
+- **状态**：**M3 已落地**（Kimi + `quota.self.read` Coding Plan；M4 OpenAI 代理见「实施阶段」）
 - **日期**：2026-09-24（修订：纳入 MiniMax、对齐 cc-switch）
 - **参考实现**：[farion1231/cc-switch](https://github.com/farion1231/cc-switch) `src-tauri/src/services/coding_plan.rs`（Token Plan 额度查询，含单元测试与解析边界）
 - **范围**：Pulse Web 账号台账、额度看板、后台 **quota-only** 同步；**不包含** MITM 代理、Key 借用、用量事件/历史用量
@@ -321,7 +321,7 @@ Fixtures 目录建议：
 |------|------|
 | **M1** | seed + cc-switch 解析移植 + quota sync + **台账三 Tab + 看板三 Tab 独立卡片** + proxy 排除 + 用量分析空态 |
 | **M2** | 智谱团队版、plan 对齐策略、`docs/coding-plan-quota-apis.md` |
-| **M3** | Kimi 等扩展；助手/bot 查额度（可选） |
+| **M3** | Kimi 等扩展；`quota.self.read` 含 Coding Plan 窗口额度（IM/助手） |
 | **M4** | **OpenAI 兼容代理分支**（GLM/MiniMax 专用池，与 Cursor MITM 分离） |
 
 ---

@@ -71,7 +71,7 @@ def test_dispatch_text_command_handles_quota_for_new_member():
             messenger=MagicMock(),
             inbound=_inbound("额度"),
         )
-        assert reply == "尚未绑定 Cursor 账号"
+        assert reply == "尚未绑定 AI 账号（Cursor / GLM / MiniMax / Kimi）"
     finally:
         session.close()
 
@@ -101,7 +101,7 @@ def test_dispatch_text_command_is_channel_neutral_for_feishu():
             messenger=MagicMock(),
             inbound=_inbound("额度", channel="feishu", channel_user_id="ou_feishu_user_1"),
         )
-        assert reply == "尚未绑定 Cursor 账号"
+        assert reply == "尚未绑定 AI 账号（Cursor / GLM / MiniMax / Kimi）"
     finally:
         session.close()
 
