@@ -310,6 +310,48 @@ def test_cp_sticky_reuses_credential_within_dwell(session):
     assert binding is not None
 
 
+def test_cp_key_reveal_endpoint():
+    from fastapi.testclient import TestClient
+
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.web.app import create_app
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-rev2", display_name="MRev2")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    key, plain = create_coding_plan_key(
+        session,
+        name="reveal-me",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    resp = client.get(f"/api/v2/openai-proxy/keys/{key.id}/reveal", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["plaintext_key"] == plain
+    assert "/openai/v1" in resp.json()["openai_base_url"]
+    session.close()
+
+
 def test_cp_key_revoke_endpoint():
     from fastapi.testclient import TestClient
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig

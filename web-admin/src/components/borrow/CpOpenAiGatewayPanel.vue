@@ -51,7 +51,6 @@
         <el-table-column label="归属" prop="member_name" min-width="140" />
         <el-table-column label="备注" prop="name" min-width="120" />
         <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
-        <el-table-column label="Hint" prop="key_hint" width="120" />
         <el-table-column label="状态" width="96">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -71,8 +70,17 @@
         <el-table-column label="近 7d" width="88" align="right">
           <template #default="{ row }">{{ formatTokens(row.window_7d_tokens ?? 0) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" align="center" fixed="right">
+        <el-table-column label="操作" width="168" align="center" fixed="right">
           <template #default="{ row }">
+            <el-button
+              v-if="row.recoverable"
+              link
+              type="primary"
+              size="small"
+              @click.stop="copyKey(row)"
+            >
+              复制 Key
+            </el-button>
             <el-button link type="primary" size="small" @click.stop="openUsages(row)">用量</el-button>
             <el-button
               v-if="canWrite && row.status === 'active'"
@@ -124,6 +132,16 @@
       <template #footer>
         <el-button @click="createVisible = false">关闭</el-button>
         <el-button v-if="!createdKey" type="primary" :loading="creating" @click="submitCreate">签发</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="revealVisible" title="pkcp_ 密钥" width="520px">
+      <p class="muted reveal-hint">完整密钥（由服务端加密保存，可再次复制）</p>
+      <el-input :model-value="revealedPlaintext" readonly type="textarea" :rows="2" />
+      <p v-if="revealedBaseUrl" class="base-url">Base URL：<code>{{ revealedBaseUrl }}</code></p>
+      <template #footer>
+        <el-button @click="revealVisible = false">关闭</el-button>
+        <el-button type="primary" @click="copyRevealed">复制 Key</el-button>
       </template>
     </el-dialog>
 
@@ -202,6 +220,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { copyText } from '@/utils/clipboard'
 import { formatTokens, formatTokensM } from '@/utils/usage'
 import { formatChinaTime } from '@/utils/time'
 
@@ -222,6 +241,7 @@ interface CpKey {
   member_name: string | null
   key_hint: string
   status: string
+  recoverable?: boolean
   total_tokens: number
   request_count?: number
   window_5h_tokens?: number
@@ -286,6 +306,10 @@ const createForm = reactive({
   member_id: '',
   name: '',
 })
+
+const revealVisible = ref(false)
+const revealedPlaintext = ref('')
+const revealedBaseUrl = ref('')
 
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
@@ -406,6 +430,39 @@ function statusTagType(status: string) {
 
 function onKeyRowClick(row: CpKey) {
   openUsages(row)
+}
+
+async function copyKey(row: CpKey) {
+  try {
+    const res = await client.get(`/api/v2/openai-proxy/keys/${row.id}/reveal`)
+    revealedPlaintext.value = res.data.plaintext_key
+    revealedBaseUrl.value = res.data.openai_base_url || ''
+    revealVisible.value = true
+    try {
+      await copyText(res.data.plaintext_key)
+      ElMessage.success('已复制到剪贴板')
+    } catch {
+      ElMessage.info('请在下方的对话框中手动复制')
+    }
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number; data?: { detail?: string } } })?.response?.status
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    if (status === 410) {
+      ElMessage.warning(typeof detail === 'string' ? detail : '该 Key 不可还原，请重新签发')
+      return
+    }
+    ElMessage.error(typeof detail === 'string' ? detail : '无法获取 Key')
+  }
+}
+
+async function copyRevealed() {
+  if (!revealedPlaintext.value) return
+  try {
+    await copyText(revealedPlaintext.value)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本')
+  }
 }
 
 async function confirmRevoke(row: CpKey) {
@@ -548,5 +605,10 @@ defineExpose({ load: loadAll })
 }
 .day-detail-wrap {
   padding: 4px 8px 12px 40px;
+}
+.reveal-hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 </style>

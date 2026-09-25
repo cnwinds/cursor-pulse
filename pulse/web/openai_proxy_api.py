@@ -176,6 +176,29 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         }
         return rollup
 
+    @app.get("/api/v2/openai-proxy/keys/{key_id}/reveal")
+    def reveal_cp_proxy_key(
+        key_id: str,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("proxy:read")),
+    ):
+        from pulse.web.proxy_keys_api import _can_reveal_key
+
+        key = _get_cp_proxy_key(session, key_id)
+        if not _can_reveal_key(user, key):
+            raise HTTPException(status_code=403, detail="无权查看该 Key")
+        enc = (config.credentials.encryption_key or "").strip()
+        plaintext = proxy_service.reveal_plaintext(key, enc)
+        if plaintext is None:
+            raise HTTPException(
+                status_code=410,
+                detail="该 Key 不可还原（签发时未加密保存），请重新签发",
+            )
+        return {
+            "plaintext_key": plaintext,
+            "openai_base_url": coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url),
+        }
+
     @app.post(
         "/api/v2/openai-proxy/keys/{key_id}/revoke",
         dependencies=[Depends(require_capability("proxy:write"))],
