@@ -566,6 +566,10 @@ const loanForm = ref({
   model: '',
   auto_revoke_on_reset: true,
 })
+const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
+  [],
+)
+const poolPreviewLoaded = ref(false)
 const manualJevTrace = ref<JevTrace | null>(null)
 const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
 const loanJevTraceOpen = ref(false)
@@ -789,6 +793,23 @@ watch(
   },
 )
 
+async function loadPoolPreview(forReassign = false) {
+  const isAuto = forReassign
+    ? reassignForm.value.lender_mode === 'auto'
+    : loanForm.value.lender_mode === 'auto'
+  if (!isAuto) return
+  poolPreviewLoaded.value = false
+  try {
+    const res = await client.get('/api/v2/proxy-pool/ranking')
+    const ranked = res.data.ranked || []
+    poolPreview.value = ranked.slice(0, 3)
+  } catch {
+    poolPreview.value = []
+  } finally {
+    poolPreviewLoaded.value = true
+  }
+}
+
 async function loadManualAutoPickPreview() {
   if (loanForm.value.lender_mode !== 'manual' || !loanForm.value.borrower_member_id) {
     manualJevTrace.value = null
@@ -822,23 +843,27 @@ async function openReassignDialog(row: LoanRow) {
     source_account_id: row.source_account_id || '',
     auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
   }
-  await loadLoanDialogData()
-  reassignOptions.value = recommend.value
-  if (
-    reassignForm.value.lender_mode === 'manual' &&
-    !reassignForm.value.source_account_id &&
-    reassignOptions.value.length
-  ) {
-    reassignForm.value.source_account_id = reassignOptions.value[0].account_id
-  }
-  if (reassignForm.value.lender_mode === 'auto') void loadPoolPreview()
   reassignDialogVisible.value = true
+  try {
+    await loadLoanDialogData()
+    reassignOptions.value = recommend.value
+    if (
+      reassignForm.value.lender_mode === 'manual' &&
+      !reassignForm.value.source_account_id &&
+      reassignOptions.value.length
+    ) {
+      reassignForm.value.source_account_id = reassignOptions.value[0].account_id
+    }
+    if (reassignForm.value.lender_mode === 'auto') void loadPoolPreview(true)
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '加载出借账号列表失败')
+  }
 }
 
 watch(
   () => reassignForm.value.lender_mode,
   (mode) => {
-    if (mode === 'auto' && reassignDialogVisible.value) void loadPoolPreview()
+    if (mode === 'auto' && reassignDialogVisible.value) void loadPoolPreview(true)
   },
 )
 
