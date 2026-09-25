@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries
-from pulse.openai_proxy.upstream import CP_VENDORS, coding_plan_gateway_public_base
+from pulse.openai_proxy.upstream import CP_VENDORS, cp_gateway_endpoints
 from pulse.proxy import key_crud
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
@@ -34,6 +34,18 @@ def _get_cp_proxy_key(session: Session, key_id: str) -> ProxyKey:
 
 
 def register_openai_proxy_admin_routes(app, get_db, require_capability, config) -> None:
+    def _attach_openai_client_urls(row: dict, session: Session) -> None:
+        endpoints = cp_gateway_endpoints(session=session, config=config)
+        row["openai_endpoints"] = endpoints
+        row["openai_base_url"] = endpoints[0]["openai_base_url"] if endpoints else ""
+
+    @app.get(
+        "/api/v2/openai-proxy/endpoints",
+        dependencies=[Depends(require_capability("proxy:read"))],
+    )
+    def list_cp_openai_endpoints(session: Session = Depends(get_db)):
+        return {"endpoints": cp_gateway_endpoints(session=session, config=config)}
+
     @app.get(
         "/api/v2/openai-proxy/pool",
         dependencies=[Depends(require_capability("proxy:read"))],
@@ -120,7 +132,7 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         row = proxy_service.key_summary(session, key)
         row["plaintext_key"] = plaintext
         row["member_name"] = member.display_name
-        row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
+        _attach_openai_client_urls(row, session)
         row["usage_hint"] = "OpenAI SDK: base_url + api_key=pkcp_…；走 Coding Plan 账号池转发"
         return row
 
@@ -142,7 +154,7 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         for row, key in zip(proxy_service.key_summaries(session, list(keys)), keys, strict=True):
             row["member_name"] = member_names.get(key.member_id)
             row["recoverable"] = bool(key.encrypted_key)
-            row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
+            _attach_openai_client_urls(row, session)
             rows.append(row)
         return rows
 
@@ -194,10 +206,9 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
                 status_code=410,
                 detail="该 Key 不可还原（签发时未加密保存），请重新签发",
             )
-        return {
-            "plaintext_key": plaintext,
-            "openai_base_url": coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url),
-        }
+        payload: dict = {"plaintext_key": plaintext}
+        _attach_openai_client_urls(payload, session)
+        return payload
 
     @app.post(
         "/api/v2/openai-proxy/keys/{key_id}/revoke",

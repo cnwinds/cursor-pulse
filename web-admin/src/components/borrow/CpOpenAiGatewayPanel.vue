@@ -1,11 +1,42 @@
 <template>
   <div class="cp-openai-panel" v-loading="loading">
     <p class="hint">
-      Coding Plan 专用 OpenAI 网关（与 Cursor MITM 同进程、不同路径）。客户端
-      <code>base_url</code> 指向 Go 代理地址下的 <code>/openai/v1</code>（默认
-      <code>http://127.0.0.1:8317/openai/v1</code>），API Key 使用签发的
-      <code>pkcp_</code>。同一密钥在 Switch dwell（默认 30 分钟，见系统选号规则）内固定后端账号；超时后按额度与并发负载均衡；429 时自动换号。
+      Coding Plan 专用 OpenAI 网关（与 Cursor MITM 同 Go 代理、不同路径）。客户端
+      <code>base_url</code> 使用下方「系统设置 → 代理地址」对应的
+      <code>{代理}/openai/v1</code>，API Key 填签发的 <code>pkcp_</code>。同一密钥在 Switch
+      dwell（默认 30 分钟，见选号规则）内固定后端账号；超时后按额度与并发负载均衡；429 时自动换号。
     </p>
+
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <h3>OpenAI Base URL</h3>
+        <el-button v-if="!openaiEndpoints.length" link type="primary" @click="goProxySettings">
+          前往配置代理地址
+        </el-button>
+      </div>
+      <p class="endpoint-desc">OpenAI SDK / LangChain 等填 <code>base_url</code>；内网用「公司」、外网用「外网」等，与 Cursor 借用命令一致。</p>
+      <el-alert
+        v-if="!openaiEndpoints.length"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="尚未配置代理地址"
+        description="请先在「系统设置 → 代理地址」添加 Go 代理（如 :8317），否则客户端无法接入。"
+      />
+      <el-table v-else :data="openaiEndpoints" size="small" stripe class="endpoint-table">
+        <el-table-column label="代理" prop="display_name" width="120" show-overflow-tooltip />
+        <el-table-column label="Base URL（base_url）" min-width="300">
+          <template #default="{ row }">
+            <code class="endpoint-code">{{ row.openai_base_url }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="72" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="copyOpenAiBaseUrl(row)">复制</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
     <el-tabs v-model="vendorTab" class="vendor-tabs" @tab-change="onVendorChange">
       <el-tab-pane label="GLM" name="glm" />
       <el-tab-pane label="MiniMax" name="minimax" />
@@ -107,7 +138,6 @@
           </template>
         </el-table-column>
       </el-table>
-      <p v-if="openaiBase" class="base-url">OpenAI Base URL：<code>{{ openaiBase }}</code></p>
     </div>
 
     <el-dialog v-model="createVisible" title="签发 Coding Plan OpenAI 密钥" width="480px">
@@ -134,7 +164,22 @@
       <template v-if="createdKey">
         <el-alert type="success" :closable="false" show-icon title="请立即保存密钥（仅显示一次）" />
         <el-input class="key-block" :model-value="createdKey.plaintext_key" readonly />
-        <p class="base-url"><code>{{ createdKey.openai_base_url }}</code></p>
+        <div v-if="createdKeyEndpoints.length" class="created-endpoints">
+          <p class="created-endpoints-title">OpenAI Base URL（按网络选择其一）</p>
+          <el-table :data="createdKeyEndpoints" size="small" stripe>
+            <el-table-column label="代理" prop="display_name" width="100" />
+            <el-table-column label="Base URL" min-width="240">
+              <template #default="{ row }">
+                <code class="endpoint-code">{{ row.openai_base_url }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column width="64" align="center">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="copyOpenAiBaseUrl(row)">复制</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </template>
       <template #footer>
         <el-button @click="createVisible = false">关闭</el-button>
@@ -142,10 +187,25 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="revealVisible" title="pkcp_ 密钥" width="520px">
+    <el-dialog v-model="revealVisible" title="pkcp_ 密钥" width="580px">
       <p class="muted reveal-hint">完整密钥（由服务端加密保存，可再次复制）</p>
       <el-input :model-value="revealedPlaintext" readonly type="textarea" :rows="2" />
-      <p v-if="revealedBaseUrl" class="base-url">Base URL：<code>{{ revealedBaseUrl }}</code></p>
+      <div v-if="revealedEndpoints.length" class="created-endpoints">
+        <p class="created-endpoints-title">OpenAI Base URL</p>
+        <el-table :data="revealedEndpoints" size="small" stripe>
+          <el-table-column label="代理" prop="display_name" width="100" />
+          <el-table-column label="Base URL" min-width="240">
+            <template #default="{ row }">
+              <code class="endpoint-code">{{ row.openai_base_url }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column width="64" align="center">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="copyOpenAiBaseUrl(row)">复制</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
       <template #footer>
         <el-button @click="revealVisible = false">关闭</el-button>
         <el-button type="primary" @click="copyRevealed">复制 Key</el-button>
@@ -224,6 +284,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -239,6 +300,12 @@ interface CpAccount {
   pool_ready: boolean
   pool_ready_reason: string | null
   tier_pressure_pct: number
+}
+
+interface OpenAiEndpoint {
+  display_name: string
+  proxy_url: string
+  openai_base_url: string
 }
 
 interface CpKey {
@@ -297,17 +364,23 @@ interface MemberOption {
 }
 
 const auth = useAuthStore()
+const router = useRouter()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const loading = ref(false)
 const vendorTab = ref('glm')
 const accounts = ref<CpAccount[]>([])
 const keys = ref<CpKey[]>([])
-const openaiBase = ref('')
+const openaiEndpoints = ref<OpenAiEndpoint[]>([])
 const members = ref<MemberOption[]>([])
 
 const createVisible = ref(false)
 const creating = ref(false)
-const createdKey = ref<{ plaintext_key: string; openai_base_url: string } | null>(null)
+const createdKey = ref<{ plaintext_key: string; openai_endpoints?: OpenAiEndpoint[] } | null>(null)
+const createdKeyEndpoints = computed(() => {
+  const fromKey = createdKey.value?.openai_endpoints
+  if (fromKey?.length) return fromKey
+  return openaiEndpoints.value
+})
 const createForm = reactive({
   coding_plan_vendor: 'glm',
   member_id: '',
@@ -316,7 +389,7 @@ const createForm = reactive({
 
 const revealVisible = ref(false)
 const revealedPlaintext = ref('')
-const revealedBaseUrl = ref('')
+const revealedEndpoints = ref<OpenAiEndpoint[]>([])
 
 const usagesVisible = ref(false)
 const usagesLoading = ref(false)
@@ -353,17 +426,36 @@ async function loadAccounts() {
   }
 }
 
+async function loadOpenaiEndpoints() {
+  try {
+    const res = await client.get('/api/v2/openai-proxy/endpoints')
+    openaiEndpoints.value = Array.isArray(res.data?.endpoints) ? res.data.endpoints : []
+  } catch {
+    openaiEndpoints.value = []
+  }
+}
+
 async function loadKeys() {
   try {
     const res = await client.get('/api/v2/openai-proxy/keys')
     keys.value = res.data.filter(
       (k: CpKey & { coding_plan_vendor?: string }) => k.coding_plan_vendor === vendorTab.value,
     )
-    if (res.data.length && res.data[0].openai_base_url) {
-      openaiBase.value = res.data[0].openai_base_url
-    }
   } catch {
     ElMessage.error('密钥列表加载失败')
+  }
+}
+
+function goProxySettings() {
+  void router.push({ path: '/settings', query: { tab: 'proxy_addresses' } })
+}
+
+async function copyOpenAiBaseUrl(row: OpenAiEndpoint) {
+  try {
+    await copyText(row.openai_base_url)
+    ElMessage.success(`已复制 ${row.display_name} Base URL`)
+  } catch {
+    ElMessage.error('复制失败')
   }
 }
 
@@ -407,9 +499,11 @@ async function submitCreate() {
     })
     createdKey.value = {
       plaintext_key: res.data.plaintext_key,
-      openai_base_url: res.data.openai_base_url,
+      openai_endpoints: res.data.openai_endpoints,
     }
-    openaiBase.value = res.data.openai_base_url
+    if (Array.isArray(res.data.openai_endpoints) && res.data.openai_endpoints.length) {
+      openaiEndpoints.value = res.data.openai_endpoints
+    }
     await loadKeys()
   } catch (err: unknown) {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -443,7 +537,9 @@ async function copyKey(row: CpKey) {
   try {
     const res = await client.get(`/api/v2/openai-proxy/keys/${row.id}/reveal`)
     revealedPlaintext.value = res.data.plaintext_key
-    revealedBaseUrl.value = res.data.openai_base_url || ''
+    revealedEndpoints.value = Array.isArray(res.data.openai_endpoints)
+      ? res.data.openai_endpoints
+      : openaiEndpoints.value
     revealVisible.value = true
     try {
       await copyText(res.data.plaintext_key)
@@ -535,10 +631,16 @@ function onDayRowClick(row: UsageByDayRow, _column: unknown, event: Event) {
 
 onMounted(async () => {
   await loadMembers()
+  await loadOpenaiEndpoints()
   await loadAll()
 })
 
-defineExpose({ load: loadAll })
+defineExpose({
+  load: async () => {
+    await loadOpenaiEndpoints()
+    await loadAll()
+  },
+})
 </script>
 
 <style scoped>
@@ -547,6 +649,45 @@ defineExpose({ load: loadAll })
   color: var(--el-text-color-secondary);
   font-size: 13px;
   line-height: 1.55;
+}
+.endpoint-card {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+}
+.endpoint-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.endpoint-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.endpoint-desc {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+.endpoint-table {
+  width: 100%;
+}
+.endpoint-code {
+  font-size: 12px;
+  word-break: break-all;
+}
+.created-endpoints {
+  margin-top: 12px;
+}
+.created-endpoints-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 .section {
   margin-top: 16px;
