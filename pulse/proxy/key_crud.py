@@ -79,8 +79,8 @@ def create_coding_plan_key(
     expires_at: datetime | None = None,
     encryption_key: str = "",
 ) -> tuple[ProxyKey, str]:
-    from pulse.openai_proxy.upstream import CP_VENDORS
     from pulse.ingestion.crypto import encrypt_secret
+    from pulse.openai_proxy.upstream import CP_VENDORS
 
     vendor = coding_plan_vendor.strip().lower()
     if vendor not in CP_VENDORS:
@@ -212,15 +212,21 @@ def key_summaries(session: Session, keys: list[ProxyKey], *, now: datetime | Non
     now = now or utcnow()
     ids = [key.id for key in keys]
     totals = usage_mod.usage_totals_by_proxy_key(session, ids)
+    req_counts = usage_mod.usage_request_counts_by_proxy_key(session, ids)
     used_5h = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_5H)
     used_7d = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_7D)
+    tok_5h = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_5H)
+    tok_7d = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_7D)
     return [
         _key_summary_row(
             key,
             total_tokens=totals.get(key.id, (0, 0))[0],
             total_cost=totals.get(key.id, (0, 0))[1],
+            request_count=req_counts.get(key.id, 0),
             used_5h=used_5h.get(key.id, 0),
             used_7d=used_7d.get(key.id, 0),
+            window_5h_tokens=tok_5h.get(key.id, 0),
+            window_7d_tokens=tok_7d.get(key.id, 0),
         )
         for key in keys
     ]
@@ -231,8 +237,11 @@ def _key_summary_row(
     *,
     total_tokens: int,
     total_cost: int,
+    request_count: int,
     used_5h: int,
     used_7d: int,
+    window_5h_tokens: int,
+    window_7d_tokens: int,
 ) -> dict:
     return {
         "id": key.id,
@@ -251,8 +260,11 @@ def _key_summary_row(
         "created_at": serialize_datetime(key.created_at),
         "total_tokens": total_tokens,
         "total_cost_cents": total_cost,
+        "request_count": request_count,
         "window_5h_cost_cents": used_5h,
         "window_7d_cost_cents": used_7d,
+        "window_5h_tokens": window_5h_tokens,
+        "window_7d_tokens": window_7d_tokens,
     }
 
 

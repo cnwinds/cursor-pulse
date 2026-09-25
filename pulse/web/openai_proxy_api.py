@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries
 from pulse.openai_proxy.upstream import CP_VENDORS, coding_plan_gateway_public_base
 from pulse.proxy import key_crud
 from pulse.proxy import service as proxy_service
-from pulse.storage.models import AiAccount, AiVendor, Member
+from pulse.proxy.usage_rollup import rollup_proxy_usages
+from pulse.storage.models import AiAccount, AiVendor, Member, ProxyKey, ProxyKeyUsage
 from pulse.web.deps import PortalUser
 
 
@@ -120,10 +122,6 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         dependencies=[Depends(require_capability("proxy:read"))],
     )
     def list_cp_proxy_keys(session: Session = Depends(get_db)):
-        from sqlalchemy import select
-
-        from pulse.storage.models import ProxyKey
-
         keys = (
             session.execute(select(ProxyKey).where(ProxyKey.mode == "coding_plan").order_by(ProxyKey.created_at.desc()))
             .scalars()
@@ -140,3 +138,35 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
             row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
             rows.append(row)
         return rows
+
+    @app.get(
+        "/api/v2/openai-proxy/keys/{key_id}/usages",
+        dependencies=[Depends(require_capability("proxy:read"))],
+    )
+    def cp_proxy_key_usages(
+        key_id: str,
+        limit: int = Query(default=50, ge=1, le=200),
+        session: Session = Depends(get_db),
+    ):
+        key = session.get(ProxyKey, key_id)
+        if key is None or key.mode != "coding_plan":
+            raise HTTPException(status_code=404, detail="Coding Plan 密钥不存在")
+        rows = (
+            session.execute(
+                select(ProxyKeyUsage).where(ProxyKeyUsage.proxy_key_id == key_id).order_by(ProxyKeyUsage.ts.desc())
+            )
+            .scalars()
+            .all()
+        )
+        rollup = rollup_proxy_usages(session, rows, limit=limit)
+        summary = proxy_service.key_summary(session, key)
+        rollup["summary"] = {
+            "name": key.name,
+            "key_hint": key.key_hint,
+            "coding_plan_vendor": key.coding_plan_vendor,
+            "request_count": summary.get("request_count", 0),
+            "total_tokens": summary.get("total_tokens", 0),
+            "window_5h_tokens": summary.get("window_5h_tokens", 0),
+            "window_7d_tokens": summary.get("window_7d_tokens", 0),
+        }
+        return rollup

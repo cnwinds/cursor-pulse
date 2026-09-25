@@ -181,6 +181,65 @@ def test_internal_openai_resolve():
     session.close()
 
 
+def test_cp_key_usage_summary_and_usages_endpoint():
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.openai_proxy.usage import record_cp_gateway_usage
+    from pulse.web.app import create_app
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-u", display_name="MU")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    key, _plain = create_coding_plan_key(
+        session,
+        name="usage-key",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    record_cp_gateway_usage(
+        session,
+        proxy_key_id=key.id,
+        credential_id=None,
+        model="glm-5.2",
+        tokens={"input": 10, "output": 5, "total": 15},
+    )
+    session.commit()
+
+    from pulse.web.auth_tokens import create_access_token
+    from pulse.web.portal import bootstrap_portal_owner
+
+    owner = bootstrap_portal_owner(_repo, channel_user_id="admin", display_name="Admin", password="x")
+    session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    listed = client.get("/api/v2/openai-proxy/keys", headers=headers)
+    assert listed.status_code == 200
+    row = next(r for r in listed.json() if r["id"] == key.id)
+    assert row["total_tokens"] == 15
+    assert row["request_count"] == 1
+    assert row["window_5h_tokens"] == 15
+
+    detail = client.get(f"/api/v2/openai-proxy/keys/{key.id}/usages", headers=headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["summary"]["total_tokens"] == 15
+    assert body["by_model"][0]["model"] == "glm-5.2"
+    session.close()
+
+
 def test_cp_admin_accounts_list(session):
     team, _repo = make_team_repo(session)
     member = Member(team_id=team.id, channel_user_id="m3", display_name="M3")
