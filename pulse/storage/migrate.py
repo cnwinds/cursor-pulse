@@ -67,6 +67,8 @@ _QUOTA_SNAPSHOT_AT_COLUMNS: dict[str, str] = {
 
 _CODING_PLAN_ACCOUNT_COLUMNS: dict[str, str] = {
     "api_region": "VARCHAR(16)",
+    "glm_organization_id": "VARCHAR(128)",
+    "glm_project_id": "VARCHAR(128)",
 }
 
 _CODING_PLAN_SNAPSHOT_COLUMNS: dict[str, str] = {

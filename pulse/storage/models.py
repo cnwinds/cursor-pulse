@@ -311,6 +311,9 @@ class AiAccount(Base):
     proxy_reserve_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     # glm: zai | bigmodel — minimax: cn | global
     api_region: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 智谱团队版（国内）：与 api_key 一并用于 ?type=2 额度查询
+    glm_organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    glm_project_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -112,22 +112,70 @@ def parse_zhipu_response(body: dict) -> CodingPlanQuotaResult:
     )
 
 
-def fetch_zhipu_quota(api_key: str, *, region: str) -> CodingPlanQuotaResult:
-    base = zhipu_quota_base(region)
-    url = f"{base}/api/monitor/usage/quota/limit"
-    with outbound_client() as client:
-        resp = client.get(
-            url,
-            headers={
-                "Authorization": api_key.strip(),
-                "Content-Type": "application/json",
-                "Accept-Language": "en-US,en",
-            },
-            timeout=15.0,
-        )
+_ZHIPU_QUOTA_PATH = "/api/monitor/usage/quota/limit"
+_ZHIPU_TEAM_QUOTA_URL = f"{_ZHIPU_CN}{_ZHIPU_QUOTA_PATH}?type=2"
+
+
+def _zhipu_common_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": api_key.strip(),
+        "Content-Type": "application/json",
+        "Accept-Language": "en-US,en",
+    }
+
+
+def _parse_zhipu_http_response(resp) -> CodingPlanQuotaResult:
     if resp.status_code in (401, 403):
         raise ValueError(f"GLM authentication failed (HTTP {resp.status_code})")
     if not resp.is_success:
         raise ValueError(f"GLM API error (HTTP {resp.status_code}): {resp.text[:500]}")
-    body = resp.json()
-    return parse_zhipu_response(body)
+    return parse_zhipu_response(resp.json())
+
+
+def fetch_zhipu_quota(api_key: str, *, region: str) -> CodingPlanQuotaResult:
+    base = zhipu_quota_base(region)
+    url = f"{base}{_ZHIPU_QUOTA_PATH}"
+    with outbound_client() as client:
+        resp = client.get(url, headers=_zhipu_common_headers(api_key), timeout=15.0)
+    return _parse_zhipu_http_response(resp)
+
+
+def fetch_zhipu_team_quota(
+    api_key: str,
+    *,
+    organization_id: str,
+    project_id: str,
+) -> CodingPlanQuotaResult:
+    """智谱团队版：固定国内站 + ?type=2 + org/project 头（cc-switch query_zhipu_team）。"""
+    org = organization_id.strip()
+    proj = project_id.strip()
+    if not org or not proj:
+        raise ValueError("智谱团队版须同时填写组织 ID 与项目 ID")
+    headers = {
+        **_zhipu_common_headers(api_key),
+        "bigmodel-organization": org,
+        "bigmodel-project": proj,
+    }
+    with outbound_client() as client:
+        resp = client.get(_ZHIPU_TEAM_QUOTA_URL, headers=headers, timeout=15.0)
+    return _parse_zhipu_http_response(resp)
+
+
+def fetch_glm_quota(
+    api_key: str,
+    *,
+    region: str,
+    organization_id: str | None = None,
+    project_id: str | None = None,
+) -> CodingPlanQuotaResult:
+    org = (organization_id or "").strip()
+    proj = (project_id or "").strip()
+    if org or proj:
+        if region != "bigmodel":
+            raise ValueError("智谱团队版仅支持国内站（bigmodel）")
+        return fetch_zhipu_team_quota(api_key, organization_id=org, project_id=proj)
+    return fetch_zhipu_quota(api_key, region=region)
+
+
+def is_glm_team_account(*, organization_id: str | None, project_id: str | None) -> bool:
+    return bool((organization_id or "").strip() and (project_id or "").strip())

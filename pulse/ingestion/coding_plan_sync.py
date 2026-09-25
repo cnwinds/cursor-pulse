@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session, joinedload
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync_errors import classify_sync_error
 from pulse.ingestion.types import IngestionResult
-from pulse.integrations.coding_plan import CodingPlanExtra, fetch_minimax_quota, fetch_zhipu_quota
+from pulse.integrations.coding_plan import CodingPlanExtra, fetch_glm_quota, fetch_minimax_quota
+from pulse.tool_center.repository import ToolCenterRepository
 from pulse.integrations.coding_plan.types import CodingPlanQuotaResult, QuotaTier
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, AiPlan
 from pulse.tool_center.quota_reads import prune_quota_snapshots_for_account
@@ -52,8 +53,14 @@ def _max_utilization(tiers: list[QuotaTier]) -> float | None:
     return max(t.utilization_pct for t in tiers)
 
 
-def _apply_glm_plan_from_level(session: Session, account: AiAccount, level: str | None) -> None:
-    if not level:
+def _apply_glm_plan_from_level(
+    session: Session,
+    account: AiAccount,
+    level: str | None,
+    *,
+    member_id: str | None = None,
+) -> None:
+    if not level or not account.team_id:
         return
     slug = level.strip().lower()
     if not slug:
@@ -66,7 +73,14 @@ def _apply_glm_plan_from_level(session: Session, account: AiAccount, level: str 
         )
     )
     if plan and account.plan_id != plan.id:
-        account.plan_id = plan.id
+        repo = ToolCenterRepository(session, account.team_id)
+        repo.change_account_plan(
+            account.id,
+            new_plan_id=plan.id,
+            effective_from=date.today(),
+            changed_by_member_id=member_id,
+            note=f"GLM API level={slug}",
+        )
 
 
 def _write_snapshot(
@@ -75,6 +89,7 @@ def _write_snapshot(
     quota: CodingPlanQuotaResult,
     *,
     captured_at: datetime | None = None,
+    member_id: str | None = None,
 ) -> AccountQuotaSnapshot:
     now = captured_at or datetime.now(UTC)
     today = now.date()
@@ -90,7 +105,7 @@ def _write_snapshot(
     )
 
     if account.vendor and account.vendor.slug == "glm":
-        _apply_glm_plan_from_level(session, account, quota.plan_level)
+        _apply_glm_plan_from_level(session, account, quota.plan_level, member_id=member_id)
 
     weekly = next((t for t in tiers if t.name == "weekly_limit"), None)
     if weekly and weekly.resets_at:
@@ -133,7 +148,12 @@ class CodingPlanQuotaSyncService:
         if slug == "glm":
             if region not in ("zai", "bigmodel"):
                 raise ValueError("GLM 账号须配置 api_region（zai 或 bigmodel）")
-            return fetch_zhipu_quota(api_key, region=region)
+            return fetch_glm_quota(
+                api_key,
+                region=region,
+                organization_id=account.glm_organization_id,
+                project_id=account.glm_project_id,
+            )
         if slug == "minimax":
             if region not in ("cn", "global"):
                 raise ValueError("MiniMax 账号须配置 api_region（cn 或 global）")
@@ -166,7 +186,7 @@ class CodingPlanQuotaSyncService:
             api_key = self.credential_service.decrypt_api_key(cred)
             quota = self._fetch_quota(account, api_key)
             now = datetime.now(UTC)
-            _write_snapshot(self.session, account, quota, captured_at=now)
+            _write_snapshot(self.session, account, quota, captured_at=now, member_id=member_id)
 
             cred.last_sync_at = now
             cred.last_sync_status = "success"

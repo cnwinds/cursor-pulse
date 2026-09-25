@@ -23,6 +23,21 @@ Pulse 对 GLM、MiniMax 仅做 **quota-only** 同步（无 usage events）。解
 
 实现：`pulse/integrations/coding_plan/zhipu.py`（`fetch_zhipu_quota` / `parse_zhipu_token_tiers`）。
 
+### 智谱团队版（M2）
+
+| 项 | 值 |
+|----|-----|
+| URL | `GET https://open.bigmodel.cn/api/monitor/usage/quota/limit?type=2`（**仅国内**，无 z.ai 团队档） |
+| Authorization | 与个人版相同（Key 原文，无 Bearer） |
+| 额外头 | `bigmodel-organization`、`bigmodel-project`（与 API Key 三者缺一不可） |
+| 响应 | 与个人版相同 → 复用 `parse_zhipu_token_tiers` |
+
+Pulse 台账字段：`glm_organization_id`、`glm_project_id`（均非空时走团队查询）；创建时 `api_region` 固定为 `bigmodel`。
+
+实现：`fetch_zhipu_team_quota` / `fetch_glm_quota`（按账号是否配置 org/project 自动分支）。
+
+同步时若 API `data.level` 与台账 plan slug 不一致，会调用 `change_account_plan` 并写入 `AiAccountPlanHistory`（note 含 `GLM API level=…`）。
+
 ## MiniMax Coding Plan
 
 | 项 | 值 |

@@ -149,6 +149,8 @@ class ToolCenterRepository:
         ownership: str = "company",
         usage_resets_on: date | None = None,
         api_region: str | None = None,
+        glm_organization_id: str | None = None,
+        glm_project_id: str | None = None,
         proxy_enabled: bool = False,
     ) -> AiAccount:
         now = datetime.now(UTC)
@@ -163,6 +165,8 @@ class ToolCenterRepository:
             ownership=ownership,
             usage_resets_on=usage_resets_on,
             api_region=api_region,
+            glm_organization_id=(glm_organization_id or "").strip() or None,
+            glm_project_id=(glm_project_id or "").strip() or None,
             proxy_enabled=proxy_enabled,
             created_at=now,
             updated_at=now,

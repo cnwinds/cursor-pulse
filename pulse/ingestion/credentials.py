@@ -136,9 +136,14 @@ class CredentialService:
         if account.vendor.slug == "glm":
             if region not in ("zai", "bigmodel"):
                 raise ValueError("GLM 账号须配置 api_region（zai 或 bigmodel）")
-            from pulse.integrations.coding_plan.zhipu import fetch_zhipu_quota
+            from pulse.integrations.coding_plan import fetch_glm_quota
 
-            fetch_zhipu_quota(api_key, region=region)
+            fetch_glm_quota(
+                api_key,
+                region=region,
+                organization_id=account.glm_organization_id,
+                project_id=account.glm_project_id,
+            )
         else:
             if region not in ("cn", "global"):
                 raise ValueError("MiniMax 账号须配置 api_region（cn 或 global）")

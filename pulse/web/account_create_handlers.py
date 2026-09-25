@@ -10,7 +10,8 @@ from pulse.ingestion.plan_infer import (
     infer_plan_from_period_usage,
 )
 from pulse.ingestion.sync_dispatch import sync_account_by_vendor
-from pulse.integrations.coding_plan import fetch_minimax_quota, fetch_zhipu_quota
+from pulse.integrations.coding_plan import fetch_glm_quota, fetch_minimax_quota
+from pulse.integrations.coding_plan.zhipu import is_glm_team_account
 from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AiVendor
 from pulse.tool_center.repository import ToolCenterRepository
@@ -145,8 +146,15 @@ def create_coding_plan_account(
         raise HTTPException(status_code=400, detail="须填写 API Key")
 
     region = (body.api_region or "").strip()
-    if slug == "glm" and region not in ("zai", "bigmodel"):
-        raise HTTPException(status_code=400, detail="GLM 须选择站点：zai（国际）或 bigmodel（国内）")
+    org_id = (body.glm_organization_id or "").strip()
+    proj_id = (body.glm_project_id or "").strip()
+    if slug == "glm":
+        if org_id or proj_id:
+            if not org_id or not proj_id:
+                raise HTTPException(status_code=400, detail="智谱团队版须同时填写组织 ID 与项目 ID")
+            region = "bigmodel"
+        elif region not in ("zai", "bigmodel"):
+            raise HTTPException(status_code=400, detail="GLM 须选择站点：zai（国际）或 bigmodel（国内）")
     if slug == "minimax" and region not in ("cn", "global"):
         raise HTTPException(status_code=400, detail="MiniMax 须选择区域：cn 或 global")
 
@@ -157,7 +165,12 @@ def create_coding_plan_account(
     status = validate_status(body.status)
 
     if slug == "glm":
-        quota = fetch_zhipu_quota(api_key, region=region)
+        quota = fetch_glm_quota(
+            api_key,
+            region=region,
+            organization_id=org_id or None,
+            project_id=proj_id or None,
+        )
         plan = _glm_plan_for_level(repo, vendor.id, quota.plan_level)
     else:
         quota = fetch_minimax_quota(api_key, region=region)
@@ -177,6 +190,8 @@ def create_coding_plan_account(
         shared_note=body.shared_note,
         ownership=body.ownership,
         api_region=region,
+        glm_organization_id=org_id or None,
+        glm_project_id=proj_id or None,
         proxy_enabled=False,
     )
 
@@ -194,6 +209,9 @@ def create_coding_plan_account(
         channel="web",
         member_id=user.member.id,
     )
+    team_suffix = ""
+    if slug == "glm" and is_glm_team_account(organization_id=org_id, project_id=proj_id):
+        team_suffix = ":team"
     log_action(
         session,
         team_id=team_id,
@@ -208,7 +226,7 @@ def create_coding_plan_account(
         member_id=user.member.id,
         action="account.create",
         capability="accounts:write",
-        detail=f"{slug}:{account.account_identifier}",
+        detail=f"{slug}{team_suffix}:{account.account_identifier}",
     )
     session.commit()
     return account

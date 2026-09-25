@@ -7,8 +7,14 @@
     <el-table :data="accounts" stripe>
       <el-table-column label="账号标识" min-width="200" prop="account_identifier" />
       <el-table-column label="套餐" width="120" prop="plan_name" />
-      <el-table-column label="站点/区域" width="120">
-        <template #default="{ row }">{{ regionLabel(row.api_region) }}</template>
+      <el-table-column label="站点/区域" width="140">
+        <template #default="{ row }">{{ regionLabel(row) }}</template>
+      </el-table-column>
+      <el-table-column v-if="vendorSlug === 'glm'" label="版本" width="88">
+        <template #default="{ row }">
+          <el-tag v-if="isTeamRow(row)" size="small" type="warning">团队</el-tag>
+          <el-tag v-else size="small" type="info">个人</el-tag>
+        </template>
       </el-table-column>
       <el-table-column label="类型" width="100">
         <template #default="{ row }">
@@ -37,11 +43,34 @@
 
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑账号' : '新增账号'" width="520px">
       <el-form label-width="100px">
-        <el-form-item label="站点/区域" required>
+        <el-form-item v-if="vendorSlug === 'glm' && !editing" label="账号类型">
+          <el-radio-group v-model="glmAccountKind">
+            <el-radio-button value="personal">个人 Coding Plan</el-radio-button>
+            <el-radio-button value="team">智谱团队版</el-radio-button>
+          </el-radio-group>
+          <p v-if="glmAccountKind === 'team'" class="field-hint">
+            团队版固定国内 open.bigmodel.cn，需 API Key + 组织 ID + 项目 ID（与 cc-switch 一致）。
+          </p>
+        </el-form-item>
+        <el-form-item v-if="vendorSlug === 'glm' && glmAccountKind === 'team' && !editing" label="组织 ID" required>
+          <el-input v-model="form.glm_organization_id" placeholder="bigmodel-organization" />
+        </el-form-item>
+        <el-form-item v-if="vendorSlug === 'glm' && glmAccountKind === 'team' && !editing" label="项目 ID" required>
+          <el-input v-model="form.glm_project_id" placeholder="bigmodel-project" />
+        </el-form-item>
+        <el-form-item v-if="showRegionSelect" label="站点/区域" required>
           <el-select v-model="form.api_region" style="width: 100%" :disabled="Boolean(editing)">
             <el-option v-for="o in regionOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
+        <template v-if="vendorSlug === 'glm' && editing && isTeamRow(editing)">
+          <el-form-item label="组织 ID">
+            <el-input :model-value="editing.glm_organization_id || '—'" disabled />
+          </el-form-item>
+          <el-form-item label="项目 ID">
+            <el-input :model-value="editing.glm_project_id || '—'" disabled />
+          </el-form-item>
+        </template>
         <el-form-item label="账号标识" required>
           <el-input v-model="form.account_identifier" placeholder="邮箱或备注名" />
         </el-form-item>
@@ -122,6 +151,8 @@ interface Account {
   vendor_id: string
   vendor_slug?: string
   api_region?: string | null
+  glm_organization_id?: string | null
+  glm_project_id?: string | null
   plan_id: string
   plan_name: string
   account_identifier: string
@@ -151,9 +182,12 @@ const editing = ref<Account | null>(null)
 const editCredential = ref<CredentialStatus | null>(null)
 const credentialMap = ref<Record<string, CredentialStatus>>({})
 const credentialSyncing = ref(false)
+const glmAccountKind = ref<'personal' | 'team'>('personal')
 
 const form = reactive({
   api_region: '',
+  glm_organization_id: '',
+  glm_project_id: '',
   plan_id: '',
   account_identifier: '',
   status: 'shared',
@@ -162,9 +196,24 @@ const form = reactive({
   api_key: '',
 })
 
+const showRegionSelect = computed(() => {
+  if (props.vendorSlug !== 'glm') return true
+  if (editing.value) return !isTeamRow(editing.value)
+  return glmAccountKind.value === 'personal'
+})
+
 const vendorPlans = computed(() => plans.value.filter((p) => p.vendor_id === vendor.value?.id))
 
-function regionLabel(code: string | null | undefined) {
+function isTeamRow(row: Account) {
+  return Boolean(row.glm_organization_id?.trim() && row.glm_project_id?.trim())
+}
+
+function regionLabel(row: Account | string | null | undefined) {
+  if (row && typeof row === 'object') {
+    if (isTeamRow(row)) return '国内团队版'
+    return regionLabel(row.api_region)
+  }
+  const code = typeof row === 'string' ? row : null
   const o = regionOptions.value.find((x) => x.value === code)
   return o?.label || code || '—'
 }
@@ -246,7 +295,10 @@ async function loadAll() {
 defineExpose({ loadAll })
 
 function resetForm() {
+  glmAccountKind.value = 'personal'
   form.api_region = regionOptions.value[0]?.value || ''
+  form.glm_organization_id = ''
+  form.glm_project_id = ''
   form.plan_id = vendorPlans.value[0]?.id || ''
   form.account_identifier = ''
   form.status = 'shared'
@@ -268,7 +320,10 @@ function openCreate() {
 
 function openEdit(row: Account) {
   editing.value = row
+  glmAccountKind.value = isTeamRow(row) ? 'team' : 'personal'
   form.api_region = row.api_region || regionOptions.value[0]?.value || ''
+  form.glm_organization_id = row.glm_organization_id || ''
+  form.glm_project_id = row.glm_project_id || ''
   form.plan_id = row.plan_id
   form.account_identifier = row.account_identifier
   form.status = row.status
@@ -344,7 +399,7 @@ async function save() {
         ElMessage.warning('请填写 API Key')
         return
       }
-      await client.post('/api/v2/accounts', {
+      const payload: Record<string, unknown> = {
         vendor_id: vendor.value.id,
         api_region: form.api_region,
         account_identifier: form.account_identifier.trim(),
@@ -353,7 +408,13 @@ async function save() {
         shared_note: form.shared_note || null,
         api_key: form.api_key.trim(),
         plan_id: props.vendorSlug === 'glm' ? form.plan_id || undefined : undefined,
-      })
+      }
+      if (props.vendorSlug === 'glm' && glmAccountKind.value === 'team') {
+        payload.api_region = 'bigmodel'
+        payload.glm_organization_id = form.glm_organization_id.trim()
+        payload.glm_project_id = form.glm_project_id.trim()
+      }
+      await client.post('/api/v2/accounts', payload)
     }
     dialogVisible.value = false
     await loadAll()
@@ -367,6 +428,12 @@ async function save() {
     saving.value = false
   }
 }
+
+watch(glmAccountKind, (kind) => {
+  if (props.vendorSlug === 'glm' && kind === 'team') {
+    form.api_region = 'bigmodel'
+  }
+})
 
 watch(
   () => props.vendorSlug,
@@ -386,5 +453,11 @@ onMounted(loadAll)
 }
 .key-hint {
   font-size: 12px;
+}
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
 }
 </style>

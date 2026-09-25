@@ -34,6 +34,8 @@ class AccountCreateBody(BaseModel):
     usage_resets_on: str | None = None
     api_key: str | None = None
     api_region: str | None = None
+    glm_organization_id: str | None = None
+    glm_project_id: str | None = None
 
 
 class AccountPatchBody(BaseModel):
@@ -87,6 +89,8 @@ def _account_payload(account) -> dict:
         "vendor_name": account.vendor.name if account.vendor else None,
         "vendor_slug": account.vendor.slug if account.vendor else None,
         "api_region": account.api_region,
+        "glm_organization_id": account.glm_organization_id,
+        "glm_project_id": account.glm_project_id,
         "plan_id": account.plan_id,
         "plan_name": account.plan.plan_name if account.plan else None,
         "account_identifier": account.account_identifier,
