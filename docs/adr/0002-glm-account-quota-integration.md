@@ -1,6 +1,6 @@
 # ADR 0002：Coding Plan 账号（GLM / MiniMax）台账与额度看板
 
-- **状态**：草案（待产品确认）
+- **状态**：**已确认 UI/代理边界**（待开发 M1；套餐对齐等细则见文末「仍待确认」）
 - **日期**：2026-09-24（修订：纳入 MiniMax、对齐 cc-switch）
 - **参考实现**：[farion1231/cc-switch](https://github.com/farion1231/cc-switch) `src-tauri/src/services/coding_plan.rs`（Token Plan 额度查询，含单元测试与解析边界）
 - **范围**：Pulse Web 账号台账、额度看板、后台 **quota-only** 同步；**不包含** MITM 代理、Key 借用、用量事件/历史用量
@@ -23,7 +23,7 @@ Pulse 已管理 **Cursor** 账号：台账、API Key、`CursorSyncService`（周
 - 开放平台按量充值余额（与 Coding Plan 窗口额度不同体系）。
 - Kimi / 火山 / ZenMux 等 cc-switch 已支持的其他 Token Plan（可后续按同一框架扩展）。
 - 智谱 **团队版**（`?type=2` + `bigmodel-organization` / `bigmodel-project` 头，见 cc-switch `query_zhipu_team`）——建议 **M2** 单独账号类型或扩展字段。
-- Credential Pool / Key Loan / Auto Lender / Jev / Go proxy（仍 **仅 Cursor**）。
+- Credential Pool / Key Loan / Auto Lender / Jev / **现有 Cursor MITM proxy**（GLM / MiniMax **暂不接入**；见下文「代理边界与未来」）。
 
 ## 外部接口（以 cc-switch 为准）
 
@@ -230,28 +230,58 @@ Board item 示例（Coding Plan）：
 
 `has_usage_detail: false` → 前端隐藏「本周期用量明细」折叠区（Cursor 专用 `cursor_pools`）。
 
-## 前端
+## 已确认的产品决策（2026-09-25）
 
-### 账号台账
+1. **台账与看板均按类型分 Tab**，三类内容 **互不混排**；Cursor / GLM / MiniMax 各自字段与操作差异大，不做「一张表打天下」。
+2. **每种类型独立设计卡片/表格**（复用布局骨架即可，文案、列、进度语义各自一套）。
+3. **GLM、MiniMax 暂不进入 proxy / 借用池**；`proxy_enabled` 默认 false，后端 pool/loan 查询继续 **仅 `vendor.slug=cursor`**。
+4. **后续**：为 Coding Plan 增加 **OpenAI 兼容上游** 的独立代理分支（与 Cursor MITM 并列，非 M1）。
 
-- 标题：**AI 账号台账**（Cursor + GLM + MiniMax）。
-- 筛选：全部 / Cursor / GLM / MiniMax；列 **平台**。
-- 新建：选平台 → region（GLM/MiniMax）→ 套餐（GLM 可选，MiniMax 占位）→ Key → 标识。
+## 前端信息架构
 
-### 额度看板
+### 账号台账（`/accounts`）
 
-| display_mode | UI |
-|--------------|-----|
-| `cursor`（默认） | 现有 Total / Auto / API + 用量明细 |
-| `coding_plan_tiers` | 5h + 每周 进度条；GLM 可选 MCP 条；**无** 美元 API 剩余文案 |
-| 共用 | 状态 tag（healthy/warning/exhausted）、重置倒计时、手动「同步」 |
+页面壳：**AI 账号台账** + 顶栏 `el-tabs`（或路由 query `?vendor=cursor|glm|minimax`）：
 
-- 隐藏：Jev、Auto Lender 标签（CP 账号）。
-- 副标题：说明 CP 与官方 Coding Plan 窗口对齐，**无历史用量**。
+| Tab | 组件（建议） | 列与能力（与 Cursor **不同**） |
+|-----|--------------|----------------------------------|
+| **Cursor** | `CursorAccountsPanel` | 沿用现表：套餐、类型、API Key 同步、用量重置、升级建议、编辑/绑 Key |
+| **GLM** | `GlmAccountsPanel` | 站点（z.ai / bigmodel）、套餐 level、Key 同步状态、主使用人、**无** Cursor 升级建议列；标识为用户备注/邮箱 |
+| **MiniMax** | `MinimaxAccountsPanel` | 区域（国内 minimaxi / 国际 io）、占位套餐、Key 同步、主使用人；**无** 用量重置日（仅快照 tier 重置） |
+
+- 各 Tab 内 **「新增账号」** 只创建当前 vendor；表单字段按 Tab 定制。
+- 默认 Tab：**Cursor**（保持现有用户习惯）。
+
+### 额度看板（`/quota`）
+
+同样 **三 Tab**，每 Tab 只用对应卡片组件：
+
+| Tab | 卡片组件 | 设计要点 |
+|-----|----------|----------|
+| **Cursor** | `CursorQuotaCard` | 现逻辑：周期、Total/Auto/API、美元 API 剩余、本周期明细、Jev/Auto 首选 |
+| **GLM** | `GlmQuotaCard` | 5h / 每周 **Tokens** 进度；可选 **MCP（TIME_LIMIT）** 条；套餐 level；最近 tier 重置倒计时；**无** 明细折叠、**无** Jev |
+| **MiniMax** | `MinimaxQuotaCard` | 5h / 每周（仅 `weekly_status=1` 时显示周条）；`general` 桶语义；**无** 明细、**无** Jev |
+
+- API：`GET /api/v2/quota/board?vendor=cursor|glm|minimax`（或一次返回三分组，前端按 Tab 取段——实现时择一，**默认按 vendor 分请求** 减小 payload）。
+- CP 卡片副文案：对齐官方 Coding Plan 窗口百分比，**无历史用量**。
+- CP **不做** Cursor 式「预计耗尽日期」（无事件，除非后续有多快照外推，非 M1）。
 
 ### 用量分析 / 概览
 
-- 对 `vendor.slug in (glm, minimax)`：**不展示**或展示「该平台暂无历史用量同步」——避免用户以为坏了。
+- GLM / MiniMax：空态「该平台仅同步额度快照，暂无历史用量」；不在 Cursor 图表中混入 CP 账号。
+
+## 代理边界与未来（非 M1）
+
+**当前（M1）**
+
+- `AiAccount.proxy_enabled`：glm/minimax 创建时强制 / 默认 **false**；管理 UI **不展示**「加入代理池」类开关（Cursor 专属）。
+- Go `Credential Pool`、Web `list_pool_credentials`、`KeyLoan` 出借源：继续过滤 **cursor vendor**；对 glm/minimax 账号 ID 若误配 proxy，authorize 层 **拒绝**（防御性校验，可选 M1）。
+
+**规划（后续 ADR / M4）**
+
+- 新增 **OpenAI-compatible upstream proxy** 分支：路由形如现有 MITM，但 upstream 为 GLM/MiniMax（及同类）OpenAI 兼容 base URL，凭据来自 Coding Plan 账号池。
+- 与 Cursor MITM **分配置、分 Proxy Key 类型或前缀**，避免混用 Quota Pool（auto/api）语义。
+- M1 仅在 `docs/adr/0002-…` 与本节留扩展点，**不实现**代理代码。
 
 ## 权限、审计、文档
 
@@ -278,24 +308,22 @@ Fixtures 目录建议：
 2. Seed：glm + minimax vendors/plans。
 3. 部署说明：现有 Cursor 账号零影响。
 
-## 开放问题（需确认）
+## 仍待确认（不阻塞 M1 Tab/卡片骨架）
 
-1. **GLM 套餐**：`level` 与台账 plan 不一致 → 自动改 plan + history，还是仅展示 API level？
-2. **MiniMax 套餐**：是否接受单一占位 plan + 备注，直到 API 提供档位？
-3. **看板布局**：Cursor / CP **混排** vs **分 Tab**？默认排序是否 Cursor 优先？
-4. **预警阈值**：CP 是否沿用 95%/100%（基于 max tier utilization）？
-5. **智谱团队版**：M1 做不做（需 org/project 字段）？
-6. **Burn 预测**：CP 无事件，是否 **不做**「预计耗尽日期」（首期建议不做）？
-7. **边界声明**：是否在 `CONTEXT.md` 写明 CP 账号永不进 proxy/借用池？
+1. **GLM 套餐**：API `level` 与台账 plan 不一致 → 自动改 plan + history，还是仅展示 API level？（**实现默认**：同步时更新 plan 并写 audit，无 history 首期可省略）
+2. **MiniMax 套餐**：单一占位 plan + 备注是否 OK？（**实现默认**：是）
+3. **预警阈值**：CP 沿用 95%/100%（max tier）？（**实现默认**：是）
+4. **智谱团队版**：M2（org/project + `?type=2`）
 
 ## 实施阶段
 
 | 阶段 | 交付 |
 |------|------|
-| **M1** | seed + zhipu/minimax client（对照 cc-switch）+ quota sync + 台账 + 看板 tier UI + 用量分析空态 |
-| **M2** | 智谱团队版、scheduler 指标、plan 自动对齐策略、`docs/coding-plan-quota-apis.md` |
-| **M3** | Kimi 等同框架扩展；助手/bot 查额度（可选） |
+| **M1** | seed + cc-switch 解析移植 + quota sync + **台账三 Tab + 看板三 Tab 独立卡片** + proxy 排除 + 用量分析空态 |
+| **M2** | 智谱团队版、plan 对齐策略、`docs/coding-plan-quota-apis.md` |
+| **M3** | Kimi 等扩展；助手/bot 查额度（可选） |
+| **M4** | **OpenAI 兼容代理分支**（GLM/MiniMax 专用池，与 Cursor MITM 分离） |
 
 ---
 
-**请确认开放问题后进入 M1。** 实现时以 cc-switch `coding_plan.rs` 为解析真源，避免重复踩坑（智谱 unit、MiniMax weekly_status、GLM 无 Bearer）。
+**M1 开发依据**：本 ADR + cc-switch `coding_plan.rs` 解析真源（智谱 unit、MiniMax weekly_status、GLM 无 Bearer）。
