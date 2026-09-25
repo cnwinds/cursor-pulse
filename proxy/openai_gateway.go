@@ -55,6 +55,10 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 				writeOpenAIError(w, http.StatusServiceUnavailable, "No available Coding Plan account in pool")
 				return
 			}
+			if res.Status == "window_limited" {
+				writeOpenAIError(w, http.StatusTooManyRequests, "Pulse proxy key window limit exceeded")
+				return
+			}
 			writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key provided")
 			return
 		}
@@ -73,8 +77,8 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 			copyOpenAIUpstream(w, upResp)
 			return
 		}
-		defer upResp.Body.Close()
 		respBody, readErr := io.ReadAll(upResp.Body)
+		upResp.Body.Close()
 		if readErr != nil {
 			writeOpenAIError(w, http.StatusBadGateway, "Upstream read failed")
 			return
