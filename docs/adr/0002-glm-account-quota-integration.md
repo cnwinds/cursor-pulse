@@ -1,6 +1,6 @@
 # ADR 0002：Coding Plan 账号（GLM / MiniMax）台账与额度看板
 
-- **状态**：**已确认 UI/代理边界**（待开发 M1；套餐对齐等细则见文末「仍待确认」）
+- **状态**：**M1 已落地**（台账/看板三 Tab、quota-only 同步、用量分析 CP 提示）；M2+ 见「实施阶段」
 - **日期**：2026-09-24（修订：纳入 MiniMax、对齐 cc-switch）
 - **参考实现**：[farion1231/cc-switch](https://github.com/farion1231/cc-switch) `src-tauri/src/services/coding_plan.rs`（Token Plan 额度查询，含单元测试与解析边界）
 - **范围**：Pulse Web 账号台账、额度看板、后台 **quota-only** 同步；**不包含** MITM 代理、Key 借用、用量事件/历史用量
