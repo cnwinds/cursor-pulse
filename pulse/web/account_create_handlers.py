@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
+from pulse.ingestion.crypto import mask_api_key
 from pulse.ingestion.plan_infer import (
     cycle_end_from_period_usage,
     default_cursor_plan,
@@ -26,6 +27,14 @@ def _glm_plan_for_level(repo: ToolCenterRepository, vendor_id: str, level: str |
     if plan:
         return plan
     return next((p for p in plans if p.slug == "pro"), None) or plans[0]
+
+
+def _coding_plan_account_identifier(raw: str | None, api_key: str) -> str:
+    """Coding Plan（GLM / MiniMax / 后续 Kimi 等）标识仅作台账展示，不参与鉴权。"""
+    identifier = (raw or "").strip()
+    if identifier:
+        return identifier
+    return mask_api_key(api_key)
 
 
 def _minimax_default_plan(repo: ToolCenterRepository, vendor_id: str):
@@ -150,9 +159,7 @@ def create_coding_plan_account(
     if slug == "minimax" and region not in ("cn", "global"):
         raise HTTPException(status_code=400, detail="MiniMax 须选择区域：cn 或 global")
 
-    identifier = (body.account_identifier or "").strip()
-    if not identifier:
-        raise HTTPException(status_code=400, detail="请填写账号标识（邮箱或备注名）")
+    identifier = _coding_plan_account_identifier(body.account_identifier, api_key)
 
     status = validate_status(body.status)
 
