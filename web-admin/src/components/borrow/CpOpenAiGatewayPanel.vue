@@ -1,12 +1,5 @@
 <template>
   <div class="cp-openai-panel" v-loading="loading">
-    <p class="hint">
-      Coding Plan 专用 OpenAI 网关（与 Cursor MITM 同 Go 代理、不同路径）。客户端
-      <code>base_url</code> 使用下方「系统设置 → 代理地址」对应的
-      <code>{代理}/openai/v1</code>，API Key 填签发的 <code>pkcp_</code>。同一密钥在 Switch
-      dwell（默认 30 分钟，见选号规则）内固定后端账号；超时后按额度与并发负载均衡；429 时自动换号。
-    </p>
-
     <div class="endpoint-card">
       <div class="endpoint-head">
         <h3>OpenAI Base URL</h3>
@@ -14,7 +7,11 @@
           前往配置代理地址
         </el-button>
       </div>
-      <p class="endpoint-desc">OpenAI SDK / LangChain 等填 <code>base_url</code>；内网用「公司」、外网用「外网」等，与 Cursor 借用命令一致。</p>
+      <p class="endpoint-desc">
+        Coding Plan 网关与 Cursor 借用同 Go 代理、路径为 <code>/openai/v1</code>（来自系统设置 → 代理地址）。
+        客户端填下表 <code>base_url</code> 与签发的 <code>pkcp_</code>，按网络选「公司 / 外网」等即可。
+        同一密钥在 dwell 内（默认 30 分钟，见选号规则）固定后端账号，超时按额度与并发均衡，429 自动换号。
+      </p>
       <el-alert
         v-if="!openaiEndpoints.length"
         type="warning"
@@ -655,12 +652,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.hint {
-  margin: 0 0 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 1.55;
-}
 .endpoint-card {
   margin-bottom: 16px;
   padding: 12px 14px;
