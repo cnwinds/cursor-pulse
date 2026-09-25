@@ -1,9 +1,5 @@
 <template>
   <div class="coding-plan-accounts" v-loading="loading">
-    <div class="panel-toolbar">
-      <el-button type="primary" :disabled="!vendor" @click="openCreate">新增 {{ vendorLabel }} 账号</el-button>
-    </div>
-
     <el-table :data="accounts" stripe>
       <el-table-column label="账号标识" min-width="200" prop="account_identifier" />
       <el-table-column label="套餐" width="120" prop="plan_name" />
@@ -304,7 +300,7 @@ async function loadAll() {
   }
 }
 
-defineExpose({ loadAll })
+defineExpose({ loadAll, openCreate })
 
 function resetForm() {
   glmAccountKind.value = 'personal'
@@ -458,11 +454,6 @@ onMounted(loadAll)
 </script>
 
 <style scoped>
-.panel-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
-}
 .key-hint {
   font-size: 12px;
 }

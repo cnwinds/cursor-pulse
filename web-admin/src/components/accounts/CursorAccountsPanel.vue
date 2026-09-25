@@ -1,9 +1,5 @@
 <template>
   <div class="accounts-page" v-loading="loading">
-    <div class="panel-toolbar">
-      <el-button type="primary" :disabled="!cursorVendor" @click="openCreate">新增 Cursor 账号</el-button>
-    </div>
-
     <el-table :data="accounts" stripe>
       <el-table-column label="账号" min-width="220">
         <template #default="{ row }">
@@ -452,7 +448,7 @@ async function loadAll() {
   }
 }
 
-defineExpose({ loadAll })
+defineExpose({ loadAll, openCreate })
 
 function resetForm() {
   form.vendor_id = cursorVendor.value?.id || ''
