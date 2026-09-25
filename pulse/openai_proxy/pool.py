@@ -95,6 +95,64 @@ def list_cp_pool_entries(
     return out
 
 
+def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[str, Any]]:
+    """All Coding Plan accounts for admin UI (入池开关 + 额度压力)."""
+    from pulse.storage.models import AiAccount, AiAccountCredential, AiVendor
+
+    slug = vendor_slug.strip().lower()
+    if slug not in CP_VENDORS:
+        return []
+    accounts = (
+        session.execute(
+            select(AiAccount)
+            .join(AiVendor, AiAccount.vendor_id == AiVendor.id)
+            .where(
+                AiVendor.slug == slug,
+                AiAccount.deleted_at.is_(None),
+            )
+            .order_by(AiAccount.account_identifier)
+        )
+        .scalars()
+        .all()
+    )
+    if not accounts:
+        return []
+    account_ids = [a.id for a in accounts]
+    creds = (
+        session.execute(select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids)))
+        .scalars()
+        .all()
+    )
+    active_primary: dict[str, int] = {}
+    for c in creds:
+        if c.status == "active" and c.key_role == "primary":
+            active_primary[c.account_id] = active_primary.get(c.account_id, 0) + 1
+    snaps = latest_snapshots_for_accounts(session, account_ids)
+    out: list[dict[str, Any]] = []
+    for acc in accounts:
+        n = active_primary.get(acc.id, 0)
+        pool_ready = n == 1
+        pool_ready_reason = None
+        if n == 0:
+            pool_ready_reason = "无可用主 Key"
+        elif n > 1:
+            pool_ready_reason = "存在多个主 Key"
+        pressure = _tier_pressure(snaps.get(acc.id))
+        out.append(
+            {
+                "id": acc.id,
+                "account_identifier": acc.account_identifier,
+                "api_region": acc.api_region,
+                "cp_proxy_enabled": bool(acc.cp_proxy_enabled),
+                "pool_ready": pool_ready,
+                "pool_ready_reason": pool_ready_reason,
+                "tier_pressure_pct": pressure,
+                "pool_effective": bool(acc.cp_proxy_enabled and pool_ready and pressure < MAX_TIER_PCT),
+            }
+        )
+    return out
+
+
 def pick_cp_credential(
     session: Session,
     *,

@@ -23,7 +23,7 @@ _Avoid_: API key (ambiguous with Cursor keys)
 A temporary binding of an underlying Cursor credential to a borrower via a loan alias.
 
 **Coding Plan Account** (GLM / MiniMax / Kimi):
-An `AiAccount` whose vendor uses **quota-only** sync (Coding Plan monitor APIs — no usage-event history). Portal ledger and quota board use **separate tabs and card layouts** from Cursor. **Not** eligible for Credential Pool, Key Loan, or the Cursor MITM proxy in the current release (`proxy_enabled` stays off). A future **OpenAI-compatible upstream proxy** branch may route these credentials separately from Cursor MITM (see `docs/adr/0002-glm-account-quota-integration.md`).
+An `AiAccount` whose vendor uses **quota-only** sync (Coding Plan monitor APIs — no usage-event history). Portal ledger and quota board use **separate tabs and card layouts** from Cursor. **Not** eligible for Credential Pool, Key Loan, or the Cursor MITM proxy (`proxy_enabled` stays off). Optional **OpenAI-compatible gateway** via `cp_proxy_enabled` + `pkcp_` keys (`/openai/v1`, ADR 0003) — separate from Go MITM.
 _Avoid_: Treating CP percent windows as Cursor Quota Pools (auto/api); ingesting fake usage events
 
 ### Proxy data plane

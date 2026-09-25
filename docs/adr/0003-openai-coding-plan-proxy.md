@@ -1,6 +1,6 @@
 # ADR 0003：Coding Plan OpenAI 兼容代理（M4）
 
-- **状态**：M4 进行中（控制面 + Pulse 内嵌网关 MVP）
+- **状态**：**M4 已落地**（网关 failover、用量、Admin API + 借用管理 UI）
 - **关联**：[ADR 0002](./0002-glm-account-quota-integration.md) M4 行；[coding-plan-quota-apis.md](../coding-plan-quota-apis.md)
 - **参考**：[Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)（多账号调度、OpenAI 协议面、与 Cursor/Claude MITM 分离的产品形态）
 

@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 import pytest
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.openai_proxy.authorize import authorize_pkcp
-from pulse.openai_proxy.pool import list_cp_pool_entries, pick_cp_credential
+from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries, pick_cp_credential
+from pulse.openai_proxy.usage import parse_openai_usage
 from pulse.openai_proxy.upstream import openai_base_url
 from pulse.proxy.key_crud import create_coding_plan_key
 from pulse.storage.db import init_db
@@ -91,3 +92,30 @@ def test_cp_pool_picks_enabled_account(session):
     assert len(entries) == 1
     picked = pick_cp_credential(session, vendor_slug="glm", encryption_key=TEST_KEY)
     assert picked and picked["api_key"] == "glm-test-key"
+
+
+def test_parse_openai_usage():
+    body = {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+    t = parse_openai_usage(body)
+    assert t["input"] == 10 and t["total"] == 15
+
+
+def test_cp_admin_accounts_list(session):
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m3", display_name="M3")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    vendor = session.scalar(select(AiVendor).where(AiVendor.slug == "glm"))
+    plan = session.scalar(select(AiPlan).where(AiPlan.vendor_id == vendor.id))
+    acc = AiAccount(
+        team_id=team.id,
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        account_identifier="glm-admin@test",
+        cp_proxy_enabled=False,
+    )
+    session.add(acc)
+    session.commit()
+    rows = list_cp_admin_accounts(session, vendor_slug="glm")
+    assert any(r["account_identifier"] == "glm-admin@test" for r in rows)
+    assert rows[0]["pool_ready"] is False

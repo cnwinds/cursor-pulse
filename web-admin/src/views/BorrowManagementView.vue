@@ -13,6 +13,9 @@
       <el-tab-pane v-if="canProxy" label="入池账号" name="pool" lazy>
         <PoolAccountsPanel />
       </el-tab-pane>
+      <el-tab-pane v-if="canProxy" label="OpenAI 网关" name="openai-gateway" lazy>
+        <CpOpenAiGatewayPanel />
+      </el-tab-pane>
       <el-tab-pane v-if="canProxy" label="打分表" name="ranking" lazy>
         <PoolRankingPanel />
       </el-tab-pane>
@@ -33,6 +36,7 @@ import { useAuthStore } from '@/stores/auth'
 import LoansView from '@/views/LoansView.vue'
 import PoolAccountsPanel from '@/components/borrow/PoolAccountsPanel.vue'
 import PoolRankingPanel from '@/components/borrow/PoolRankingPanel.vue'
+import CpOpenAiGatewayPanel from '@/components/borrow/CpOpenAiGatewayPanel.vue'
 import PoolSelectionRulesPanel from '@/components/borrow/PoolSelectionRulesPanel.vue'
 import PoolJevSettingsPanel from '@/components/borrow/PoolJevSettingsPanel.vue'
 
@@ -47,7 +51,7 @@ const canRules = computed(
 )
 
 const tab = ref('loans')
-const VALID_TABS = new Set(['loans', 'pool', 'ranking', 'rules', 'jev'])
+const VALID_TABS = new Set(['loans', 'pool', 'openai-gateway', 'ranking', 'rules', 'jev'])
 
 function defaultTab(): string {
   if (canLoans.value) return 'loans'
@@ -62,7 +66,7 @@ function syncTabFromRoute() {
       tab.value = canProxy.value ? 'pool' : defaultTab()
       return
     }
-    if ((q === 'pool' || q === 'ranking') && !canProxy.value) {
+    if ((q === 'pool' || q === 'openai-gateway' || q === 'ranking') && !canProxy.value) {
       tab.value = defaultTab()
       return
     }

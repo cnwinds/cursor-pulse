@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
-import httpx
 from fastapi import Depends, HTTPException, Request, Response
 from pulse.openai_proxy.authorize import authorize_pkcp
-from pulse.openai_proxy.pool import pick_cp_credential
-from pulse.openai_proxy.upstream import auth_header, openai_base_url
+from pulse.openai_proxy.forward import _openai_error, forward_chat_completions
 from sqlalchemy.orm import Session
-from starlette.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +17,6 @@ def _extract_bearer(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return ""
-
-
-def _openai_error(status: int, message: str, err_type: str = "invalid_request_error") -> Response:
-    body = {"error": {"message": message, "type": err_type}}
-    return Response(content=json.dumps(body), status_code=status, media_type="application/json")
 
 
 async def handle_chat_completions(
@@ -43,61 +34,21 @@ async def handle_chat_completions(
         return _openai_error(401, "Invalid API key provided")
 
     vendor = auth["coding_plan_vendor"]
-    assert vendor
-    entry = pick_cp_credential(session, vendor_slug=vendor, encryption_key=encryption_key)
-    if entry is None:
-        return _openai_error(
-            503,
-            f"No available Coding Plan account in pool for {vendor}",
-            "server_error",
-        )
+    proxy_key_id = auth["proxy_key_id"]
+    assert vendor and proxy_key_id
 
     try:
         payload = await request.json()
     except Exception:
         return _openai_error(400, "Invalid JSON body")
 
-    base = openai_base_url(vendor_slug=vendor, api_region=entry.get("api_region"))
-    url = f"{base.rstrip('/')}/chat/completions"
-    headers = auth_header(vendor_slug=vendor, api_key=entry["api_key"])
-    stream = bool(payload.get("stream"))
-
-    timeout = httpx.Timeout(600.0, connect=30.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            if stream:
-                req = client.build_request("POST", url, headers=headers, json=payload)
-                resp = await client.send(req, stream=True)
-                if resp.status_code >= 400:
-                    err_body = await resp.aread()
-                    await resp.aclose()
-                    return Response(
-                        content=err_body,
-                        status_code=resp.status_code,
-                        media_type=resp.headers.get("content-type"),
-                    )
-
-                async def _iter():
-                    try:
-                        async for chunk in resp.aiter_bytes():
-                            yield chunk
-                    finally:
-                        await resp.aclose()
-
-                return StreamingResponse(
-                    _iter(),
-                    status_code=resp.status_code,
-                    media_type=resp.headers.get("content-type", "text/event-stream"),
-                )
-            resp = await client.post(url, headers=headers, json=payload)
-            return Response(
-                content=resp.content,
-                status_code=resp.status_code,
-                media_type=resp.headers.get("content-type", "application/json"),
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("openai gateway upstream error vendor=%s: %s", vendor, exc)
-            return _openai_error(502, "Upstream request failed", "server_error")
+    return await forward_chat_completions(
+        session,
+        vendor=vendor,
+        payload=payload,
+        encryption_key=encryption_key,
+        proxy_key_id=proxy_key_id,
+    )
 
 
 def register_openai_gateway_routes(app, get_db, config) -> None:
@@ -118,7 +69,9 @@ def register_openai_gateway_routes(app, get_db, config) -> None:
         return {
             "object": "list",
             "data": [
-                {"id": "glm-coding-plan", "object": "model", "owned_by": "pulse"},
-                {"id": "minimax-coding-plan", "object": "model", "owned_by": "pulse"},
+                {"id": "glm-4.7", "object": "model", "owned_by": "glm"},
+                {"id": "glm-5.2", "object": "model", "owned_by": "glm"},
+                {"id": "MiniMax-M2.5", "object": "model", "owned_by": "minimax"},
+                {"id": "kimi-k2.5", "object": "model", "owned_by": "kimi"},
             ],
         }
