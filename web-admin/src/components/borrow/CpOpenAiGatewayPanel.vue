@@ -47,14 +47,9 @@
         <h3>pkcp_ 接入密钥</h3>
         <el-button v-if="canWrite" type="primary" size="small" @click="openCreateKey">签发密钥</el-button>
       </div>
-<<<<<<< HEAD
-      <el-table :data="keys" stripe size="small">
+      <el-table :data="keys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
         <el-table-column label="归属" prop="member_name" min-width="140" />
         <el-table-column label="备注" prop="name" min-width="120" />
-=======
-      <el-table :data="keys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
-        <el-table-column label="名称" prop="name" min-width="120" />
->>>>>>> cursor/cp-key-usage-ui-1c40
         <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
         <el-table-column label="Hint" prop="key_hint" width="120" />
         <el-table-column label="状态" width="96">
