@@ -154,8 +154,9 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
                 expires_at=body.expires_at,
                 encryption_key=enc,
             )
-            host = config.web.host if config.web.host not in ("0.0.0.0", "::") else "127.0.0.1"
-            openai_base = f"http://{host}:{config.web.port}/openai/v1"
+            from pulse.openai_proxy.upstream import coding_plan_gateway_public_base
+
+            openai_base = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
         else:
             key, plaintext = proxy_service.create_key(
                 session,

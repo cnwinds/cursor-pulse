@@ -80,8 +80,12 @@ func defaultShouldMITM(authority string) bool {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isOpenAICompatPath(r) {
+		s.handleOpenAICompat(w, r)
+		return
+	}
 	if r.Method != http.MethodConnect {
-		http.Error(w, "cursor-quota-proxy: CONNECT only", http.StatusBadRequest)
+		http.Error(w, "cursor-quota-proxy: CONNECT only (or use /openai/v1 for Coding Plan)", http.StatusBadRequest)
 		return
 	}
 	s.handleConnect(w, r)

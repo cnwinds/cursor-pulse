@@ -11,7 +11,7 @@ from pulse.ingestion.crypto import encrypt_secret
 from pulse.openai_proxy.authorize import authorize_pkcp
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries, pick_cp_credential
 from pulse.openai_proxy.usage import parse_openai_usage
-from pulse.openai_proxy.upstream import openai_base_url
+from pulse.openai_proxy.upstream import coding_plan_gateway_public_base, openai_base_url
 from pulse.proxy.key_crud import create_coding_plan_key
 from pulse.storage.db import init_db
 from pulse.storage.models import AiAccount, AiAccountCredential, AiPlan, AiVendor, Member, Team
@@ -28,6 +28,12 @@ def session():
     db = session_factory()
     yield db
     db.close()
+
+
+def test_coding_plan_gateway_public_base():
+    assert (
+        coding_plan_gateway_public_base(proxy_public_url="http://127.0.0.1:8317") == "http://127.0.0.1:8317/openai/v1"
+    )
 
 
 def test_openai_base_url_glm_regions():
@@ -98,6 +104,82 @@ def test_parse_openai_usage():
     body = {"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
     t = parse_openai_usage(body)
     assert t["input"] == 10 and t["total"] == 15
+
+
+def test_internal_openai_resolve():
+    from fastapi.testclient import TestClient
+
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.web.app import create_app
+
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    app = create_app(config, session_factory=session_factory)
+    client = TestClient(app)
+    session = session_factory()
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-int", display_name="MInt")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    vendor = session.scalar(select(AiVendor).where(AiVendor.slug == "glm"))
+    plan = session.scalar(select(AiPlan).where(AiPlan.vendor_id == vendor.id))
+    acc = AiAccount(
+        team_id=team.id,
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        account_identifier="glm-resolve@test",
+        api_region="zai",
+        cp_proxy_enabled=True,
+    )
+    session.add(acc)
+    session.flush()
+    session.add(
+        AiAccountCredential(
+            account_id=acc.id,
+            vendor_id=vendor.id,
+            credential_type="coding_plan_api_key",
+            encrypted_value=encrypt_secret("resolve-key", TEST_KEY),
+            key_hint="r…key",
+            key_role="primary",
+            bound_by_member_id=member.id,
+            last_sync_status="success",
+            last_sync_at=datetime.now(UTC),
+        )
+    )
+    _key, plain = create_coding_plan_key(
+        session,
+        name="resolve",
+        member_id=member.id,
+        coding_plan_vendor="glm",
+        encryption_key=TEST_KEY,
+    )
+    session.commit()
+
+    bad = client.post(
+        "/api/internal/v1/openai-proxy/resolve",
+        json={"pulse_key": "pkcp_bad"},
+        headers={"Authorization": "Bearer internal-token"},
+    )
+    assert bad.status_code == 200
+    assert bad.json()["status"] == "invalid"
+
+    ok = client.post(
+        "/api/internal/v1/openai-proxy/resolve",
+        json={"pulse_key": plain},
+        headers={"Authorization": "Bearer internal-token"},
+    )
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["status"] == "ok"
+    assert body["api_key"] == "resolve-key"
+    assert body["upstream_chat_url"].endswith("/chat/completions")
+    session.close()
 
 
 def test_cp_admin_accounts_list(session):

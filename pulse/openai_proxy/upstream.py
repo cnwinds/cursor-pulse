@@ -9,6 +9,11 @@ CodingPlanVendor = Literal["glm", "minimax", "kimi"]
 CP_VENDORS: frozenset[str] = frozenset({"glm", "minimax", "kimi"})
 
 
+def coding_plan_gateway_public_base(*, proxy_public_url: str) -> str:
+    """OpenAI SDK base_url on Go data plane (layer A), not Pulse Web."""
+    return f"{(proxy_public_url or 'http://127.0.0.1:8317').rstrip('/')}/openai/v1"
+
+
 def openai_base_url(*, vendor_slug: str, api_region: str | None) -> str:
     """Return base URL ending with / (OpenAI SDK style)."""
     slug = (vendor_slug or "").strip().lower()

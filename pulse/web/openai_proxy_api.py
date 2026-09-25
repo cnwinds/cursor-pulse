@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries
-from pulse.openai_proxy.upstream import CP_VENDORS
+from pulse.openai_proxy.upstream import CP_VENDORS, coding_plan_gateway_public_base
 from pulse.proxy import key_crud
 from pulse.proxy import service as proxy_service
 from pulse.storage.models import AiAccount, AiVendor, Member
@@ -108,11 +108,10 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
             encryption_key=enc,
         )
         session.commit()
-        host = config.web.host if config.web.host not in ("0.0.0.0", "::") else "127.0.0.1"
         row = proxy_service.key_summary(session, key)
         row["plaintext_key"] = plaintext
         row["member_name"] = member.display_name
-        row["openai_base_url"] = f"http://{host}:{config.web.port}/openai/v1"
+        row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
         row["usage_hint"] = "OpenAI SDK: base_url + api_key=pkcp_…；走 Coding Plan 账号池转发"
         return row
 
@@ -138,7 +137,6 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         for row, key in zip(proxy_service.key_summaries(session, list(keys)), keys, strict=True):
             row["member_name"] = member_names.get(key.member_id)
             row["recoverable"] = bool(key.encrypted_key)
-            host = config.web.host if config.web.host not in ("0.0.0.0", "::") else "127.0.0.1"
-            row["openai_base_url"] = f"http://{host}:{config.web.port}/openai/v1"
+            row["openai_base_url"] = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
             rows.append(row)
         return rows

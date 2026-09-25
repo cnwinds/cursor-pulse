@@ -6,7 +6,7 @@
 
 | 层 | 用途 | 关键变量 | 消费者 |
 |---|---|---|---|
-| **A. Cursor MITM** | 替换 Key、计量、会话授权 | `PROXY_LISTEN`、`PULSE_INTERNAL_SERVICE_TOKEN`、`PROXY_PULSE_BASE_URL`、代理地址（系统设置） | 用户 CLI；Go 代理 `:8317` |
+| **A. Go 数据面** | Cursor MITM + Coding Plan OpenAI 网关 | `PROXY_LISTEN`、`PULSE_INTERNAL_SERVICE_TOKEN`、`PROXY_PULSE_BASE_URL`、代理地址（系统设置） | 用户 CLI（CONNECT）；OpenAI SDK（`POST /openai/v1/*`） |
 | **B. 进程内互调** | Web↔Assistant、Assistant→Pulse | `ASSISTANT_MIRROR_BASE_URL`、`ASSISTANT_SERVICE_TOKEN`、`PULSE_BASE_URL` | web / assistant / channel |
 | **C. 出站翻墙** | 访问外网 Cursor / LLM / 钉钉 | 宿主机 `HTTP(S)_PROXY`；Go 侧 **`PROXY_UPSTREAM_URL`** | Python 出站；Go 上游 Cursor |
 
@@ -14,9 +14,10 @@
 用户 Cursor CLI
   │  HTTPS_PROXY = 代理地址（系统设置） (:8317)     ← 层 A
   ▼
-Go MITM (cursor-pulse-proxy)
-  ├─ authorize / usage ──直连──▶ Pulse web       ← 层 B（控制面）
-  └─ Cursor API ──PROXY_UPSTREAM_URL──▶ 翻墙代理 ← 层 C
+Go cursor-pulse-proxy (:8317)
+  ├─ CONNECT MITM ──▶ Cursor API（层 C 翻墙）
+  ├─ /openai/v1/* ──resolve/usage──▶ Pulse web   ← 层 B（控制面）
+  └─ authorize / usage（MITM）──▶ Pulse web      ← 层 B
 
 Pulse web / channel
   ├─ Assistant mirror ──内部直连──▶ :8090         ← 层 B（trust_env=False）
