@@ -16,16 +16,16 @@ M4 增加 **独立 OpenAI Chat Completions 网关**：客户端配置 `base_url`
 |---------|----------|
 | 多订阅账号 + 分组/渠道 | `AiAccount.cp_proxy_enabled` + vendor slug |
 | 用户 API Key + 计费/限流 | `ProxyKey`（`pkcp_`）+ 现有 window 限额 |
-| OpenAI `/v1/chat/completions` 入口 | `POST /openai/v1/chat/completions` |
-| 调度/ failover | MVP：按额度快照 `total_pct` 升序；后续 sticky / 429 换号 |
-| 独立于 Claude Code MITM | 不修改 Go `cursor-pulse-proxy`；HTTP 反代在 Python |
+| OpenAI `/v1/chat/completions` 入口 | Go `:8317` → `POST /openai/v1/chat/completions` |
+| 调度/ failover | 按额度快照 `total_pct` 升序；429/502/503 换号重试 |
+| 独立于 Cursor MITM 路径 | 同 Go 进程；**不走 CONNECT**，仅 plain HTTP `/openai/v1/*` |
 
 ## 决策
 
 1. **密钥前缀 `pkcp_`**，`ProxyKey.mode=coding_plan`，`coding_plan_vendor` ∈ {glm, minimax, kimi}。
 2. **入池开关 `cp_proxy_enabled`**（账号级），与 Cursor `proxy_enabled` **互斥语义**（CP 账号仍保持 `proxy_enabled=false`）。
 3. **Upstream** 按 vendor + `api_region` 解析（见 `pulse/openai_proxy/upstream.py`）；GLM 优先 **Coding Plan** base（z.ai `api/coding/paas/v4`）。
-4. **首版范围**：Pulse Web 内嵌转发 + 管理 API；Go 代理 **不** 承载 CP 流量。
+4. **数据面在 Go 代理（层 A）**：客户端 `base_url={PROXY_PUBLIC_URL}/openai/v1`；Go 经 **internal API** 向 Pulse 解析 `pkcp_`、选池、上报用量。Pulse Web **仅控制面**（Admin API + `/api/internal/v1/openai-proxy/*`），**不**再公网暴露 `/openai/v1`。
 
 ## 非目标（M4 MVP）
 

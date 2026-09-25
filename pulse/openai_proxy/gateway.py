@@ -1,4 +1,4 @@
-"""OpenAI-compatible HTTP gateway (M4)."""
+"""OpenAI gateway handlers (logic shared with internal resolve; data plane is Go :8317)."""
 
 from __future__ import annotations
 

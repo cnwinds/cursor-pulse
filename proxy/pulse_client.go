@@ -238,6 +238,74 @@ func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCur
 	return res, nil
 }
 
+// OpenAIResolveResult is returned by the Coding Plan resolve internal API.
+type OpenAIResolveResult struct {
+	Status           string `json:"status"`
+	ProxyKeyID       string `json:"proxy_key_id"`
+	CodingPlanVendor string `json:"coding_plan_vendor"`
+	CredentialID     string `json:"credential_id"`
+	APIKey           string `json:"api_key"`
+	UpstreamChatURL  string `json:"upstream_chat_url"`
+	Reason           string `json:"reason"`
+}
+
+func (c *PulseClient) ResolveOpenAI(pulseKey string, excludeCredentialIDs []string) (OpenAIResolveResult, error) {
+	payload := map[string]any{
+		"pulse_key":                pulseKey,
+		"exclude_credential_ids": excludeCredentialIDs,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/openai-proxy/resolve", bytes.NewReader(body))
+	if err != nil {
+		return OpenAIResolveResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return OpenAIResolveResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return OpenAIResolveResult{}, fmt.Errorf("openai resolve HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+	var res OpenAIResolveResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return OpenAIResolveResult{}, err
+	}
+	return res, nil
+}
+
+func (c *PulseClient) RecordOpenAIUsage(proxyKeyID, credentialID, model string, usage map[string]any) error {
+	payload := map[string]any{
+		"proxy_key_id":  proxyKeyID,
+		"credential_id": credentialID,
+		"model":         model,
+		"usage":         usage,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/openai-proxy/usage", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("openai usage HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *PulseClient) FetchPool() ([]PoolCredential, error) {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/internal/v1/proxy/pool", nil)
 	if err != nil {

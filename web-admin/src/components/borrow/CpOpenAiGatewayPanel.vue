@@ -1,8 +1,9 @@
 <template>
   <div class="cp-openai-panel" v-loading="loading">
     <p class="hint">
-      Coding Plan 专用 OpenAI 网关（与 Cursor Go MITM 分离）。客户端
-      <code>base_url</code> 指向 Pulse <code>/openai/v1</code>，API Key 使用签发的
+      Coding Plan 专用 OpenAI 网关（与 Cursor MITM 同进程、不同路径）。客户端
+      <code>base_url</code> 指向 Go 代理地址下的 <code>/openai/v1</code>（默认
+      <code>http://127.0.0.1:8317/openai/v1</code>），API Key 使用签发的
       <code>pkcp_</code>。入池账号按额度压力调度，429 时自动换号重试。
     </p>
     <el-tabs v-model="vendorTab" class="vendor-tabs" @tab-change="onVendorChange">

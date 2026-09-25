@@ -86,11 +86,11 @@ Pulse 台账字段：`glm_organization_id`、`glm_project_id`（均非空时走�
 
 | 能力 | 说明 |
 |------|------|
-| 客户端 | `base_url={Pulse}/openai/v1`，`Authorization: Bearer pkcp_…` |
+| 客户端 | `base_url={Go 代理}/openai/v1`（默认 `http://127.0.0.1:8317/openai/v1`），`Authorization: Bearer pkcp_…` |
 | 签发 | `POST /api/v2/proxy-keys`，body 含 `coding_plan_vendor` |
 | 入池 | `POST /api/v2/openai-proxy/accounts/{id}`，`cp_proxy_enabled` |
 | 池列表 | `GET /api/v2/openai-proxy/pool?vendor=glm` |
-| 转发 | `POST /openai/v1/chat/completions` → 厂家 OpenAI 兼容 upstream |
+| 转发 | Go `POST /openai/v1/chat/completions` → 厂家 OpenAI 兼容 upstream |
 
 用量分析仍仅 Cursor 事件聚合；CP 网关用量后续可写 `proxy_key_usages`。
 

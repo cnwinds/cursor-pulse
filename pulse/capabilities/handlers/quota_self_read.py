@@ -170,9 +170,7 @@ def _format_coding_plan_section(item: dict[str, Any]) -> list[str]:
 
 
 def _format_user_message(accounts_data: list[dict[str, Any]]) -> str:
-    cursor_items = [
-        a for a in accounts_data if a.get("display_mode", "cursor") != "coding_plan_tiers"
-    ]
+    cursor_items = [a for a in accounts_data if a.get("display_mode", "cursor") != "coding_plan_tiers"]
     cp_items = [a for a in accounts_data if a.get("display_mode") == "coding_plan_tiers"]
     lines: list[str] = []
     if cursor_items:
