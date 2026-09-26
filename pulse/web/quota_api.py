@@ -479,6 +479,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     team_id=team.id,
                     borrower_member_id=body.borrower_member_id,
                     note=body.note,
+                    model=body.model,
                     loan_selection=effective_loan_selection(session, config, team.id),
                     jev=build_jev_client(config),
                 )

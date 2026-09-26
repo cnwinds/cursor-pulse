@@ -471,6 +471,7 @@ def list_pool_ranking_board(
                 "max_concurrent_users": max_seats,
                 "ttl_seconds": int(ttl),
             },
+            "quota_pool": quota_pool,
         }
 
     candidates, excluded_no_snap = _build_pool_lender_candidates(
@@ -516,4 +517,46 @@ def list_pool_ranking_board(
             "max_concurrent_users": max_seats,
             "ttl_seconds": int(ttl),
         },
+        "quota_pool": quota_pool,
+    }
+
+
+def list_pool_ranking_boards(
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    jev_bypass_cache: bool = False,
+) -> dict:
+    """Auto / API Quota Pool 各一份打分表；另含入池综合（intake，OR 余量）。"""
+    kwargs = dict(
+        loan_selection=loan_selection,
+        jev=jev,
+        jev_bypass_cache=jev_bypass_cache,
+    )
+    return {
+        "intake": list_pool_ranking_board(session, **kwargs, quota_pool=None),
+        "auto": list_pool_ranking_board(session, **kwargs, quota_pool="auto"),
+        "api": list_pool_ranking_board(session, **kwargs, quota_pool="api"),
+    }
+
+
+def list_pool_credentials_grouped(
+    session: Session,
+    *,
+    encryption_key: str,
+    loan_selection=None,
+    jev=None,
+) -> dict[str, list[dict]]:
+    """Go 代理热更新：入池综合顺序 + 各 Quota Pool 独立顺序。"""
+    common = dict(
+        session=session,
+        encryption_key=encryption_key,
+        loan_selection=loan_selection,
+        jev=jev,
+    )
+    return {
+        "default": list_pool_credentials(**common, quota_pool=None),
+        "auto": list_pool_credentials(**common, quota_pool="auto"),
+        "api": list_pool_credentials(**common, quota_pool="api"),
     }

@@ -96,13 +96,21 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         from pulse.settings.team_store import effective_config_for_saved_tenant
 
         runtime = effective_config_for_saved_tenant(session, config)
-        credentials = proxy_service.list_pool_credentials(
+        from pulse.proxy.pool_board import list_pool_credentials_grouped
+
+        grouped = list_pool_credentials_grouped(
             session,
             encryption_key=enc_key,
             loan_selection=runtime.tool_center.loan_selection,
             jev=build_jev_client(runtime),
         )
-        return {"credentials": credentials}
+        return {
+            "credentials": grouped["default"],
+            "credentials_by_pool": {
+                "auto": grouped["auto"],
+                "api": grouped["api"],
+            },
+        }
 
     @app.post(
         "/api/internal/v1/proxy/usage",

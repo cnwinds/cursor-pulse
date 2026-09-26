@@ -308,6 +308,7 @@ def issue_pool_loan(
     team_id: str,
     borrower_member_id: str,
     note: str | None = None,
+    model: str | None = None,
     loan_selection: LoanSelectionConfig | None = None,
     jev=None,
 ) -> dict:
@@ -325,11 +326,15 @@ def issue_pool_loan(
     if not (encryption_key or "").strip():
         raise KeyLoanError("未配置凭证加密密钥，无法签发代理别名 Key")
 
+    from pulse.tool_center.quota_pool import quota_pool_for_model
+
+    quota_pool = quota_pool_for_model(model) if (model or "").strip() else None
     pooled = list_pool_credentials(
         session,
         encryption_key=encryption_key,
         loan_selection=loan_selection,
         jev=jev,
+        quota_pool=quota_pool,
     )
     if not pooled:
         raise KeyLoanError("账号池里没有可轮换的账号，请先在账号池开启入池")

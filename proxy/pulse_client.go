@@ -317,28 +317,36 @@ func (c *PulseClient) RecordOpenAIUsage(proxyKeyID, credentialID, model string, 
 	return nil
 }
 
-func (c *PulseClient) FetchPool() ([]PoolCredential, error) {
+func (c *PulseClient) FetchPool() (PulsePoolSnapshot, error) {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/internal/v1/proxy/pool", nil)
 	if err != nil {
-		return nil, err
+		return PulsePoolSnapshot{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return PulsePoolSnapshot{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pool HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		return PulsePoolSnapshot{}, fmt.Errorf("pool HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 	var out struct {
-		Credentials []PoolCredential `json:"credentials"`
+		Credentials     []PoolCredential `json:"credentials"`
+		CredentialsByPool struct {
+			Auto []PoolCredential `json:"auto"`
+			API  []PoolCredential `json:"api"`
+		} `json:"credentials_by_pool"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
+		return PulsePoolSnapshot{}, err
 	}
-	return out.Credentials, nil
+	return PulsePoolSnapshot{
+		Default: out.Credentials,
+		Auto:    out.CredentialsByPool.Auto,
+		API:     out.CredentialsByPool.API,
+	}, nil
 }
 
 func (c *PulseClient) EnqueueUsage(item UsageItem) {
