@@ -189,6 +189,40 @@
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item v-if="loanForm.lender_mode === 'auto'" label="目标模型">
+          <el-input
+            v-model="loanForm.model"
+            placeholder="建议填写；留空则按入池综合排序，填模型则按对应 Auto/API 池排序"
+          />
+          <div v-if="poolPreviewLoaded && loanForm.lender_mode === 'auto'" class="manual-hint">
+            <template v-if="poolPreviewPool">
+              <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（预览）：</p>
+              <ol v-if="poolPreview.length" class="pool-preview">
+                <li v-for="row in poolPreview" :key="row.account_id">
+                  {{ row.account_identifier }}
+                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+                </li>
+              </ol>
+            </template>
+            <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
+              <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
+              <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
+                <li v-for="row in poolPreviewDual.auto" :key="'a-' + row.account_id">
+                  {{ row.account_identifier }}
+                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+                </li>
+              </ol>
+              <p v-if="poolPreviewDual.api.length">API 池优先：</p>
+              <ol v-if="poolPreviewDual.api.length" class="pool-preview">
+                <li v-for="row in poolPreviewDual.api" :key="'p-' + row.account_id">
+                  {{ row.account_identifier }}
+                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+                </li>
+              </ol>
+            </template>
+            <p v-else>账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
+          </div>
+        </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="目标模型">
           <el-input
             v-model="loanForm.model"
@@ -264,13 +298,31 @@
           <p>
             自动分配使用账号池：使用过程中在已入池账号之间轮换，确认时不锁定某一个账号。
           </p>
-          <p v-if="poolPreview.length">当前优先（会变，不是锁定）：</p>
-          <ol v-if="poolPreview.length" class="pool-preview">
-            <li v-for="row in poolPreview" :key="row.account_id">
-              {{ row.account_identifier }}
-              <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-            </li>
-          </ol>
+          <template v-if="poolPreviewPool && poolPreview.length">
+            <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（会变，不是锁定）：</p>
+            <ol class="pool-preview">
+              <li v-for="row in poolPreview" :key="row.account_id">
+                {{ row.account_identifier }}
+                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+              </li>
+            </ol>
+          </template>
+          <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
+            <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
+            <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
+              <li v-for="row in poolPreviewDual.auto" :key="'ra-' + row.account_id">
+                {{ row.account_identifier }}
+                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+              </li>
+            </ol>
+            <p v-if="poolPreviewDual.api.length">API 池优先：</p>
+            <ol v-if="poolPreviewDual.api.length" class="pool-preview">
+              <li v-for="row in poolPreviewDual.api" :key="'rp-' + row.account_id">
+                {{ row.account_identifier }}
+                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
+              </li>
+            </ol>
+          </template>
           <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
         </div>
       </el-form>
@@ -569,6 +621,11 @@ const loanForm = ref({
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
   [],
 )
+const poolPreviewDual = ref<{
+  auto: { account_id: string; account_identifier: string; score?: number | null }[]
+  api: { account_id: string; account_identifier: string; score?: number | null }[]
+}>({ auto: [], api: [] })
+const poolPreviewPool = ref<'auto' | 'api' | null>(null)
 const poolPreviewLoaded = ref(false)
 const manualJevTrace = ref<JevTrace | null>(null)
 const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
@@ -764,7 +821,7 @@ async function submitLoan() {
         auto_revoke_on_reset: isAuto ? false : loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
-        model: isAuto ? null : loanForm.value.model.trim() || null,
+        model: loanForm.value.model.trim() || null,
       },
     )
     loanDialogVisible.value = false
@@ -783,6 +840,16 @@ watch(
   () => loanForm.value.lender_mode,
   (mode) => {
     if (mode === 'manual') void loadManualAutoPickPreview()
+    if (mode === 'auto' && loanDialogVisible.value) void loadPoolPreview(false)
+  },
+)
+
+watch(
+  () => [loanForm.value.model, loanDialogVisible.value] as const,
+  () => {
+    if (loanDialogVisible.value && loanForm.value.lender_mode === 'auto') {
+      void loadPoolPreview(false)
+    }
   },
 )
 
@@ -793,18 +860,39 @@ watch(
   },
 )
 
+function mapPoolPreviewRows(rows: unknown[]) {
+  return (rows as { account_id: string; account_identifier: string; score?: number | null }[]).slice(0, 3)
+}
+
 async function loadPoolPreview(forReassign = false) {
   const isAuto = forReassign
     ? reassignForm.value.lender_mode === 'auto'
     : loanForm.value.lender_mode === 'auto'
   if (!isAuto) return
   poolPreviewLoaded.value = false
+  poolPreviewPool.value = null
+  poolPreviewDual.value = { auto: [], api: [] }
   try {
-    const res = await client.get('/api/v2/proxy-pool/ranking')
-    const ranked = res.data.ranked || []
-    poolPreview.value = ranked.slice(0, 3)
+    const model = loanForm.value.model.trim()
+    const res = await client.get('/api/v2/proxy-pool/ranking', {
+      params: model ? { model } : undefined,
+    })
+    if (model && res.data.ranked) {
+      poolPreview.value = mapPoolPreviewRows(res.data.ranked)
+      const qp = res.data.quota_pool
+      poolPreviewPool.value = qp === 'api' || qp === 'auto' ? qp : null
+    } else if (res.data.boards) {
+      poolPreview.value = []
+      poolPreviewDual.value = {
+        auto: mapPoolPreviewRows(res.data.boards.auto?.ranked || []),
+        api: mapPoolPreviewRows(res.data.boards.api?.ranked || []),
+      }
+    } else {
+      poolPreview.value = mapPoolPreviewRows(res.data.ranked || [])
+    }
   } catch {
     poolPreview.value = []
+    poolPreviewDual.value = { auto: [], api: [] }
   } finally {
     poolPreviewLoaded.value = true
   }

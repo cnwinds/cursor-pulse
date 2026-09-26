@@ -167,12 +167,12 @@ func pollPool(pool *Pool, pulse *PulseClient, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	refresh := func() {
-		creds, err := pulse.FetchPool()
+		snap, err := pulse.FetchPool()
 		if err != nil {
 			log.Printf("[pool] fetch: %v", err)
 			return
 		}
-		pool.ReplaceFromPulse(creds)
+		pool.ReplaceFromPulseSnapshot(snap)
 	}
 	refresh()
 	for range tick.C {

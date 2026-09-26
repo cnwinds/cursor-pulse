@@ -1,6 +1,21 @@
 <template>
   <div class="ranking-panel">
     <div class="panel-card">
+      <div class="quota-pool-bar">
+        <el-radio-group v-model="quotaPoolTab" size="small">
+          <el-radio-button value="auto">
+            Auto 池
+            <span class="tab-count">{{ boardsData.auto.ranked.length }}</span>
+          </el-radio-button>
+          <el-radio-button value="api">
+            API 池
+            <span class="tab-count">{{ boardsData.api.ranked.length }}</span>
+          </el-radio-button>
+        </el-radio-group>
+        <span class="quota-pool-hint">
+          按客户端模型所属 Quota Pool 分别排序；Composer/auto 类走 Auto 池，其余 API 类走 API 池。
+        </span>
+      </div>
       <div class="ranking-shell">
         <el-tabs v-model="rankingTab" class="ranking-tabs">
         <el-tab-pane name="ranked">
@@ -36,6 +51,19 @@
                   {{ row.primary_member_name }}
                 </span>
               </div>
+            </template>
+          </el-table-column>
+          <el-table-column width="88" align="right">
+            <template #header>
+              <ColHeader
+                :label="quotaPoolTab === 'auto' ? 'Auto 余量' : 'API 余量'"
+                :tip="`当前 Quota Pool（${quotaPoolTab}）桶的剩余额度比例；打分与硬过滤均按该桶计算。`"
+              />
+            </template>
+            <template #default="{ row }">
+              <span class="metric-pill">
+                {{ formatPoolHeadroom(row.pool_headroom_pct) }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column width="92" align="right">
@@ -339,6 +367,8 @@ interface RankingRow {
   status?: string | null
   reserve_pct?: number | null
   picked?: boolean
+  pool?: string | null
+  pool_headroom_pct?: number | null
 }
 
 interface RankingDecision {
@@ -367,7 +397,27 @@ const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('proxy:write'))
 const rankingLoading = ref(false)
 const rankingTab = ref<'ranked' | 'excluded'>('ranked')
-const ranking = ref<RankingBoard>({ ranked: [], excluded: [], decision: null, seat_snapshot: null })
+const quotaPoolTab = ref<'auto' | 'api'>('auto')
+
+function emptyBoard(): RankingBoard {
+  return { ranked: [], excluded: [], decision: null, seat_snapshot: null }
+}
+
+function normalizeBoard(raw: Partial<RankingBoard> | null | undefined): RankingBoard {
+  return {
+    ranked: raw?.ranked || [],
+    excluded: raw?.excluded || [],
+    decision: raw?.decision || null,
+    seat_snapshot: raw?.seat_snapshot || null,
+  }
+}
+
+const boardsData = ref<{ auto: RankingBoard; api: RankingBoard }>({
+  auto: emptyBoard(),
+  api: emptyBoard(),
+})
+
+const ranking = computed(() => boardsData.value[quotaPoolTab.value] ?? emptyBoard())
 const jevTraceOpen = ref(false)
 
 const traceAccountLookup = computed((): JevTraceAccountLookup[] => {
@@ -451,6 +501,11 @@ function exclusionReasonLabel(reason: string | undefined) {
   )
 }
 
+function formatPoolHeadroom(pct: number | null | undefined): string {
+  if (pct == null || Number.isNaN(pct)) return '—'
+  return `${pct.toFixed(1)}%`
+}
+
 function formatProxySeats(row: RankingRow): string {
   const n = row.proxy_active_seats ?? 0
   const max = seatSnapshot.value?.max_concurrent_users ?? 0
@@ -477,11 +532,16 @@ async function loadRanking(options?: { forceJev?: boolean }) {
     const res = await client.get('/api/v2/proxy-pool/ranking', {
       params: options?.forceJev ? { force_jev: true } : undefined,
     })
-    ranking.value = {
-      ranked: res.data.ranked || [],
-      excluded: res.data.excluded || [],
-      decision: res.data.decision || null,
-      seat_snapshot: res.data.seat_snapshot || null,
+    if (res.data.boards?.auto && res.data.boards?.api) {
+      boardsData.value = {
+        auto: normalizeBoard(res.data.boards.auto),
+        api: normalizeBoard(res.data.boards.api),
+      }
+    } else {
+      const single = normalizeBoard(res.data)
+      boardsData.value = { auto: single, api: single }
+      if (res.data.quota_pool === 'api') quotaPoolTab.value = 'api'
+      else if (res.data.quota_pool === 'auto') quotaPoolTab.value = 'auto'
     }
   } catch (e: unknown) {
     const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -556,6 +616,20 @@ onMounted(loadRanking)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
     0 12px 40px rgba(15, 23, 42, 0.06);
+}
+.quota-pool-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 10px;
+}
+.quota-pool-hint {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12px;
+  color: var(--rank-muted);
+  line-height: 1.45;
 }
 .ranking-shell {
   position: relative;

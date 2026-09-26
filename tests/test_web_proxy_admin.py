@@ -395,6 +395,12 @@ def test_pool_ranking_board(env):
     assert "jev_trace" in body["decision"]
     assert body["decision"]["jev_trace"]["meta"]["status"] == "skipped"
     assert body["decision"]["jev_trace"]["meta"]["skip_reason"] == "jev_unavailable"
+    assert "boards" in body
+    assert "auto" in body["boards"]
+    assert "api" in body["boards"]
+    assert "quota_pool" in body["boards"]["auto"]
+    assert body["boards"]["auto"]["quota_pool"] == "auto"
+    assert body["boards"]["api"]["quota_pool"] == "api"
 
 
 def test_pool_ranking_ignores_loan_cap(env):

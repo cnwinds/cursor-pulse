@@ -186,9 +186,9 @@ func TestPulseClientFetchPool(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewPulseClient(srv.URL, "tok", time.Minute)
-	creds, err := c.FetchPool()
-	if err != nil || len(creds) != 1 || creds[0].CredentialID != "c1" {
-		t.Fatalf("%+v %v", creds, err)
+	snap, err := c.FetchPool()
+	if err != nil || len(snap.Default) != 1 || snap.Default[0].CredentialID != "c1" {
+		t.Fatalf("%+v %v", snap, err)
 	}
 }
 

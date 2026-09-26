@@ -146,7 +146,10 @@ func (e *keyEntry) ensureToken(ctx context.Context, client *http.Client, exchang
 type Pool struct {
 	mu   sync.Mutex
 	keys []*keyEntry
-	cur  int
+	// Per Quota Pool order from Pulse (auto vs api scoring); empty falls back to keys.
+	keysAuto []*keyEntry
+	keysAPI  []*keyEntry
+	cur      int
 
 	client       *http.Client
 	exchangeBase string
@@ -188,16 +191,16 @@ func (p *Pool) SetUpstreamProxy(upstream *url.URL) {
 	p.client.Transport = newOutboundTransport(upstream)
 }
 
-// ReplaceFromPulse merges Pulse pool credentials into the live pool.
-// Same credential_id keeps quota exhaustion + cached JWT; auth-bad cooldown is
-// cleared so keys can be retried after Pulse reconnects. Removed ids are dropped;
-// new ids are appended. Cursor position is preserved when possible.
-func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	prevCur := p.cur
+// PulsePoolSnapshot is the internal /proxy/pool payload (default + per Quota Pool).
+type PulsePoolSnapshot struct {
+	Default []PoolCredential
+	Auto    []PoolCredential
+	API     []PoolCredential
+}
+
+func mergeCredentialList(prev []*keyEntry, creds []PoolCredential) []*keyEntry {
 	byID := map[string]*keyEntry{}
-	for _, e := range p.keys {
+	for _, e := range prev {
 		byID[e.credentialID] = e
 	}
 	var next []*keyEntry
@@ -207,7 +210,7 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 		}
 		if old, ok := byID[c.CredentialID]; ok {
 			old.apiKey = c.APIKey
-			old.clearAuthCooldown() // allow retry after Pulse/pool refresh
+			old.clearAuthCooldown()
 			old.autoPct = c.AutoPct
 			old.apiPct = c.ApiPct
 			next = append(next, old)
@@ -222,7 +225,22 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 			},
 		})
 	}
-	p.keys = next
+	return next
+}
+
+// ReplaceFromPulse merges Pulse default credential order (intake / legacy).
+func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
+	p.ReplaceFromPulseSnapshot(PulsePoolSnapshot{Default: creds})
+}
+
+// ReplaceFromPulseSnapshot hot-updates default + auto/api Quota Pool orderings.
+func (p *Pool) ReplaceFromPulseSnapshot(snap PulsePoolSnapshot) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	prevCur := p.cur
+	p.keys = mergeCredentialList(p.keys, snap.Default)
+	p.keysAuto = mergeCredentialList(p.keysAuto, snap.Auto)
+	p.keysAPI = mergeCredentialList(p.keysAPI, snap.API)
 	if len(p.keys) == 0 {
 		p.cur = 0
 	} else if prevCur >= len(p.keys) {
@@ -230,7 +248,21 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 	} else {
 		p.cur = prevCur
 	}
-	log.Printf("[pool] hot-updated: %d credential(s)", len(p.keys))
+	log.Printf("[pool] hot-updated: default=%d auto=%d api=%d", len(p.keys), len(p.keysAuto), len(p.keysAPI))
+}
+
+func (p *Pool) keysOrderedFor(pool quotaPoolKind) []*keyEntry {
+	switch pool {
+	case quotaPoolAuto:
+		if len(p.keysAuto) > 0 {
+			return append([]*keyEntry(nil), p.keysAuto...)
+		}
+	case quotaPoolAPI:
+		if len(p.keysAPI) > 0 {
+			return append([]*keyEntry(nil), p.keysAPI...)
+		}
+	}
+	return append([]*keyEntry(nil), p.keys...)
 }
 
 func (p *Pool) size() int {
@@ -265,8 +297,11 @@ func (p *Pool) tokenForQuotaPoolWithin(
 	allowed map[string]bool,
 ) (*keyEntry, string, error) {
 	p.mu.Lock()
-	keys := append([]*keyEntry(nil), p.keys...)
+	keys := p.keysOrderedFor(pool)
 	start := p.cur
+	if start >= len(keys) {
+		start = 0
+	}
 	p.mu.Unlock()
 
 	n := len(keys)

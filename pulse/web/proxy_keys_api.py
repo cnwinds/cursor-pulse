@@ -383,13 +383,36 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
                 )
             jev_bypass_cache = True
         runtime = effective_config_for_saved_tenant(session, config)
-        return proxy_service.list_pool_ranking_board(
+        jev = build_jev_client(runtime)
+        selection = runtime.tool_center.loan_selection
+        if model:
+            pool = quota_pool_for_model(model)
+            board = proxy_service.list_pool_ranking_board(
+                session,
+                loan_selection=selection,
+                jev=jev,
+                quota_pool=pool,
+                jev_bypass_cache=jev_bypass_cache,
+            )
+            board["quota_pool"] = pool
+            return board
+        from pulse.proxy.pool_board import list_pool_ranking_boards
+
+        boards = list_pool_ranking_boards(
             session,
-            loan_selection=runtime.tool_center.loan_selection,
-            jev=build_jev_client(runtime),
-            quota_pool=quota_pool_for_model(model) if model else None,
+            loan_selection=selection,
+            jev=jev,
             jev_bypass_cache=jev_bypass_cache,
         )
+        intake = boards["intake"]
+        return {
+            **intake,
+            "boards": {
+                "auto": boards["auto"],
+                "api": boards["api"],
+            },
+            "quota_pool": None,
+        }
 
     @app.post(
         "/api/v2/proxy-pool/accounts/{account_id}",

@@ -574,6 +574,9 @@ def test_pool_returns_only_enabled_credentials(env):
     assert creds[0]["api_key"] == "cursor-key-1"
     assert creds[0]["auto_pct"] == 10.0
     assert creds[0]["api_pct"] == 5.0
+    by_pool = resp.json().get("credentials_by_pool") or {}
+    assert by_pool.get("auto") is not None
+    assert by_pool.get("api") is not None
 
 
 def test_pool_excludes_loan_credentials(env):
