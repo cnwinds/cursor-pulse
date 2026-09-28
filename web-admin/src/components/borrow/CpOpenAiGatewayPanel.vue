@@ -98,19 +98,12 @@
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计用量" min-width="140">
+        <el-table-column label="累计用量/5h/7d" min-width="152" align="right">
           <template #default="{ row }">
-            <div class="usage-cell">
-              <span class="usage-tokens">{{ formatTokensM(row.total_tokens ?? 0) }}</span>
-              <span class="usage-sub">{{ row.request_count ?? 0 }} 次请求</span>
-            </div>
+            <span class="usage-combined" :title="formatKeyUsageTooltip(row)">
+              {{ formatKeyUsageCombined(row) }}
+            </span>
           </template>
-        </el-table-column>
-        <el-table-column label="近 5h" width="88" align="right">
-          <template #default="{ row }">{{ formatTokens(row.window_5h_tokens ?? 0) }}</template>
-        </el-table-column>
-        <el-table-column label="近 7d" width="88" align="right">
-          <template #default="{ row }">{{ formatTokens(row.window_7d_tokens ?? 0) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="168" align="center" fixed="right">
           <template #default="{ row }">
@@ -542,6 +535,19 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
+function formatKeyUsageCombined(row: CpKey) {
+  const total = formatTokensM(row.total_tokens ?? 0)
+  const count = row.request_count ?? 0
+  const h5 = formatTokens(row.window_5h_tokens ?? 0)
+  const d7 = formatTokens(row.window_7d_tokens ?? 0)
+  return `${total}·${count}次/${h5}/${d7}`
+}
+
+function formatKeyUsageTooltip(row: CpKey) {
+  const count = row.request_count ?? 0
+  return `累计 ${formatTokensM(row.total_tokens ?? 0)}（${count} 次请求）· 近 5h ${formatTokens(row.window_5h_tokens ?? 0)} · 近 7d ${formatTokens(row.window_7d_tokens ?? 0)}`
+}
+
 function statusTagType(status: string) {
   if (status === 'active') return 'success'
   if (status === 'suspended') return 'warning'
@@ -768,18 +774,11 @@ defineExpose({
 .key-block {
   margin-top: 12px;
 }
-.usage-cell {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.35;
-}
-.usage-tokens {
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-.usage-sub {
+.usage-combined {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 :deep(.cp-key-row) {
   cursor: pointer;
