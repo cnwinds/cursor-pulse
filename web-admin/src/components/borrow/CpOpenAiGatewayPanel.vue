@@ -51,7 +51,7 @@
         <el-table :data="accounts" stripe>
           <el-table-column label="账号" prop="account_identifier" min-width="160" />
           <el-table-column label="区域" prop="api_region" width="100" />
-          <el-table-column label="额度压力" width="100">
+          <el-table-column label="额度" width="100">
             <template #default="{ row }">{{ row.tier_pressure_pct?.toFixed?.(1) ?? row.tier_pressure_pct }}%</template>
           </el-table-column>
           <el-table-column label="就绪" width="100">
