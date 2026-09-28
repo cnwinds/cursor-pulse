@@ -113,28 +113,28 @@
             <el-tag v-else :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计费用" width="92" align="right">
+        <el-table-column min-width="148" align="left">
           <template #header>
-            <el-tooltip content="按团队价表本地估算，非 Cursor 账单" placement="top">
-              <span class="col-header-tip">累计费用</span>
+            <el-tooltip
+              content="上行 tokens（M），下行费用（价表本地估算，非账单）；列内按 / 对齐"
+              placement="top"
+            >
+              <span class="col-header-tip">总量/5h/7d</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <span class="cost-cell">${{ formatKeyCostUsd(row) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="用量" min-width="212" align="left">
-          <template #default="{ row }">
-            <div class="usage-combined-cell" :title="formatKeyUsageTooltip(row)">
-              <div class="usage-combined-primary">
-                累计 {{ formatTokensM(row.total_tokens ?? 0) }}
-              </div>
-              <div class="usage-combined-sub">
-                <span>{{ row.request_count ?? 0 }}次</span>
-                <span class="usage-combined-sep">·</span>
-                <span>5h {{ formatTokensM(row.window_5h_tokens ?? 0) }}·{{ row.window_5h_request_count ?? 0 }}次</span>
-                <span class="usage-combined-sep">·</span>
-                <span>7d {{ formatTokensM(row.window_7d_tokens ?? 0) }}·{{ row.window_7d_request_count ?? 0 }}次</span>
+            <div class="usage-slash-block" :title="formatKeyUsageTooltip(row)">
+              <div class="usage-slash-grid">
+                <span>{{ formatKeyTokensSlash(row.total_tokens) }}</span>
+                <span class="usage-slash-sep">/</span>
+                <span>{{ formatKeyTokensSlash(row.window_5h_tokens) }}</span>
+                <span class="usage-slash-sep">/</span>
+                <span>{{ formatKeyTokensSlash(row.window_7d_tokens) }}</span>
+                <span>{{ formatKeyUsdSlash(row.total_cost_cents) }}</span>
+                <span class="usage-slash-sep">/</span>
+                <span>{{ formatKeyUsdSlash(row.window_5h_cost_cents) }}</span>
+                <span class="usage-slash-sep">/</span>
+                <span>{{ formatKeyUsdSlash(row.window_7d_cost_cents) }}</span>
               </div>
             </div>
           </template>
@@ -451,6 +451,8 @@ interface CpKey {
   request_count?: number
   window_5h_tokens?: number
   window_7d_tokens?: number
+  window_5h_cost_cents?: number
+  window_7d_cost_cents?: number
   window_5h_request_count?: number
   window_7d_request_count?: number
 }
@@ -734,8 +736,19 @@ async function submitEditKey() {
   }
 }
 
-function formatKeyCostUsd(row: CpKey) {
-  return ((row.total_cost_cents ?? 0) / 100).toFixed(2)
+function formatKeyTokensSlash(value?: number | null) {
+  const n = Number(value) || 0
+  const m = n / 1_000_000
+  if (m === 0) return '0M'
+  const core = m.toFixed(2).replace(/\.?0+$/, '')
+  return `${core}M`
+}
+
+function formatKeyUsdSlash(cents?: number | null) {
+  const usd = (Number(cents) || 0) / 100
+  if (usd === 0) return '$0'
+  const core = usd.toFixed(2).replace(/\.?0+$/, '')
+  return `$${core}`
 }
 
 function statusLabel(status: string) {
@@ -749,9 +762,9 @@ function statusLabel(status: string) {
 
 function formatKeyUsageTooltip(row: CpKey) {
   return [
-    `累计 ${formatTokensM(row.total_tokens ?? 0)} · ${row.request_count ?? 0} 次`,
-    `近 5h ${formatTokensM(row.window_5h_tokens ?? 0)} · ${row.window_5h_request_count ?? 0} 次`,
-    `近 7d ${formatTokensM(row.window_7d_tokens ?? 0)} · ${row.window_7d_request_count ?? 0} 次`,
+    `总量 ${formatKeyTokensSlash(row.total_tokens)} · ${formatKeyUsdSlash(row.total_cost_cents)} · ${row.request_count ?? 0} 次`,
+    `5h ${formatKeyTokensSlash(row.window_5h_tokens)} · ${formatKeyUsdSlash(row.window_5h_cost_cents)} · ${row.window_5h_request_count ?? 0} 次`,
+    `7d ${formatKeyTokensSlash(row.window_7d_tokens)} · ${formatKeyUsdSlash(row.window_7d_cost_cents)} · ${row.window_7d_request_count ?? 0} 次`,
   ].join('\n')
 }
 
@@ -998,30 +1011,36 @@ defineExpose({
   cursor: help;
   border-bottom: 1px dashed var(--el-border-color);
 }
-.cost-cell {
-  font-size: 13px;
+.usage-slash-block {
+  padding: 2px 0;
+}
+.usage-slash-grid {
+  display: grid;
+  grid-template-columns: minmax(3.25rem, 1fr) auto minmax(3.25rem, 1fr) auto minmax(3.25rem, 1fr);
+  column-gap: 3px;
+  row-gap: 3px;
+  width: max-content;
+  max-width: 100%;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.usage-slash-grid > span:nth-child(-n + 5) {
+  font-size: 13px;
   color: var(--el-text-color-primary);
 }
-.usage-combined-cell {
-  line-height: 1.35;
-}
-.usage-combined-primary {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color: var(--el-text-color-primary);
-}
-.usage-combined-sub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 4px;
-  font-size: 12px;
+.usage-slash-grid > span:nth-child(n + 6) {
+  font-size: 11px;
   color: var(--el-text-color-secondary);
-  font-variant-numeric: tabular-nums;
 }
-.usage-combined-sep {
-  opacity: 0.65;
+.usage-slash-grid > span:nth-child(5n + 1),
+.usage-slash-grid > span:nth-child(5n + 3),
+.usage-slash-grid > span:nth-child(5n + 5) {
+  text-align: right;
+}
+.usage-slash-sep {
+  text-align: center;
+  color: var(--el-text-color-placeholder);
+  user-select: none;
 }
 :deep(.cp-key-row) {
   cursor: pointer;
