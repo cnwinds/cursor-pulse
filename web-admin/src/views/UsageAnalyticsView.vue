@@ -4,12 +4,8 @@
       <div>
         <h2>用量分析</h2>
         <p class="desc desc-oneline">
-          看所选日期里 Cursor 用了多少 Token。
-          GLM / MiniMax / Kimi 这里没有按日记录，
-          <template v-if="codingPlanAccountCount > 0">你们有 {{ codingPlanAccountCount }} 个这类账号，</template>
-          要看剩余额度请打开
+          所选日期的 Cursor 用量。GLM / MiniMax / Kimi 请打开
           <router-link to="/quota-board">额度看板</router-link>。
-          <span v-if="overview?.timezone" class="tz">按 {{ overview.timezone }} 的日历统计。</span>
         </p>
       </div>
       <el-button @click="loadOverview">刷新</el-button>
@@ -313,7 +309,6 @@ const loading = ref(false)
 const overview = ref<Overview | null>(null)
 const accounts = ref<AccountRow[]>([])
 const members = ref<MemberRow[]>([])
-const codingPlanAccountCount = ref(0)
 const rangePreset = ref<RangePreset>('this_month')
 const dateRange = ref<[string, string] | null>(null)
 const filterAccountIds = ref<string[]>([])
@@ -558,17 +553,12 @@ async function openDrill(row: TableRow) {
 }
 
 async function loadFilters() {
-  const [accRes, memberRes, glmRes, minimaxRes, kimiRes] = await Promise.all([
+  const [accRes, memberRes] = await Promise.all([
     client.get('/api/v2/accounts', { params: { vendor_slug: 'cursor' } }),
     client.get('/api/v2/members'),
-    client.get('/api/v2/accounts', { params: { vendor_slug: 'glm' } }),
-    client.get('/api/v2/accounts', { params: { vendor_slug: 'minimax' } }),
-    client.get('/api/v2/accounts', { params: { vendor_slug: 'kimi' } }),
   ])
   accounts.value = accRes.data
   members.value = memberRes.data
-  codingPlanAccountCount.value =
-    (glmRes.data?.length || 0) + (minimaxRes.data?.length || 0) + (kimiRes.data?.length || 0)
 }
 
 async function loadOverview() {
