@@ -112,7 +112,7 @@ watch(() => route.query.tab, syncTabFromRoute)
 }
 .desc {
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   margin: 4px 0 0;
 }
 .vendor-tabs-shell {

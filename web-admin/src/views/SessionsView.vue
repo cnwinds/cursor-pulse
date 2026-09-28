@@ -742,7 +742,7 @@ onMounted(async () => {
 }
 .user-id-muted,
 .muted {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-muted);
 }
 .chat-panel {
@@ -755,7 +755,7 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--pulse-text-secondary);
   margin-bottom: 12px;
   padding-bottom: 12px;
@@ -766,7 +766,7 @@ onMounted(async () => {
   line-height: 1.6;
 }
 .session-toc-title {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
   color: var(--pulse-text-primary);
   margin-bottom: 8px;
@@ -799,13 +799,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 500;
   color: #0f172a;
 }
 .session-toc-preview {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.45;
   color: var(--pulse-text-primary);
   display: -webkit-box;
@@ -816,12 +816,12 @@ onMounted(async () => {
 }
 .session-toc-time {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-secondary);
 }
 .chat-stream-prepend {
   text-align: center;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-secondary);
   padding: 8px 0 12px;
 }
@@ -857,13 +857,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
   color: var(--pulse-text-primary);
 }
 .divider-meta {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-secondary);
 }
 .divider-actions {
@@ -934,7 +934,7 @@ onMounted(async () => {
   line-height: 24px;
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-secondary);
   list-style: none;
   white-space: nowrap;
@@ -969,7 +969,7 @@ onMounted(async () => {
 .tool-summary-time {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--pulse-text-muted);
   line-height: 24px;
 }
@@ -982,7 +982,7 @@ onMounted(async () => {
   min-width: 0;
 }
 .tool-label {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   color: var(--pulse-text-secondary);
   margin-bottom: 4px;
@@ -993,7 +993,7 @@ onMounted(async () => {
   border-radius: 8px;
   background: #0f172a;
   color: var(--pulse-border);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.45;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -1002,13 +1002,13 @@ onMounted(async () => {
   overflow-y: auto;
 }
 .bubble-role {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--pulse-text-secondary);
   margin-bottom: 4px;
 }
 .bubble-text {
   word-break: break-word;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   line-height: 1.5;
   color: #0f172a;
 }
@@ -1021,7 +1021,7 @@ onMounted(async () => {
 .bubble-markdown :deep(h3),
 .bubble-markdown :deep(h4) {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
   line-height: 1.4;
 }
 .bubble-markdown :deep(strong) {
@@ -1031,7 +1031,7 @@ onMounted(async () => {
   width: 100%;
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .bubble-markdown :deep(th),
 .bubble-markdown :deep(td) {
@@ -1053,8 +1053,8 @@ onMounted(async () => {
   padding-left: 20px;
 }
 .bubble-markdown :deep(code) {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--pulse-font-mono);
+  font-size: var(--pulse-text-sm);
   background: var(--pulse-bg-code);
   padding: 1px 4px;
   border-radius: 4px;
@@ -1072,7 +1072,7 @@ onMounted(async () => {
 }
 .bubble-time {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--pulse-text-muted);
   text-align: right;
 }

@@ -473,11 +473,11 @@ onMounted(loadAll)
 
 <style scoped>
 .key-hint {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .field-hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-text-color-secondary);
   line-height: 1.4;
 }

@@ -189,14 +189,14 @@ async function send() {
   color: rgba(255, 255, 255, 0.8);
 }
 .meta {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   opacity: 0.7;
   margin-bottom: 4px;
 }
 .text {
   white-space: pre-wrap;
   line-height: 1.5;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
 }
 .actions {
   margin-top: 8px;
@@ -212,7 +212,7 @@ async function send() {
   border-top: 1px solid var(--pulse-border);
 }
 .typing {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--pulse-text-secondary);
 }
 </style>

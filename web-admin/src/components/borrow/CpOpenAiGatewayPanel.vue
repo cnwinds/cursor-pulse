@@ -922,11 +922,11 @@ defineExpose({
 }
 .endpoint-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
 }
 .endpoint-desc {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-text-color-secondary);
   line-height: 1.5;
 }
@@ -934,7 +934,7 @@ defineExpose({
   width: 100%;
 }
 .endpoint-code {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   word-break: break-all;
 }
 .created-endpoints {
@@ -942,7 +942,7 @@ defineExpose({
 }
 .created-endpoints-title {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
 }
 .section {
@@ -973,7 +973,7 @@ defineExpose({
 }
 .pool-collapse-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
 }
 .section-head {
@@ -984,7 +984,7 @@ defineExpose({
 }
 .section-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
 }
 .section-head-actions {
   display: flex;
@@ -998,13 +998,13 @@ defineExpose({
   gap: 8px;
 }
 .filter-label {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-regular);
   white-space: nowrap;
 }
 .base-url {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
 }
 .key-block {
@@ -1030,11 +1030,11 @@ defineExpose({
   line-height: 1.2;
 }
 .usage-slash-grid > span:nth-child(-n + 5) {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-primary);
 }
 .usage-slash-grid > span:nth-child(n + 6) {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--el-text-color-secondary);
 }
 .usage-slash-grid > span:nth-child(5n + 1),
@@ -1075,18 +1075,18 @@ defineExpose({
   width: 100%;
 }
 .usage-collapse-title {
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
 .usage-collapse-totals {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 400;
   color: var(--el-text-color-secondary);
 }
 .usage-section-title {
   margin: 16px 0 12px;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
 }
 .account-stack {
@@ -1098,11 +1098,11 @@ defineExpose({
   max-width: 100%;
 }
 .account-id {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   word-break: break-all;
 }
 .account-owner {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--el-text-color-secondary);
 }
 .usage-fill-table {
@@ -1132,7 +1132,7 @@ defineExpose({
 }
 .reveal-hint {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
 }
 </style>

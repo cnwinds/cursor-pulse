@@ -138,7 +138,7 @@ const rows = computed<ProgressRow[]>(() => {
 }
 
 .quota-label {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   color: var(--el-text-color-primary);
   white-space: nowrap;
@@ -146,7 +146,7 @@ const rows = computed<ProgressRow[]>(() => {
 }
 
 .quota-row.sub .quota-label {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 400;
   color: var(--el-text-color-secondary);
 }
@@ -189,7 +189,7 @@ const rows = computed<ProgressRow[]>(() => {
 }
 
 .quota-pct {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -198,7 +198,7 @@ const rows = computed<ProgressRow[]>(() => {
 }
 
 .quota-row.sub .quota-pct {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 500;
   color: var(--el-text-color-secondary);
 }

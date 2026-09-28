@@ -1190,7 +1190,7 @@ onMounted(loadLoans)
 .embedded-summary {
   margin: 0;
   flex: 1;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
 }
 .embedded-summary strong {
@@ -1203,7 +1203,7 @@ onMounted(loadLoans)
 .desc {
   margin: 0;
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
 }
 .proxy-spend-btn {
   font-variant-numeric: tabular-nums;
@@ -1222,7 +1222,7 @@ onMounted(loadLoans)
   min-width: 32px;
 }
 .loan-actions :deep(.el-icon) {
-  font-size: 18px;
+  font-size: var(--pulse-text-lg);
 }
 .loan-actions :deep(.copy-cmd-icon-btn) {
   padding: 6px;
@@ -1256,7 +1256,7 @@ onMounted(loadLoans)
   margin-right: 4px;
 }
 .filter-label {
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   color: var(--el-text-color-regular);
 }
 .account-stack {
@@ -1275,16 +1275,16 @@ onMounted(loadLoans)
   max-width: 100%;
 }
 .account-id {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   word-break: break-all;
 }
 .account-owner {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--el-text-color-secondary);
 }
 .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .pager {
   display: flex;
@@ -1325,18 +1325,18 @@ onMounted(loadLoans)
   width: 100%;
 }
 .usage-collapse-title {
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
 .usage-collapse-totals {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 400;
   color: var(--el-text-color-secondary);
 }
 .usage-section-title {
   margin: 16px 0 12px;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
 }
 .usage-fill-table {
@@ -1370,7 +1370,7 @@ onMounted(loadLoans)
 .manual-hint {
   margin: 0 0 12px;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   line-height: 1.5;
 }
 </style>

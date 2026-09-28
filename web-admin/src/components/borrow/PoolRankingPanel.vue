@@ -606,7 +606,7 @@ onMounted(loadRanking)
   --rank-surface: #ffffff;
   --rank-muted: var(--pulse-text-secondary);
   --rank-border: rgba(15, 23, 42, 0.08);
-  font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+
 }
 .panel-card {
   background: linear-gradient(165deg, var(--pulse-bg-muted) 0%, var(--pulse-bg-code) 42%, #ffffff 100%);
@@ -627,7 +627,7 @@ onMounted(loadRanking)
 .quota-pool-hint {
   flex: 1;
   min-width: 200px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--rank-muted);
   line-height: 1.45;
 }
@@ -657,7 +657,7 @@ onMounted(loadRanking)
   max-width: 100%;
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.25;
   border: 1px solid transparent;
   cursor: default;
@@ -703,7 +703,7 @@ onMounted(loadRanking)
   min-width: 1.25rem;
   padding: 0 6px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 18px;
@@ -752,11 +752,11 @@ onMounted(loadRanking)
   max-width: 100%;
 }
 .account-id {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   word-break: break-all;
 }
 .account-owner {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--rank-muted);
 }
 .score-cell {
@@ -784,7 +784,7 @@ onMounted(loadRanking)
   min-width: 2rem;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   background: var(--pulse-border);
@@ -808,7 +808,7 @@ onMounted(loadRanking)
   gap: 3px;
   cursor: help;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 :deep(.col-header-q) {
   display: inline-flex;
@@ -817,7 +817,7 @@ onMounted(loadRanking)
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 700;
   color: var(--pulse-text-secondary);
   background: var(--pulse-border);

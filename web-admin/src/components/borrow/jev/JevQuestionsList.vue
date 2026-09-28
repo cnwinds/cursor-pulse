@@ -61,7 +61,7 @@ const items = computed(() =>
 }
 .block h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
 }
 .q-title {
@@ -72,7 +72,7 @@ const items = computed(() =>
 }
 .q-instructions {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-regular);
   line-height: 1.5;
 }
@@ -80,7 +80,7 @@ const items = computed(() =>
   margin: 0;
   padding-left: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   display: flex;
   flex-direction: column;
   gap: 8px;

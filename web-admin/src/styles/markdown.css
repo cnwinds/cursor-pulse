@@ -16,7 +16,7 @@
 .pulse-markdown :deep(h3),
 .pulse-markdown :deep(h4) {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
   line-height: 1.4;
   color: var(--pulse-text-strong);
 }
@@ -29,7 +29,7 @@
   width: 100%;
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 
 .pulse-markdown :deep(th),
@@ -57,7 +57,7 @@
 
 .pulse-markdown :deep(code) {
   font-family: var(--pulse-font-mono);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   background: var(--pulse-bg-code);
   padding: 1px 4px;
   border-radius: 4px;

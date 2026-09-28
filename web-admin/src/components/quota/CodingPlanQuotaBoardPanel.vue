@@ -166,7 +166,7 @@ defineExpose({ loadAll })
 <style scoped>
 .desc {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .card-col {
   margin-bottom: 16px;
@@ -187,7 +187,7 @@ defineExpose({ loadAll })
 .progress-label {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   margin-bottom: 4px;
 }
 .card-actions {
@@ -195,7 +195,7 @@ defineExpose({ loadAll })
   justify-content: space-between;
   align-items: center;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .empty {
   padding: 12px 0;

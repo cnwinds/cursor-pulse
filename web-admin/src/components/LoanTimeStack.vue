@@ -26,11 +26,11 @@ const parts = computed(() => formatChinaDateTimeParts(props.iso))
   font-variant-numeric: tabular-nums;
 }
 .time-date {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-text-color-primary);
 }
 .time-clock {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: var(--el-text-color-secondary);
 }
 .muted {

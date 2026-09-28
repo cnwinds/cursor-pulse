@@ -447,7 +447,7 @@ onMounted(async () => {
 }
 .desc {
   color: var(--pulse-text-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   margin-top: 4px;
   max-width: 720px;
   line-height: 1.5;
@@ -463,12 +463,12 @@ onMounted(async () => {
 }
 .field-hint {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-muted);
   line-height: 1.4;
 }
 .muted {
   color: var(--pulse-text-muted);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 </style>

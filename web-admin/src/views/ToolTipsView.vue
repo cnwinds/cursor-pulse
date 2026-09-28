@@ -150,7 +150,7 @@ onMounted(load)
 }
 .desc {
   color: var(--pulse-text-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   margin-top: 4px;
 }
 .header-actions {

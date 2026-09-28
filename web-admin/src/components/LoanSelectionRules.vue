@@ -340,7 +340,7 @@ async function onSave() {
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   display: grid;
@@ -370,8 +370,8 @@ async function onSave() {
 }
 .stage-head h3 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 650;
+  font-size: var(--pulse-text-md);
+  font-weight: var(--pulse-font-semibold);
   letter-spacing: -0.01em;
 }
 .controls {
@@ -394,14 +394,14 @@ async function onSave() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
   color: var(--pulse-text-primary);
   white-space: nowrap;
 }
 .unit {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-semibold);
   color: var(--muted);
 }
 .flow :deep(.el-input-number) {
@@ -418,7 +418,7 @@ async function onSave() {
   border-radius: 50%;
   background: var(--pulse-border);
   color: var(--pulse-text-secondary);
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 700;
   line-height: 1;
   cursor: help;
@@ -433,7 +433,7 @@ async function onSave() {
   padding-left: 42px;
 }
 .readonly {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   font-weight: 600;
   color: var(--muted);
 }

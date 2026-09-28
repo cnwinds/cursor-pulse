@@ -36,7 +36,7 @@ function displayId(accountId: string): string {
 }
 .block h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
 }
 </style>

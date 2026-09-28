@@ -147,7 +147,7 @@ function formatJson(value: unknown): string {
 <style scoped>
 .jev-trace-empty {
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   padding: 8px 0;
 }
 .jev-trace-meta {
@@ -158,34 +158,34 @@ function formatJson(value: unknown): string {
   margin-bottom: 16px;
 }
 .meta-model {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-regular);
 }
 .meta-timing {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
   font-variant-numeric: tabular-nums;
 }
 .meta-error {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-color-danger);
   flex: 1 1 100%;
 }
 .section-hint {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-text-color-secondary);
   margin: 0 0 12px;
   line-height: 1.5;
 }
 .section-hint code {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .json-block {
   margin-top: 16px;
 }
 .json-block summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--el-color-primary);
   margin-bottom: 8px;
 }
@@ -195,7 +195,7 @@ function formatJson(value: unknown): string {
   background: #0f172a;
   color: var(--pulse-border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.45;
   overflow: auto;
   max-height: 420px;

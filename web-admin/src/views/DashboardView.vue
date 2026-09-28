@@ -360,8 +360,7 @@ onMounted(async () => {
 
 <style scoped>
 .trend-range {
-  font-size: 12px;
-  font-weight: 400;
+  font-weight: var(--pulse-font-regular);
   color: var(--pulse-text-secondary);
 }
 .attention-list {
@@ -373,7 +372,6 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
 }
 .attention-text {
   color: var(--pulse-text-primary);
@@ -394,11 +392,9 @@ onMounted(async () => {
   margin-bottom: 6px;
 }
 .risk-name {
-  font-size: 13px;
-  font-weight: 500;
+  font-weight: var(--pulse-font-medium);
 }
 .risk-meta {
-  font-size: 12px;
   color: var(--pulse-text-secondary);
   margin-top: 4px;
 }
@@ -413,20 +409,18 @@ onMounted(async () => {
   border-bottom: none;
 }
 .activity-title {
-  font-size: 13px;
   color: var(--pulse-text-primary);
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
 }
 .activity-operator {
-  font-weight: 600;
+  font-weight: var(--pulse-font-semibold);
 }
 .activity-detail {
   color: var(--pulse-text-secondary);
 }
 .activity-time {
-  font-size: 12px;
   color: var(--pulse-text-muted);
   white-space: nowrap;
 }

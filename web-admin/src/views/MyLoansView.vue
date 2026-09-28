@@ -197,7 +197,7 @@ onMounted(loadLoans)
 .desc {
   margin: 4px 0 0;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .header-actions {
   display: flex;
@@ -209,7 +209,7 @@ onMounted(loadLoans)
 }
 .key-reveal .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   margin-bottom: 6px;
 }
 .reveal-actions {

@@ -93,7 +93,7 @@ onMounted(load)
 
 <style scoped>
 .jev-panel {
-  font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+
 }
 .panel-card {
   background: linear-gradient(165deg, var(--pulse-bg-muted) 0%, var(--pulse-bg-code) 42%, #ffffff 100%);

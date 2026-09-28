@@ -106,19 +106,9 @@ a {
 }
 
 .page-header h2,
-.pulse-page-header h2 {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--pulse-text-strong);
-}
-
+.pulse-page-header h2,
 .pulse-page-title {
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
   color: var(--pulse-text-strong);
 }
 
@@ -128,14 +118,13 @@ a {
 .page-header p.desc {
   margin: 4px 0 0;
   color: var(--pulse-text-secondary);
-  font-size: 0.875rem;
-  line-height: 1.55;
+  line-height: var(--pulse-leading-normal);
 }
 
 .pulse-more-link {
   margin-left: auto;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--pulse-text-base);
+  font-weight: var(--pulse-font-medium);
   color: var(--el-color-primary);
   text-decoration: none;
   transition: color var(--pulse-transition);
@@ -149,8 +138,8 @@ a {
   display: block;
   margin-bottom: 4px;
   color: var(--pulse-text-primary);
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: var(--pulse-font-semibold);
+  font-size: var(--pulse-text-base);
 }
 
 .pulse-meta-box {
@@ -159,7 +148,7 @@ a {
   border: 1px solid var(--pulse-border);
   border-radius: var(--pulse-radius-sm);
   background: var(--pulse-bg-muted);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--pulse-text-body);
 }
 
@@ -230,7 +219,7 @@ a {
   border-radius: var(--pulse-radius-sm);
   background: var(--pulse-bg-surface);
   color: var(--pulse-text-body);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-family: inherit;
   cursor: pointer;
   transition:

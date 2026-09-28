@@ -231,7 +231,7 @@ function onSave() {
 }
 .field-hint {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-muted);
   line-height: 1.4;
 }

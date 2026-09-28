@@ -6,6 +6,25 @@
   --pulse-font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, sans-serif;
   --pulse-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
 
+  /* Type scale (rem @ 16px root) */
+  --pulse-text-xs: 0.6875rem; /* 11px — 侧栏脚注、极弱提示 */
+  --pulse-text-sm: 0.75rem; /* 12px — 表格头、标签、次要 */
+  --pulse-text-base: 0.8125rem; /* 13px — 正文默认 */
+  --pulse-text-md: 0.875rem; /* 14px — 表单、聊天、小节标题 */
+  --pulse-text-body-lg: 1rem; /* 16px — 列表主标题等 */
+  --pulse-text-lg: 1.125rem; /* 18px — 页标题 */
+  --pulse-text-xl: 1.25rem; /* 20px — KPI 数字 */
+  --pulse-text-stat: 1.65rem; /* 概览 Stat 大卡 */
+
+  --pulse-leading-tight: 1.35;
+  --pulse-leading-normal: 1.55;
+  --pulse-leading-relaxed: 1.7;
+
+  --pulse-font-regular: 400;
+  --pulse-font-medium: 500;
+  --pulse-font-semibold: 600;
+  --pulse-font-bold: 700;
+
   --pulse-color-accent: #0d9488;
   --pulse-color-accent-hover: #0f766e;
   --pulse-color-accent-soft: #2dd4bf;

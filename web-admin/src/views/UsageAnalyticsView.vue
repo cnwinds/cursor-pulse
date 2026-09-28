@@ -618,13 +618,11 @@ onMounted(async () => {
 }
 .page-header h2 {
   margin: 0 0 4px;
-  font-size: 20px;
 }
 .desc {
   margin: 0;
   color: var(--pulse-text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
+  line-height: var(--pulse-leading-normal);
 }
 .desc-oneline {
   max-width: 100%;
@@ -694,14 +692,10 @@ onMounted(async () => {
   background: hsl(32 90% 50% / 0.08);
 }
 .kpi-label {
-  font-size: 12px;
-  color: var(--pulse-text-secondary);
   margin-bottom: 6px;
 }
 .kpi-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #0f172a;
+  color: var(--pulse-text-strong);
 }
 .chart-row {
   margin-bottom: 12px;
@@ -711,14 +705,11 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 .chart-title {
-  font-size: 14px;
-  font-weight: 600;
   margin-bottom: 8px;
-  color: #0f172a;
 }
 .chart-hint {
   margin-left: 8px;
-  font-weight: 400;
+  font-weight: var(--pulse-font-regular);
 }
 .chart {
   height: 300px;
@@ -732,9 +723,5 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 8px;
-}
-.muted {
-  color: var(--pulse-text-muted);
-  font-size: 12px;
 }
 </style>

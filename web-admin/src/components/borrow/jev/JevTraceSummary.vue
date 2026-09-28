@@ -162,7 +162,7 @@ const ownerRows = computed(() => {
 }
 .card h4 {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
 }
 .kv {
@@ -174,7 +174,7 @@ const ownerRows = computed(() => {
   display: grid;
   grid-template-columns: 100px 1fr;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .kv dt {
   margin: 0;
@@ -197,7 +197,7 @@ const ownerRows = computed(() => {
   grid-template-columns: minmax(80px, 1fr) 1fr 52px;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .prob-label {
   overflow: hidden;

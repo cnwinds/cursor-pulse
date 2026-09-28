@@ -71,7 +71,7 @@ function toneForPct(v: number | null | undefined): string {
   min-height: 18px;
 }
 .tier-label {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 500;
   color: var(--el-text-color-secondary);
   white-space: nowrap;
@@ -103,7 +103,7 @@ function toneForPct(v: number | null | undefined): string {
   background: var(--el-border-color);
 }
 .tier-pct {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;

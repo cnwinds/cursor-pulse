@@ -1,0 +1,143 @@
+/**
+ * 全站字体与字号层级 — 组件内尽量用 class 或 var(--pulse-text-*)，避免再引入第二套 sans。
+ */
+
+#app {
+  font-family: var(--pulse-font-sans);
+  font-size: var(--pulse-text-base);
+  line-height: var(--pulse-leading-normal);
+}
+
+#app code,
+#app kbd,
+#app samp,
+#app pre,
+#app .pulse-mono,
+#app .mono {
+  font-family: var(--pulse-font-mono);
+}
+
+#app .tabular-nums,
+#app .kpi-value,
+#app .stat-value,
+#app .proxy-spend-btn {
+  font-family: var(--pulse-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— 页面结构 —— */
+.page-header h2,
+.pulse-page-header h2,
+.pulse-page-title,
+.layout .page-title {
+  font-size: var(--pulse-text-lg);
+  font-weight: var(--pulse-font-bold);
+  letter-spacing: -0.02em;
+  line-height: var(--pulse-leading-tight);
+}
+
+.page-header .desc,
+.page-header p.desc,
+.pulse-desc,
+.pulse-hint {
+  font-size: var(--pulse-text-md);
+}
+
+/* —— 卡片 / 图表 —— */
+.chart-title,
+.section-title,
+.table-header strong,
+.panel-head h3,
+.file-content-header code {
+  font-size: var(--pulse-text-md);
+  font-weight: var(--pulse-font-semibold);
+  color: var(--pulse-text-strong);
+  line-height: var(--pulse-leading-tight);
+}
+
+.kpi-label,
+.stat-label {
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-medium);
+  color: var(--pulse-text-secondary);
+}
+
+.kpi-value {
+  font-size: var(--pulse-text-xl);
+  font-weight: var(--pulse-font-semibold);
+  letter-spacing: -0.03em;
+  color: var(--pulse-text-strong);
+}
+
+.stat-value {
+  font-size: var(--pulse-text-stat);
+  font-weight: var(--pulse-font-semibold);
+  letter-spacing: -0.03em;
+}
+
+.stat-sub {
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
+}
+
+.muted,
+.text-muted {
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
+}
+
+.caption,
+.text-caption {
+  font-size: var(--pulse-text-xs);
+  color: var(--pulse-text-muted);
+  line-height: var(--pulse-leading-normal);
+}
+
+/* —— Element Plus 对齐 —— */
+.el-table {
+  font-size: var(--pulse-text-base);
+}
+
+.el-table th.el-table__cell {
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-semibold);
+}
+
+.el-form-item__label {
+  font-size: var(--pulse-text-md);
+  font-weight: var(--pulse-font-medium);
+}
+
+.el-descriptions__label,
+.el-descriptions__content {
+  font-size: var(--pulse-text-base);
+}
+
+.el-tabs__item {
+  font-size: var(--pulse-text-md);
+}
+
+.el-radio-button__inner {
+  font-size: var(--pulse-text-sm);
+}
+
+.el-button {
+  font-family: inherit;
+}
+
+.el-input__inner,
+.el-textarea__inner {
+  font-family: inherit;
+  font-size: var(--pulse-text-md);
+}
+
+.el-dialog__title {
+  font-size: var(--pulse-text-lg);
+  font-weight: var(--pulse-font-bold);
+  letter-spacing: -0.02em;
+}
+
+.el-message,
+.el-notification {
+  font-family: var(--pulse-font-sans);
+}

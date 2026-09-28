@@ -150,6 +150,6 @@ async function copyItem(item: ProxyCommandMenuItem) {
   vertical-align: middle;
 }
 .copy-cmd-icon-btn :deep(.el-icon) {
-  font-size: 18px;
+  font-size: var(--pulse-text-lg);
 }
 </style>

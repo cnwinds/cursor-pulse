@@ -415,16 +415,16 @@ onMounted(load)
 }
 .section-title {
   margin: 16px 0 8px;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
 }
 .hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .pricing-table {
   width: 100%;

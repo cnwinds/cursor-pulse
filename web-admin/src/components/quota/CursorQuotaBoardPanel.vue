@@ -582,7 +582,7 @@ defineExpose({ loadAll })
 .desc {
   margin: 0;
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
 }
 .header-actions {
   display: flex;
@@ -627,7 +627,7 @@ defineExpose({ loadAll })
 }
 .account-email {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   word-break: break-all;
 }
 .account-subline {
@@ -636,7 +636,7 @@ defineExpose({ loadAll })
   align-items: baseline;
   gap: 0;
   max-width: 100%;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.35;
   color: var(--el-text-color-secondary);
 }
@@ -649,7 +649,7 @@ defineExpose({ loadAll })
   flex-shrink: 0;
 }
 .account-plan {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 400;
   color: var(--el-text-color-placeholder);
   word-break: break-word;
@@ -660,7 +660,7 @@ defineExpose({ loadAll })
 }
 .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .cycle-meta {
   display: flex;
@@ -668,7 +668,7 @@ defineExpose({ loadAll })
   align-items: center;
   gap: 0;
   margin-bottom: 10px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-text-color-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -686,7 +686,7 @@ defineExpose({ loadAll })
   flex-shrink: 0;
 }
 .meta-item .el-icon {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-text-color-placeholder);
   flex-shrink: 0;
 }
@@ -703,7 +703,7 @@ defineExpose({ loadAll })
 .progress-label {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   margin-bottom: 4px;
 }
 .usage-section {
@@ -714,7 +714,7 @@ defineExpose({ loadAll })
 }
 .api-inline-note {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   margin-left: 2px;
   font-variant-numeric: tabular-nums;
 }
@@ -732,7 +732,7 @@ defineExpose({ loadAll })
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px dashed var(--el-border-color-lighter);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .spend-title {
   display: flex;
@@ -751,7 +751,7 @@ defineExpose({ loadAll })
 }
 .spend-toggle {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--el-color-primary);
 }
 .usage-pool {
@@ -761,7 +761,7 @@ defineExpose({ loadAll })
   align-items: baseline;
   margin-top: 4px;
   padding: 4px 6px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   border-radius: 4px;
   background: var(--el-fill-color);
 }
@@ -796,7 +796,7 @@ defineExpose({ loadAll })
   gap: 8px;
   align-items: baseline;
   padding: 3px 6px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .usage-model-row:nth-child(odd) {
   background: var(--el-fill-color-lighter);
@@ -840,7 +840,7 @@ defineExpose({ loadAll })
   flex-shrink: 0;
 }
 .updated-at {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .manual-hint {
   margin-bottom: 12px;
@@ -867,7 +867,7 @@ defineExpose({ loadAll })
   display: flex;
   justify-content: space-between;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   margin-bottom: 8px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--el-border-color-lighter);
@@ -877,7 +877,7 @@ defineExpose({ loadAll })
   grid-template-columns: 140px 1fr 72px 80px;
   gap: 8px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   margin-bottom: 6px;
 }
 .daily-model-name {
@@ -902,7 +902,7 @@ defineExpose({ loadAll })
 }
 .daily-model-tokens {
   text-align: right;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   font-weight: 600;
 }
 </style>

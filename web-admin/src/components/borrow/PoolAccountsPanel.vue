@@ -115,12 +115,12 @@ defineExpose({ load })
   margin: 0;
   flex: 1;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   line-height: 1.55;
 }
 .account-sub {
   color: var(--el-text-color-secondary);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   margin-top: 2px;
 }
 </style>

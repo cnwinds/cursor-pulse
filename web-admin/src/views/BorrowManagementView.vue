@@ -112,7 +112,7 @@ function onTabChange(name: string | number) {
 .desc {
   margin: 0;
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   line-height: 1.55;
   max-width: 720px;
 }

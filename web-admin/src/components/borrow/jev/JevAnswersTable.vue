@@ -73,11 +73,11 @@ const rows = computed(() =>
 <style scoped>
 .block h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
 }
 .raw-snippet {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   word-break: break-all;
 }
 </style>

@@ -223,7 +223,7 @@ onMounted(loadSkills)
   margin-bottom: var(--pulse-space-section);
 }
 .skill-id {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   font-family: var(--pulse-font-mono);
   color: var(--pulse-text-secondary);
 }
@@ -236,7 +236,7 @@ onMounted(loadSkills)
 .file-content-header code {
   font-family: var(--pulse-font-mono);
   color: var(--pulse-text-secondary);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .meta-row + .meta-row {
   margin-top: 8px;

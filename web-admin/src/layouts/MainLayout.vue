@@ -178,15 +178,15 @@ async function onLogout() {
 }
 
 .title {
-  font-weight: 700;
-  font-size: 1.05rem;
+  font-weight: var(--pulse-font-bold);
+  font-size: var(--pulse-text-md);
   letter-spacing: 0.02em;
-  color: var(--pulse-bg-muted);
+  color: #f8fafc;
 }
 
 .subtitle {
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--pulse-text-xs);
+  font-weight: var(--pulse-font-medium);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--pulse-sidebar-text);
@@ -211,9 +211,6 @@ async function onLogout() {
 }
 
 .page-title {
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
   color: var(--pulse-text-strong);
 }
 
@@ -224,7 +221,7 @@ async function onLogout() {
 }
 
 .user-name {
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 500;
   color: var(--pulse-text-primary);
 }
@@ -241,7 +238,7 @@ async function onLogout() {
   align-items: center;
   gap: 8px;
   padding: 14px 18px 18px;
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   color: rgba(148, 163, 184, 0.85);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -307,7 +304,7 @@ async function onLogout() {
 :deep(.el-sub-menu__title) {
   color: var(--pulse-sidebar-text-hover);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }

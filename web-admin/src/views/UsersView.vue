@@ -778,12 +778,10 @@ onMounted(load)
 }
 .page-header h2 {
   margin: 0 0 4px;
-  font-size: 20px;
 }
 .desc {
   margin: 0;
   color: var(--pulse-text-secondary);
-  font-size: 14px;
 }
 .panel {
   background: #fff;
@@ -819,7 +817,7 @@ onMounted(load)
 }
 .directory-search-hint {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   color: var(--pulse-text-secondary);
 }
 .directory-tree-wrap {
@@ -842,12 +840,12 @@ onMounted(load)
 }
 .panel-head h3 {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: var(--pulse-text-body-lg);
 }
 .panel-desc {
   margin: 0;
   color: var(--pulse-text-muted);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .pending-panel {
   padding: 12px 16px;
@@ -865,7 +863,7 @@ onMounted(load)
 }
 .pending-empty-hint {
   color: var(--pulse-text-muted);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   white-space: nowrap;
 }
 .pending-list {
@@ -893,7 +891,7 @@ onMounted(load)
   font-weight: 600;
 }
 .meta {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-muted);
 }
 .pending-actions {
@@ -903,7 +901,7 @@ onMounted(load)
 .dialog-desc {
   margin: 0 0 16px;
   color: var(--pulse-text-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
 }
 .role-grid {
   display: grid;
@@ -935,7 +933,7 @@ onMounted(load)
   margin-bottom: 6px;
 }
 .role-desc {
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   color: var(--pulse-text-secondary);
   line-height: 1.4;
 }

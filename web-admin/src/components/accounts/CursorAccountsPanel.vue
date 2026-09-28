@@ -597,7 +597,7 @@ onMounted(loadAll)
 }
 .desc {
   color: var(--pulse-text-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   margin-top: 4px;
 }
 .header-actions {
@@ -610,11 +610,11 @@ onMounted(loadAll)
 .field-hint {
   margin-top: 6px;
   color: var(--pulse-text-muted);
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.4;
 }
 .key-hint {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   margin-top: 2px;
 }
 .credential-meta {
@@ -622,11 +622,11 @@ onMounted(loadAll)
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .sync-error {
   color: #dc2626;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .dialog-footer {
   display: flex;
