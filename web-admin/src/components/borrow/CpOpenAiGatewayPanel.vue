@@ -93,7 +93,7 @@
         v-loading="keysLoading"
         @row-click="onKeyRowClick"
       >
-        <el-table-column label="归属" min-width="156">
+        <el-table-column label="归属" min-width="148">
           <template #default="{ row }">
             <div class="account-stack">
               <span class="account-id">{{ row.member_name || '—' }}</span>
@@ -101,17 +101,36 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="厂家" prop="coding_plan_vendor" width="72" align="center" />
-        <el-table-column label="状态" width="88" align="center">
+        <el-table-column label="状态" width="84" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <el-tooltip
+              v-if="row.status === 'suspended' && row.suspended_reason?.trim()"
+              :content="row.suspended_reason"
+              placement="top"
+            >
+              <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计用量/5h/7d" min-width="228" align="left">
+        <el-table-column label="累计费用" width="92" align="right">
+          <template #header>
+            <el-tooltip content="按团队价表本地估算，非 Cursor 账单" placement="top">
+              <span class="col-header-tip">累计费用</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span class="cost-cell">${{ formatKeyCostUsd(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="用量" min-width="212" align="left">
           <template #default="{ row }">
             <div class="usage-combined-cell" :title="formatKeyUsageTooltip(row)">
+              <div class="usage-combined-primary">
+                累计 {{ formatTokensM(row.total_tokens ?? 0) }}
+              </div>
               <div class="usage-combined-sub">
-                <span>累计 {{ formatTokensM(row.total_tokens ?? 0) }}·{{ row.request_count ?? 0 }}次</span>
+                <span>{{ row.request_count ?? 0 }}次</span>
                 <span class="usage-combined-sep">·</span>
                 <span>5h {{ formatTokensM(row.window_5h_tokens ?? 0) }}·{{ row.window_5h_request_count ?? 0 }}次</span>
                 <span class="usage-combined-sep">·</span>
@@ -120,7 +139,12 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="176" align="center" fixed="right">
+        <el-table-column label="创建时间" width="96" align="center">
+          <template #default="{ row }">
+            <LoanTimeStack :iso="row.created_at" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="168" align="center" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.recoverable"
@@ -172,7 +196,7 @@
         <el-form-item label="备注">
           <el-input
             v-model="createForm.name"
-            placeholder="可选；留空则备注列为 —"
+            placeholder="可选；留空则归属下方显示 key 提示"
           />
         </el-form-item>
       </el-form>
@@ -357,6 +381,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
+import LoanTimeStack from '@/components/LoanTimeStack.vue'
 import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import { formatTokensM } from '@/utils/usage'
@@ -385,8 +410,11 @@ interface CpKey {
   member_name: string | null
   key_hint: string
   status: string
+  suspended_reason?: string | null
+  created_at?: string | null
   recoverable?: boolean
   total_tokens: number
+  total_cost_cents?: number
   request_count?: number
   window_5h_tokens?: number
   window_7d_tokens?: number
@@ -637,6 +665,10 @@ async function submitCreate() {
 
 function keyRowSubline(row: CpKey) {
   return row.name?.trim() || row.key_hint || '—'
+}
+
+function formatKeyCostUsd(row: CpKey) {
+  return ((row.total_cost_cents ?? 0) / 100).toFixed(2)
 }
 
 function statusLabel(status: string) {
@@ -895,8 +927,22 @@ defineExpose({
 .key-block {
   margin-top: 12px;
 }
+.col-header-tip {
+  cursor: help;
+  border-bottom: 1px dashed var(--el-border-color);
+}
+.cost-cell {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-primary);
+}
 .usage-combined-cell {
   line-height: 1.35;
+}
+.usage-combined-primary {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-primary);
 }
 .usage-combined-sub {
   display: flex;
