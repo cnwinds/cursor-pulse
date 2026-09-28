@@ -77,9 +77,15 @@
     <div class="section">
       <div class="section-head">
         <h3>pkcp_ 接入密钥</h3>
-        <el-button v-if="canWrite" type="primary" size="small" @click="openCreateKey">签发密钥</el-button>
+        <div class="section-head-actions">
+          <div class="filter-switch">
+            <span class="filter-label">仅显示在用</span>
+            <el-switch v-model="activeKeysOnly" />
+          </div>
+          <el-button v-if="canWrite" type="primary" size="small" @click="openCreateKey">签发密钥</el-button>
+        </div>
       </div>
-      <el-table :data="keys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
+      <el-table :data="displayKeys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
         <el-table-column label="归属" prop="member_name" min-width="140" />
         <el-table-column label="备注" min-width="120">
           <template #default="{ row }">
@@ -378,6 +384,12 @@ const poolAccountsTitle = computed(() => {
   return `入池账号（${enabled}/${total}）`
 })
 const keys = ref<CpKey[]>([])
+/** 默认只展示 status=active 的密钥 */
+const activeKeysOnly = ref(true)
+const displayKeys = computed(() => {
+  if (!activeKeysOnly.value) return keys.value
+  return keys.value.filter((k) => k.status === 'active')
+})
 const openaiEndpoints = ref<OpenAiEndpoint[]>([])
 const members = ref<MemberOption[]>([])
 
@@ -731,6 +743,22 @@ defineExpose({
 .section-head h3 {
   margin: 0;
   font-size: 15px;
+}
+.section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.filter-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-label {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
 }
 .base-url {
   margin: 8px 0 0;
