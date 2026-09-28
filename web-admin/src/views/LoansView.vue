@@ -350,10 +350,26 @@
             </div>
           </template>
           <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading">
-            <el-table-column label="账号" min-width="200">
-              <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
+            <el-table-column label="账号" min-width="168">
+              <template #default="{ row }">
+                <div class="account-stack">
+                  <span class="account-id">{{ row.account_identifier || '—' }}</span>
+                  <span v-if="row.primary_member_name" class="account-owner">
+                    {{ row.primary_member_name }}
+                  </span>
+                </div>
+              </template>
             </el-table-column>
-            <el-table-column prop="plan_name" label="计划" width="100" />
+            <el-table-column label="额度" min-width="176">
+              <template #default="{ row }">
+                <QuotaProgressBars
+                  :total_pct="row.total_pct"
+                  :auto_pct="row.auto_pct"
+                  :api_pct="row.api_pct"
+                  :status="row.status"
+                />
+              </template>
+            </el-table-column>
             <el-table-column prop="request_count" label="请求数" width="88" align="right" />
             <el-table-column label="tokens" width="110" align="right">
               <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
@@ -497,6 +513,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
+import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
 import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
@@ -725,6 +742,10 @@ interface LoanUsageByAccountRow {
   account_identifier: string
   primary_member_name: string | null
   plan_name: string | null
+  total_pct?: number | null
+  auto_pct?: number | null
+  api_pct?: number | null
+  status?: string | null
   request_count: number
   total_tokens: number
   cost_cents: number
@@ -743,15 +764,6 @@ interface LoanUsageByModelRow {
   request_count: number
   total_tokens: number
   cost_cents: number
-}
-
-function formatAccountWithPrimary(row: {
-  account_identifier?: string | null
-  primary_member_name?: string | null
-}) {
-  const account = row.account_identifier || '—'
-  if (!row.primary_member_name) return account
-  return `${account}（${row.primary_member_name}）`
 }
 
 function formatProxySpend(row: LoanRow) {
