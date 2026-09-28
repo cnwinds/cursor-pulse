@@ -248,7 +248,12 @@
             </el-table-column>
             <el-table-column label="额度" min-width="176">
               <template #default="{ row }">
+                <CodingPlanTierBars
+                  v-if="row.quota_display === 'coding_plan_tiers'"
+                  :tiers="row.quota_tiers"
+                />
                 <QuotaProgressBars
+                  v-else
                   :total_pct="row.total_pct"
                   :auto_pct="row.auto_pct"
                   :api_pct="row.api_pct"
@@ -345,6 +350,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
+import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import { formatTokens, formatTokensM } from '@/utils/usage'
 import { formatChinaTime } from '@/utils/time'
@@ -396,6 +402,8 @@ interface UsageByAccountRow {
   request_count: number
   total_tokens: number
   cost_cents: number
+  quota_display?: 'cursor' | 'coding_plan_tiers'
+  quota_tiers?: Array<{ name: string; label?: string; utilization_pct?: number | null }>
   total_pct?: number | null
   auto_pct?: number | null
   api_pct?: number | null
