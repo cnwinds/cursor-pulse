@@ -378,17 +378,17 @@
           <template #default="{ row }">
             <div class="day-detail-wrap">
               <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
-                <el-table-column label="时间" min-width="178" class-name="day-detail-time">
+                <el-table-column label="时间" width="164" align="left">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
-                <el-table-column label="账号" min-width="140" show-overflow-tooltip>
+                <el-table-column label="账号" min-width="108" show-overflow-tooltip>
                   <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
                 </el-table-column>
-                <el-table-column prop="model" label="模型" min-width="96" show-overflow-tooltip />
-                <el-table-column label="tokens" min-width="80" align="right">
+                <el-table-column prop="model" label="模型" min-width="168" show-overflow-tooltip />
+                <el-table-column label="tokens" width="76" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
                 </el-table-column>
-                <el-table-column label="费用" min-width="72" align="right">
+                <el-table-column label="费用" width="64" align="right">
                   <template #default="{ row: item }">
                     ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
                   </template>
