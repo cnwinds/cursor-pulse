@@ -3,27 +3,18 @@
     <header class="page-header">
       <div>
         <h2>用量分析</h2>
-        <p class="desc">
-          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。
-          GLM / MiniMax / Kimi Coding Plan 无历史用量，不在此页统计。
+        <p class="desc desc-oneline">
+          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。GLM / MiniMax / Kimi Coding Plan 无历史用量，不在此页统计。
+          <template v-if="codingPlanAccountCount > 0">
+            团队内有 {{ codingPlanAccountCount }} 个上述 Coding Plan 账号仅同步窗口额度、无按日用量，请前往
+            <router-link to="/quota-board">额度看板</router-link>
+            查看 5h / 周额度。
+          </template>
           <span v-if="overview?.timezone" class="tz">时区 {{ overview.timezone }}</span>
         </p>
       </div>
       <el-button @click="loadOverview">刷新</el-button>
     </header>
-
-    <el-alert
-      v-if="codingPlanAccountCount > 0"
-      type="info"
-      :closable="false"
-      show-icon
-      class="cp-hint"
-    >
-      团队内有 {{ codingPlanAccountCount }} 个 GLM / MiniMax / Kimi Coding Plan 账号：仅同步窗口额度快照，无按日用量。
-      请前往
-      <router-link to="/quota-board">额度看板</router-link>
-      查看 5h / 周额度。
-    </el-alert>
 
     <el-card shadow="never" class="filter-card">
       <div class="filters">
@@ -95,7 +86,7 @@
 
     <el-row :gutter="12" class="kpi-row">
       <el-col :xs="12" :sm="8" :md="4" v-for="item in kpiItems" :key="item.label">
-        <el-card shadow="never" class="kpi-card">
+        <el-card shadow="never" class="kpi-card" :class="item.tone ? `kpi-card--${item.tone}` : ''">
           <div class="kpi-label">{{ item.label }}</div>
           <div class="kpi-value">{{ item.value }}</div>
         </el-card>
@@ -235,6 +226,7 @@ import {
   DEFAULT_DISPLAY_TIMEZONE,
   formatYmd,
 } from '@/utils/time'
+import { usageKpiToneForLabel } from '@/utils/usageChartColors'
 import { formatSpend, formatTokens, kindFamilyLabel } from '@/utils/usage'
 
 type Dimension = 'account' | 'model' | 'family' | 'pool'
@@ -347,24 +339,34 @@ const dimensionLabel = computed(() => {
 const dimensionColumnLabel = computed(() => dimensionLabel.value)
 
 const kpiItems = computed(() => {
+  const placeholder = (label: string) => ({
+    label,
+    value: '—',
+    tone: usageKpiToneForLabel(label),
+  })
   const k = overview.value?.kpi
   if (!k) {
     return [
-      { label: '总 Token', value: '—' },
-      { label: '输入', value: '—' },
-      { label: '输出', value: '—' },
-      { label: 'Cache Read', value: '—' },
-      { label: '事件数', value: '—' },
-      { label: '估算花费', value: '—' },
+      placeholder('总 Token'),
+      placeholder('输入'),
+      placeholder('输出'),
+      placeholder('Cache Read'),
+      placeholder('事件数'),
+      placeholder('估算花费'),
     ]
   }
+  const row = (label: string, value: string) => ({
+    label,
+    value,
+    tone: usageKpiToneForLabel(label),
+  })
   return [
-    { label: '总 Token', value: formatTokens(k.tokens_total) },
-    { label: '输入', value: formatTokens(k.tokens_input) },
-    { label: '输出', value: formatTokens(k.tokens_output) },
-    { label: 'Cache Read', value: formatTokens(k.tokens_cache_read) },
-    { label: '事件数', value: String(k.event_count) },
-    { label: '估算花费', value: formatSpend(k.cost_usd) },
+    row('总 Token', formatTokens(k.tokens_total)),
+    row('输入', formatTokens(k.tokens_input)),
+    row('输出', formatTokens(k.tokens_output)),
+    row('Cache Read', formatTokens(k.tokens_cache_read)),
+    row('事件数', String(k.event_count)),
+    row('估算花费', formatSpend(k.cost_usd)),
   ]
 })
 
@@ -618,20 +620,21 @@ onMounted(async () => {
   margin: 0 0 4px;
   font-size: 20px;
 }
-.cp-hint {
-  margin-bottom: 12px;
-}
-.cp-hint a {
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
-.cp-hint a:hover {
-  text-decoration: underline;
-}
 .desc {
   margin: 0;
   color: var(--pulse-text-secondary);
   font-size: 13px;
+  line-height: 1.5;
+}
+.desc-oneline {
+  max-width: 100%;
+}
+.desc-oneline a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.desc-oneline a:hover {
+  text-decoration: underline;
 }
 .tz {
   margin-left: 8px;
@@ -669,6 +672,26 @@ onMounted(async () => {
 }
 .kpi-card {
   margin-bottom: 12px;
+}
+.kpi-card--input {
+  border-top: 3px solid hsl(192 72% 38%) !important;
+  background: hsl(192 72% 38% / 0.07);
+}
+.kpi-card--cache {
+  border-top: 3px solid hsl(192 32% 52%) !important;
+  background: hsl(192 32% 52% / 0.1);
+}
+.kpi-card--output {
+  border-top: 3px solid hsl(24 88% 48%) !important;
+  background: hsl(24 88% 48% / 0.08);
+}
+.kpi-card--total {
+  border-top: 3px solid hsl(192 45% 42%) !important;
+  background: hsl(192 30% 40% / 0.06);
+}
+.kpi-card--cost {
+  border-top: 3px solid #d97706 !important;
+  background: hsl(32 90% 50% / 0.08);
 }
 .kpi-label {
   font-size: 12px;
