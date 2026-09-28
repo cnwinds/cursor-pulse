@@ -82,10 +82,18 @@
             <span class="filter-label">仅显示在用</span>
             <el-switch v-model="activeKeysOnly" />
           </div>
+          <el-button size="small" :loading="keysLoading" @click="loadKeys">刷新</el-button>
           <el-button v-if="canWrite" type="primary" size="small" @click="openCreateKey">签发密钥</el-button>
         </div>
       </div>
-      <el-table :data="displayKeys" stripe size="small" row-class-name="cp-key-row" @row-click="onKeyRowClick">
+      <el-table
+        :data="displayKeys"
+        stripe
+        size="small"
+        row-class-name="cp-key-row"
+        v-loading="keysLoading"
+        @row-click="onKeyRowClick"
+      >
         <el-table-column label="归属" prop="member_name" min-width="140" />
         <el-table-column label="备注" min-width="120">
           <template #default="{ row }">
@@ -434,6 +442,7 @@ const poolAccountsTitle = computed(() => {
   return `入池账号（${enabled}/${total}）`
 })
 const keys = ref<CpKey[]>([])
+const keysLoading = ref(false)
 /** 默认只展示 status=active 的密钥 */
 const activeKeysOnly = ref(true)
 const displayKeys = computed(() => {
@@ -529,6 +538,7 @@ async function loadOpenaiEndpoints() {
 }
 
 async function loadKeys() {
+  keysLoading.value = true
   try {
     const res = await client.get('/api/v2/openai-proxy/keys')
     keys.value = res.data.filter(
@@ -536,6 +546,8 @@ async function loadKeys() {
     )
   } catch {
     ElMessage.error('密钥列表加载失败')
+  } finally {
+    keysLoading.value = false
   }
 }
 
