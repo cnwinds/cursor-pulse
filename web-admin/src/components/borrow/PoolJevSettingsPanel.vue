@@ -96,7 +96,7 @@ onMounted(load)
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
 }
 .panel-card {
-  background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 42%, #ffffff 100%);
+  background: linear-gradient(165deg, var(--pulse-bg-muted) 0%, var(--pulse-bg-code) 42%, #ffffff 100%);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
   padding: 20px 24px 8px;

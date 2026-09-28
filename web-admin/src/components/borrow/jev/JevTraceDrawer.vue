@@ -193,7 +193,7 @@ function formatJson(value: unknown): string {
   margin: 0;
   padding: 12px;
   background: #0f172a;
-  color: #e2e8f0;
+  color: var(--pulse-border);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.45;

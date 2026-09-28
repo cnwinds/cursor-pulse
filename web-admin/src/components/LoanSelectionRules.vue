@@ -302,7 +302,7 @@ async function onSave() {
 <style scoped>
 .flow {
   --ink: #0f172a;
-  --muted: #64748b;
+  --muted: var(--pulse-text-secondary);
   --line: #d6dee8;
   --accent: #0f766e;
   max-width: 760px;
@@ -347,20 +347,20 @@ async function onSave() {
   place-items: center;
   position: relative;
   z-index: 1;
-  box-shadow: 0 0 0 4px #f8fafc;
+  box-shadow: 0 0 0 4px var(--pulse-bg-muted);
 }
 .stage--off .node {
-  background: #94a3b8;
+  background: var(--pulse-text-muted);
 }
 .stage-card {
   background: #fff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--pulse-border);
   border-radius: 12px;
   padding: 12px 14px 14px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .stage--off .stage-card {
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
 }
 .stage-head {
   display: flex;
@@ -387,7 +387,7 @@ async function onSave() {
   margin: 0;
   padding: 6px 10px;
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
   border: 1px solid #eef2f6;
 }
 .field-label {
@@ -396,7 +396,7 @@ async function onSave() {
   gap: 4px;
   font-size: 13px;
   font-weight: 600;
-  color: #334155;
+  color: var(--pulse-text-primary);
   white-space: nowrap;
 }
 .unit {
@@ -416,8 +416,8 @@ async function onSave() {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: #e2e8f0;
-  color: #64748b;
+  background: var(--pulse-border);
+  color: var(--pulse-text-secondary);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;

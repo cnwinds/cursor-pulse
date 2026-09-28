@@ -1,0 +1,78 @@
+/* Shared markdown / prose (sessions, skills, prompts) */
+.pulse-markdown {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  color: var(--pulse-text-primary);
+}
+
+.pulse-markdown :deep(p) {
+  margin: 0 0 8px;
+}
+
+.pulse-markdown :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.pulse-markdown :deep(h3),
+.pulse-markdown :deep(h4) {
+  margin: 0 0 8px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--pulse-text-strong);
+}
+
+.pulse-markdown :deep(strong) {
+  font-weight: 600;
+}
+
+.pulse-markdown :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.pulse-markdown :deep(th),
+.pulse-markdown :deep(td) {
+  border: 1px solid var(--pulse-border);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.pulse-markdown :deep(th) {
+  background: var(--pulse-bg-muted);
+}
+
+.pulse-markdown :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--pulse-border);
+  margin: 12px 0;
+}
+
+.pulse-markdown :deep(ul),
+.pulse-markdown :deep(ol) {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.pulse-markdown :deep(code) {
+  font-family: var(--pulse-font-mono);
+  font-size: 12px;
+  background: var(--pulse-bg-code);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.pulse-markdown :deep(pre) {
+  margin: 8px 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--pulse-bg-muted);
+  border: 1px solid var(--pulse-border-soft);
+  border-radius: var(--pulse-radius-sm);
+}
+
+.pulse-markdown :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}

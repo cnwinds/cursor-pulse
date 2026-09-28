@@ -1299,9 +1299,9 @@ async function deleteProxyAddress(index: number) {
   cursor: pointer;
 }
 .settings-table :deep(.el-table__row:hover) {
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
 }
 .edit-icon {
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 </style>

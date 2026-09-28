@@ -8,7 +8,7 @@
     </el-alert>
 
     <template v-if="data">
-      <div class="page-toolbar">
+      <div class="pulse-toolbar">
         <el-button
           size="small"
           :icon="Refresh"
@@ -20,9 +20,9 @@
       </div>
 
       <!-- ① 需要关注 -->
-      <el-card v-if="attentionItems.length" shadow="never" class="block">
+      <el-card v-if="attentionItems.length" shadow="never" class="pulse-section">
         <template #header>
-          <div class="card-header">
+          <div class="pulse-card-header">
             <span>需要关注</span>
             <el-badge :value="attentionItems.length" type="warning" />
           </div>
@@ -33,7 +33,7 @@
               <WarningFilled />
             </el-icon>
             <span class="attention-text">{{ item.text }}</span>
-            <router-link :to="item.to" class="attention-link">去处理 →</router-link>
+            <router-link :to="item.to" class="pulse-more-link attention-link">去处理 →</router-link>
           </div>
         </div>
       </el-card>
@@ -46,12 +46,12 @@
       </el-row>
 
       <!-- ③ 用量趋势 -->
-      <el-card v-if="usage" shadow="never" class="block">
+      <el-card v-if="usage" shadow="never" class="pulse-section">
         <template #header>
-          <div class="card-header">
+          <div class="pulse-card-header">
             <span>近 30 天日趋势</span>
             <span v-if="usageRangeLabel" class="trend-range">{{ usageRangeLabel }}</span>
-            <router-link to="/usage-analytics" class="more-link">用量分析 →</router-link>
+            <router-link to="/usage-analytics" class="pulse-more-link">用量分析 →</router-link>
           </div>
         </template>
         <v-chart v-if="hasTrend" class="trend-chart" :option="trendOption" autoresize />
@@ -61,11 +61,11 @@
       <!-- ④ 额度风险 / 最近动态 -->
       <el-row v-if="quotaRiskTop.length || activityItems.length" :gutter="16">
         <el-col v-if="quotaRiskTop.length" :xs="24" :md="12">
-          <el-card shadow="never" class="block">
+          <el-card shadow="never" class="pulse-section">
             <template #header>
-              <div class="card-header">
+              <div class="pulse-card-header">
                 <span>额度风险 Top 5</span>
-                <router-link to="/quota-board" class="more-link">看板 →</router-link>
+                <router-link to="/quota-board" class="pulse-more-link">看板 →</router-link>
               </div>
             </template>
             <div v-for="row in quotaRiskTop" :key="row.account_id" class="risk-item">
@@ -89,11 +89,11 @@
         </el-col>
 
         <el-col v-if="activityItems.length" :xs="24" :md="12">
-          <el-card shadow="never" class="block">
+          <el-card shadow="never" class="pulse-section">
             <template #header>
-              <div class="card-header">
+              <div class="pulse-card-header">
                 <span>最近动态</span>
-                <router-link to="/audit" class="more-link">审计 →</router-link>
+                <router-link to="/audit" class="pulse-more-link">审计 →</router-link>
               </div>
             </template>
             <div v-for="row in activityItems" :key="row.id" class="activity-item">
@@ -359,31 +359,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.block {
-  margin-bottom: 16px;
-}
-.page-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-}
-.more-link {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
 .trend-range {
   font-size: 12px;
   font-weight: 400;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
 }
 .attention-list {
   display: flex;
@@ -397,13 +376,9 @@ onMounted(async () => {
   font-size: 13px;
 }
 .attention-text {
-  color: #334155;
+  color: var(--pulse-text-primary);
 }
 .attention-link {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--el-color-primary);
-  text-decoration: none;
   white-space: nowrap;
 }
 .trend-chart {
@@ -424,7 +399,7 @@ onMounted(async () => {
 }
 .risk-meta {
   font-size: 12px;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   margin-top: 4px;
 }
 .activity-item {
@@ -432,14 +407,14 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--pulse-border-soft);
 }
 .activity-item:last-child {
   border-bottom: none;
 }
 .activity-title {
   font-size: 13px;
-  color: #334155;
+  color: var(--pulse-text-primary);
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -448,15 +423,15 @@ onMounted(async () => {
   font-weight: 600;
 }
 .activity-detail {
-  color: #64748b;
+  color: var(--pulse-text-secondary);
 }
 .activity-time {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
   white-space: nowrap;
 }
 .load-error {
-  margin-bottom: 16px;
+  margin-bottom: var(--pulse-space-section);
 }
 .retry-btn {
   margin-left: 8px;

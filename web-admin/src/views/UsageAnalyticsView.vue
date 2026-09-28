@@ -417,7 +417,7 @@ const trendOption = computed(() => dailyTrendChartOption(overview.value?.series_
 const structOption = computed(() => {
   const rows = chartSeries.value.filter((r) => r.tokens_total > 0)
   return {
-    color: ['#2563eb', '#0d9488', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b', '#14b8a6', '#e11d48'],
+    color: ['#2563eb', '#0d9488', '#f59e0b', '#ef4444', '#8b5cf6', 'var(--pulse-text-secondary)', '#14b8a6', '#e11d48'],
     tooltip: {
       trigger: 'item',
       formatter: (p: { name: string; value: number; percent: number }) =>
@@ -630,12 +630,12 @@ onMounted(async () => {
 }
 .desc {
   margin: 0;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   font-size: 13px;
 }
 .tz {
   margin-left: 8px;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 .filter-card {
   margin-bottom: 12px;
@@ -672,7 +672,7 @@ onMounted(async () => {
 }
 .kpi-label {
   font-size: 12px;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   margin-bottom: 6px;
 }
 .kpi-value {
@@ -711,7 +711,7 @@ onMounted(async () => {
   margin-bottom: 8px;
 }
 .muted {
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
   font-size: 12px;
 }
 </style>

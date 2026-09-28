@@ -604,12 +604,12 @@ onMounted(loadRanking)
 .ranking-panel {
   --rank-accent: #0d9488;
   --rank-surface: #ffffff;
-  --rank-muted: #64748b;
+  --rank-muted: var(--pulse-text-secondary);
   --rank-border: rgba(15, 23, 42, 0.08);
   font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
 }
 .panel-card {
-  background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 42%, #ffffff 100%);
+  background: linear-gradient(165deg, var(--pulse-bg-muted) 0%, var(--pulse-bg-code) 42%, #ffffff 100%);
   border: 1px solid var(--rank-border);
   border-radius: 14px;
   padding: 12px 16px 4px;
@@ -680,9 +680,9 @@ onMounted(loadRanking)
   border-color: rgba(13, 148, 136, 0.22);
 }
 .decision-chip--algo {
-  color: #475569;
-  background: #f1f5f9;
-  border-color: #e2e8f0;
+  color: var(--pulse-text-body);
+  background: var(--pulse-bg-code);
+  border-color: var(--pulse-border);
 }
 .refresh-btn {
   flex-shrink: 0;
@@ -712,14 +712,14 @@ onMounted(loadRanking)
   background: rgba(13, 148, 136, 0.12);
 }
 .tab-count--muted {
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--pulse-text-secondary);
+  background: var(--pulse-border);
 }
 .rank-table {
   width: 100%;
   border-radius: 10px;
   overflow: hidden;
-  --el-table-header-bg-color: #f1f5f9;
+  --el-table-header-bg-color: var(--pulse-bg-code);
   --el-table-tr-bg-color: #fff;
 }
 .rank-table :deep(.el-table__header th .cell) {
@@ -734,7 +734,7 @@ onMounted(loadRanking)
 .rank-index {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
 }
 .account-cell {
   display: flex;
@@ -787,8 +787,8 @@ onMounted(loadRanking)
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  background: #e2e8f0;
-  color: #334155;
+  background: var(--pulse-border);
+  color: var(--pulse-text-primary);
 }
 .seat-pill {
   background: rgba(13, 148, 136, 0.12);
@@ -819,8 +819,8 @@ onMounted(loadRanking)
   border-radius: 50%;
   font-size: 10px;
   font-weight: 700;
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--pulse-text-secondary);
+  background: var(--pulse-border);
   cursor: help;
 }
 </style>

@@ -150,6 +150,10 @@ async function send() {
   bottom: 24px;
   z-index: 2000;
 }
+
+.chat-fab :deep(.el-button--primary) {
+  box-shadow: var(--pulse-shadow-fab);
+}
 .chat-body {
   height: calc(100vh - 200px);
   overflow-y: auto;
@@ -165,19 +169,21 @@ async function send() {
   align-self: flex-start;
 }
 .bubble-row.interim .bubble {
-  background: #e2e8f0;
-  border: 1px dashed #94a3b8;
+  background: var(--pulse-bg-inset);
+  border: 1px dashed var(--pulse-text-muted);
   font-style: italic;
 }
 .bubble {
   max-width: 300px;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: #f1f5f9;
+  border-radius: var(--pulse-radius-md);
+  background: var(--pulse-bg-code);
+  border: 1px solid var(--pulse-border-soft);
 }
 .bubble-row.user .bubble {
-  background: #6366f1;
+  background: linear-gradient(135deg, var(--el-color-primary) 0%, var(--pulse-color-accent-hover) 100%);
   color: #fff;
+  border-color: transparent;
 }
 .bubble-row.user .meta {
   color: rgba(255, 255, 255, 0.8);
@@ -203,10 +209,10 @@ async function send() {
   flex-direction: column;
   gap: 8px;
   padding-top: 8px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--pulse-border);
 }
 .typing {
   font-size: 13px;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
 }
 </style>
