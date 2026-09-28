@@ -348,6 +348,8 @@ def test_cp_key_usage_summary_and_usages_endpoint():
     body = detail.json()
     assert body["summary"]["total_tokens"] == 15
     assert body["by_model"][0]["model"] == "glm-5.2"
+    assert body["by_model"][0]["cost_cents"] > 0
+    assert body["by_day"][0]["cost_cents"] > 0
     session.close()
 
 
