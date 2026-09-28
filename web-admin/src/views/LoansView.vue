@@ -83,7 +83,7 @@
           ${{ (row.borrowed_cents / 100).toFixed(2) }}
         </template>
       </el-table-column>
-      <el-table-column label="proxy消耗" width="132" align="center">
+      <el-table-column label="proxy消耗" min-width="188" align="center">
         <template #default="{ row }">
           <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
             {{ formatProxySpend(row) }}
