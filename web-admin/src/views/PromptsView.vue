@@ -92,7 +92,7 @@ onMounted(loadPrompts)
 }
 .desc {
   margin: 4px 0 0;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   line-height: 1.5;
 }
 .source-alert {
@@ -109,11 +109,11 @@ onMounted(loadPrompts)
   overflow-x: auto;
   padding: 12px;
   border-radius: 6px;
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
 }
 :deep(.markdown-body code) {
   padding: 1px 4px;
   border-radius: 3px;
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
 }
 </style>

@@ -31,7 +31,7 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
   const labels = days.map((d) => d.date.slice(5))
   const parts = days.map(tokenParts)
   return {
-    color: ['#2563eb', '#0d9488', '#8b5cf6', '#f59e0b'],
+    color: ['#0d9488', '#14b8a6', '#2dd4bf', '#f59e0b'],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },

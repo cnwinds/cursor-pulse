@@ -596,7 +596,7 @@ onMounted(loadAll)
   margin-bottom: 20px;
 }
 .desc {
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   font-size: 14px;
   margin-top: 4px;
 }
@@ -605,11 +605,11 @@ onMounted(loadAll)
   gap: 12px;
 }
 .muted {
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 .field-hint {
   margin-top: 6px;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
   font-size: 12px;
   line-height: 1.4;
 }

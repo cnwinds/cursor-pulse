@@ -1,29 +1,29 @@
 <template>
-  <div class="login-page">
-    <el-card class="login-card" shadow="hover">
+  <div class="pulse-auth-shell">
+    <el-card class="pulse-auth-card" shadow="never">
       <template #header>
-        <div class="card-header">
-          <img class="logo" src="/logo.svg" alt="Cursor Pulse" />
+        <div class="pulse-auth-card-header">
+          <img class="pulse-auth-logo" src="/logo.svg" alt="Cursor Pulse" />
           <div>
-            <h2>小脉管理后台</h2>
-            <p>Cursor Pulse · 团队用量协调</p>
+            <h2 class="pulse-auth-title">小脉管理后台</h2>
+            <p class="pulse-auth-subtitle">Cursor Pulse · 团队用量协调</p>
           </div>
         </div>
       </template>
 
-      <div v-if="loadingProviders" class="loading-hint">加载登录方式…</div>
+      <div v-if="loadingProviders" class="pulse-hint loading-hint">加载登录方式…</div>
 
       <template v-else>
         <div
           v-if="visibleTabs.length > 1"
-          class="login-tabs"
+          class="pulse-login-tabs"
           :style="{ gridTemplateColumns: `repeat(${visibleTabs.length}, 1fr)` }"
         >
           <button
             v-for="tab in visibleTabs"
             :key="tab.id"
             type="button"
-            class="login-tab"
+            class="pulse-login-tab"
             :class="{ active: activeTab === tab.id }"
             @click="activeTab = tab.id"
           >
@@ -32,7 +32,9 @@
         </div>
 
         <form v-if="activeTab === 'password'" class="login-form" @submit.prevent="loginPassword">
-          <p class="admin-hint">本地账号登录；首次部署可用超管 <strong>admin</strong> + ADMIN_PASSWORD</p>
+          <p class="pulse-hint admin-hint">
+            本地账号登录；首次部署可用超管 <strong>admin</strong> + ADMIN_PASSWORD
+          </p>
           <el-input
             v-model="form.username"
             placeholder="用户名"
@@ -53,20 +55,20 @@
         </form>
 
         <div v-else-if="activeTab === 'dingtalk_oauth'" class="oauth-panel">
-          <p class="oauth-hint">使用钉钉 App 扫码，首次登录需超级管理员审批</p>
+          <p class="pulse-hint">使用钉钉 App 扫码，首次登录需超级管理员审批</p>
           <el-button type="primary" size="large" class="full" :loading="oauthLoading" @click="loginOAuth('dingtalk_oauth')">
             打开钉钉扫码
           </el-button>
         </div>
 
         <div v-else-if="activeTab === 'feishu_oauth'" class="oauth-panel">
-          <p class="oauth-hint">使用飞书 App 扫码，首次登录需超级管理员审批</p>
+          <p class="pulse-hint">使用飞书 App 扫码，首次登录需超级管理员审批</p>
           <el-button type="primary" size="large" class="full" :loading="oauthLoading" @click="loginOAuth('feishu_oauth')">
             打开飞书授权
           </el-button>
         </div>
 
-        <p v-else-if="!visibleTabs.length" class="oauth-hint">
+        <p v-else-if="!visibleTabs.length" class="pulse-hint">
           未配置可用登录方式。请设置 ADMIN_PASSWORD，或配置钉钉/飞书应用凭证。
         </p>
       </template>
@@ -104,7 +106,6 @@ const pwdLoading = ref(false)
 const form = reactive({ username: 'admin', password: '' })
 
 const visibleTabs = computed(() => {
-  // Always show password tab so bootstrap is possible; mark disabled via hint if needed.
   const list = providers.value.filter((p) => p.id === 'password' || p.enabled)
   if (!list.some((p) => p.id === 'password')) {
     list.unshift({ id: 'password', label: '本地密码', kind: 'password', enabled: true })
@@ -191,81 +192,26 @@ onMounted(loadProviders)
 </script>
 
 <style scoped>
-.login-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(160deg, #0f172a 0%, #1e293b 40%, #f8fafc 40%);
-}
-.login-card {
-  width: min(420px, 92vw);
-}
-.card-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-.card-header h2 {
-  margin: 0;
-  font-size: 1.25rem;
-}
-.card-header p {
-  margin: 4px 0 0;
-  color: #64748b;
-  font-size: 0.875rem;
-}
-.logo {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-}
-.login-tabs {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-.login-tab {
-  padding: 10px 12px;
-  border: 1px solid #dcdfe6;
-  border-radius: 8px;
-  background: #fff;
-  color: #606266;
-  font-size: 14px;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
-.login-tab:hover {
-  border-color: #409eff;
-  color: #409eff;
-}
-.login-tab.active {
-  border-color: #409eff;
-  color: #409eff;
-  font-weight: 600;
-}
 .login-form {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
+
 .admin-hint {
-  margin: 0;
-  font-size: 13px;
-  color: #64748b;
+  margin: 0 0 4px;
 }
+
 .oauth-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-.oauth-hint,
+
 .loading-hint {
-  margin: 0;
-  font-size: 13px;
-  color: #64748b;
   text-align: center;
-  line-height: 1.5;
 }
+
 .full {
   width: 100%;
 }

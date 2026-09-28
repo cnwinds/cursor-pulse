@@ -887,13 +887,13 @@ defineExpose({ loadAll })
 }
 .daily-bar-track {
   height: 8px;
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
   border-radius: 4px;
   overflow: hidden;
 }
 .daily-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  background: linear-gradient(90deg, #3b82f6, var(--el-color-primary));
   border-radius: 4px;
 }
 .daily-model-cost {

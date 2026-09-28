@@ -1,0 +1,75 @@
+/**
+ * 小脉 · Cursor Pulse — design tokens
+ * Refined utilitarian ops console: deep slate shell, teal pulse accent.
+ */
+:root {
+  --pulse-font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, sans-serif;
+  --pulse-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+
+  --pulse-color-accent: #0d9488;
+  --pulse-color-accent-hover: #0f766e;
+  --pulse-color-accent-soft: #2dd4bf;
+  --pulse-color-accent-muted: rgba(13, 148, 136, 0.14);
+
+  --pulse-sidebar-bg: #0c1222;
+  --pulse-sidebar-bg-gradient: linear-gradient(180deg, #0f172a 0%, #0c1222 55%, #080d18 100%);
+  --pulse-sidebar-text: #94a3b8;
+  --pulse-sidebar-text-hover: #cbd5e1;
+  --pulse-sidebar-text-active: #ecfdf5;
+  --pulse-sidebar-active-bg: rgba(13, 148, 136, 0.22);
+  --pulse-sidebar-active-border: var(--pulse-color-accent-soft);
+
+  --pulse-header-bg: rgba(255, 255, 255, 0.92);
+  --pulse-header-border: #e2e8f0;
+
+  --pulse-bg-page: #eef1f6;
+  --pulse-bg-page-pattern: radial-gradient(circle at 1px 1px, rgba(15, 23, 42, 0.045) 1px, transparent 0);
+  --pulse-bg-surface: #ffffff;
+  --pulse-bg-muted: #f8fafc;
+  --pulse-bg-code: #f1f5f9;
+  --pulse-bg-inset: #eef2f6;
+
+  --pulse-text-primary: #1e293b;
+  --pulse-text-secondary: #64748b;
+  --pulse-text-muted: #94a3b8;
+  --pulse-text-strong: #0f172a;
+  --pulse-text-body: #475569;
+
+  --pulse-border: #e2e8f0;
+  --pulse-border-soft: #f1f5f9;
+
+  --pulse-radius-sm: 8px;
+  --pulse-radius-md: 12px;
+  --pulse-radius-lg: 16px;
+  --pulse-radius-xl: 20px;
+
+  --pulse-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.05);
+  --pulse-shadow-elevated: 0 16px 48px rgba(15, 23, 42, 0.12);
+  --pulse-shadow-fab: 0 8px 24px rgba(13, 148, 136, 0.35);
+
+  --pulse-space-page: 20px;
+  --pulse-space-section: 16px;
+
+  --pulse-transition: 0.18s ease;
+
+  /* Element Plus theme alignment */
+  --el-color-primary: #0d9488;
+  --el-color-primary-light-3: #4db6ac;
+  --el-color-primary-light-5: #80cbc4;
+  --el-color-primary-light-7: #b2dfdb;
+  --el-color-primary-light-8: #cceae6;
+  --el-color-primary-light-9: #e6f5f3;
+  --el-color-primary-dark-2: #0f766e;
+
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-font-family: var(--pulse-font-sans);
+  --el-bg-color-page: var(--pulse-bg-page);
+  --el-text-color-primary: var(--pulse-text-primary);
+  --el-text-color-regular: var(--pulse-text-body);
+  --el-text-color-secondary: var(--pulse-text-secondary);
+  --el-text-color-placeholder: var(--pulse-text-muted);
+  --el-border-color: var(--pulse-border);
+  --el-border-color-lighter: var(--pulse-border-soft);
+  --el-fill-color-light: var(--pulse-bg-muted);
+}

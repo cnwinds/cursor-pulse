@@ -149,7 +149,7 @@ onMounted(load)
   margin-bottom: 20px;
 }
 .desc {
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   font-size: 14px;
   margin-top: 4px;
 }
