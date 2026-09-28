@@ -1,39 +1,5 @@
 <template>
   <div class="cp-openai-panel" v-loading="loading">
-    <div class="endpoint-card">
-      <div class="endpoint-head">
-        <h3>OpenAI Base URL</h3>
-        <el-button v-if="!openaiEndpoints.length" link type="primary" @click="goProxySettings">
-          前往配置代理地址
-        </el-button>
-      </div>
-      <p class="endpoint-desc">
-        Coding Plan 网关与 Cursor 借用同 Go 代理、路径为 <code>/openai/v1</code>（来自系统设置 → 代理地址）。
-        客户端填下表 <code>base_url</code> 与签发的 <code>pkcp_</code>，按网络选「公司 / 外网」等即可。
-        同一密钥在 dwell 内（默认 30 分钟，见选号规则）固定后端账号，超时按额度与并发均衡，429 自动换号。
-      </p>
-      <el-alert
-        v-if="!openaiEndpoints.length"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="尚未配置代理地址"
-        description="请先在「系统设置 → 代理地址」添加 Go 代理（如 :8317），否则客户端无法接入。"
-      />
-      <el-table v-else :data="openaiEndpoints" size="small" stripe class="endpoint-table">
-        <el-table-column label="代理" prop="display_name" width="120" show-overflow-tooltip />
-        <el-table-column label="Base URL（base_url）" min-width="300">
-          <template #default="{ row }">
-            <code class="endpoint-code">{{ row.openai_base_url }}</code>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="72" align="center">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="copyOpenAiBaseUrl(row)">复制</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
     <el-tabs v-model="vendorTab" class="vendor-tabs" @tab-change="onVendorChange">
       <el-tab-pane label="GLM" name="glm" />
       <el-tab-pane label="MiniMax" name="minimax" />
@@ -185,6 +151,41 @@
             >
               恢复
             </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <h3>OpenAI Base URL</h3>
+        <el-button v-if="!openaiEndpoints.length" link type="primary" @click="goProxySettings">
+          前往配置代理地址
+        </el-button>
+      </div>
+      <p class="endpoint-desc">
+        Coding Plan 网关与 Cursor 借用同 Go 代理、路径为 <code>/openai/v1</code>（来自系统设置 → 代理地址）。
+        客户端填下表 <code>base_url</code> 与签发的 <code>pkcp_</code>，按网络选「公司 / 外网」等即可。
+        同一密钥在 dwell 内（默认 30 分钟，见选号规则）固定后端账号，超时按额度与并发均衡，429 自动换号。
+      </p>
+      <el-alert
+        v-if="!openaiEndpoints.length"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="尚未配置代理地址"
+        description="请先在「系统设置 → 代理地址」添加 Go 代理（如 :8317），否则客户端无法接入。"
+      />
+      <el-table v-else :data="openaiEndpoints" size="small" stripe class="endpoint-table">
+        <el-table-column label="代理" prop="display_name" width="120" show-overflow-tooltip />
+        <el-table-column label="Base URL（base_url）" min-width="300">
+          <template #default="{ row }">
+            <code class="endpoint-code">{{ row.openai_base_url }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="72" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="copyOpenAiBaseUrl(row)">复制</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -907,7 +908,7 @@ defineExpose({
 
 <style scoped>
 .endpoint-card {
-  margin-bottom: 16px;
+  margin-top: 20px;
   padding: 12px 14px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
