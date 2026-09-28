@@ -113,7 +113,7 @@
             <el-tag v-else :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column min-width="148" align="left">
+        <el-table-column min-width="132" align="left" header-align="left">
           <template #header>
             <el-tooltip
               content="上行 tokens（M），下行费用（价表本地估算，非账单）；列内按 / 对齐"
@@ -1013,14 +1013,16 @@ defineExpose({
 }
 .usage-slash-block {
   padding: 2px 0;
+  text-align: left;
 }
 .usage-slash-grid {
   display: grid;
-  grid-template-columns: minmax(3.25rem, 1fr) auto minmax(3.25rem, 1fr) auto minmax(3.25rem, 1fr);
-  column-gap: 3px;
+  grid-template-columns: 2.85rem auto 2.85rem auto 2.85rem;
+  column-gap: 2px;
   row-gap: 3px;
   width: max-content;
   max-width: 100%;
+  justify-content: start;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
@@ -1035,7 +1037,7 @@ defineExpose({
 .usage-slash-grid > span:nth-child(5n + 1),
 .usage-slash-grid > span:nth-child(5n + 3),
 .usage-slash-grid > span:nth-child(5n + 5) {
-  text-align: right;
+  text-align: left;
 }
 .usage-slash-sep {
   text-align: center;
