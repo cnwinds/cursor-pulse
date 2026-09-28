@@ -48,7 +48,7 @@
             <el-button size="small" @click.stop="loadAccounts">刷新</el-button>
           </div>
         </template>
-        <el-table :data="accounts" stripe size="small">
+        <el-table :data="accounts" stripe>
           <el-table-column label="账号" prop="account_identifier" min-width="160" />
           <el-table-column label="区域" prop="api_region" width="100" />
           <el-table-column label="额度压力" width="100">
@@ -89,7 +89,6 @@
       <el-table
         :data="displayKeys"
         stripe
-        size="small"
         row-class-name="cp-key-row"
         v-loading="keysLoading"
         @row-click="onKeyRowClick"
@@ -888,7 +887,6 @@ defineExpose({
   margin-top: 12px;
 }
 .usage-combined {
-  font-size: 12px;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
   white-space: nowrap;
