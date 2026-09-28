@@ -93,19 +93,21 @@
         v-loading="keysLoading"
         @row-click="onKeyRowClick"
       >
-        <el-table-column label="归属" prop="member_name" min-width="140" />
-        <el-table-column label="备注" min-width="120">
+        <el-table-column label="归属" min-width="156">
           <template #default="{ row }">
-            <span :class="{ muted: !row.name?.trim() }">{{ row.name?.trim() || '—' }}</span>
+            <div class="account-stack">
+              <span class="account-id">{{ row.member_name || '—' }}</span>
+              <span class="account-owner">{{ keyRowSubline(row) }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="厂家" prop="coding_plan_vendor" width="88" />
-        <el-table-column label="状态" width="96">
+        <el-table-column label="厂家" prop="coding_plan_vendor" width="72" align="center" />
+        <el-table-column label="状态" width="88" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计用量/5h/7d" min-width="200" align="left">
+        <el-table-column label="累计用量/5h/7d" min-width="228" align="left">
           <template #default="{ row }">
             <div class="usage-combined-cell" :title="formatKeyUsageTooltip(row)">
               <div class="usage-combined-sub">
@@ -118,7 +120,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="168" align="center" fixed="right">
+        <el-table-column label="操作" width="176" align="center" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.recoverable"
@@ -631,6 +633,10 @@ async function submitCreate() {
   } finally {
     creating.value = false
   }
+}
+
+function keyRowSubline(row: CpKey) {
+  return row.name?.trim() || row.key_hint || '—'
 }
 
 function statusLabel(status: string) {
