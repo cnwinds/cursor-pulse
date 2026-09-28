@@ -378,13 +378,13 @@
           <template #default="{ row }">
             <div class="day-detail-wrap">
               <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
-                <el-table-column label="时间" width="164" align="left">
+                <el-table-column label="时间" width="160" align="left">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
-                <el-table-column label="账号" min-width="108" show-overflow-tooltip>
+                <el-table-column label="账号" min-width="168" show-overflow-tooltip>
                   <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
                 </el-table-column>
-                <el-table-column prop="model" label="模型" min-width="168" show-overflow-tooltip />
+                <el-table-column prop="model" label="模型" min-width="152" show-overflow-tooltip />
                 <el-table-column label="tokens" width="76" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
                 </el-table-column>
@@ -1118,20 +1118,15 @@ defineExpose({
 .day-detail-wrap {
   padding: 8px;
   background: var(--el-fill-color-lighter);
-  overflow-x: auto;
 }
 .day-detail-table {
   width: 100%;
-  min-width: 580px;
   --el-table-bg-color: transparent;
 }
-.day-detail-table :deep(.day-detail-time .cell) {
+.day-detail-table :deep(.el-table__body td:first-child .cell),
+.day-detail-table :deep(.el-table__header th:first-child .cell) {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-.day-detail-table :deep(.el-table__header-wrapper),
-.day-detail-table :deep(.el-table__body-wrapper) {
-  overflow-x: visible !important;
 }
 .day-detail-table :deep(.el-table__body tr) {
   cursor: default;
