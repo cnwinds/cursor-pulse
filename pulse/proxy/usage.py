@@ -95,6 +95,29 @@ def window_tokens_by_proxy_key(
     return {key_id: int(tokens) for key_id, tokens in rows}
 
 
+def window_request_counts_by_proxy_key(
+    session: Session,
+    proxy_key_ids: list[str],
+    *,
+    since,
+) -> dict[str, int]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(
+            ProxyKeyUsage.proxy_key_id,
+            func.count(),
+        )
+        .where(
+            ProxyKeyUsage.proxy_key_id.in_(ids),
+            ProxyKeyUsage.ts >= since,
+        )
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: int(count) for key_id, count in rows}
+
+
 def usage_totals_by_proxy_key(session: Session, proxy_key_ids: list[str]) -> dict[str, tuple[int, int]]:
     ids = [key_id for key_id in proxy_key_ids if key_id]
     if not ids:

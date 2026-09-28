@@ -217,6 +217,8 @@ def key_summaries(session: Session, keys: list[ProxyKey], *, now: datetime | Non
     used_7d = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_7D)
     tok_5h = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_5H)
     tok_7d = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_7D)
+    req_5h = usage_mod.window_request_counts_by_proxy_key(session, ids, since=now - WINDOW_5H)
+    req_7d = usage_mod.window_request_counts_by_proxy_key(session, ids, since=now - WINDOW_7D)
     return [
         _key_summary_row(
             key,
@@ -227,6 +229,8 @@ def key_summaries(session: Session, keys: list[ProxyKey], *, now: datetime | Non
             used_7d=used_7d.get(key.id, 0),
             window_5h_tokens=tok_5h.get(key.id, 0),
             window_7d_tokens=tok_7d.get(key.id, 0),
+            window_5h_request_count=req_5h.get(key.id, 0),
+            window_7d_request_count=req_7d.get(key.id, 0),
         )
         for key in keys
     ]
@@ -242,6 +246,8 @@ def _key_summary_row(
     used_7d: int,
     window_5h_tokens: int,
     window_7d_tokens: int,
+    window_5h_request_count: int,
+    window_7d_request_count: int,
 ) -> dict:
     return {
         "id": key.id,
@@ -265,6 +271,8 @@ def _key_summary_row(
         "window_7d_cost_cents": used_7d,
         "window_5h_tokens": window_5h_tokens,
         "window_7d_tokens": window_7d_tokens,
+        "window_5h_request_count": window_5h_request_count,
+        "window_7d_request_count": window_7d_request_count,
     }
 
 
