@@ -307,6 +307,8 @@ def test_loan_usages_detail(loan_client_env):
     assert body["by_account"][0]["request_count"] == 1
     assert body["by_account"][0]["total_tokens"] == 100
     assert body["by_account"][0]["cost_cents"] == 42
+    assert body["by_account"][0]["total_pct"] == 28.5
+    assert body["by_account"][0]["status"] == "healthy"
     assert body["by_model"] == [{"model": "gpt-5", "request_count": 1, "total_tokens": 100, "cost_cents": 42}]
     assert len(body["by_day"]) == 1
     assert body["by_day"][0]["request_count"] == 1

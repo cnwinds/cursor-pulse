@@ -15,6 +15,7 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
+from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.util.datetime_fmt import format_china_date, serialize_datetime
 
 _UNKNOWN_ACCOUNT_LABEL = "未知账号"
@@ -122,6 +123,8 @@ def rollup_proxy_usages(
         day_bucket["cost_cents"] += cost
         day_bucket["items"].append(item)
 
+    _attach_account_quota_snapshots(session, by_account_map)
+
     return {
         "by_account": sorted(
             by_account_map.values(),
@@ -171,3 +174,31 @@ def _resolve_usage_accounts(
         for m in session.execute(select(Member).where(Member.id.in_(member_ids))).scalars():
             members[m.id] = m.display_name
     return cred_to_account, accounts, plans, members
+
+
+def _attach_account_quota_snapshots(session: Session, by_account_map: dict[str, dict]) -> None:
+    account_ids = [row["account_id"] for row in by_account_map.values() if row.get("account_id")]
+    if not account_ids:
+        return
+    snapshots = latest_snapshots_for_accounts(session, account_ids)
+    for row in by_account_map.values():
+        account_id = row.get("account_id")
+        snap = snapshots.get(account_id) if account_id else None
+        if not snap:
+            row["total_pct"] = None
+            row["auto_pct"] = None
+            row["api_pct"] = None
+            row["status"] = None
+            continue
+        row["total_pct"] = snap.total_pct
+        row["auto_pct"] = snap.auto_pct
+        row["api_pct"] = snap.api_pct
+        status = None
+        if snap.total_pct is not None:
+            if snap.total_pct >= 100:
+                status = "exhausted"
+            elif snap.total_pct >= 80:
+                status = "warning"
+            else:
+                status = "healthy"
+        row["status"] = status
