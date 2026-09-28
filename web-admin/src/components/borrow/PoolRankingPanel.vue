@@ -602,7 +602,7 @@ onMounted(loadRanking)
 
 <style scoped>
 .ranking-panel {
-  --rank-accent: #0d9488;
+  --rank-accent: var(--pulse-color-accent);
   --rank-surface: #ffffff;
   --rank-muted: var(--pulse-text-secondary);
   --rank-border: rgba(15, 23, 42, 0.08);
@@ -675,9 +675,9 @@ onMounted(loadRanking)
   opacity: 0.92;
 }
 .decision-chip--jev {
-  color: #0f766e;
-  background: rgba(13, 148, 136, 0.1);
-  border-color: rgba(13, 148, 136, 0.22);
+  color: var(--pulse-color-accent-hover);
+  background: var(--pulse-color-accent-muted);
+  border-color: rgba(99, 102, 241, 0.22);
 }
 .decision-chip--algo {
   color: var(--pulse-text-body);
@@ -708,8 +708,8 @@ onMounted(loadRanking)
   font-variant-numeric: tabular-nums;
   line-height: 18px;
   text-align: center;
-  color: #0f766e;
-  background: rgba(13, 148, 136, 0.12);
+  color: var(--pulse-color-accent-hover);
+  background: rgba(99, 102, 241, 0.12);
 }
 .tab-count--muted {
   color: var(--pulse-text-secondary);
@@ -729,7 +729,7 @@ onMounted(loadRanking)
   padding-bottom: 8px;
 }
 .rank-table :deep(.row-picked) {
-  --el-table-tr-bg-color: rgba(13, 148, 136, 0.06);
+  --el-table-tr-bg-color: rgba(99, 102, 241, 0.06);
 }
 .rank-index {
   font-variant-numeric: tabular-nums;
@@ -791,8 +791,8 @@ onMounted(loadRanking)
   color: var(--pulse-text-primary);
 }
 .seat-pill {
-  background: rgba(13, 148, 136, 0.12);
-  color: #0f766e;
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--pulse-color-accent-hover);
 }
 .seat-pill--warn {
   background: rgba(245, 158, 11, 0.18);

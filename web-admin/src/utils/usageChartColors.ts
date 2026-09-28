@@ -1,7 +1,7 @@
 /** Cursor 用量图：输入族同色相、按「相对单价」差饱和度；输出用高对比色相。 */
 
-/** 输入 / cache 共用色相（青蓝，接近 pulse 主色族） */
-export const USAGE_INPUT_HUE = 192
+/** 输入 / cache 共用色相（靛蓝，与品牌主色一致） */
+export const USAGE_INPUT_HUE = 239
 
 /** 输出：橙红，与输入族色差大 */
 export const USAGE_OUTPUT_HUE = 24

@@ -47,7 +47,7 @@ a {
 
 .el-table {
   --el-table-header-bg-color: var(--pulse-bg-muted);
-  --el-table-row-hover-bg-color: rgba(13, 148, 136, 0.06);
+  --el-table-row-hover-bg-color: rgba(99, 102, 241, 0.06);
 }
 
 .el-button--primary {
@@ -168,7 +168,7 @@ a {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 80% 50% at 20% 20%, rgba(45, 212, 191, 0.12), transparent 55%);
+  background: radial-gradient(ellipse 80% 50% at 20% 20%, rgba(56, 189, 248, 0.14), transparent 55%);
   pointer-events: none;
 }
 

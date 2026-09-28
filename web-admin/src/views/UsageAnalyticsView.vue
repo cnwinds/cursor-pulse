@@ -413,7 +413,7 @@ const trendOption = computed(() => dailyTrendChartOption(overview.value?.series_
 const structOption = computed(() => {
   const rows = chartSeries.value.filter((r) => r.tokens_total > 0)
   return {
-    color: ['#2563eb', '#0d9488', '#f59e0b', '#ef4444', '#8b5cf6', 'var(--pulse-text-secondary)', '#14b8a6', '#e11d48'],
+    color: ['#6366f1', '#38bdf8', '#f59e0b', '#ef4444', '#818cf8', 'var(--pulse-text-secondary)', '#4f46e5', '#e11d48'],
     tooltip: {
       trigger: 'item',
       formatter: (p: { name: string; value: number; percent: number }) =>
@@ -433,7 +433,7 @@ const structOption = computed(() => {
 const rankOption = computed(() => {
   const rows = [...chartSeries.value].reverse()
   return {
-    color: ['#2563eb'],
+    color: ['#6366f1'],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -661,20 +661,20 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 .kpi-card--input {
-  border-top: 3px solid hsl(192 72% 38%) !important;
-  background: hsl(192 72% 38% / 0.07);
+  border-top: 3px solid var(--pulse-color-accent) !important;
+  background: var(--pulse-color-accent-muted);
 }
 .kpi-card--cache {
-  border-top: 3px solid hsl(192 32% 52%) !important;
-  background: hsl(192 32% 52% / 0.1);
+  border-top: 3px solid var(--pulse-color-accent-soft) !important;
+  background: rgba(129, 140, 248, 0.1);
 }
 .kpi-card--output {
   border-top: 3px solid hsl(24 88% 48%) !important;
   background: hsl(24 88% 48% / 0.08);
 }
 .kpi-card--total {
-  border-top: 3px solid hsl(192 45% 42%) !important;
-  background: hsl(192 30% 40% / 0.06);
+  border-top: 3px solid var(--pulse-color-accent-hover) !important;
+  background: rgba(99, 102, 241, 0.06);
 }
 .kpi-card--cost {
   border-top: 3px solid #d97706 !important;

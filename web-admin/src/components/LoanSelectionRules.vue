@@ -304,7 +304,7 @@ async function onSave() {
   --ink: #0f172a;
   --muted: var(--pulse-text-secondary);
   --line: #d6dee8;
-  --accent: #0f766e;
+  --accent: var(--pulse-color-accent-hover);
   max-width: 760px;
   color: var(--ink);
 }
