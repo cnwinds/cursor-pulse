@@ -1208,6 +1208,13 @@ onMounted(loadLoans)
 .proxy-spend-btn {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  max-width: none;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.proxy-spend-btn :deep(span) {
+  overflow: visible;
+  text-overflow: clip;
 }
 .loan-actions {
   display: inline-flex;
