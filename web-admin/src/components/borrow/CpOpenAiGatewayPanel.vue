@@ -213,46 +213,91 @@
     </el-dialog>
 
     <el-drawer v-model="usagesVisible" :title="usageDrawerTitle" size="720px">
-      <div class="usage-summary" v-if="usageSummary">
-        <div>
-          网关计量（非厂家账单）：{{ formatTokensM(usageSummary.total_tokens) }} tokens ·
-          {{ usageSummary.request_count }} 次请求
-        </div>
-        <div class="usage-summary-sub">
-          近 5h {{ formatTokensM(usageSummary.window_5h_tokens) }} · 近 7d
-          {{ formatTokensM(usageSummary.window_7d_tokens) }}
-        </div>
-      </div>
-      <h4 class="usage-section-title">按后端账号汇总</h4>
-      <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading" size="small">
-        <el-table-column label="账号" prop="account_identifier" min-width="180" />
-        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
-        <el-table-column label="tokens" width="110" align="right">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-      </el-table>
-      <h4 class="usage-section-title">按模型汇总</h4>
-      <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading" size="small">
-        <el-table-column prop="model" label="模型" min-width="180" />
-        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
-        <el-table-column label="tokens" width="110" align="right">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-      </el-table>
-      <h4 class="usage-section-title">明细（按天）</h4>
-      <p class="usage-hint">点击行展开当天请求</p>
+      <el-collapse v-model="usageAccountSectionOpen" class="usage-section-collapse">
+        <el-collapse-item name="account">
+          <template #title>
+            <div class="usage-collapse-head">
+              <span class="usage-collapse-title">按后端账号汇总（本地估算）</span>
+              <span class="usage-collapse-totals">
+                账号数 {{ usageAccountTotals.accountCount }} · 请求数
+                {{ usageAccountTotals.requestCount }} · tokens
+                {{ formatTokensM(usageAccountTotals.totalTokens) }} · 费用 ${{
+                  (usageAccountTotals.costCents / 100).toFixed(2)
+                }}
+              </span>
+            </div>
+          </template>
+          <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading">
+            <el-table-column label="账号" min-width="168">
+              <template #default="{ row }">
+                <div class="account-stack">
+                  <span class="account-id">{{ row.account_identifier || '—' }}</span>
+                  <span v-if="row.primary_member_name" class="account-owner">
+                    {{ row.primary_member_name }}
+                  </span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="额度" min-width="176">
+              <template #default="{ row }">
+                <QuotaProgressBars
+                  :total_pct="row.total_pct"
+                  :auto_pct="row.auto_pct"
+                  :api_pct="row.api_pct"
+                  :status="row.status"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+            <el-table-column label="tokens" width="110" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="110" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
+      <el-collapse v-model="usageModelSectionOpen" class="usage-section-collapse">
+        <el-collapse-item name="model">
+          <template #title>
+            <div class="usage-collapse-head">
+              <span class="usage-collapse-title">按模型汇总（本地估算）</span>
+              <span class="usage-collapse-totals">
+                模型数 {{ usageModelTotals.modelCount }} · 请求数
+                {{ usageModelTotals.requestCount }} · tokens
+                {{ formatTokensM(usageModelTotals.totalTokens) }} · 费用 ${{
+                  (usageModelTotals.costCents / 100).toFixed(2)
+                }}
+              </span>
+            </div>
+          </template>
+          <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading">
+            <el-table-column prop="model" label="模型" min-width="180" />
+            <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+            <el-table-column label="tokens" width="110" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="110" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
+      <h4 class="usage-section-title">proxy 明细（按天 · 本地估算）</h4>
       <el-table
         :data="usageByDay"
         class="usage-fill-table day-usage-table"
         v-loading="usagesLoading"
         row-key="day"
-        size="small"
+        :expand-row-keys="expandedDayKeys"
+        @expand-change="onDayExpandChange"
         @row-click="onDayRowClick"
       >
         <el-table-column type="expand" width="48">
           <template #default="{ row }">
             <div class="day-detail-wrap">
-              <el-table :data="row.items" size="small" class="usage-fill-table">
+              <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
                 <el-table-column label="时间" width="150">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
@@ -260,13 +305,13 @@
                   <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
                 </el-table-column>
                 <el-table-column prop="model" label="模型" min-width="100" show-overflow-tooltip />
-                <el-table-column label="in / out" width="100" align="right">
-                  <template #default="{ row: item }">
-                    {{ item.tokens_input ?? 0 }} / {{ item.tokens_output ?? 0 }}
-                  </template>
-                </el-table-column>
                 <el-table-column label="tokens" width="72" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
+                </el-table-column>
+                <el-table-column label="费用" width="64" align="right">
+                  <template #default="{ row: item }">
+                    ${{ ((item.cost_cents ?? 0) / 100).toFixed(2) }}
+                  </template>
                 </el-table-column>
               </el-table>
             </div>
@@ -276,6 +321,9 @@
         <el-table-column prop="request_count" label="请求数" width="88" align="right" />
         <el-table-column label="tokens" width="110" align="right">
           <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+        </el-table-column>
+        <el-table-column label="费用" width="110" align="right">
+          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
     </el-drawer>
@@ -289,6 +337,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
+import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import { formatTokens, formatTokensM } from '@/utils/usage'
 import { formatChinaTime } from '@/utils/time'
 
@@ -333,28 +382,36 @@ interface UsageSummary {
 }
 
 interface UsageByAccountRow {
+  account_id: string | null
   account_identifier: string
+  primary_member_name: string | null
   request_count: number
   total_tokens: number
+  cost_cents: number
+  total_pct?: number | null
+  auto_pct?: number | null
+  api_pct?: number | null
+  status?: string | null
 }
 
 interface UsageByModelRow {
   model: string
   request_count: number
   total_tokens: number
+  cost_cents: number
 }
 
 interface UsageByDayRow {
   day: string
   request_count: number
   total_tokens: number
+  cost_cents: number
   items: Array<{
     ts: string
     account_identifier: string | null
     model: string | null
-    tokens_input: number
-    tokens_output: number
     total_tokens: number
+    cost_cents: number
   }>
 }
 
@@ -411,6 +468,29 @@ const usageSummary = ref<UsageSummary | null>(null)
 const usageByAccount = ref<UsageByAccountRow[]>([])
 const usageByModel = ref<UsageByModelRow[]>([])
 const usageByDay = ref<UsageByDayRow[]>([])
+const usageAccountSectionOpen = ref<string[]>([])
+const usageModelSectionOpen = ref<string[]>([])
+const expandedDayKeys = ref<string[]>([])
+
+const usageAccountTotals = computed(() => {
+  const rows = usageByAccount.value
+  return {
+    accountCount: rows.length,
+    requestCount: rows.reduce((sum, row) => sum + (row.request_count ?? 0), 0),
+    totalTokens: rows.reduce((sum, row) => sum + (row.total_tokens ?? 0), 0),
+    costCents: rows.reduce((sum, row) => sum + (row.cost_cents ?? 0), 0),
+  }
+})
+
+const usageModelTotals = computed(() => {
+  const rows = usageByModel.value
+  return {
+    modelCount: rows.length,
+    requestCount: rows.reduce((sum, row) => sum + (row.request_count ?? 0), 0),
+    totalTokens: rows.reduce((sum, row) => sum + (row.total_tokens ?? 0), 0),
+    costCents: rows.reduce((sum, row) => sum + (row.cost_cents ?? 0), 0),
+  }
+})
 
 const usageDrawerTitle = computed(() => {
   const s = usageSummary.value
@@ -631,6 +711,9 @@ async function openUsages(row: CpKey) {
   usageByAccount.value = []
   usageByModel.value = []
   usageByDay.value = []
+  usageAccountSectionOpen.value = []
+  usageModelSectionOpen.value = []
+  expandedDayKeys.value = []
   usagesVisible.value = true
   usagesLoading.value = true
   try {
@@ -646,13 +729,23 @@ async function openUsages(row: CpKey) {
   }
 }
 
-function onDayRowClick(row: UsageByDayRow, _column: unknown, event: Event) {
+function toggleDayExpand(row: UsageByDayRow) {
+  const key = row.day
+  if (expandedDayKeys.value.includes(key)) {
+    expandedDayKeys.value = expandedDayKeys.value.filter((k) => k !== key)
+  } else {
+    expandedDayKeys.value = [...expandedDayKeys.value, key]
+  }
+}
+
+function onDayExpandChange(row: UsageByDayRow, expandedRows: UsageByDayRow[]) {
+  expandedDayKeys.value = expandedRows.map((r) => r.day)
+}
+
+function onDayRowClick(row: UsageByDayRow, _column: unknown, event: MouseEvent) {
   const target = event.target as HTMLElement | null
   if (target?.closest('.el-table__expand-icon')) return
-  const table = target?.closest('.day-usage-table')
-  if (!table) return
-  const expandIcon = (event.currentTarget as HTMLElement)?.querySelector('.el-table__expand-icon') as HTMLElement | null
-  expandIcon?.click()
+  toggleDayExpand(row)
 }
 
 onMounted(async () => {
@@ -783,23 +876,59 @@ defineExpose({
 :deep(.cp-key-row) {
   cursor: pointer;
 }
-.usage-summary {
-  margin-bottom: 16px;
-  font-size: 14px;
-  line-height: 1.6;
+.usage-section-collapse {
+  margin-bottom: 12px;
+  border: none;
 }
-.usage-summary-sub {
-  color: var(--el-text-color-secondary);
+.usage-section-collapse :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 40px;
+  line-height: 1.5;
+  border: none;
+}
+.usage-section-collapse :deep(.el-collapse-item__wrap) {
+  border: none;
+}
+.usage-section-collapse :deep(.el-collapse-item__content) {
+  padding-bottom: 4px;
+}
+.usage-collapse-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding-right: 8px;
+  width: 100%;
+}
+.usage-collapse-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.usage-collapse-totals {
   font-size: 13px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
 }
 .usage-section-title {
-  margin: 20px 0 8px;
+  margin: 16px 0 12px;
   font-size: 14px;
   font-weight: 600;
 }
-.usage-hint {
-  margin: 0 0 8px;
-  font-size: 12px;
+.account-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.25;
+  max-width: 100%;
+}
+.account-id {
+  font-size: 13px;
+  word-break: break-all;
+}
+.account-owner {
+  font-size: 11px;
   color: var(--el-text-color-secondary);
 }
 .usage-fill-table {
@@ -808,8 +937,24 @@ defineExpose({
 .day-usage-table :deep(.el-table__body tr) {
   cursor: pointer;
 }
+.day-usage-table :deep(.el-table__expanded-cell) {
+  padding: 0;
+}
 .day-detail-wrap {
-  padding: 4px 8px 12px 40px;
+  padding: 8px;
+  background: var(--el-fill-color-lighter);
+  overflow-x: hidden;
+}
+.day-detail-table {
+  width: 100%;
+  --el-table-bg-color: transparent;
+}
+.day-detail-table :deep(.el-table__header-wrapper),
+.day-detail-table :deep(.el-table__body-wrapper) {
+  overflow-x: hidden !important;
+}
+.day-detail-table :deep(.el-table__body tr) {
+  cursor: default;
 }
 .reveal-hint {
   margin: 0 0 8px;
