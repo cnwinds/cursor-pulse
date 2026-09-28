@@ -51,8 +51,10 @@
         <el-table :data="accounts" stripe>
           <el-table-column label="账号" prop="account_identifier" min-width="160" />
           <el-table-column label="区域" prop="api_region" width="100" />
-          <el-table-column label="额度" width="100">
-            <template #default="{ row }">{{ row.tier_pressure_pct?.toFixed?.(1) ?? row.tier_pressure_pct }}%</template>
+          <el-table-column label="额度" min-width="176">
+            <template #default="{ row }">
+              <CodingPlanTierBars :tiers="row.quota_tiers" />
+            </template>
           </el-table-column>
           <el-table-column label="就绪" width="100">
             <template #default="{ row }">
@@ -428,6 +430,7 @@ interface CpAccount {
   pool_ready: boolean
   pool_ready_reason: string | null
   tier_pressure_pct: number
+  quota_tiers?: Array<{ name: string; label?: string; utilization_pct?: number | null }>
 }
 
 interface OpenAiEndpoint {

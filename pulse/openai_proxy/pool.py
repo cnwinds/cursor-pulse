@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from pulse.openai_proxy.upstream import CP_VENDORS
+from pulse.tool_center.coding_plan_board import quota_tiers_for_board
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -137,7 +138,8 @@ def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[s
             pool_ready_reason = "无可用主 Key"
         elif n > 1:
             pool_ready_reason = "存在多个主 Key"
-        pressure = _tier_pressure(snaps.get(acc.id))
+        snap = snaps.get(acc.id)
+        pressure = _tier_pressure(snap)
         out.append(
             {
                 "id": acc.id,
@@ -147,6 +149,7 @@ def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[s
                 "pool_ready": pool_ready,
                 "pool_ready_reason": pool_ready_reason,
                 "tier_pressure_pct": pressure,
+                "quota_tiers": quota_tiers_for_board(snap) if snap is not None else [],
                 "pool_effective": bool(acc.cp_proxy_enabled and pool_ready and pressure < MAX_TIER_PCT),
             }
         )
