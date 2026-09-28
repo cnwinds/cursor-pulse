@@ -106,7 +106,7 @@
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计用量/5h/7d" min-width="152" align="right">
+        <el-table-column label="累计用量/5h/7d" min-width="152" align="left">
           <template #default="{ row }">
             <span class="usage-combined" :title="formatKeyUsageTooltip(row)">
               {{ formatKeyUsageCombined(row) }}
