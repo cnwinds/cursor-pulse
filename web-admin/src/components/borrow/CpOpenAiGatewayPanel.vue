@@ -105,11 +105,17 @@
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="累计用量/5h/7d" min-width="152" align="left">
+        <el-table-column label="累计用量/5h/7d" min-width="200" align="left">
           <template #default="{ row }">
-            <span class="usage-combined" :title="formatKeyUsageTooltip(row)">
-              {{ formatKeyUsageCombined(row) }}
-            </span>
+            <div class="usage-combined-cell" :title="formatKeyUsageTooltip(row)">
+              <div class="usage-combined-sub">
+                <span>累计 {{ formatTokensM(row.total_tokens ?? 0) }}·{{ row.request_count ?? 0 }}次</span>
+                <span class="usage-combined-sep">·</span>
+                <span>5h {{ formatTokensM(row.window_5h_tokens ?? 0) }}·{{ row.window_5h_request_count ?? 0 }}次</span>
+                <span class="usage-combined-sep">·</span>
+                <span>7d {{ formatTokensM(row.window_7d_tokens ?? 0) }}·{{ row.window_7d_request_count ?? 0 }}次</span>
+              </div>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="168" align="center" fixed="right">
@@ -351,7 +357,7 @@ import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
 import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
-import { formatTokens, formatTokensM } from '@/utils/usage'
+import { formatTokensM } from '@/utils/usage'
 import { formatChinaTime } from '@/utils/time'
 
 interface CpAccount {
@@ -382,6 +388,8 @@ interface CpKey {
   request_count?: number
   window_5h_tokens?: number
   window_7d_tokens?: number
+  window_5h_request_count?: number
+  window_7d_request_count?: number
 }
 
 interface UsageSummary {
@@ -634,17 +642,12 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-function formatKeyUsageCombined(row: CpKey) {
-  const total = formatTokensM(row.total_tokens ?? 0)
-  const count = row.request_count ?? 0
-  const h5 = formatTokens(row.window_5h_tokens ?? 0)
-  const d7 = formatTokens(row.window_7d_tokens ?? 0)
-  return `${total}·${count}次/${h5}/${d7}`
-}
-
 function formatKeyUsageTooltip(row: CpKey) {
-  const count = row.request_count ?? 0
-  return `累计 ${formatTokensM(row.total_tokens ?? 0)}（${count} 次请求）· 近 5h ${formatTokens(row.window_5h_tokens ?? 0)} · 近 7d ${formatTokens(row.window_7d_tokens ?? 0)}`
+  return [
+    `累计 ${formatTokensM(row.total_tokens ?? 0)} · ${row.request_count ?? 0} 次`,
+    `近 5h ${formatTokensM(row.window_5h_tokens ?? 0)} · ${row.window_5h_request_count ?? 0} 次`,
+    `近 7d ${formatTokensM(row.window_7d_tokens ?? 0)} · ${row.window_7d_request_count ?? 0} 次`,
+  ].join('\n')
 }
 
 function statusTagType(status: string) {
@@ -886,10 +889,20 @@ defineExpose({
 .key-block {
   margin-top: 12px;
 }
-.usage-combined {
+.usage-combined-cell {
+  line-height: 1.35;
+}
+.usage-combined-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   font-variant-numeric: tabular-nums;
-  line-height: 1.4;
-  white-space: nowrap;
+}
+.usage-combined-sep {
+  opacity: 0.65;
 }
 :deep(.cp-key-row) {
   cursor: pointer;
