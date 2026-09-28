@@ -15,6 +15,7 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
+from pulse.tool_center.coding_plan_board import quota_tiers_for_board
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.util.datetime_fmt import format_china_date, serialize_datetime
 
@@ -123,7 +124,7 @@ def rollup_proxy_usages(
         day_bucket["cost_cents"] += cost
         day_bucket["items"].append(item)
 
-    _attach_account_quota_snapshots(session, by_account_map)
+    _attach_account_quota_snapshots(session, by_account_map, accounts)
 
     return {
         "by_account": sorted(
@@ -176,7 +177,11 @@ def _resolve_usage_accounts(
     return cred_to_account, accounts, plans, members
 
 
-def _attach_account_quota_snapshots(session: Session, by_account_map: dict[str, dict]) -> None:
+def _attach_account_quota_snapshots(
+    session: Session,
+    by_account_map: dict[str, dict],
+    accounts: dict[str, AiAccount],
+) -> None:
     account_ids = [row["account_id"] for row in by_account_map.values() if row.get("account_id")]
     if not account_ids:
         return
@@ -184,11 +189,29 @@ def _attach_account_quota_snapshots(session: Session, by_account_map: dict[str, 
     for row in by_account_map.values():
         account_id = row.get("account_id")
         snap = snapshots.get(account_id) if account_id else None
+        row["quota_display"] = "cursor"
+        row["quota_tiers"] = []
         if not snap:
             row["total_pct"] = None
             row["auto_pct"] = None
             row["api_pct"] = None
             row["status"] = None
+            continue
+        sync_kind = getattr(snap, "sync_kind", None) or "cursor"
+        tiers = quota_tiers_for_board(snap) if sync_kind == "coding_plan" else []
+        if tiers:
+            row["quota_display"] = "coding_plan_tiers"
+            row["quota_tiers"] = tiers
+            row["total_pct"] = None
+            row["auto_pct"] = None
+            row["api_pct"] = None
+            max_pct = max(float(t.get("utilization_pct") or 0) for t in tiers)
+            if max_pct >= 100:
+                row["status"] = "exhausted"
+            elif max_pct >= 80:
+                row["status"] = "warning"
+            else:
+                row["status"] = "healthy"
             continue
         row["total_pct"] = snap.total_pct
         row["auto_pct"] = snap.auto_pct

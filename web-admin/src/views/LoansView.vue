@@ -362,7 +362,12 @@
             </el-table-column>
             <el-table-column label="额度" min-width="176">
               <template #default="{ row }">
+                <CodingPlanTierBars
+                  v-if="row.quota_display === 'coding_plan_tiers'"
+                  :tiers="row.quota_tiers"
+                />
                 <QuotaProgressBars
+                  v-else
                   :total_pct="row.total_pct"
                   :auto_pct="row.auto_pct"
                   :api_pct="row.api_pct"
@@ -513,6 +518,7 @@ import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
+import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
@@ -742,6 +748,8 @@ interface LoanUsageByAccountRow {
   account_identifier: string
   primary_member_name: string | null
   plan_name: string | null
+  quota_display?: 'cursor' | 'coding_plan_tiers'
+  quota_tiers?: Array<{ name: string; label?: string; utilization_pct?: number | null }>
   total_pct?: number | null
   auto_pct?: number | null
   api_pct?: number | null
