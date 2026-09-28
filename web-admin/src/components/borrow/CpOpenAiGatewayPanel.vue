@@ -44,7 +44,7 @@
 
     <div class="section">
       <div class="section-head">
-        <h3>pkcp_ 接入密钥</h3>
+        <h3>借用记录</h3>
         <div class="section-head-actions">
           <div class="filter-switch">
             <span class="filter-label">仅显示在用</span>
