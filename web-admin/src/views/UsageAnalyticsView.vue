@@ -4,13 +4,12 @@
       <div>
         <h2>用量分析</h2>
         <p class="desc desc-oneline">
-          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。GLM / MiniMax / Kimi Coding Plan 无历史用量，不在此页统计。
-          <template v-if="codingPlanAccountCount > 0">
-            团队内有 {{ codingPlanAccountCount }} 个上述 Coding Plan 账号仅同步窗口额度、无按日用量，请前往
-            <router-link to="/quota-board">额度看板</router-link>
-            查看 5h / 周额度。
-          </template>
-          <span v-if="overview?.timezone" class="tz">时区 {{ overview.timezone }}</span>
+          看所选日期里 Cursor 用了多少 Token。
+          GLM / MiniMax / Kimi 这里没有按日记录，
+          <template v-if="codingPlanAccountCount > 0">你们有 {{ codingPlanAccountCount }} 个这类账号，</template>
+          要看剩余额度请打开
+          <router-link to="/quota-board">额度看板</router-link>。
+          <span v-if="overview?.timezone" class="tz">按 {{ overview.timezone }} 的日历统计。</span>
         </p>
       </div>
       <el-button @click="loadOverview">刷新</el-button>
