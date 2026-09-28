@@ -144,8 +144,17 @@
             <LoanTimeStack :iso="row.created_at" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="168" align="center" fixed="right">
+        <el-table-column label="操作" width="196" align="center" fixed="right">
           <template #default="{ row }">
+            <el-button
+              v-if="canWrite && row.status !== 'revoked'"
+              link
+              type="primary"
+              size="small"
+              @click.stop="openEditKey(row)"
+            >
+              编辑
+            </el-button>
             <el-button
               v-if="row.recoverable"
               link
@@ -223,6 +232,30 @@
       <template #footer>
         <el-button @click="createVisible = false">关闭</el-button>
         <el-button v-if="!createdKey" type="primary" :loading="creating" @click="submitCreate">签发</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editVisible" title="编辑备注" width="440px" @closed="onEditClosed">
+      <el-form label-width="88px" @submit.prevent="submitEditKey">
+        <el-form-item label="归属">
+          <span>{{ editTarget?.member_name || '—' }}</span>
+        </el-form-item>
+        <el-form-item label="Key 提示">
+          <span class="muted">{{ editTarget?.key_hint || '—' }}</span>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="editName"
+            maxlength="128"
+            show-word-limit
+            clearable
+            placeholder="可选；留空则归属下方显示 key 提示"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="submitEditKey">保存</el-button>
       </template>
     </el-dialog>
 
@@ -499,6 +532,10 @@ const members = ref<MemberOption[]>([])
 
 const createVisible = ref(false)
 const creating = ref(false)
+const editVisible = ref(false)
+const editSaving = ref(false)
+const editTarget = ref<CpKey | null>(null)
+const editName = ref('')
 const createdKey = ref<{ plaintext_key: string; openai_endpoints?: OpenAiEndpoint[] } | null>(null)
 const createdKeyEndpoints = computed(() => {
   const fromKey = createdKey.value?.openai_endpoints
@@ -665,6 +702,36 @@ async function submitCreate() {
 
 function keyRowSubline(row: CpKey) {
   return row.name?.trim() || row.key_hint || '—'
+}
+
+function openEditKey(row: CpKey) {
+  editTarget.value = row
+  editName.value = row.name?.trim() ?? ''
+  editVisible.value = true
+}
+
+function onEditClosed() {
+  editTarget.value = null
+  editName.value = ''
+}
+
+async function submitEditKey() {
+  const row = editTarget.value
+  if (!row) return
+  editSaving.value = true
+  try {
+    await client.patch(`/api/v2/proxy-keys/${row.id}`, {
+      name: editName.value.trim(),
+    })
+    row.name = editName.value.trim()
+    ElMessage.success('备注已保存')
+    editVisible.value = false
+  } catch (err: unknown) {
+    const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    ElMessage.error(typeof detail === 'string' ? detail : '保存失败')
+  } finally {
+    editSaving.value = false
+  }
 }
 
 function formatKeyCostUsd(row: CpKey) {
