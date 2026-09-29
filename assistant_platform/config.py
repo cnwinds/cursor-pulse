@@ -73,6 +73,8 @@ class AssistantLlmConfig(BaseModel):
     agent_history_max_messages: int = 40
     agent_total_timeout_seconds: float = 120.0
     agent_max_interim_replies: int = 3
+    # Stream LLM output to the web chat as a live draft (DingTalk/Feishu still get whole messages).
+    stream_web_replies: bool = True
     turn_timeout_seconds: int = 300
     inbox_max_per_drain: int = 5
     # Interactive chat workers (session.process / reply.send). Default 4 so
@@ -156,6 +158,8 @@ def load_assistant_config() -> AssistantConfig:
             agent_history_max_messages=int(os.environ.get("ASSISTANT_AGENT_HISTORY_MAX_MESSAGES", "40")),
             agent_total_timeout_seconds=float(os.environ.get("ASSISTANT_AGENT_TOTAL_TIMEOUT_SECONDS", "120")),
             agent_max_interim_replies=int(os.environ.get("ASSISTANT_AGENT_MAX_INTERIM_REPLIES", "3")),
+            stream_web_replies=os.environ.get("ASSISTANT_LLM_STREAM_WEB_REPLIES", "true").lower()
+            in ("1", "true", "yes", "on"),
             turn_timeout_seconds=int(os.environ.get("ASSISTANT_TURN_TIMEOUT_SECONDS", "300")),
             inbox_max_per_drain=int(os.environ.get("ASSISTANT_INBOX_MAX_PER_DRAIN", "5")),
             job_worker_count=int(os.environ.get("ASSISTANT_JOB_WORKER_COUNT", "4")),
@@ -192,6 +196,7 @@ def _apply_team_assistant_llm_overrides(config: AssistantConfig) -> AssistantCon
         "agent_history_max_messages",
         "agent_total_timeout_seconds",
         "agent_max_interim_replies",
+        "stream_web_replies",
         "turn_timeout_seconds",
         "inbox_max_per_drain",
         "job_worker_count",

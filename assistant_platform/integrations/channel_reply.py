@@ -60,3 +60,26 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
     except Exception:
         logger.exception("reply.send HTTP call failed")
         return {"status": "failed"}
+
+
+def send_channel_stream(payload: dict[str, Any], config: AssistantConfig) -> dict[str, Any]:
+    """POST a live reply draft (best-effort; the committed reply is authoritative)."""
+    if not config.pulse_internal_token:
+        return {"status": "skipped", "reason": "no_internal_token"}
+
+    import httpx
+
+    url = f"{config.pulse_base_url.rstrip('/')}/api/internal/v1/channel/stream"
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {config.pulse_internal_token}"},
+            timeout=3.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body if isinstance(body, dict) else {"status": "unknown"}
+    except Exception:
+        logger.warning("reply stream HTTP call failed stream_id=%s", payload.get("stream_id"), exc_info=True)
+        return {"status": "failed"}

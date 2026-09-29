@@ -556,6 +556,19 @@ class PortalChatDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class PortalChatStream(Base):
+    """In-progress assistant reply draft for the web chat (removed once committed)."""
+
+    __tablename__ = "portal_chat_streams"
+
+    stream_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    team_id: Mapped[str] = mapped_column(String(36), index=True)
+    member_id: Mapped[str] = mapped_column(String(36), index=True)
+    assistant_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
 class KnowledgeEntry(Base):
     __tablename__ = "knowledge_entries"
 

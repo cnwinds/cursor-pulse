@@ -45,6 +45,7 @@ _MEMBER_FK_UPDATES: tuple[tuple[str, str], ...] = (
     ("proxy_keys", "member_id"),
     ("capability_invocations", "actor_member_id"),
     ("portal_chat_deliveries", "member_id"),
+    ("portal_chat_streams", "member_id"),
 )
 
 
