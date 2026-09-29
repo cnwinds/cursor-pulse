@@ -107,9 +107,8 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		if entry != nil && !entry.authCooling(now) && entry.availableFor(pool) {
 			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
 			if err == nil {
-				// Dwell measures time since the last switch, so a plain reuse
-				// must not refresh StickySince (that would freeze the window and
-				// block rotation forever). Only backfill legacy zero state.
+				// StickySince is bind time only; dwell uses StickyLastActive
+				// (refreshed below). Only backfill legacy zero StickySince.
 				if binding.StickySince.IsZero() {
 					binding.StickySince = now
 				}
