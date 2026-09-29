@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
 ### 变更
 
 - **Switch dwell 默认间隔**：`loan_selection.min_switch_minutes` 与 Go `PROXY_STICKY_MIN_DWELL` 默认值由 30 分钟改为 **20 分钟**（已保存的团队选号规则不变，需在「借用管理 → 选号规则」手动改或设环境变量）。
@@ -179,7 +181,8 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...v0.3.0
