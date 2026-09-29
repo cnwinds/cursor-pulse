@@ -22,7 +22,7 @@ def test_loan_selection_defaults():
     assert sel.proxy_weight_freshness == 0.03
     assert sel.max_concurrent_users == 3
     assert sel.concurrent_ttl_seconds == 180
-    assert sel.min_switch_minutes == 30.0
+    assert sel.min_switch_minutes == 20.0
 
 
 def test_loan_selection_yaml_override():

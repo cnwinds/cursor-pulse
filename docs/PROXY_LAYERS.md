@@ -43,7 +43,7 @@ Pulse web / channel
 | `PROXY_UPSTREAM_URL` | C | Go → Cursor 的翻墙代理 |
 | `HTTP_PROXY` / `HTTPS_PROXY`（宿主机） | C | Python 出站（Cursor sync、钉钉 OAuth 等） |
 | `JEV_BASE_URL` / `JEV_API_KEY` | C | Jev（OpenRouter Decisions）——Auto Lender 主判，走 `outbound_client`（可翻墙） |
-| `PROXY_STICKY_MIN_DWELL` | A | Go sticky 最小驻留（默认 30m；`0`/`off` 关闭）。Web 侧同名语义见 `loan_selection.min_switch_minutes` |
+| `PROXY_STICKY_MIN_DWELL` | A | Go sticky 最小驻留（默认 20m；`0`/`off` 关闭）。Web 侧同名语义见 `loan_selection.min_switch_minutes` |
 
 ## 常见故障
 

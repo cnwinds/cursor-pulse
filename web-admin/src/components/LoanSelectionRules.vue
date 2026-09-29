@@ -215,7 +215,7 @@ const saving = ref(false)
 const draft = reactive({
   max_concurrent_users: 3,
   concurrent_ttl_seconds: 180,
-  min_switch_minutes: 30,
+  min_switch_minutes: 20,
   max_active_loans_per_account: 2,
   min_coverage_hours: 1,
   owner_reserve_pct: 0,
@@ -252,7 +252,7 @@ function readSelection(raw: Record<string, unknown> | undefined) {
   const src = raw || {}
   draft.max_concurrent_users = Number(src.max_concurrent_users ?? 3)
   draft.concurrent_ttl_seconds = Number(src.concurrent_ttl_seconds ?? 180)
-  draft.min_switch_minutes = Number(src.min_switch_minutes ?? 30)
+  draft.min_switch_minutes = Number(src.min_switch_minutes ?? 20)
   draft.max_active_loans_per_account = Number(src.max_active_loans_per_account ?? 2)
   draft.min_coverage_hours = Number(src.min_coverage_hours ?? 1)
   draft.owner_reserve_pct = Number(src.owner_reserve_pct ?? 0)

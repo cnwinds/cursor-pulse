@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **Switch dwell 默认间隔**：`loan_selection.min_switch_minutes` 与 Go `PROXY_STICKY_MIN_DWELL` 默认值由 30 分钟改为 **20 分钟**（已保存的团队选号规则不变，需在「借用管理 → 选号规则」手动改或设环境变量）。
+
 ### 新增
 
 - **Jev 外呼耗时**：`jev_trace.meta` 记录 `called_at`（UTC ISO）与 `duration_ms`（HTTP 端到端）；缓存命中时沿用首次外呼的时间与耗时。摘要 Tab 与中国时区展示；审计 `lender_auto_pick` 附带 `jev_called_at` / `jev_duration_ms`。
