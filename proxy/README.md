@@ -137,8 +137,9 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 会话的 sticky 凭证绑定后 **30 分钟内**不因「该 Quota Pool 桶耗尽」而轮转——只记日志并继续用当前账号。认证失败（`badUntil` 冷却）与全池耗尽仍立即轮转，避免会话卡在不可用账号上。
 
-- 计时基准是 `SessionBinding.StickySince`，只在**真正切换**账号时重置；同一账号续用不刷新，否则窗口永不失效。
-- 存量绑定没有 `StickySince`（零值）→ 不驻留，行为与旧版一致。
+- 计时基准是 **距上次成功选号/续用的空闲间隔**（`StickyLastActive`；无该字段时回退 `StickySince`）。密集聊天会持续刷新 `StickyLastActive`，不会因「绑定总时长」到点而换号。
+- `StickySince` 只在**真正切换**账号时重置；同一账号续用不刷新。
+- 存量绑定没有活动时间戳（零值）→ 不驻留，行为与旧版一致。
 - Web 侧对应语义见 `loan_selection.min_switch_minutes`（评分侧降权），两层独立生效。
 
 ## 借用候选白名单（自动分配借用）

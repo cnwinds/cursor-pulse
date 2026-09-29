@@ -22,10 +22,11 @@ def _aware(dt: datetime) -> datetime:
     return dt
 
 
-def _dwell_active(*, sticky_since: datetime | None, min_switch_minutes: float, now: datetime) -> bool:
-    if min_switch_minutes <= 0 or sticky_since is None:
+def _dwell_active(*, last_active_at: datetime | None, min_switch_minutes: float, now: datetime) -> bool:
+    """True while the idle gap since the last request is inside the dwell window."""
+    if min_switch_minutes <= 0 or last_active_at is None:
         return False
-    return (now - _aware(sticky_since)) < timedelta(minutes=min_switch_minutes)
+    return (now - _aware(last_active_at)) < timedelta(minutes=min_switch_minutes)
 
 
 def _entry_map(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -108,6 +109,7 @@ def resolve_cp_credential(
     binding = session.get(CpOpenAiStickyBinding, proxy_key_id)
     sticky_id = (binding.credential_id if binding else "") or ""
     sticky_since = binding.sticky_since if binding else None
+    last_active_at = binding.updated_at if binding else None
 
     current = (current_credential_id or "").strip() or None
     if release_current and current:
@@ -116,6 +118,7 @@ def resolve_cp_credential(
             binding = None
             sticky_id = ""
             sticky_since = None
+            last_active_at = None
         get_occupancy().choose(
             holder_id=holder,
             ranked=[(current, by_id.get(current, {}).get("account_id", ""))],
@@ -133,7 +136,7 @@ def resolve_cp_credential(
         sticky_id
         and sticky_id in by_id
         and sticky_id not in exclude
-        and _dwell_active(sticky_since=sticky_since, min_switch_minutes=min_switch, now=now)
+        and _dwell_active(last_active_at=last_active_at, min_switch_minutes=min_switch, now=now)
     ):
         chosen_id = sticky_id
         _touch_seat(holder, chosen_id, by_id, selection)

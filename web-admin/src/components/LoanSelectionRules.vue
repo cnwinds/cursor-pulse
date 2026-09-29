@@ -78,7 +78,7 @@
               <span class="field-label">
                 最短切换
                 <Tip
-                  text="绑定后这段时间内降权，避免来回跳号。代理进程内的强制停留由 PROXY_STICKY_MIN_DWELL 控制。登录失败或额度桶耗尽仍会换。"
+                  text="两次请求间隔小于该值时降权/驻留，避免密集聊天中途换号导致 cache 失效。代理侧由 PROXY_STICKY_MIN_DWELL 控制。登录失败或额度桶耗尽仍会换。"
                 />
               </span>
               <el-input-number

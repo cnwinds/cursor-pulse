@@ -16,10 +16,13 @@ type SessionBinding struct {
 	// Run requests prefer this credential for the model's quota pool (auto vs api)
 	// until that pool is exhausted, then rotate within the pool order.
 	StickyCredentialID string
-	// StickySince is when StickyCredentialID was bound. Switch dwell
-	// (stickyMinDwell) suppresses quota-driven rotation inside this window so a
-	// session does not hop accounts too often. Zero means "no dwell history".
+	// StickySince is when StickyCredentialID was bound (for metrics / scoring).
+	// It is refreshed only on credential change, not on reuse.
 	StickySince time.Time
+	// StickyLastActive is the last successful pool Select for this session.
+	// Switch dwell (stickyMinDwell) suppresses quota-driven rotation while the
+	// gap since this timestamp is inside the window, so dense chat keeps cache.
+	StickyLastActive time.Time
 	// AllowedCredentialIDs scopes pool selection to a ranked candidate set. A
 	// loan_alias binding gets this from Pulse (the accounts eligible to lend to
 	// that borrower), so the loan key roams across candidate accounts like the
