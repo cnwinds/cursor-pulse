@@ -47,19 +47,31 @@ def _dedupe_key(*, message_id: str | None, text: str, kind: str) -> str | None:
     return None
 
 
-def _already_delivered(dedupe_key: str | None) -> bool:
-    if not dedupe_key:
-        return False
+def _prune_dedupe_locked(now: float) -> None:
+    expired = [key for key, ts in _recent_channel_deliveries.items() if now - ts > _DEDUPE_TTL_SECONDS]
+    for key in expired:
+        _recent_channel_deliveries.pop(key, None)
 
+
+def _try_begin_delivery(dedupe_key: str | None) -> bool:
+    """Claim a dedupe slot. True = proceed; False = already claimed/delivered."""
+    if not dedupe_key:
+        return True
     now = time.monotonic()
     with _dedupe_lock:
-        expired = [key for key, ts in _recent_channel_deliveries.items() if now - ts > _DEDUPE_TTL_SECONDS]
-        for key in expired:
-            _recent_channel_deliveries.pop(key, None)
+        _prune_dedupe_locked(now)
         if dedupe_key in _recent_channel_deliveries:
-            return True
+            return False
         _recent_channel_deliveries[dedupe_key] = now
-        return False
+        return True
+
+
+def _abort_delivery(dedupe_key: str | None) -> None:
+    """Release a claim so a failed attempt can be retried."""
+    if not dedupe_key:
+        return
+    with _dedupe_lock:
+        _recent_channel_deliveries.pop(dedupe_key, None)
 
 
 def _get_channel_messenger(config: AppConfig):
@@ -108,14 +120,54 @@ def deliver_channel_reply(
         text=text,
         kind=kind,
     )
+    if not _try_begin_delivery(dedupe_key):
+        channel = str(reply_endpoint.get("channel", "") or "")
+        if channel == "web" and stream_id and session is not None:
+            from pulse.web.portal_chat import close_portal_chat_stream
+
+            close_portal_chat_stream(session, stream_id)
+        elif channel in _SUPPORTED_IM_CHANNELS:
+            logger.info(
+                "channel reply deduped: message_id=%s kind=%s",
+                assistant_message_id,
+                kind,
+            )
+        return {"status": "sent", "reason": "deduplicated"}
+
+    result = _deliver_channel_reply_once(
+        config,
+        reply_endpoint=reply_endpoint,
+        text=text,
+        messenger=messenger,
+        session=session,
+        team_id=team_id,
+        assistant_session_id=assistant_session_id,
+        assistant_message_id=assistant_message_id,
+        kind=kind,
+        stream_id=stream_id,
+    )
+    if result.get("status") != "sent":
+        _abort_delivery(dedupe_key)
+    return result
+
+
+def _deliver_channel_reply_once(
+    config: AppConfig,
+    *,
+    reply_endpoint: dict[str, Any],
+    text: str,
+    messenger=None,
+    session=None,
+    team_id: str | None = None,
+    assistant_session_id: str | None = None,
+    assistant_message_id: str | None = None,
+    kind: str = "final",
+    stream_id: str | None = None,
+) -> dict[str, str]:
     channel = str(reply_endpoint.get("channel", "") or "")
     if channel == "web":
         from pulse.web.portal_chat import close_portal_chat_stream, store_portal_chat_delivery
 
-        if _already_delivered(dedupe_key):
-            if stream_id and session is not None:
-                close_portal_chat_stream(session, stream_id)
-            return {"status": "sent", "reason": "deduplicated"}
         member_id = str(reply_endpoint.get("member_id", "")).strip()
         if not member_id or session is None or not team_id:
             return {"status": "queued", "reason": "missing_web_context"}
@@ -139,14 +191,6 @@ def deliver_channel_reply(
 
     if channel not in _SUPPORTED_IM_CHANNELS:
         return {"status": "noop", "reason": "unsupported_channel"}
-
-    if _already_delivered(dedupe_key):
-        logger.info(
-            "channel reply deduped: message_id=%s kind=%s",
-            assistant_message_id,
-            kind,
-        )
-        return {"status": "sent", "reason": "deduplicated"}
 
     logger.info(
         "reply.timing stage=channel_deliver_start message_id=%s kind=%s channel=%s at=%s",

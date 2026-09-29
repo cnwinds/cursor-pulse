@@ -21,13 +21,16 @@ type Server struct {
 	sessions   *SessionMap
 	sticky     *StickySelect
 	sessionTTL time.Duration
-	onRotate   func(entry *keyEntry, binding SessionBinding, kind failKind)
-	transport  *http.Transport
+	// sessionTokens is nil when PROXY_OPAQUE_SESSION_TOKEN is off; exchange
+	// then hands clients the upstream Cursor JWT.
+	sessionTokens *sessionTokenMinter
+	onRotate      func(entry *keyEntry, binding SessionBinding, kind failKind)
+	transport     *http.Transport
 
 	passthroughMu sync.Mutex
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
 
-	cpStickyMu  sync.Mutex
+	cpStickyMu   sync.Mutex
 	cpStickyCred map[string]string // pkcp_ pulse key → last credential id
 
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
@@ -44,6 +47,7 @@ func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Se
 		pulse:            pulse,
 		sessions:         sessions,
 		sticky:           NewStickySelect(pool, sessions),
+		sessionTokens:    newSessionTokenMinter(),
 		transport:        newOutboundTransport(nil),
 		shouldMITM:       defaultShouldMITM,
 		connectAllowlist: resolveConnectAllowlist(),

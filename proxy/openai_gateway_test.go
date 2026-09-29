@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -42,13 +43,16 @@ func TestOpenAIModelsEndpoint(t *testing.T) {
 	}
 }
 
-func TestOpenAIRequiresPulse(t *testing.T) {
-	t.Parallel()
-	s := NewServer(NewPool(nil), nil, nil, nil)
-	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
+func TestOpenAIChatBodyTooLarge(t *testing.T) {
+	t.Setenv("PROXY_MAX_BODY", "64")
+	s := &Server{pulse: &PulseClient{}}
+	body := bytes.Repeat([]byte("x"), 128)
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer pkcp_test")
+	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	s.handleOpenAICompat(rr, req)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status %d", rr.Code)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 }

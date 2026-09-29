@@ -84,14 +84,18 @@ type PulseClient struct {
 	usageBatchMax   int
 	usageFlushEvery time.Duration
 	usageMaxRetries int
+	usageBufMax     int // hard cap; overflow drops newest after a failed flush requeue
 	usageMu         sync.Mutex
 	usageBuf        []UsageItem
+	usageRetryAfter time.Time // backoff after a failed flush (ignored when force)
 	stopped         bool
 	startMu         sync.Mutex
 	started         bool
 	stopCh          chan struct{}
 	wg              sync.WaitGroup
 }
+
+const defaultUsageBufMax = 2000
 
 func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 	if authTTL <= 0 {
@@ -109,6 +113,7 @@ func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 		usageBatchMax:   50,
 		usageFlushEvery: 5 * time.Second,
 		usageMaxRetries: 3,
+		usageBufMax:     defaultUsageBufMax,
 		stopCh:          make(chan struct{}),
 	}
 }
@@ -256,7 +261,7 @@ func (c *PulseClient) ResolveOpenAI(
 	releaseCurrent bool,
 ) (OpenAIResolveResult, error) {
 	payload := map[string]any{
-		"pulse_key":                pulseKey,
+		"pulse_key":              pulseKey,
 		"exclude_credential_ids": excludeCredentialIDs,
 	}
 	if currentCredentialID != "" {
@@ -333,7 +338,7 @@ func (c *PulseClient) FetchPool() (PulsePoolSnapshot, error) {
 		return PulsePoolSnapshot{}, fmt.Errorf("pool HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 	var out struct {
-		Credentials     []PoolCredential `json:"credentials"`
+		Credentials       []PoolCredential `json:"credentials"`
 		CredentialsByPool struct {
 			Auto []PoolCredential `json:"auto"`
 			API  []PoolCredential `json:"api"`
@@ -391,6 +396,10 @@ func (c *PulseClient) flushUsage(force bool) {
 		c.usageMu.Unlock()
 		return
 	}
+	if !force && !c.usageRetryAfter.IsZero() && time.Now().Before(c.usageRetryAfter) {
+		c.usageMu.Unlock()
+		return
+	}
 	batch := append([]UsageItem(nil), c.usageBuf...)
 	c.usageBuf = c.usageBuf[:0]
 	c.usageMu.Unlock()
@@ -414,10 +423,43 @@ func (c *PulseClient) flushUsage(force bool) {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			c.usageMu.Lock()
+			c.usageRetryAfter = time.Time{}
+			c.usageMu.Unlock()
 			return
 		}
 		lastErr = fmt.Errorf("usage HTTP %d", resp.StatusCode)
 		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
 	}
-	log.Printf("[pulse] usage flush dropped %d items after retries: %v (force=%v)", len(batch), lastErr, force)
+	log.Printf("[pulse] usage flush failed (%d items): %v (force=%v); requeue", len(batch), lastErr, force)
+	c.requeueUsage(batch, !force)
+}
+
+// requeueUsage puts a failed batch back at the front of the buffer (oldest first).
+// When withBackoff is true, subsequent non-force flushes wait briefly so an outage
+// does not tight-loop on every EnqueueUsage that hits usageBatchMax.
+func (c *PulseClient) requeueUsage(batch []UsageItem, withBackoff bool) {
+	if len(batch) == 0 {
+		return
+	}
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	c.usageBuf = append(batch, c.usageBuf...)
+	max := c.usageBufMax
+	if max <= 0 {
+		max = defaultUsageBufMax
+	}
+	if len(c.usageBuf) > max {
+		overflow := len(c.usageBuf) - max
+		c.usageBuf = c.usageBuf[:max]
+		log.Printf("[pulse] usage buffer full; dropped %d newest item(s) (cap=%d)", overflow, max)
+	}
+	if withBackoff {
+		// ~1s per retry attempt, floor 2s — next ticker / enqueue can try again.
+		backoff := time.Duration(c.usageMaxRetries) * time.Second
+		if backoff < 2*time.Second {
+			backoff = 2 * time.Second
+		}
+		c.usageRetryAfter = time.Now().Add(backoff)
+	}
 }

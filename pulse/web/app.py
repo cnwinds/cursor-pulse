@@ -364,6 +364,7 @@ def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
     if resolved is None:
         logger.warning("Vue admin SPA not found; /admin will be unavailable")
         return
+    resolved = resolved.resolve()
 
     assets_dir = resolved / "assets"
     if assets_dir.is_dir():
@@ -380,9 +381,9 @@ def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
     @app.get("/admin/{full_path:path}")
     async def admin_spa(full_path: str = "") -> FileResponse:
         # Prefer real files (favicon, etc.); otherwise SPA shell.
-        if full_path and ".." not in full_path.split("/"):
-            candidate = resolved / full_path
-            if candidate.is_file():
+        if full_path:
+            candidate = (resolved / full_path).resolve()
+            if candidate.is_relative_to(resolved) and candidate.is_file():
                 return FileResponse(candidate)
         return FileResponse(index_file)
 

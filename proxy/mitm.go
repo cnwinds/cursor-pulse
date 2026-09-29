@@ -72,6 +72,16 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// sessions == nil skips the check (local -keys / baseline tests).
 	var binding SessionBinding
 	var cliTok string
+	rewriteAuth := !skipAuth
+	if s.sessions != nil && skipAuth && s.sessionTokens != nil {
+		// A minted client token is useless upstream, so /auth/* calls carrying
+		// one get the bound account's JWT. Unbound tokens pass through as-is.
+		tok := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		tok = strings.TrimPrefix(tok, "bearer ")
+		if b, ok := s.sessions.Lookup(tok); ok {
+			cliTok, binding, rewriteAuth = tok, b, true
+		}
+	}
 	if s.sessions != nil && !skipAuth {
 		cliTok = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		cliTok = strings.TrimPrefix(cliTok, "bearer ")
@@ -203,7 +213,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		}
 		copyHeaders(outReq.Header, req.Header)
 		outReq.Header.Del("Accept-Encoding")
-		if !skipAuth {
+		if rewriteAuth {
 			outReq.Header.Set("Authorization", "Bearer "+token)
 		}
 
@@ -412,6 +422,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "cursor key exchange unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		clientTok, expiresAt := s.clientSessionToken(token)
 		if s.sessions != nil {
 			binding := SessionBinding{
 				Mode:                 res.Mode,
@@ -421,6 +432,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				CursorAPIKey:         exchangeKey,
 				WindowLimitReason:    windowLimitReason,
 				AllowedCredentialIDs: res.CredentialIDs,
+				ExpiresAt:            expiresAt,
 			}
 			if res.SeatAdvised {
 				binding.BlockedCredentialIDs = res.BlockedCredentialIDs
@@ -430,11 +442,11 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 					binding.StickySince = time.Now()
 				}
 			}
-			s.sessions.Bind(token, binding)
+			s.sessions.Bind(clientTok, binding)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"accessToken":  token,
+			"accessToken":  clientTok,
 			"refreshToken": "pulse",
 		})
 		log.Printf("[mitm] exchange ok %s loan_id=%s credential=%s", res.Mode, res.LoanID, res.CredentialID)
@@ -457,19 +469,21 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
 			return
 		}
+		clientTok, expiresAt := s.clientSessionToken(token)
 		if s.sessions != nil {
-			s.sessions.Bind(token, SessionBinding{
+			s.sessions.Bind(clientTok, SessionBinding{
 				Mode:                 res.Mode,
 				LoanID:               res.LoanID,
 				PulseKey:             pulseKey,
 				StickyCredentialID:   entry.credentialID,
 				WindowLimitReason:    windowLimitReason,
 				BlockedCredentialIDs: res.BlockedCredentialIDs,
+				ExpiresAt:            expiresAt,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"accessToken":  token,
+			"accessToken":  clientTok,
 			"refreshToken": "pulse",
 		})
 		log.Printf("[mitm] exchange ok loan_pool loan_id=%s credential=%s", res.LoanID, entry.credentialID)
@@ -493,18 +507,20 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
 		return
 	}
+	clientTok, expiresAt := s.clientSessionToken(token)
 	if s.sessions != nil {
-		s.sessions.Bind(token, SessionBinding{
+		s.sessions.Bind(clientTok, SessionBinding{
 			ProxyKeyID:           res.ProxyKeyID,
 			PulseKey:             pulseKey,
 			StickyCredentialID:   entry.credentialID,
 			WindowLimitReason:    windowLimitReason,
 			BlockedCredentialIDs: res.BlockedCredentialIDs,
+			ExpiresAt:            expiresAt,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"accessToken":  token,
+		"accessToken":  clientTok,
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
@@ -522,6 +538,8 @@ func attributesUsageToLoan(b SessionBinding) bool {
 // exchangeConflicts reports whether an existing session JWT cannot be reused
 // for this authorize result. loan_pool borrowers share an empty ProxyKeyID, so
 // identity is the loan id; a pk_ holder and a different loan both conflict.
+// Sessions are keyed by minted client tokens unless PROXY_OPAQUE_SESSION_TOKEN
+// is off, so an upstream JWT only ever collides in that legacy mode.
 func exchangeConflicts(existing SessionBinding, mode, proxyKeyID, loanID string) bool {
 	if existing.ProxyKeyID == "" && existing.LoanID == "" {
 		return false

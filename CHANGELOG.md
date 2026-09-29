@@ -20,6 +20,14 @@
 
 ### 修复
 
+- **代理用量上报失败可补发**：`flushUsage` 重试失败后把批次放回缓冲区（带上限与短暂退避），不再整批丢弃。
+- **代理 OpenAI 网关请求体上限**：`/openai/v1/chat/completions` 与 MITM 共用 `PROXY_MAX_BODY`（默认 32 MiB），超限返回 413。
+- **代理根服务器超时**：`http.Server` 设置 `ReadHeaderTimeout` / `IdleTimeout`，与 MITM 连接一致。
+- **小脉 `reply.send` 投递失败可重试**：HTTP 失败或返回非 `sent`/`skipped` 时抛错，走 job 失败重试，不再静默标 `done`。渠道去重改为「先占坑、失败释放」，避免首次失败后重试被误判为已发送。
+- **长对话不被 90 s 卡死回收误重跑**：job 执行期间每约 30 s 心跳刷新 `updated_at`；`job_processing_timeout_seconds` 仍按距上次心跳计时，崩溃可及时回收。
+- **安全：代理换票不再下发上游 Cursor JWT**：`pka_`/`pk_` 换票原先把 `exchange_user_api_key` 返回的真实 `accessToken` 交给客户端，借用人可直连 Cursor 调 Dashboard（含创建 Key）。现默认签发代理替身 JWT（`PROXY_OPAQUE_SESSION_TOKEN`，设 `off` 可回退），真实 token 仅留在代理内存；MITM 转发业务与 `/auth/*` 时再换成上游 JWT。
+- **安全：`/admin/*` 未登录任意文件读取**：静态路由仅过滤 `..`，`/admin//etc/...` 或 `%2F` 编码的绝对路径可读取服务器任意文件。现解析后校验必须位于 SPA 目录内。升级后建议轮换 JWT 密钥、内部 service token 与 `ASSISTANT_SECRET_KEY`。
+- **安全：设置密钥明文查看收紧**：`GET /api/settings/{section}/reveal/{key}` 由 `settings:read` 改为需 `settings:write`，审计员、运营员不再能查看钉钉/飞书/LLM 等密钥明文；前端无写权限时隐藏查看按钮。
 - **Web 小脉显示旧回复**：`POST /api/chat` 曾固定返回 `poll_after=0`，前端从最早的投递开始轮询，重复显示历史回复并提前停止，新回复看不到。现从本次用户消息之后轮询；无回应超过 5 分钟自动解除「正在想」并提示。
 
 ## [0.5.0] - 2026-09-22

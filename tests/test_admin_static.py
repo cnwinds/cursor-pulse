@@ -80,3 +80,27 @@ def test_admin_routes_serve_packaged_spa(monkeypatch, tmp_path):
     asset = client.get("/admin/assets/app.js")
     assert asset.status_code == 200
     assert "console.log" in asset.text
+
+
+def test_admin_spa_rejects_paths_outside_static_dir(monkeypatch, tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html>admin-shell</html>", encoding="utf-8")
+    (static / "favicon.ico").write_text("icon", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top-secret", encoding="utf-8")
+    monkeypatch.setenv("PULSE_ADMIN_STATIC_DIR", str(static))
+
+    config = AppConfig(
+        web=WebConfig(jwt_secret="jwt-test-secret"),
+        tenant=TenantConfig(slug="test", name="Test"),
+    )
+    client = TestClient(create_app(config, _session_factory(), require_admin_spa=True))
+
+    assert client.get("/admin/favicon.ico").text == "icon"
+    encoded = str(secret).replace("/", "%2F")
+    for path in (f"/admin/{secret}", f"/admin/{encoded}", "/admin/..%2Fsecret.txt"):
+        res = client.get(path)
+        assert res.status_code == 200
+        assert "top-secret" not in res.text
+        assert "admin-shell" in res.text
