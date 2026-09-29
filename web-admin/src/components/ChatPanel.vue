@@ -98,12 +98,12 @@ const WELCOME: ChatMsg = {
   kind: 'final',
 }
 const PENDING_TURN_MAX_AGE_MS = 5 * 60 * 1000
+const REPLY_IDLE_TIMEOUT_MS = 5 * 60 * 1000
 
 const open = ref(false)
 const input = ref('')
 const loading = ref(false)
 const messages = ref<ChatMsg[]>([WELCOME])
-let historyLoaded = false
 
 function toChatMsg(item: DeliveryItem): ChatMsg {
   if (item.kind === 'user') return { role: 'user', text: item.text, createdAt: item.created_at }
@@ -128,6 +128,8 @@ const pollAfter = ref(0)
 const draft = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+let lastActivityAt = 0
+let historyTask: Promise<void> | null = null
 
 async function scrollBottom() {
   await nextTick()
@@ -165,7 +167,12 @@ async function pollMessages() {
       }
     }
     if (items.length || draft.value !== prevDraft) {
+      lastActivityAt = Date.now()
       await scrollBottom()
+    } else if (pollTimer && Date.now() - lastActivityAt > REPLY_IDLE_TIMEOUT_MS) {
+      loading.value = false
+      stopPolling()
+      ElMessage.warning('小脉暂时没有回应，请稍后再试')
     }
   } catch {
     /* keep polling until final or timeout */
@@ -177,6 +184,7 @@ async function pollMessages() {
 function startPolling(fromId = 0) {
   stopPolling()
   pollAfter.value = fromId
+  lastActivityAt = Date.now()
   pollTimer = setInterval(pollMessages, 400)
   void pollMessages()
 }
@@ -184,9 +192,8 @@ function startPolling(fromId = 0) {
 async function loadHistory() {
   try {
     const { data } = await client.get('/api/chat/history')
-    historyLoaded = true
     const items: DeliveryItem[] = data.items || []
-    messages.value = [WELCOME, ...items.map(toChatMsg), ...messages.value.slice(1)]
+    messages.value = [WELCOME, ...items.map(toChatMsg)]
     const last = items[items.length - 1]
     const turnPending =
       (data.streams || []).length > 0 ||
@@ -199,12 +206,12 @@ async function loadHistory() {
     }
     await scrollBottom()
   } catch {
-    /* keep the welcome message; retry on next open */
+    historyTask = null
   }
 }
 
 watch(open, (visible) => {
-  if (visible && !historyLoaded) void loadHistory()
+  if (visible && !historyTask) historyTask = loadHistory()
 })
 
 onUnmounted(stopPolling)
@@ -212,6 +219,8 @@ onUnmounted(stopPolling)
 async function send() {
   const text = input.value.trim()
   if (!text || loading.value) return
+  if (historyTask) await historyTask
+  if (loading.value) return
   messages.value.push({ role: 'user', text, createdAt: new Date().toISOString() })
   input.value = ''
   loading.value = true

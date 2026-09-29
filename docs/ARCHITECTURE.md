@@ -70,12 +70,14 @@ Cursor Pulse 是**自托管 monorepo**：Cursor 控制面 + 可选 IM + 可选 A
 
 - `/api/auth/providers` — 可用登录方式（password / dingtalk_oauth / feishu_oauth）
 - `/api/auth/*`、`/api/v2/*`（账号、凭证、额度、借贷、Proxy Key、Assistant 代理等）
+- `/api/chat`（发送给小脉）、`/api/chat/messages?after=`（轮询回复与流式草稿）、`/api/chat/history`（刷新后恢复历史）
 - `/health`
 
 **内部（service token；未配置应失败关闭）**
 
 - `/api/internal/v1/capabilities/*`
 - `/api/internal/v1/channel/reply`
+- `/api/internal/v1/channel/stream`（Web 回复草稿；正式回复带 `stream_id` 时同事务移除草稿）
 - `/api/internal/v1/proxy/{authorize,pool,usage,events}`
 
 **内部 token 变量名（同一密钥值）：**
