@@ -202,7 +202,7 @@ class LoanSelectionConfig(BaseModel):
     proxy_weight_surplus: float = Field(default=0.17, ge=0)
     proxy_weight_freshness: float = Field(default=0.03, ge=0)
     # 驻留：账号刚绑定/刚切走时降权，避免借用人在账号间抖动
-    min_switch_minutes: float = Field(default=30.0, ge=0)
+    min_switch_minutes: float = Field(default=20.0, ge=0)
     recency_penalty: float = Field(default=0.25, ge=0)
     # 主负责人保留量（账号级 proxy_reserve_pct 优先）；0 = 不保留
     owner_reserve_pct: float = Field(default=0.0, ge=0, le=100)

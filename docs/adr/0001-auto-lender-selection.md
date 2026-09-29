@@ -32,7 +32,7 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
    早期实现是「定时任务 + `reassign_loan_source`」，每次换号都要在 Cursor 侧新建一把 Key 并吊销旧 Key，且粒度只能是分钟级，做不到「使用过程中灵活更换」。该路径已退休（`reevaluate_auto_loans` 与 `auto_lender_reevaluate` 作业移除）；`reassign_loan_source` 保留为管理员手动改绑。
 
 7. **Switch dwell 分两层，作用不同。**
-   评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickySince` + `stickyMinDwell` 保证同一会话在窗口内不因桶耗尽换账号。自动分配借用真正生效的是后者。
+   评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickyLastActive` + `stickyMinDwell` 按**两次请求间隔**保证密集聊天不因桶耗尽换账号。自动分配借用真正生效的是后者。
 
 8. **管理员「自动分配」改为账号池路由（`routing_mode=pool`）。**
    发放的 pka_ 不选定起始账号，也不新建 Cursor Key。授权返回 `mode=loan_pool`，Go 与历史 `pk_` 共用同一 Credential Pool（入池账号、打分表、sticky）。指定账号仍是固定借用。自助借 Key 仍走上面的候选白名单，不改成整池。`pk_` 发放留在「账号池 → 历史接入密钥」；新成员走借用记录的自动分配。入池开关和打分表保留。

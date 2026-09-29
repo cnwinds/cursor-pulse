@@ -166,7 +166,7 @@
       <p class="endpoint-desc">
         Coding Plan 网关与 Cursor 借用同 Go 代理、路径为 <code>/openai/v1</code>（来自系统设置 → 代理地址）。
         客户端填下表 <code>base_url</code> 与签发的 <code>pkcp_</code>，按网络选「公司 / 外网」等即可。
-        同一密钥在 dwell 内（默认 30 分钟，见选号规则）固定后端账号，超时按额度与并发均衡，429 自动换号。
+        同一密钥在 dwell 内（默认 20 分钟，见选号规则）固定后端账号，超时按额度与并发均衡，429 自动换号。
       </p>
       <el-alert
         v-if="!openaiEndpoints.length"

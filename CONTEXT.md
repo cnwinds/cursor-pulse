@@ -85,7 +85,7 @@ Per-account percentage (`proxy_reserve_pct`, default from `loan_selection.owner_
 _Avoid_: Confusing with Snapshot Headroom (headroom is live state; reserve is a policy floor)
 
 **Switch Dwell**:
-Minimum time (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) a credential stays bound before quota pressure may rotate it. `SessionBinding.StickySince` is the clock; within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
+Minimum idle gap (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) between two proxy requests before quota pressure may rotate the sticky credential. While requests arrive within that window (dense chat), the proxy keeps the same account so upstream prompt cache stays warm. Go uses `SessionBinding.StickyLastActive`; Coding Plan OpenAI stickiness uses `CpOpenAiStickyBinding.updated_at`. `StickySince` / `sticky_since` record when the credential was bound, not the dwell clock. Within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
 _Avoid_: Treating it as a hard lock (exhaustion and auth failure still rotate)
 
 **Concurrent Seat**:

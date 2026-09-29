@@ -47,7 +47,7 @@ def test_settings_exposes_loan_selection(settings_client):
     sel = res.json()["tool_center"]["loan_selection"]
     assert sel["max_concurrent_users"] == 3
     assert sel["concurrent_ttl_seconds"] == 180
-    assert sel["min_switch_minutes"] == 30
+    assert sel["min_switch_minutes"] == 20
 
 
 def test_patch_loan_selection_updates_effective_config(settings_client):
@@ -61,7 +61,7 @@ def test_patch_loan_selection_updates_effective_config(settings_client):
     body = res.json()["tool_center"]["loan_selection"]
     assert body["max_concurrent_users"] == 5
     assert body["owner_reserve_pct"] == 20
-    assert body["min_switch_minutes"] == 30
+    assert body["min_switch_minutes"] == 20
 
     session = sf()
     sel = effective_loan_selection(session, config, team_id)

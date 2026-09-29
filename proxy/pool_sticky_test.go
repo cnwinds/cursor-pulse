@@ -288,10 +288,12 @@ func TestStickyDwellHoldsOnBucketExhaustion(t *testing.T) {
 func TestStickyDwellExpiredRotates(t *testing.T) {
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	idle := time.Now().Add(-31 * time.Minute)
 	binding := SessionBinding{
 		ProxyKeyID:         "pk1",
 		StickyCredentialID: "c1",
-		StickySince:        time.Now().Add(-31 * time.Minute),
+		StickySince:        idle,
+		StickyLastActive:   idle,
 	}
 
 	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
@@ -332,14 +334,16 @@ func TestStickyDwellDoesNotBlockAuthCooldownRotation(t *testing.T) {
 }
 
 func TestStickyDwellNotRefreshedOnReuse(t *testing.T) {
-	// 驻留窗口从「上次切换」起算；同一账号续用不能刷新它
+	// StickySince 只在换号时刷新；续用只刷新 StickyLastActive
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
 	since := time.Now().Add(-10 * time.Minute)
+	lastActive := time.Now().Add(-2 * time.Minute)
 	binding := SessionBinding{
 		ProxyKeyID:         "pk1",
 		StickyCredentialID: "c1",
 		StickySince:        since,
+		StickyLastActive:   lastActive,
 	}
 	sessions.Bind("jwt1", binding)
 
@@ -349,6 +353,27 @@ func TestStickyDwellNotRefreshedOnReuse(t *testing.T) {
 	}
 	if !binding.StickySince.Equal(since) {
 		t.Fatalf("reuse must not refresh StickySince: %v -> %v", since, binding.StickySince)
+	}
+	if binding.StickyLastActive.Before(lastActive) {
+		t.Fatalf("reuse should refresh StickyLastActive")
+	}
+}
+
+func TestStickyDwellHoldsWhenBoundLongButRecentlyActive(t *testing.T) {
+	// 绑定很久但仍在密集聊天：距上次请求间隔短，不应因桶耗尽换号
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID:         "pk1",
+		StickyCredentialID: "c1",
+		StickySince:        time.Now().Add(-2 * time.Hour),
+		StickyLastActive:   time.Now().Add(-1 * time.Minute),
+	}
+	sessions.Bind("jwt1", binding)
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c1" {
+		t.Fatalf("recent activity should hold c1 within dwell: err=%v entry=%v", err, entry)
 	}
 }
 

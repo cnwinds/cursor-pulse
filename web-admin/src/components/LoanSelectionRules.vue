@@ -78,7 +78,7 @@
               <span class="field-label">
                 最短切换
                 <Tip
-                  text="绑定后这段时间内降权，避免来回跳号。代理进程内的强制停留由 PROXY_STICKY_MIN_DWELL 控制。登录失败或额度桶耗尽仍会换。"
+                  text="两次请求间隔小于该值时降权/驻留，避免密集聊天中途换号导致 cache 失效。代理侧由 PROXY_STICKY_MIN_DWELL 控制。登录失败或额度桶耗尽仍会换。"
                 />
               </span>
               <el-input-number
@@ -215,7 +215,7 @@ const saving = ref(false)
 const draft = reactive({
   max_concurrent_users: 3,
   concurrent_ttl_seconds: 180,
-  min_switch_minutes: 30,
+  min_switch_minutes: 20,
   max_active_loans_per_account: 2,
   min_coverage_hours: 1,
   owner_reserve_pct: 0,
@@ -252,7 +252,7 @@ function readSelection(raw: Record<string, unknown> | undefined) {
   const src = raw || {}
   draft.max_concurrent_users = Number(src.max_concurrent_users ?? 3)
   draft.concurrent_ttl_seconds = Number(src.concurrent_ttl_seconds ?? 180)
-  draft.min_switch_minutes = Number(src.min_switch_minutes ?? 30)
+  draft.min_switch_minutes = Number(src.min_switch_minutes ?? 20)
   draft.max_active_loans_per_account = Number(src.max_active_loans_per_account ?? 2)
   draft.min_coverage_hours = Number(src.min_coverage_hours ?? 1)
   draft.owner_reserve_pct = Number(src.owner_reserve_pct ?? 0)

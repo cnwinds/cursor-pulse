@@ -47,13 +47,32 @@ func (s *StickySelect) SetAdvisor(fn SeatAdvisor) {
 	s.advisor = fn
 }
 
-// dwellActive reports whether binding was refreshed inside the dwell window.
-// A zero StickySince is legacy state (pre-dwell) and never blocks rotation.
+// dwellActive reports whether the session is still "active" for Switch dwell:
+// the idle gap since the last successful Select is inside minDwell. Legacy
+// bindings may only have StickySince (time of last switch); that is used as a
+// fallback until StickyLastActive is populated.
 func (s *StickySelect) dwellActive(binding *SessionBinding, now time.Time) bool {
-	if s.minDwell <= 0 || binding.StickySince.IsZero() {
+	if s.minDwell <= 0 {
 		return false
 	}
-	return now.Sub(binding.StickySince) < s.minDwell
+	ref := binding.StickyLastActive
+	if ref.IsZero() {
+		ref = binding.StickySince
+	}
+	if ref.IsZero() {
+		return false
+	}
+	return now.Sub(ref) < s.minDwell
+}
+
+func (s *StickySelect) touchActive(sessionJWT string, binding *SessionBinding, now time.Time) {
+	if binding == nil {
+		return
+	}
+	binding.StickyLastActive = now
+	if sessionJWT != "" {
+		s.sessions.Bind(sessionJWT, *binding)
+	}
 }
 
 // bindSticky records a sticky binding, refreshing StickySince only when the
@@ -63,6 +82,7 @@ func (s *StickySelect) bindSticky(sessionJWT string, binding *SessionBinding, cr
 		binding.StickySince = now
 	}
 	binding.StickyCredentialID = credentialID
+	binding.StickyLastActive = now
 	if sessionJWT != "" {
 		s.sessions.Bind(sessionJWT, *binding)
 	}
@@ -87,15 +107,12 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 		if entry != nil && !entry.authCooling(now) && entry.availableFor(pool) {
 			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
 			if err == nil {
-				// Dwell measures time since the last switch, so a plain reuse
-				// must not refresh StickySince (that would freeze the window and
-				// block rotation forever). Only backfill legacy zero state.
+				// StickySince is bind time only; dwell uses StickyLastActive
+				// (refreshed below). Only backfill legacy zero StickySince.
 				if binding.StickySince.IsZero() {
 					binding.StickySince = now
-					if sessionJWT != "" {
-						s.sessions.Bind(sessionJWT, *binding)
-					}
 				}
+				s.touchActive(sessionJWT, binding, now)
 				return got, tok, nil
 			}
 			// Transient exchange errors must not rotate sticky (align with tokenSkipping).
@@ -116,6 +133,7 @@ func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *S
 				log.Printf("[pool] sticky credential %s lacks %s quota (auto_pct=%s api_pct=%s) — holding within dwell",
 					stickyID, pool, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
 				if got, tok, err := s.pool.tokenForCredential(ctx, stickyID); err == nil {
+					s.touchActive(sessionJWT, binding, now)
 					return got, tok, nil
 				}
 			}

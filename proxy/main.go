@@ -193,11 +193,11 @@ const defaultSessionTTL = 120 * time.Second
 
 // defaultStickyMinDwell is the Switch dwell default: a CLI session keeps its
 // sticky credential for at least this long before quota pressure may rotate it.
-const defaultStickyMinDwell = 30 * time.Minute
+const defaultStickyMinDwell = 20 * time.Minute
 
 // stickyMinDwellUsage is the flag/env help text for Switch dwell.
 const stickyMinDwellUsage = "min time a CLI session keeps its sticky credential " +
-	"(default 30m; env PROXY_STICKY_MIN_DWELL, 0/off disables)"
+	"(default 20m; env PROXY_STICKY_MIN_DWELL, 0/off disables)"
 
 func resolveStickyMinDwell(flagVal time.Duration) time.Duration {
 	if flagVal > 0 {
