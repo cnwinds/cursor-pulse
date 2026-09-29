@@ -115,13 +115,11 @@ func TestLoanPassthroughExchangeEmptyPool(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.AccessToken != "jwt-loan" {
-		t.Fatalf("accessToken=%q want jwt-loan", out.AccessToken)
-	}
+	assertMintedSessionToken(t, out.AccessToken, "jwt-loan")
 	if upstreamAuth != "Bearer "+loanKey {
 		t.Fatalf("upstream Authorization=%q want Bearer %s", upstreamAuth, loanKey)
 	}
-	b, ok := sessions.Lookup("jwt-loan")
+	b, ok := sessions.Lookup(out.AccessToken)
 	if !ok {
 		t.Fatal("session not bound")
 	}
@@ -256,9 +254,7 @@ func TestLoanPassthroughMITMUsage(t *testing.T) {
 	if err := json.NewDecoder(exResp.Body).Decode(&exOut); err != nil {
 		t.Fatal(err)
 	}
-	if exOut.AccessToken != "jwt-loan" {
-		t.Fatalf("accessToken=%q want jwt-loan", exOut.AccessToken)
-	}
+	assertMintedSessionToken(t, exOut.AccessToken, "jwt-loan")
 
 	modelProto := msgField(1, []byte("claude-4-sonnet"))
 	runBody := make([]byte, 5+len(modelProto))
@@ -578,10 +574,8 @@ func loanAliasHarness(t *testing.T, extra map[string]any) (SessionBinding, strin
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.AccessToken != "jwt-alias" {
-		t.Fatalf("accessToken=%q want jwt-alias", out.AccessToken)
-	}
-	b, ok := sessions.Lookup("jwt-alias")
+	assertMintedSessionToken(t, out.AccessToken, "jwt-alias")
+	b, ok := sessions.Lookup(out.AccessToken)
 	if !ok {
 		t.Fatal("session not bound")
 	}

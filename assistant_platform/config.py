@@ -84,7 +84,8 @@ class AssistantLlmConfig(BaseModel):
     # summarization cannot block live turns.
     job_bg_worker_count: int = 1
     # Reclaim jobs stuck in ``processing`` after a worker crash / lock failure.
-    # Keep short so interactive chats recover within ~1–2 minutes.
+    # Compared against last heartbeat (workers touch ``updated_at`` every ~30s),
+    # so long healthy turns are not requeued; keep short for crash recovery.
     job_processing_timeout_seconds: int = 90
 
 

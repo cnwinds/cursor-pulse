@@ -40,6 +40,9 @@ type SessionBinding struct {
 	// surface a clear resource_exhausted limit error instead of "invalid API key".
 	WindowLimitReason string
 	BoundAt           time.Time
+	// ExpiresAt is the exp of the proxy-minted client token; Prune drops the
+	// binding after sessionPruneGrace. Zero never expires.
+	ExpiresAt time.Time
 }
 
 type SessionMap struct {
@@ -71,6 +74,21 @@ func (m *SessionMap) Delete(jwt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.byJWT, jwt)
+}
+
+// Prune drops bindings whose ExpiresAt is more than sessionPruneGrace before
+// now and returns how many were removed.
+func (m *SessionMap) Prune(now time.Time) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	removed := 0
+	for jwt, b := range m.byJWT {
+		if !b.ExpiresAt.IsZero() && now.After(b.ExpiresAt.Add(sessionPruneGrace)) {
+			delete(m.byJWT, jwt)
+			removed++
+		}
+	}
+	return removed
 }
 
 // allowedSet returns AllowedCredentialIDs as a lookup set, or nil when the

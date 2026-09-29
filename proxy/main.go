@@ -138,6 +138,13 @@ Point agent at this proxy and trust the CA (PowerShell):
 		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
 		srv.sticky = NewStickySelectWithDwell(pool, sessions, resolveStickyMinDwell(*stickyMinDwell))
 		srv.useSeatAdvisor()
+		if sessionTokensEnabled() {
+			log.Printf("exchange issues proxy-minted session tokens (PROXY_OPAQUE_SESSION_TOKEN)")
+		} else {
+			srv.sessionTokens = nil
+			log.Printf("WARNING: PROXY_OPAQUE_SESSION_TOKEN=off - exchange returns upstream Cursor JWTs to clients")
+		}
+		go pruneSessions(sessions, 10*time.Minute)
 	}
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))
@@ -151,7 +158,13 @@ Point agent at this proxy and trust the CA (PowerShell):
 	}
 	log.Printf("cursor upstream: %s", redactUpstreamProxy(upstreamRaw))
 
-	log.Fatal(http.ListenAndServe(cfg.Listen, srv))
+	httpSrv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           srv,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		IdleTimeout:       defaultIdleTimeout,
+	}
+	log.Fatal(httpSrv.ListenAndServe())
 }
 
 func pollExhaustedReset(pool *Pool, every time.Duration) {
@@ -160,6 +173,16 @@ func pollExhaustedReset(pool *Pool, every time.Duration) {
 	for range tick.C {
 		// Only runtime Quota Pool marks — auth cooldowns keep their own TTL.
 		pool.resetQuotaMarks()
+	}
+}
+
+func pruneSessions(sessions *SessionMap, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for range tick.C {
+		if n := sessions.Prune(time.Now()); n > 0 {
+			log.Printf("[session] pruned %d expired session(s)", n)
+		}
 	}
 }
 

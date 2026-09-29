@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -28,8 +29,14 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key provided")
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	limited := http.MaxBytesReader(w, r.Body, maxNonStreamBodyLimit())
+	body, err := io.ReadAll(limited)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "Request body too large")
+			return
+		}
 		writeOpenAIError(w, http.StatusBadRequest, "Invalid body")
 		return
 	}

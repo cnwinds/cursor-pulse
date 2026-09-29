@@ -261,6 +261,7 @@ func TestBusinessUnknownJWTUnauthorized(t *testing.T) {
 // TestExchangeCollisionRotatesToOtherCredential ensures that when a pool
 // credential returns a JWT already bound to a different ProxyKeyID, exchange
 // skips that credential and mints from another pool key instead of failing.
+// Collisions only exist with PROXY_OPAQUE_SESSION_TOKEN off.
 func TestExchangeCollisionRotatesToOtherCredential(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +293,7 @@ func TestExchangeCollisionRotatesToOtherCredential(t *testing.T) {
 	}
 	sessions := NewSessionMap()
 	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
+	s.sessionTokens = nil
 	s.shouldMITM = func(string) bool { return true }
 	permitTestConnect(s)
 	s.transport = &http.Transport{

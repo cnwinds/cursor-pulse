@@ -220,6 +220,72 @@ func TestPulseClientUsageBatchFlush(t *testing.T) {
 	}
 }
 
+func TestPulseClientUsageFlushRequeuesOnFailure(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	c := NewPulseClient(srv.URL, "tok", time.Minute)
+	c.usageMaxRetries = 2
+	c.usageBatchMax = 10
+	c.usageBufMax = 100
+	c.EnqueueUsage(UsageItem{ProxyKeyID: "pk1", Tokens: TokenCounts{Input: 1}})
+	c.EnqueueUsage(UsageItem{ProxyKeyID: "pk1", Tokens: TokenCounts{Input: 2}})
+	c.flushUsage(false)
+
+	if posts.Load() < 2 {
+		t.Fatalf("expected retries, got %d posts", posts.Load())
+	}
+	c.usageMu.Lock()
+	n := len(c.usageBuf)
+	backoff := c.usageRetryAfter
+	c.usageMu.Unlock()
+	if n != 2 {
+		t.Fatalf("expected 2 items requeued, got %d", n)
+	}
+	if backoff.IsZero() || !time.Now().Before(backoff) {
+		t.Fatalf("expected usageRetryAfter in the future, got %v", backoff)
+	}
+
+	// Backoff should skip a non-force flush without draining the buffer.
+	before := posts.Load()
+	c.flushUsage(false)
+	if posts.Load() != before {
+		t.Fatalf("backoff flush should not POST; before=%d after=%d", before, posts.Load())
+	}
+
+	// Force flush ignores backoff and still requeues on failure (shutdown path).
+	c.flushUsage(true)
+	c.usageMu.Lock()
+	n = len(c.usageBuf)
+	c.usageMu.Unlock()
+	if n != 2 {
+		t.Fatalf("force flush failure should still requeue; got %d", n)
+	}
+}
+
+func TestPulseClientUsageRequeueRespectsBufMax(t *testing.T) {
+	c := NewPulseClient("http://127.0.0.1:1", "tok", time.Minute)
+	c.usageBufMax = 3
+	c.requeueUsage([]UsageItem{
+		{ProxyKeyID: "a", Tokens: TokenCounts{Input: 1}},
+		{ProxyKeyID: "b", Tokens: TokenCounts{Input: 2}},
+		{ProxyKeyID: "c", Tokens: TokenCounts{Input: 3}},
+		{ProxyKeyID: "d", Tokens: TokenCounts{Input: 4}},
+	}, false)
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	if len(c.usageBuf) != 3 {
+		t.Fatalf("len=%d want 3", len(c.usageBuf))
+	}
+	if c.usageBuf[0].ProxyKeyID != "a" || c.usageBuf[2].ProxyKeyID != "c" {
+		t.Fatalf("should keep oldest, got %+v", c.usageBuf)
+	}
+}
+
 func TestPulseClientStartStopLifecycle(t *testing.T) {
 	var bodies atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

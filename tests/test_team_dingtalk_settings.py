@@ -96,6 +96,29 @@ def test_reveal_dingtalk_app_secret(dingtalk_settings_client):
     assert bad.status_code == 404
 
 
+@pytest.mark.parametrize("role", ["auditor", "operator"])
+def test_reveal_secret_requires_settings_write(dingtalk_settings_client, role):
+    client, config, owner, _team_id, sf = dingtalk_settings_client
+    owner_headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+    client.patch(
+        "/api/settings/dingtalk",
+        headers=owner_headers,
+        json={"data": {"app_key": "ding-key", "app_secret": "ding-secret-value"}},
+    )
+    s = sf()
+    _team, repo = make_team_repo(s)
+    member = repo.add_member(f"{role}-1", role)
+    member.portal_role = role
+    member.portal_status = "active"
+    repo.commit()
+    s.close()
+
+    headers = {"Authorization": f"Bearer {create_access_token(config, member)}"}
+    assert client.get("/api/settings", headers=headers).status_code == 200
+    res = client.get("/api/settings/dingtalk/reveal/app_secret", headers=headers)
+    assert res.status_code == 403
+
+
 def test_apply_team_dingtalk_overrides_merges_db(dingtalk_settings_client):
     _client, config, owner, team_id, sf = dingtalk_settings_client
     session = sf()

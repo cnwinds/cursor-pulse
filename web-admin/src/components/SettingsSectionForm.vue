@@ -76,7 +76,7 @@
             :disabled="field.readonly"
             class="secret-input"
           >
-            <template v-if="!field.readonly" #suffix>
+            <template v-if="!field.readonly && canWrite" #suffix>
               <el-icon
                 class="secret-eye"
                 :class="{ 'is-loading': secretLoading[field.key] }"

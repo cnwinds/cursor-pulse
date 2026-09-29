@@ -126,9 +126,9 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 | 限制 | 默认 | 环境变量 |
 |---|---|---|
-| 非流式请求体 | 32 MiB | `PROXY_MAX_BODY`（字节数） |
+| 非流式请求体 | 32 MiB | `PROXY_MAX_BODY`（字节数；MITM 与 `/openai/v1/chat/completions` 共用） |
 | 流式 usage tap 缓冲 | 8 MiB | —（超限后停止解析，仍转发） |
-| 每连接读头超时 | 30s | — |
+| 每连接读头超时 | 30s | —（根 `http.Server` 与 MITM 连接均设置） |
 | 每连接空闲超时 | 120s | — |
 | 池 exhausted 周期清零 | 30m | `PROXY_EXHAUSTED_RESET`（`0`/`off`/`false` 关闭） |
 | sticky 最小驻留 | 20m | `PROXY_STICKY_MIN_DWELL`（`0`/`off`/`false` 关闭） |
