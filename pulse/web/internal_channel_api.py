@@ -23,6 +23,15 @@ class ChannelReplyBody(BaseModel):
     session_id: str | None = None
     message_id: str | None = None
     kind: str = "final"
+    stream_id: str | None = None
+
+
+class ChannelStreamBody(BaseModel):
+    reply_endpoint: dict[str, Any] = Field(default_factory=dict)
+    stream_id: str = Field(min_length=1, max_length=64)
+    session_id: str | None = None
+    text: str = ""
+    done: bool = False
 
 
 _recent_channel_deliveries: dict[str, float] = {}
@@ -92,6 +101,7 @@ def deliver_channel_reply(
     assistant_session_id: str | None = None,
     assistant_message_id: str | None = None,
     kind: str = "final",
+    stream_id: str | None = None,
 ) -> dict[str, str]:
     dedupe_key = _dedupe_key(
         message_id=assistant_message_id,
@@ -100,14 +110,18 @@ def deliver_channel_reply(
     )
     channel = str(reply_endpoint.get("channel", "") or "")
     if channel == "web":
+        from pulse.web.portal_chat import close_portal_chat_stream, store_portal_chat_delivery
+
         if _already_delivered(dedupe_key):
+            if stream_id and session is not None:
+                close_portal_chat_stream(session, stream_id)
             return {"status": "sent", "reason": "deduplicated"}
         member_id = str(reply_endpoint.get("member_id", "")).strip()
         if not member_id or session is None or not team_id:
             return {"status": "queued", "reason": "missing_web_context"}
         try:
-            from pulse.web.portal_chat import store_portal_chat_delivery
-
+            if stream_id:
+                close_portal_chat_stream(session, stream_id)
             store_portal_chat_delivery(
                 session,
                 team_id=team_id,
@@ -233,6 +247,7 @@ def register_internal_channel_routes(app, config: AppConfig, get_db, team_repo_f
             assistant_session_id=body.session_id,
             assistant_message_id=body.message_id,
             kind=body.kind,
+            stream_id=body.stream_id,
         )
         if result.get("status") != "sent":
             logger.warning(
@@ -244,3 +259,30 @@ def register_internal_channel_routes(app, config: AppConfig, get_db, team_repo_f
         else:
             session.commit()
         return result
+
+    @app.post(
+        "/api/internal/v1/channel/stream",
+        dependencies=[Depends(require_internal_service)],
+    )
+    def internal_channel_stream(body: ChannelStreamBody, session: Session = Depends(get_db)):
+        from pulse.web.portal_chat import close_portal_chat_stream, upsert_portal_chat_stream
+
+        if str(body.reply_endpoint.get("channel", "") or "") != "web":
+            return {"status": "noop", "reason": "unsupported_channel"}
+        member_id = str(body.reply_endpoint.get("member_id", "")).strip()
+        if not member_id:
+            return {"status": "noop", "reason": "missing_member_id"}
+        team, _repo = team_repo_fn(session)
+        if body.done:
+            close_portal_chat_stream(session, body.stream_id)
+        else:
+            upsert_portal_chat_stream(
+                session,
+                team_id=team.id,
+                member_id=member_id,
+                stream_id=body.stream_id,
+                text=body.text,
+                assistant_session_id=body.session_id,
+            )
+        session.commit()
+        return {"status": "ok"}

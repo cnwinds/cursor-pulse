@@ -59,6 +59,19 @@ class SupportsCompleteWithTools(Protocol):
     def complete_with_tools(self, *, messages: list[dict], tools: list[dict], temperature: float = 0.1) -> dict: ...
 
 
+class ReplyStreamSink(Protocol):
+    """Live draft of the current LLM round's visible content.
+
+    ``update`` receives the accumulated text. The draft of the round that ends the
+    run is left open for the caller to commit with the final reply; drafts of
+    other rounds are ``discard``-ed (no-op if already committed as an interim).
+    """
+
+    def update(self, text: str) -> None: ...
+
+    def discard(self) -> None: ...
+
+
 class AgentUnavailable(Exception):
     pass
 
@@ -108,8 +121,19 @@ class AgentRuntime:
         inbox: TurnInbox | None = None,
         on_interim_reply: InterimReplyCallback | None = None,
         on_agent_trace: AgentTraceCallback | None = None,
+        stream_sink: ReplyStreamSink | None = None,
     ) -> str:
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        llm_kwargs: dict[str, Any] = {"on_content_delta": stream_sink.update} if stream_sink is not None else {}
+
+        def discard_draft() -> None:
+            if stream_sink is None:
+                return
+            try:
+                stream_sink.discard()
+            except Exception:
+                logger.exception("stream sink discard failed subject=%s", self._subject_id)
+
         messages.extend(history)
         messages.append({"role": "user", "content": user_text})
         interim_count = 0
@@ -151,9 +175,10 @@ class AgentRuntime:
                 int((llm_t0 - run_t0) * 1000),
             )
             try:
-                resp = self._llm.complete_with_tools(messages=messages, tools=self._tools)
+                resp = self._llm.complete_with_tools(messages=messages, tools=self._tools, **llm_kwargs)
             except Exception as exc:
                 logger.exception("agent llm call failed subject=%s", self._subject_id)
+                discard_draft()
                 raise AgentUnavailable(_UNAVAILABLE) from exc
             logger.info(
                 "reply.timing stage=llm_round_done subject_id=%s round=%d elapsed_ms=%d has_content=%s tool_calls=%d",
@@ -176,6 +201,7 @@ class AgentRuntime:
                 ):
                     ack_nudge_used = True
                     delivered = maybe_emit_interim(content)
+                    discard_draft()
                     emit_trace(
                         {
                             "type": "thinking",
@@ -202,6 +228,7 @@ class AgentRuntime:
             delivered = False
             if content:
                 delivered = maybe_emit_interim(content)
+            discard_draft()
             if thinking_text:
                 emit_trace(
                     {

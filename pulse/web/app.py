@@ -200,6 +200,18 @@ def create_app(
                 status_code=503,
                 detail="Assistant 未启用，请配置 ASSISTANT_MIRROR_ENABLED=true",
             )
+        from pulse.web.portal_chat import store_portal_chat_delivery
+
+        # Committed before the mirror call so no DB write lock is held during HTTP.
+        user_row = store_portal_chat_delivery(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            text=message,
+            kind="user",
+        )
+        session.commit()
+        poll_after = user_row.id
         try:
             from pulse.channels.dingtalk.mirror import mirror_web_message
 
@@ -214,11 +226,13 @@ def create_app(
             )
         except Exception:
             logger.exception("Assistant web mirror failed")
+            session.delete(user_row)
+            session.commit()
             raise HTTPException(status_code=502, detail="转发 Assistant 失败")
         return {
             "status": "accepted",
             "session_id": mirror_result.get("session_id"),
-            "poll_after": 0,
+            "poll_after": poll_after,
             "reply": "已记录，小脉处理中，请稍候。",
             "actions": [],
         }
@@ -230,7 +244,12 @@ def create_app(
         user: PortalUser = Depends(_require_user),
     ):
         team, _repo = _team_repo(session)
-        from pulse.web.portal_chat import delivery_to_json, list_portal_chat_deliveries
+        from pulse.web.portal_chat import (
+            delivery_to_json,
+            list_active_portal_chat_streams,
+            list_portal_chat_deliveries,
+            stream_to_json,
+        )
 
         rows = list_portal_chat_deliveries(
             session,
@@ -238,7 +257,33 @@ def create_app(
             member_id=user.member.id,
             after_id=after,
         )
-        return {"items": [delivery_to_json(row) for row in rows]}
+        streams = list_active_portal_chat_streams(session, team_id=team.id, member_id=user.member.id)
+        return {
+            "items": [delivery_to_json(row) for row in rows],
+            "streams": [stream_to_json(row) for row in streams],
+        }
+
+    @app.get("/api/chat/history")
+    def chat_history(
+        limit: int = Query(50, ge=1, le=200),
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(_require_user),
+    ):
+        team, _repo = _team_repo(session)
+        from pulse.web.portal_chat import (
+            delivery_to_json,
+            list_active_portal_chat_streams,
+            list_recent_portal_chat_deliveries,
+            stream_to_json,
+        )
+
+        rows = list_recent_portal_chat_deliveries(session, team_id=team.id, member_id=user.member.id, limit=limit)
+        streams = list_active_portal_chat_streams(session, team_id=team.id, member_id=user.member.id)
+        return {
+            "items": [delivery_to_json(row) for row in rows],
+            "streams": [stream_to_json(row) for row in streams],
+            "last_id": rows[-1].id if rows else 0,
+        }
 
     @app.get("/api/audit-logs", dependencies=[Depends(require_capability("audit:read"))])
     def audit_logs(session: Session = Depends(get_db), limit: int = Query(100, le=500)):

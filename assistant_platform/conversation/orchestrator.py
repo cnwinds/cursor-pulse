@@ -12,7 +12,7 @@ from assistant_platform.capabilities.pulse_client import PulseCapabilityClient
 from assistant_platform.capabilities.resolve import resolve_capabilities
 from assistant_platform.config import AssistantConfig, resolve_effective_chat_memory, resolve_effective_llm
 from assistant_platform.conversation.agent_policy import build_agent_system
-from assistant_platform.conversation.agent_runtime import AgentRuntime, AgentUnavailable
+from assistant_platform.conversation.agent_runtime import AgentRuntime, AgentUnavailable, ReplyStreamSink
 from assistant_platform.conversation.agent_tools import (
     TOOL_EXCLUSIONS,
     tool_name_for_capability,
@@ -30,6 +30,7 @@ from assistant_platform.conversation.turn_inbox import (
 )
 from assistant_platform.evolution.clustering import cluster_low_score_reviews
 from assistant_platform.integrations.channel_reply import send_channel_reply
+from assistant_platform.integrations.reply_stream import WebReplyStream
 from assistant_platform.llm import build_assistant_llm_client
 from assistant_platform.memory.agent_tools import MemoryToolService
 from assistant_platform.memory.archive_pipeline import run_archive_pipeline, should_run_archive_pipeline
@@ -118,6 +119,7 @@ def _persist_and_queue_reply(
     text: str,
     kind: str,
     trigger_message_id: str | None = None,
+    stream_id: str | None = None,
 ) -> ChatMessageRow:
     meta: dict[str, Any] = {"kind": kind}
     if trigger_message_id:
@@ -138,6 +140,8 @@ def _persist_and_queue_reply(
         "text": text,
         "kind": kind,
     }
+    if stream_id:
+        reply_payload["stream_id"] = stream_id
     repo.add_outbox(
         assistant_id=session_row.assistant_id,
         team_id=session_row.team_id,
@@ -163,6 +167,7 @@ def _persist_and_deliver_interim(
     session_row: ChatSessionRow,
     reply_endpoint: dict,
     text: str,
+    stream_id: str | None = None,
 ) -> ChatMessageRow:
     """Persist interim message and deliver immediately (no reply.send job)."""
     assistant_message = ChatMessageRow(
@@ -181,6 +186,8 @@ def _persist_and_deliver_interim(
         "text": text,
         "kind": "interim",
     }
+    if stream_id:
+        reply_payload["stream_id"] = stream_id
     repo.add_outbox(
         assistant_id=session_row.assistant_id,
         team_id=session_row.team_id,
@@ -316,6 +323,7 @@ def generate_reply_text(
     turn_inbox: TurnInbox | None = None,
     on_interim_reply: Callable[[str], None] | None = None,
     on_agent_trace: Callable[[dict[str, Any]], None] | None = None,
+    stream_sink: ReplyStreamSink | None = None,
 ) -> str:
     if incoming is None:
         return simple_reply(text)
@@ -495,6 +503,7 @@ def generate_reply_text(
             inbox=turn_inbox,
             on_interim_reply=on_interim_reply,
             on_agent_trace=on_agent_trace,
+            stream_sink=stream_sink,
         )
     except AgentUnavailable as exc:
         return str(exc) or _UNAVAILABLE
@@ -549,6 +558,10 @@ def process_session_job(
             timer.mark("session_process_skipped_duplicate")
             return
 
+        stream: WebReplyStream | None = None
+        if reply_endpoint.get("channel") == "web" and resolve_effective_llm(config).stream_web_replies:
+            stream = WebReplyStream(config=config, session_id=session_id, reply_endpoint=reply_endpoint)
+
         def emit_interim(text: str) -> None:
             timer.mark("interim_emit", preview=(text or "")[:80])
             _persist_and_deliver_interim(
@@ -558,6 +571,7 @@ def process_session_job(
                 session_row=session_row,
                 reply_endpoint=reply_endpoint,
                 text=text,
+                stream_id=stream.take_stream_id() if stream is not None else None,
             )
 
         def emit_trace(event: dict) -> None:
@@ -573,18 +587,24 @@ def process_session_job(
                 logger.exception("emit agent trace failed; continuing turn")
 
         timer.mark("agent_run_start")
-        reply_text = generate_reply_text(
-            db_session,
-            config=config,
-            incoming=incoming,
-            text=text,
-            session_row=session_row,
-            display_name=display_name,
-            pulse_client=pulse_client,
-            turn_inbox=inbox,
-            on_interim_reply=emit_interim,
-            on_agent_trace=emit_trace,
-        )
+        try:
+            reply_text = generate_reply_text(
+                db_session,
+                config=config,
+                incoming=incoming,
+                text=text,
+                session_row=session_row,
+                display_name=display_name,
+                pulse_client=pulse_client,
+                turn_inbox=inbox,
+                on_interim_reply=emit_interim,
+                on_agent_trace=emit_trace,
+                stream_sink=stream,
+            )
+        except Exception:
+            if stream is not None:
+                stream.discard()
+            raise
         timer.mark("agent_run_done", reply_preview=(reply_text or "")[:80])
 
         _persist_and_queue_reply(
@@ -595,6 +615,7 @@ def process_session_job(
             text=reply_text,
             kind="final",
             trigger_message_id=message_id,
+            stream_id=stream.take_stream_id() if stream is not None else None,
         )
         # Commit before turn teardown so a lock failure in ``end_turn`` cannot
         # rollback the user-visible final reply + reply.send job (silent no-reply).

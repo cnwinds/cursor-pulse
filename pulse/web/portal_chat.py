@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.storage.models import PortalChatDelivery
+from pulse.storage.models import PortalChatDelivery, PortalChatStream
 from pulse.util.datetime_fmt import serialize_datetime
+
+# Drafts not refreshed within this window are treated as abandoned (e.g. worker crash).
+STREAM_STALE_AFTER = timedelta(seconds=120)
 
 
 def store_portal_chat_delivery(
@@ -49,6 +54,99 @@ def list_portal_chat_deliveries(
         .limit(limit)
     )
     return list(session.scalars(stmt))
+
+
+def list_recent_portal_chat_deliveries(
+    session: Session,
+    *,
+    team_id: str,
+    member_id: str,
+    limit: int = 50,
+) -> list[PortalChatDelivery]:
+    stmt = (
+        select(PortalChatDelivery)
+        .where(
+            PortalChatDelivery.team_id == team_id,
+            PortalChatDelivery.member_id == member_id,
+        )
+        .order_by(PortalChatDelivery.id.desc())
+        .limit(limit)
+    )
+    return list(reversed(session.scalars(stmt).all()))
+
+
+def upsert_portal_chat_stream(
+    session: Session,
+    *,
+    team_id: str,
+    member_id: str,
+    stream_id: str,
+    text: str,
+    assistant_session_id: str | None = None,
+) -> PortalChatStream:
+    row = session.get(PortalChatStream, stream_id)
+    if row is None:
+        _delete_stale_streams(session, team_id=team_id, member_id=member_id)
+        row = PortalChatStream(
+            stream_id=stream_id,
+            team_id=team_id,
+            member_id=member_id,
+            assistant_session_id=assistant_session_id,
+            text=text,
+        )
+        session.add(row)
+    else:
+        row.text = text
+        row.updated_at = datetime.now(UTC)
+    session.flush()
+    return row
+
+
+def close_portal_chat_stream(session: Session, stream_id: str) -> None:
+    row = session.get(PortalChatStream, stream_id)
+    if row is not None:
+        session.delete(row)
+        session.flush()
+
+
+def _as_aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _delete_stale_streams(session: Session, *, team_id: str, member_id: str) -> None:
+    cutoff = datetime.now(UTC) - STREAM_STALE_AFTER
+    rows = session.scalars(
+        select(PortalChatStream).where(
+            PortalChatStream.team_id == team_id,
+            PortalChatStream.member_id == member_id,
+        )
+    ).all()
+    for row in rows:
+        if _as_aware(row.updated_at) < cutoff:
+            session.delete(row)
+
+
+def list_active_portal_chat_streams(
+    session: Session,
+    *,
+    team_id: str,
+    member_id: str,
+) -> list[PortalChatStream]:
+    rows = session.scalars(
+        select(PortalChatStream).where(
+            PortalChatStream.team_id == team_id,
+            PortalChatStream.member_id == member_id,
+        )
+    ).all()
+    cutoff = datetime.now(UTC) - STREAM_STALE_AFTER
+    return sorted(
+        (row for row in rows if _as_aware(row.updated_at) >= cutoff),
+        key=lambda row: _as_aware(row.updated_at),
+    )
+
+
+def stream_to_json(row: PortalChatStream) -> dict:
+    return {"stream_id": row.stream_id, "text": row.text}
 
 
 def delivery_to_json(row: PortalChatDelivery) -> dict:

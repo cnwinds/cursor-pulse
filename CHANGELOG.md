@@ -10,11 +10,17 @@
 
 ### 新增
 
+- **Web 小脉流式回复**：LLM 改为 SSE 流式调用，Web 聊天边生成边显示（「小脉 · 输入中」草稿气泡）；工具仍返回 JSON 由 LLM 按技能模板排版。草稿存 `portal_chat_streams`，正式回复带 `stream_id` 时同事务替换。钉钉/飞书仍发整条。可用 `ASSISTANT_LLM_STREAM_WEB_REPLIES=false` 或团队设置 `assistant_llm.stream_web_replies` 关闭。
+- **Web 小脉聊天历史**：用户消息也写入 `portal_chat_deliveries`，新增 `GET /api/chat/history`；刷新后恢复历史并续接进行中的回复。消息显示发送时间（中国时区），回复按 Markdown 渲染；输入框内悬浮发送按钮，抽屉加宽。
 - **Jev 外呼耗时**：`jev_trace.meta` 记录 `called_at`（UTC ISO）与 `duration_ms`（HTTP 端到端）；缓存命中时沿用首次外呼的时间与耗时。摘要 Tab 与中国时区展示；审计 `lender_auto_pick` 附带 `jev_called_at` / `jev_duration_ms`。
 - **noul 响应解析**：识别 OpenRouter 返回的 `{"type":"noul","noul":…}`，主负责人安全判定与报文表格可正确显示。
 - **Jev 输入改用「在用」占座**：发给 Jev 的 `state` / `questions` 使用经代理上报的 `proxy_active_seats`（按成员计座），不再包含固定借用笔数 `active_loans`；约束改为 `max_concurrent_proxy_users`。
 - **打分表 Jev 报文**：`/proxy-pool/ranking` 的 `decision.jev_trace` 返回 Decisions 请求的 `state` / `questions` 与响应 `answers`（含缓存命中时的出参快照）。借用管理 → 打分表可通过「Jev 报文」抽屉查看摘要、护栏与完整 JSON；「为成员分配 Key」选自动分配时亦可查看同一池顺序的报文。
 - **Jev 强制外呼**：`GET /proxy-pool/ranking?force_jev=1`（需 `proxy:write`，30s/团队限流）与 `POST /loans/auto-pick` 的 `force_jev` 可绕过 TTL 缓存。指定账号分配时按借用人 + 目标模型调用 auto-pick 预览 Jev 报文；额度看板可打开池顺序报文。
+
+### 修复
+
+- **Web 小脉显示旧回复**：`POST /api/chat` 曾固定返回 `poll_after=0`，前端从最早的投递开始轮询，重复显示历史回复并提前停止，新回复看不到。现从本次用户消息之后轮询；无回应超过 5 分钟自动解除「正在想」并提示。
 
 ## [0.5.0] - 2026-09-22
 
