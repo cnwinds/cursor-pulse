@@ -18,6 +18,20 @@ npm run dev
 
 浏览器打开 http://localhost:5173
 
+### 菜单点了没反应 / `Failed to fetch dynamically imported module …DashboardView.vue`
+
+这是 **Vite 开发模式**下懒加载路由组件失败，不是权限或菜单写死。概览、用量分析会加载 **ECharts** 相关依赖；账号台账等页不依赖图表，所以往往只有这两页出问题。
+
+处理步骤（按顺序试）：
+
+1. 停掉 `npm run dev`，删除缓存后重启：`rm -rf node_modules/.vite && npm run dev`
+2. 确认依赖完整：`npm install`
+3. 浏览器 **硬刷新**（Ctrl+Shift+R），避免混用 `localhost` 与局域网 IP 打开同一站点
+4. 用局域网 IP 访问时，可设 `VITE_DEV_HMR_HOST=192.168.x.x` 再启动 dev
+5. 看 Vite 终端与浏览器 Network：是否 `vue-echarts` / `echarts_*.js` 404 或 500
+
+日常更稳的方式：生产构建后走 `pulse web` 的 `http://<host>:8080/admin/`（`npm run build`）。
+
 ## 生产部署（同域）
 
 ```bash
