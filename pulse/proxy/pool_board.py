@@ -268,7 +268,8 @@ def _rank_loan_candidates(session: Session, loan, *, loan_selection=None) -> lis
     board = rank_lenders(
         candidates,
         loan_selection=loan_selection,
-        pool="unknown",
+        # 白名单只圈定可游走的账号（任一桶有余量）；选座时再按请求的桶表排序过滤。
+        pool=None,
         today=today,
         now=now,
         # 借用路径的硬过滤，但不在借人数上限上排除：本笔借用自己就可能占满名额，
@@ -407,9 +408,9 @@ def ranked_pool_credential_pairs(
     *,
     loan_selection=None,
     jev=None,
-    quota_pool=None,
+    quota_pool: str = "auto",
 ) -> list[tuple[str, str]]:
-    """账号池打分顺序的 ``(primary credential_id, account_id)``，不含密钥明文。
+    """``quota_pool``（auto/api）打分表顺序的 ``(primary credential_id, account_id)``，不含密钥明文。
 
     与打分表、``list_pool_credentials`` 同一套 ``rank_lenders``（含 Jev 缓存）。
     同时在线选座用它，避免为了顺序去解密 Cursor Key。
@@ -432,7 +433,7 @@ def ranked_pool_credential_pairs(
     board = rank_lenders(
         candidates,
         loan_selection=loan_selection,
-        pool=quota_pool,
+        pool="api" if quota_pool == "api" else "auto",
         today=today,
         now=now,
         enforce_loan_cap=False,
@@ -441,9 +442,10 @@ def ranked_pool_credential_pairs(
     by_account = {cred.account_id: cred.id for cred in ctx.creds}
     pairs: list[tuple[str, str]] = []
     for row in board["ranked"]:
-        cred_id = by_account.get(row["account_id"])
+        account_id = row["account_id"]
+        cred_id = by_account.get(account_id)
         if cred_id:
-            pairs.append((cred_id, row["account_id"]))
+            pairs.append((cred_id, account_id))
     return pairs
 
 
@@ -528,14 +530,13 @@ def list_pool_ranking_boards(
     jev=None,
     jev_bypass_cache: bool = False,
 ) -> dict:
-    """Auto / API Quota Pool 各一份打分表；另含入池综合（intake，OR 余量）。"""
+    """Auto / API Quota Pool 各一份打分表，就是代理选号用的两张顺序表。"""
     kwargs = dict(
         loan_selection=loan_selection,
         jev=jev,
         jev_bypass_cache=jev_bypass_cache,
     )
     return {
-        "intake": list_pool_ranking_board(session, **kwargs, quota_pool=None),
         "auto": list_pool_ranking_board(session, **kwargs, quota_pool="auto"),
         "api": list_pool_ranking_board(session, **kwargs, quota_pool="api"),
     }
@@ -548,15 +549,20 @@ def list_pool_credentials_grouped(
     loan_selection=None,
     jev=None,
 ) -> dict[str, list[dict]]:
-    """Go 代理热更新：入池综合顺序 + 各 Quota Pool 独立顺序。"""
+    """Go 代理热更新：auto / api 两张顺序表，``all`` 是两表凭证并集（只用于查找）。"""
     common = dict(
         session=session,
         encryption_key=encryption_key,
         loan_selection=loan_selection,
         jev=jev,
     )
-    return {
-        "default": list_pool_credentials(**common, quota_pool=None),
-        "auto": list_pool_credentials(**common, quota_pool="auto"),
-        "api": list_pool_credentials(**common, quota_pool="api"),
-    }
+    auto = list_pool_credentials(**common, quota_pool="auto")
+    api = list_pool_credentials(**common, quota_pool="api")
+    seen: set[str] = set()
+    union: list[dict] = []
+    for item in auto + api:
+        if item["credential_id"] in seen:
+            continue
+        seen.add(item["credential_id"])
+        union.append(item)
+    return {"all": union, "auto": auto, "api": api}

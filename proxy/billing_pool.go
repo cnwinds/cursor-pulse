@@ -8,12 +8,12 @@ import (
 )
 
 // quotaPoolKind identifies which Cursor included-usage bucket a request draws from.
+// There are exactly two. A request that names no model is auto.
 type quotaPoolKind int
 
 const (
-	quotaPoolUnknown quotaPoolKind = iota
-	quotaPoolAuto                  // Auto + Composer (+ grok in Cursor billing)
-	quotaPoolAPI                   // premium / named API models (+ Cursor catalog GLM)
+	quotaPoolAuto quotaPoolKind = iota // Auto + Composer (+ grok), and every request without a model
+	quotaPoolAPI                       // premium / named API models (+ Cursor catalog GLM)
 )
 
 func normalizeCursorModel(model string) string {
@@ -64,15 +64,10 @@ func isLikelyByokModel(model string) bool {
 }
 
 // quotaPoolForModel maps a billed model to the Pulse auto_pct vs api_pct bucket.
+// No model and BYOK models (user's own key, no Cursor quota) are auto.
 func quotaPoolForModel(model string) quotaPoolKind {
-	if model == "" {
-		return quotaPoolUnknown
-	}
-	if isAutoComposerModel(model) {
+	if model == "" || isAutoComposerModel(model) || isLikelyByokModel(model) {
 		return quotaPoolAuto
-	}
-	if isLikelyByokModel(model) {
-		return quotaPoolUnknown
 	}
 	return quotaPoolAPI
 }
@@ -83,7 +78,7 @@ func isAgentRunPath(path string) bool {
 
 func resolveQuotaPool(ctx context.Context, path string, bodySnap func() []byte, streamFS *frameSource) quotaPoolKind {
 	if !isAgentRunPath(path) || bodySnap == nil {
-		return quotaPoolUnknown
+		return quotaPoolAuto
 	}
 	if streamFS != nil {
 		deadline := time.Now().Add(streamModelWaitTimeout)
@@ -98,18 +93,12 @@ func resolveQuotaPool(ctx context.Context, path string, bodySnap func() []byte, 
 }
 
 // effectiveMarkQuotaPool re-parses the request body at failure time when the
-// initial pool was unknown (e.g. slow stream body).
+// model had not arrived at selection time (slow stream body defaulted to auto).
 func effectiveMarkQuotaPool(path string, bodySnap func() []byte, initial quotaPoolKind) quotaPoolKind {
-	if initial != quotaPoolUnknown {
+	if initial == quotaPoolAPI || bodySnap == nil || !isAgentRunPath(path) {
 		return initial
 	}
-	if bodySnap == nil || !isAgentRunPath(path) {
-		return quotaPoolUnknown
-	}
-	if p := quotaPoolForModel(findModelName(bodySnap())); p != quotaPoolUnknown {
-		return p
-	}
-	return quotaPoolUnknown
+	return quotaPoolForModel(findModelName(bodySnap()))
 }
 
 func formatSnapshotPct(p *float64) string {
@@ -120,12 +109,8 @@ func formatSnapshotPct(p *float64) string {
 }
 
 func (k quotaPoolKind) String() string {
-	switch k {
-	case quotaPoolAuto:
-		return "auto"
-	case quotaPoolAPI:
+	if k == quotaPoolAPI {
 		return "api"
-	default:
-		return "unknown"
 	}
+	return "auto"
 }

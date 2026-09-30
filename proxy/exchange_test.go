@@ -125,8 +125,8 @@ func TestExchangeOKBindsSession(t *testing.T) {
 	if !ok || b.ProxyKeyID != "pk1" || b.PulseKey != "pk_ok" {
 		t.Fatalf("session bind failed: ok=%v %+v", ok, b)
 	}
-	if b.StickyCredentialID == "" {
-		t.Fatal("expected sticky credential on exchange")
+	if b.AutoSticky.CredentialID == "" || b.APISticky.CredentialID != "" {
+		t.Fatalf("exchange should fill only the auto slot: %+v / %+v", b.AutoSticky, b.APISticky)
 	}
 }
 

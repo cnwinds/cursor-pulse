@@ -91,56 +91,77 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			return
 		}
 		if s.pulse != nil && s.sessionTTL > 0 && time.Since(b.BoundAt) > s.sessionTTL {
-			current := b.StickyCredentialID
+			// Report one slot as current and the other as held while it is
+			// active: both seats stay alive, and the assignment answers for the
+			// reported slot. Prefer the auto slot unless only the api slot is
+			// in use (e.g. a long api stream after the auto slot went idle).
+			now := time.Now()
+			reauthPool := quotaPoolAuto
+			if b.APISticky.CredentialID != "" && (b.AutoSticky.CredentialID == "" ||
+				(!b.slotActive(quotaPoolAuto, now) && b.slotActive(quotaPoolAPI, now))) {
+				reauthPool = quotaPoolAPI
+			}
+			current := b.sticky(reauthPool).CredentialID
 			if current == "" {
 				current = b.CredentialID
 			}
-			res, err := s.pulse.AuthorizeReport(b.PulseKey, current, false)
+			res, err := s.pulse.AuthorizeSeat(b.PulseKey, current, false, reauthPool, b.heldOutside(reauthPool))
 			if err != nil {
 				log.Printf("[mitm] session re-authorize fail-closed: %v", err)
 				http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 				return
 			}
+			// Apply to the local copy and to the stored binding: other requests
+			// on this session may have filled a slot during the Pulse call.
+			store := func(apply func(*SessionBinding)) {
+				apply(&b)
+				if !s.sessions.Update(cliTok, apply) {
+					s.sessions.Bind(cliTok, b)
+				}
+			}
 			switch res.Status {
 			case "ok":
-				b.WindowLimitReason = ""
-				b.BoundAt = time.Now()
-				if res.CredentialID != "" {
-					b.CredentialID = res.CredentialID
-				}
-				if res.LoanID != "" {
-					b.LoanID = res.LoanID
-				}
-				if res.Mode != "" {
-					b.Mode = res.Mode
-				}
-				if strings.TrimSpace(res.CursorAPIKey) != "" {
-					b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
-				}
-				// Replace (not merge): a candidate dropped from the ranked
-				// allowlist must stop serving on the next request. Empty clears
-				// the scope, which returns the binding to the pinned path.
-				b.AllowedCredentialIDs = res.CredentialIDs
-				if res.SeatAdvised {
-					b.BlockedCredentialIDs = res.BlockedCredentialIDs
-					if seatFollowsAssignment(b, res) {
-						moved := strings.TrimSpace(res.AssignedCredentialID)
-						if moved == "" {
-							http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
-							return
-						}
-						if moved != current {
-							b.StickySince = time.Now()
-							b.StickyCredentialID = moved
-						}
+				moved := ""
+				if res.SeatAdvised && seatFollowsAssignment(b, res) {
+					moved = strings.TrimSpace(res.AssignedCredentialID)
+					if moved == "" {
+						http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
+						return
 					}
 				}
-				s.sessions.Bind(cliTok, b)
+				store(func(x *SessionBinding) {
+					x.WindowLimitReason = ""
+					x.BoundAt = now
+					if res.CredentialID != "" {
+						x.CredentialID = res.CredentialID
+					}
+					if res.LoanID != "" {
+						x.LoanID = res.LoanID
+					}
+					if res.Mode != "" {
+						x.Mode = res.Mode
+					}
+					if strings.TrimSpace(res.CursorAPIKey) != "" {
+						x.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
+					}
+					// Replace (not merge): a candidate dropped from the ranked
+					// allowlist must stop serving on the next request. Empty clears
+					// the scope, which returns the binding to the pinned path.
+					x.AllowedCredentialIDs = res.CredentialIDs
+					if res.SeatAdvised {
+						x.BlockedCredentialIDs = res.BlockedCredentialIDs
+					}
+					if moved != "" && moved != current {
+						*x.sticky(reauthPool) = stickySlot{CredentialID: moved, Since: now}
+					}
+				})
 			case "window_limited":
-				b.WindowLimitReason = authWindowReason(res)
-				b.BoundAt = time.Now()
-				s.sessions.Bind(cliTok, b)
-				writeWindowLimited(w, b.WindowLimitReason)
+				reason := authWindowReason(res)
+				store(func(x *SessionBinding) {
+					x.WindowLimitReason = reason
+					x.BoundAt = now
+				})
+				writeWindowLimited(w, reason)
 				return
 			default:
 				s.sessions.Delete(cliTok)
@@ -232,6 +253,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	if resp == nil {
 		http.Error(w, "cursor-quota-proxy: upstream unreachable", http.StatusBadGateway)
 		return
+	}
+	if loanPooled || (!loanBound && s.sticky != nil) {
+		defer s.sticky.Track(cliTok, quotaPool)()
 	}
 
 	// --- non-200: whole-body classification ---
@@ -365,7 +389,8 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "pulse client not configured", http.StatusServiceUnavailable)
 		return
 	}
-	res, err := s.pulse.AuthorizeReport(pulseKey, "", false)
+	// Exchange carries no model: the first account comes from the auto order.
+	res, err := s.pulse.AuthorizeSeat(pulseKey, "", false, quotaPoolAuto, nil)
 	if err != nil {
 		log.Printf("[mitm] authorize fail-closed: %v", err)
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
@@ -438,8 +463,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				binding.BlockedCredentialIDs = res.BlockedCredentialIDs
 				assigned := strings.TrimSpace(res.AssignedCredentialID)
 				if assigned != "" && containsID(res.CredentialIDs, assigned) {
-					binding.StickyCredentialID = assigned
-					binding.StickySince = time.Now()
+					binding.AutoSticky = stickySlot{CredentialID: assigned, Since: time.Now()}
 				}
 			}
 			s.sessions.Bind(clientTok, binding)
@@ -475,7 +499,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				Mode:                 res.Mode,
 				LoanID:               res.LoanID,
 				PulseKey:             pulseKey,
-				StickyCredentialID:   entry.credentialID,
+				AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
 				WindowLimitReason:    windowLimitReason,
 				BlockedCredentialIDs: res.BlockedCredentialIDs,
 				ExpiresAt:            expiresAt,
@@ -512,7 +536,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		s.sessions.Bind(clientTok, SessionBinding{
 			ProxyKeyID:           res.ProxyKeyID,
 			PulseKey:             pulseKey,
-			StickyCredentialID:   entry.credentialID,
+			AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
 			WindowLimitReason:    windowLimitReason,
 			BlockedCredentialIDs: res.BlockedCredentialIDs,
 			ExpiresAt:            expiresAt,
@@ -613,7 +637,7 @@ func (s *Server) exchangeAdvised(ctx context.Context, res *AuthResult, pulseKey 
 		if s.pulse == nil {
 			return s.exchangeUnadvised(ctx, *res, seen)
 		}
-		next, err := s.pulse.AuthorizeReport(pulseKey, current, true)
+		next, err := s.pulse.AuthorizeSeat(pulseKey, current, true, quotaPoolAuto, nil)
 		if err != nil || !next.SeatAdvised {
 			log.Printf("[mitm] seat reassignment unavailable: %v", err)
 			return s.exchangeUnadvised(ctx, *res, seen)

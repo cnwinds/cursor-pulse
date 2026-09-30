@@ -186,8 +186,8 @@ func TestExchangeHidesUpstreamJWT(t *testing.T) {
 	if !ok1 || !ok2 || b1.ProxyKeyID != "pk1" || b2.ProxyKeyID != "pk2" {
 		t.Fatalf("bindings: %v %+v / %v %+v", ok1, b1, ok2, b2)
 	}
-	if b1.StickyCredentialID != b2.StickyCredentialID {
-		t.Fatalf("no collision rotation expected: %q vs %q", b1.StickyCredentialID, b2.StickyCredentialID)
+	if b1.AutoSticky.CredentialID != b2.AutoSticky.CredentialID {
+		t.Fatalf("no collision rotation expected: %q vs %q", b1.AutoSticky.CredentialID, b2.AutoSticky.CredentialID)
 	}
 	if b1.ExpiresAt.IsZero() {
 		t.Fatal("minted binding must carry ExpiresAt")

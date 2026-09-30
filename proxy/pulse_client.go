@@ -177,18 +177,34 @@ func (c *PulseClient) Stop() {
 }
 
 func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
-	return c.authorize(pulseKey, "", false)
+	return c.authorize(pulseKey, seatReport{})
 }
 
-// AuthorizeReport is Authorize plus the credential this session is on.
-// A non-empty current credential or release=true bypasses the auth cache:
-// session reauth and rotation must refresh the occupancy seat.
-func (c *PulseClient) AuthorizeReport(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
-	return c.authorize(pulseKey, strings.TrimSpace(currentCredentialID), releaseCurrent)
+// AuthorizeSeat is Authorize plus seat advice for one Quota Pool slot of a
+// session. current is that slot's credential ("" when empty); release means
+// it is being left. held lists the session's other slot credentials so their
+// seats stay alive. Pulse only assigns from pool's order. Seat calls bypass
+// the auth cache: they must refresh the occupancy seat.
+func (c *PulseClient) AuthorizeSeat(pulseKey, currentCredentialID string, releaseCurrent bool, pool quotaPoolKind, held []string) (AuthResult, error) {
+	return c.authorize(pulseKey, seatReport{
+		seat:    true,
+		current: strings.TrimSpace(currentCredentialID),
+		release: releaseCurrent,
+		pool:    pool,
+		held:    held,
+	})
 }
 
-func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCurrent bool) (AuthResult, error) {
-	report := currentCredentialID != "" || releaseCurrent
+type seatReport struct {
+	seat    bool
+	current string
+	release bool
+	pool    quotaPoolKind
+	held    []string
+}
+
+func (c *PulseClient) authorize(pulseKey string, seat seatReport) (AuthResult, error) {
+	report := seat.seat
 	if !report {
 		c.authMu.Lock()
 		if e, ok := c.authCache[pulseKey]; ok && time.Now().Before(e.expiry) {
@@ -200,11 +216,25 @@ func (c *PulseClient) authorize(pulseKey, currentCredentialID string, releaseCur
 	}
 
 	payload := map[string]any{"pulse_key": pulseKey}
-	if currentCredentialID != "" {
-		payload["current_credential_id"] = currentCredentialID
-	}
-	if releaseCurrent {
-		payload["release_current"] = true
+	if seat.seat {
+		payload["quota_pool"] = seat.pool.String()
+		if seat.current != "" {
+			payload["current_credential_id"] = seat.current
+		}
+		if seat.release {
+			payload["release_current"] = true
+		}
+		// held may equal current: when both slots share a credential, releasing
+		// one slot must not drop the seat the other slot still uses.
+		var held []string
+		for _, id := range seat.held {
+			if id = strings.TrimSpace(id); id != "" {
+				held = append(held, id)
+			}
+		}
+		if len(held) > 0 {
+			payload["held_credential_ids"] = held
+		}
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/authorize", bytes.NewReader(body))

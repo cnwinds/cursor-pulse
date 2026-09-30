@@ -18,6 +18,11 @@ class AuthorizeBody(BaseModel):
     current_credential_id: str | None = None
     # 当前凭证已不可用（额度耗尽、要换号）。不要把这个凭证再分回去。
     release_current: bool = False
+    # 这次选座用哪个 Quota Pool 的顺序（auto / api）。没有模型的请求一律算 auto；
+    # 其他值（如旧版代理发来的 unknown）也按 auto，不能因此拒绝授权。
+    quota_pool: str | None = "auto"
+    # 同一会话另一个桶正在用的凭证：续座，且换号时不因释放 current 丢掉它的座位。
+    held_credential_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
 class UsageItem(BaseModel):
@@ -83,6 +88,8 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             current_credential_id=body.current_credential_id,
             release_current=body.release_current,
             config=config,
+            quota_pool=body.quota_pool,
+            held_credential_ids=body.held_credential_ids,
         )
 
     @app.get(
@@ -105,7 +112,7 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             jev=build_jev_client(runtime),
         )
         return {
-            "credentials": grouped["default"],
+            "credentials": grouped["all"],
             "credentials_by_pool": {
                 "auto": grouped["auto"],
                 "api": grouped["api"],

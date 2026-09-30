@@ -137,11 +137,12 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 ## Switch dwell（sticky 最小驻留）
 
-会话的 sticky 凭证在**两次请求间隔小于驻留阈值**期间不因「该 Quota Pool 桶耗尽」而轮转（默认 20 分钟）——只记日志并继续用当前账号。认证失败（`badUntil` 冷却）与全池耗尽仍立即轮转，避免会话卡在不可用账号上。
+会话的每个 sticky 槽（`AutoSticky` / `APISticky`，见下文「两个 sticky 槽」）在**两次请求间隔小于驻留阈值**期间不因「本桶耗尽」而轮转（默认 20 分钟）——只记日志并继续用当前账号。认证失败（`badUntil` 冷却）与全池耗尽仍立即轮转，避免会话卡在不可用账号上。
 
-- 计时基准是 **距上次成功选号/续用的空闲间隔**（`StickyLastActive`；无该字段时回退 `StickySince`）。密集聊天会持续刷新 `StickyLastActive`，不会因「绑定总时长」到点而换号。
-- `StickySince` 只在**真正切换**账号时重置；同一账号续用不刷新。
-- 存量绑定没有活动时间戳（零值）→ 不驻留，行为与旧版一致。
+- 计时基准是该槽 **距上次服务的空闲间隔**（`LastActive`；无该字段时回退 `Since`）。选号/续用时刷新，请求转发**结束**时再刷新一次：一个跑了 25 分钟的 agent 长流，驻留从流结束时算起；流还在跑时，该槽一律视为在驻留期内，并发进来的同桶请求不会把它换走。密集聊天会持续刷新 `LastActive`，不会因「绑定总时长」到点而换号。
+- `Since` 只在该槽**真正切换**账号时重置；同一账号续用不刷新。
+- 槽没有活动时间戳（零值）→ 不驻留。
+- 驻留只保护已经填上的槽；另一个桶的槽是空的时候照常按本桶表选号，不看对方的驻留。
 - Web 侧对应语义见 `loan_selection.min_switch_minutes`（评分侧降权），两层独立生效。
 
 ## 借用候选白名单（自动分配借用）
@@ -155,22 +156,33 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 
 ## 同时在线人数
 
-换票、会话续期，以及 sticky 因为额度耗尽要换号时，代理把当前凭证报给 `POST /api/internal/v1/proxy/authorize`（`current_credential_id`，离开时再带 `release_current: true`）。Web 按人计座：同一成员在同一个账号上只占一席，同时用两个账号则各占一席。默认同一账号不超过 3 个经代理的同时使用者（`max_concurrent_users`，0 为不限制）。心跳超过 `concurrent_ttl_seconds`（默认 180s，长于会话 TTL）视为离开。
+换票、会话续期、sticky 槽为空或因为额度耗尽要换号时，代理调用 `POST /api/internal/v1/proxy/authorize` 选座：`quota_pool`（`auto` / `api`，缺省 `auto`）说明是哪个槽，`current_credential_id` 是这个槽当前的凭证（离开时再带 `release_current: true`），`held_credential_ids` 是同一会话另一个**活跃**槽的凭证（续座；即使与 current 相同，释放 current 也不拆它的座位）。槽活跃 = 有请求正在转发，或 3 分钟内服务过（与 Pulse 默认座位 TTL 一致）。闲置的槽不再上报，座位随 TTL 过期；它下次再用时先带 `current_credential_id`（不释放）重新选座：账号未满就留在原账号，已满则按本桶表换一个，都没有座位则拒绝。会话续期优先报 auto 槽，只有 auto 槽闲置而 api 槽活跃时才报 api 槽。Web 按人计座：同一成员在同一个账号上只占一席，同时用两个账号则各占一席。默认同一账号不超过 3 个经代理的同时使用者（`max_concurrent_users`，0 为不限制）。心跳超过 `concurrent_ttl_seconds`（默认 180s，长于会话 TTL）视为离开。
 
 - 响应里 `seat_advised=true` 且 `assigned_credential_id` 有值：用这个凭证，不要在每次心跳时改选全局第一名。
 - `seat_advised=true` 且分配为空：没有可去的未满账号（或正在离开的凭证不能再选回去）。换号或新加入时不要再塞进满员账号。
 - `seat_advised=false`：Web 没有按人数做判断（没有候选，或顾问失败）。按本地池选号；池本身是空的，就是密钥耗尽，不是人数上限。
 - 顾问请求失败：沿用本地选号，并跳过上次返回的 `blocked_credential_ids`。
+- Web 只按 `quota_pool` 那张打分表的顺序分配，且只分配该桶仍有快照余量的账号，与本地 `availableFor` 判断一致。借用白名单同样先按该桶打分表排序再过滤。
 - 指定借用仍固定在原 Key 上，只是占一个座位。
 - 参数在 web-admin「系统设置 → 选号规则」。
+
+## 两个 sticky 槽
+
+只有 auto 和 api 两个 Quota Pool。`Run` 请求按模型归桶：Auto / Composer / BYOK 第三方模型，以及**没带模型的请求**（登录、非 `Run` 路径、5s 内没等到模型）一律算 auto，其余算 api。
+
+- 每个 **CLI session JWT** 同时记两个 sticky 槽：`AutoSticky`、`APISticky`。exchange 时只按 auto 表填 `AutoSticky`；`APISticky` 在第一次 api 请求时按 api 表填。
+- auto 请求只用 `AutoSticky`，api 请求只用 `APISticky`，各自按自己那张顺序表选号、各自换号、各自驻留。即使 auto 槽的账号 api 桶还有余量，api 请求也不会顺用它——必须按 api 表选。
+- 每个槽记进行中的请求数（转发开始加 1、结束减 1，含出错与客户端断开）。agent 的 `Run` 流可能一跑几十分钟而没有新请求，靠这个计数识别该槽仍在使用。
+- 两个槽可以落在同一个账号上（该账号恰好两张表都排前面），此时只占一个座位。
+- 额度耗尽后的 `RotateOnExhaustion` 只动失败请求所属的那个槽，而且只在该槽确实是这个凭证时才动。
 
 ## 池 exhausted 语义
 
 - 配额按 Cursor **Auto+Composer** 与 **API** 两桶分别标记（`autoQuotaExhausted` / `apiQuotaExhausted`）；仅当两桶都耗尽时凭证才视为 fully unavailable。
-- Pulse `/pool` 下发 `auto_pct` / `api_pct` 快照；`Run` 时按请求模型选桶，**优先复用当前 sticky 账号**，仅在该桶无额度时按池顺序换号（subagent 与父会话共用同一 sticky）。
+- Pulse `/pool` 下发 `credentials_by_pool.auto` / `.api` 两张顺序表（`credentials` 只是两表并集，用于按 ID 查找）以及 `auto_pct` / `api_pct` 快照。
 - 某凭证因 **配额/限流** 被标记后，运行时耗尽标志 **sticky**：Pulse 热更新凭证池时 **保留**（避免短暂恢复后立刻再烧额度）。
 - **auth/exchange 失败** 走 `badUntil` 短冷却（约 2 分钟），热更新会清掉。
-- Pulse 模式下每个 **CLI session JWT** 在 exchange 时绑定一个池内凭证（`StickyCredentialID`）。
+- 本地回退（没有 Pulse 选座建议）时也按本桶顺序表**从头**找第一个可用账号，不从当前位置往后绕。
 - 热更新 **保留** `cur` 指针，不会每 60s 把池子打回 index 0。
 - 进程默认每 **30m** 清一次 **runtime 额度耗尽标志**（不清 `badUntil`），并将 `cur` 置 0（`PROXY_EXHAUSTED_RESET`；设为 `0`/`off`/`false` 可关闭）。auth 冷却仍靠 TTL / 热更新。
 - 日志：`[pool] runtime quota marks reset (N keys)`（全量 `reset()` 仍为 `[pool] exhaustion flags reset`）。

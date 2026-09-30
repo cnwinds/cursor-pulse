@@ -1169,6 +1169,197 @@ def test_authorize_same_member_is_one_seat(env):
     assert _authorize(env, second)["assigned_credential_id"] == env["cred_id"]
 
 
+def _seed_api_full_account(env) -> str:
+    s = env["sf"]()
+    account = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-api-full",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+    )
+    s.add(account)
+    s.flush()
+    cred = AiAccountCredential(
+        account_id=account.id,
+        vendor_id=env["vendor_id"],
+        credential_type="api_key",
+        encrypted_value=encrypt_secret("cursor-key-api-full", TEST_KEY),
+        key_hint="af...ll",
+        key_role="primary",
+        status="active",
+        bound_by_member_id="m1",
+    )
+    s.add(cred)
+    snap = _healthy_snap(account.id, cycle_end=TODAY + timedelta(days=15))
+    snap.api_pct = 100.0
+    s.add(snap)
+    s.commit()
+    s.close()
+    return cred.id
+
+
+def test_authorize_treats_legacy_unknown_pool_as_auto(env):
+    """旧版代理可能发 unknown：按 auto 选座（api 桶已满的账号照样可分），不拒绝授权。"""
+    from pulse.proxy.occupancy import reset_occupancy
+
+    reset_occupancy()
+    full_cred = _seed_api_full_account(env)
+    (plain,) = _seat_keys(env, 1)
+    body = _authorize(
+        env, plain, current_credential_id=env["cred_id"], release_current=True, quota_pool="unknown"
+    )
+    assert body["status"] == "ok"
+    assert body["assigned_credential_id"] == full_cred
+
+
+def test_authorize_api_pool_never_assigns_account_without_api_headroom(env):
+    quota_pool = "api"
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    full_cred = _seed_api_full_account(env)
+    holder, other = _seat_keys(env, 2)
+
+    first = _authorize(env, holder, current_credential_id=full_cred, release_current=True, quota_pool=quota_pool)
+    assert first["assigned_credential_id"] == env["cred_id"]
+
+    # 唯一有 api 余量的账号已满：宁可不分配，也不能分到 api 桶已满的账号
+    blocked = _authorize(env, other, current_credential_id=full_cred, release_current=True, quota_pool=quota_pool)
+    assert blocked["seat_advised"] is True
+    assert blocked["assigned_credential_id"] in (None, "")
+
+
+def test_authorize_auto_pool_may_assign_account_with_only_auto_headroom(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    full_cred = _seed_api_full_account(env)
+    first, second = _seat_keys(env, 2)
+    taken = _authorize(env, first, quota_pool="auto")["assigned_credential_id"]
+    assert taken in (env["cred_id"], full_cred)
+    rest = _authorize(env, second, quota_pool="auto")["assigned_credential_id"]
+    assert {taken, rest} == {env["cred_id"], full_cred}
+
+
+def test_authorize_defaults_to_auto_pool(env):
+    """没有 quota_pool 的请求按 auto：api 桶已满的账号照样可分。"""
+    from pulse.proxy.occupancy import reset_occupancy
+
+    reset_occupancy()
+    full_cred = _seed_api_full_account(env)
+    (plain,) = _seat_keys(env, 1)
+    body = _authorize(env, plain, current_credential_id=env["cred_id"], release_current=True)
+    assert body["assigned_credential_id"] == full_cred
+
+
+def test_authorize_held_slot_keeps_seat_when_other_slot_releases(env):
+    """同一会话 auto/api 两槽同在一个账号：api 槽换走时，auto 槽的座位不能被拆。"""
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    holder, other = _seat_keys(env, 2)
+    assert _authorize(env, holder, quota_pool="auto")["assigned_credential_id"] == env["cred_id"]
+
+    left = _authorize(
+        env,
+        holder,
+        current_credential_id=env["cred_id"],
+        release_current=True,
+        quota_pool="api",
+        held_credential_ids=[env["cred_id"]],
+    )
+    assert left["assigned_credential_id"] in (None, "")
+
+    blocked = _authorize(env, other, quota_pool="auto")
+    assert blocked["assigned_credential_id"] in (None, "")
+    assert env["cred_id"] in blocked["blocked_credential_ids"]
+
+
+def test_authorize_release_without_held_frees_seat(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    holder, other = _seat_keys(env, 2)
+    assert _authorize(env, holder)["assigned_credential_id"] == env["cred_id"]
+    _authorize(env, holder, current_credential_id=env["cred_id"], release_current=True)
+    assert _authorize(env, other)["assigned_credential_id"] == env["cred_id"]
+
+
+def test_authorize_seat_uses_team_jev_config(env, monkeypatch):
+    """选座与打分表同一份生效配置：团队里开 Jev，选座也要按团队配置建 Jev 客户端。"""
+    import pulse.llm.jev as jev_module
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="jev",
+        patch={"enabled": True, "api_key": "team-jev-key"},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    seen: list = []
+
+    def fake_build(config):
+        seen.append(config.jev)
+        return None
+
+    monkeypatch.setattr(jev_module, "build_jev_client", fake_build)
+    (plain,) = _seat_keys(env, 1)
+    assert _authorize(env, plain)["assigned_credential_id"] == env["cred_id"]
+    assert seen, "seat assignment should build a Jev client"
+    assert all(cfg.enabled and cfg.api_key == "team-jev-key" for cfg in seen)
+
+
 def test_authorize_pinned_loan_keeps_seat_when_account_is_full(env):
     from pulse.proxy.occupancy import reset_occupancy
     from pulse.settings.team_store import patch_team_setting

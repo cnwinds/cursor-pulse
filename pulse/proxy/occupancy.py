@@ -65,6 +65,7 @@ class OccupancyBook:
         pinned_credential_id: str | None,
         max_concurrent: int,
         ttl_seconds: float,
+        held_credential_ids: list[str] | None = None,
         now: float | None = None,
     ) -> SeatChoice:
         """在锁内过期、判断并落座。
@@ -73,6 +74,8 @@ class OccupancyBook:
         ``max_concurrent <= 0`` 表示不限制人数。
         指定账号（``pinned``）始终留在原凭证上，即使已经超过上限。
         ``release_current`` 表示当前凭证不可再用，不会把它分回去。
+        ``held_credential_ids`` 是同一人另一个会话槽正在用的凭证：续座，且释放
+        current 时若与它同账号，不拆掉这个座位。
         """
         now = time.monotonic() if now is None else now
         current = (current_credential_id or "").strip() or None
@@ -81,6 +84,8 @@ class OccupancyBook:
             accounts = dict(account_by_credential)
             for cred, account_id in ranked:
                 accounts.setdefault(cred, account_id)
+            held = [cid for cid in (held_credential_ids or []) if cid]
+            held_accounts = {accounts[cid] for cid in held if accounts.get(cid)}
 
             def holder_on(account_id: str) -> bool:
                 return (holder_id, account_id) in self._seats
@@ -130,11 +135,15 @@ class OccupancyBook:
             def drop_account(credential_id: str) -> None:
                 account_id = accounts.get(credential_id)
                 if account_id:
-                    self._seats.pop((holder_id, account_id), None)
+                    if account_id not in held_accounts:
+                        self._seats.pop((holder_id, account_id), None)
                     return
                 for key, seat in list(self._seats.items()):
-                    if key[0] == holder_id and seat.credential_id == credential_id:
+                    if key[0] == holder_id and seat.credential_id == credential_id and key[1] not in held_accounts:
                         self._seats.pop(key, None)
+
+            for cid in held:
+                occupy(cid)
 
             if pinned:
                 cred = (pinned_credential_id or current or "").strip() or None

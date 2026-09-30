@@ -404,15 +404,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             jev=jev,
             jev_bypass_cache=jev_bypass_cache,
         )
-        intake = boards["intake"]
-        return {
-            **intake,
-            "boards": {
-                "auto": boards["auto"],
-                "api": boards["api"],
-            },
-            "quota_pool": None,
-        }
+        return {"boards": {"auto": boards["auto"], "api": boards["api"]}, "quota_pool": None}
 
     @app.post(
         "/api/v2/proxy-pool/accounts/{account_id}",

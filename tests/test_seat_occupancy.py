@@ -173,3 +173,36 @@ def test_zero_cap_is_unlimited():
         choice = _choose(book, holder_id=f"member:{i}", max_concurrent=0)
         assert choice.assigned_credential_id == "c1"
         assert choice.blocked_credential_ids == []
+
+
+def test_release_keeps_seat_held_by_other_slot():
+    book = OccupancyBook()
+    _choose(book, holder_id="member:1", max_concurrent=1)
+    left = _choose(
+        book,
+        holder_id="member:1",
+        ranked=[("c1", "a1")],
+        current_credential_id="c1",
+        release_current=True,
+        held_credential_ids=["c1"],
+        max_concurrent=1,
+    )
+    assert left.assigned_credential_id is None
+    other = _choose(book, holder_id="member:2", ranked=[("c1", "a1")], max_concurrent=1)
+    assert other.assigned_credential_id is None
+    assert "c1" in other.blocked_credential_ids
+
+
+def test_held_slot_seat_is_refreshed():
+    book = OccupancyBook()
+    _choose(book, holder_id="member:1", current_credential_id="c2", now=0)
+    _choose(book, holder_id="member:1", current_credential_id="c1", held_credential_ids=["c2"], now=150)
+    assert book.count_by_account(ttl_seconds=180, now=200) == {"a1": 1, "a2": 1}
+
+
+def test_loan_alias_allowlist_follows_pool_order():
+    from pulse.proxy.seat_assignment import _in_pool_order
+
+    allowlist = [("c1", "a1"), ("c2", "a2"), ("c3", "a3")]
+    ordered = _in_pool_order(allowlist, [("c3", "a3"), ("c9", "a9"), ("c1", "a1")])
+    assert ordered == [("c3", "a3"), ("c1", "a1"), ("c2", "a2")]

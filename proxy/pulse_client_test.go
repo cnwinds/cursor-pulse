@@ -108,26 +108,36 @@ func TestPulseClientAuthorizeLoanPoolNotCached(t *testing.T) {
 	}
 }
 
-func TestAuthorizeReportSendsCurrentAndBypassesCache(t *testing.T) {
+func TestAuthorizeSeatSendsSlotAndBypassesCache(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		var body struct {
-			PulseKey            string `json:"pulse_key"`
-			CurrentCredentialID string `json:"current_credential_id"`
-			ReleaseCurrent      bool   `json:"release_current"`
+			PulseKey            string   `json:"pulse_key"`
+			CurrentCredentialID string   `json:"current_credential_id"`
+			ReleaseCurrent      bool     `json:"release_current"`
+			QuotaPool           string   `json:"quota_pool"`
+			Held                []string `json:"held_credential_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if hits.Load() == 1 && (body.CurrentCredentialID != "" || body.ReleaseCurrent) {
-			t.Fatalf("plain authorize should omit seat fields: %+v", body)
-		}
-		if hits.Load() == 2 && body.CurrentCredentialID != "cred-9" {
-			t.Fatalf("current=%q", body.CurrentCredentialID)
-		}
-		if hits.Load() == 3 && !body.ReleaseCurrent {
-			t.Fatal("expected release_current")
+		switch hits.Load() {
+		case 1:
+			if body.CurrentCredentialID != "" || body.ReleaseCurrent || body.QuotaPool != "" || body.Held != nil {
+				t.Fatalf("plain authorize should omit seat fields: %+v", body)
+			}
+		case 2:
+			if body.QuotaPool != "auto" || body.CurrentCredentialID != "" || body.Held != nil {
+				t.Fatalf("exchange seat should ask auto with no current: %+v", body)
+			}
+		case 3:
+			if body.QuotaPool != "api" || body.CurrentCredentialID != "cred-9" || !body.ReleaseCurrent {
+				t.Fatalf("api slot release: %+v", body)
+			}
+			if len(body.Held) != 2 || body.Held[0] != "cred-9" || body.Held[1] != "cred-auto" {
+				t.Fatalf("other slot credentials should be held, blanks dropped: %+v", body.Held)
+			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok", "proxy_key_id": "pk1", "mode": "quota", "reason": nil,
@@ -143,11 +153,11 @@ func TestAuthorizeReportSendsCurrentAndBypassesCache(t *testing.T) {
 	if _, err := c.Authorize("pk_abc"); err != nil || hits.Load() != 1 {
 		t.Fatalf("cache hits=%d", hits.Load())
 	}
-	res, err := c.AuthorizeReport("pk_abc", "cred-9", false)
+	res, err := c.AuthorizeSeat("pk_abc", "", false, quotaPoolAuto, nil)
 	if err != nil || !res.SeatAdvised || res.AssignedCredentialID != "cred-9" || hits.Load() != 2 {
-		t.Fatalf("report res=%+v hits=%d err=%v", res, hits.Load(), err)
+		t.Fatalf("seat res=%+v hits=%d err=%v", res, hits.Load(), err)
 	}
-	if _, err := c.AuthorizeReport("pk_abc", "cred-9", true); err != nil || hits.Load() != 3 {
+	if _, err := c.AuthorizeSeat("pk_abc", "cred-9", true, quotaPoolAPI, []string{"cred-9", "cred-auto", ""}); err != nil || hits.Load() != 3 {
 		t.Fatalf("release hits=%d err=%v", hits.Load(), err)
 	}
 }

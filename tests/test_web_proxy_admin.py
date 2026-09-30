@@ -380,8 +380,10 @@ def test_pool_ranking_board(env):
 
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=_admin(env))
     assert resp.status_code == 200
-    body = resp.json()
-    assert "api_key" not in str(body)
+    full = resp.json()
+    assert "api_key" not in str(full)
+    assert "ranked" not in full
+    body = full["boards"]["auto"]
     ranked_ids = [r["account_identifier"] for r in body["ranked"]]
     assert ranked_ids[0] == "acct-soon"
     assert "acct-1" in ranked_ids
@@ -395,12 +397,8 @@ def test_pool_ranking_board(env):
     assert "jev_trace" in body["decision"]
     assert body["decision"]["jev_trace"]["meta"]["status"] == "skipped"
     assert body["decision"]["jev_trace"]["meta"]["skip_reason"] == "jev_unavailable"
-    assert "boards" in body
-    assert "auto" in body["boards"]
-    assert "api" in body["boards"]
-    assert "quota_pool" in body["boards"]["auto"]
-    assert body["boards"]["auto"]["quota_pool"] == "auto"
-    assert body["boards"]["api"]["quota_pool"] == "api"
+    assert body["quota_pool"] == "auto"
+    assert full["boards"]["api"]["quota_pool"] == "api"
 
 
 def test_pool_ranking_ignores_loan_cap(env):
@@ -451,7 +449,7 @@ def test_pool_ranking_ignores_loan_cap(env):
 
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=_admin(env))
     assert resp.status_code == 200
-    body = resp.json()
+    body = resp.json()["boards"]["auto"]
     ranked_ids = [r["account_identifier"] for r in body["ranked"]]
     assert "acct-1" in ranked_ids
     assert all(e["reason"] != "loan_cap" for e in body["excluded"])
@@ -610,7 +608,7 @@ def test_set_and_clear_pool_score_adjust(env):
 
     headers = _admin(env)
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
-    ranked = resp.json()["ranked"]
+    ranked = resp.json()["boards"]["auto"]["ranked"]
     assert [r["account_identifier"] for r in ranked][0] == "acct-soon"
     natural_far = next(r for r in ranked if r["account_identifier"] == "acct-far")
 
@@ -623,7 +621,7 @@ def test_set_and_clear_pool_score_adjust(env):
     assert resp.json() == {"id": far_id, "score_adjust": 1.0, "reserve_pct": None}
 
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
-    ranked = resp.json()["ranked"]
+    ranked = resp.json()["boards"]["auto"]["ranked"]
     assert [r["account_identifier"] for r in ranked][0] == "acct-far"
     far_row = next(r for r in ranked if r["account_identifier"] == "acct-far")
     assert far_row["score_adjust"] == 1.0
@@ -639,7 +637,7 @@ def test_set_and_clear_pool_score_adjust(env):
     assert resp.json()["score_adjust"] is None
 
     resp = env["client"].get("/api/v2/proxy-pool/ranking", headers=headers)
-    ranked = resp.json()["ranked"]
+    ranked = resp.json()["boards"]["auto"]["ranked"]
     assert [r["account_identifier"] for r in ranked][0] == "acct-soon"
     far_row = next(r for r in ranked if r["account_identifier"] == "acct-far")
     assert far_row["score_adjust"] is None

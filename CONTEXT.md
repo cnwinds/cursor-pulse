@@ -29,11 +29,11 @@ _Avoid_: Treating CP percent windows as Cursor Quota Pools (auto/api); ingesting
 ### Proxy data plane
 
 **Quota Pool**:
-The billing bucket a Cursor request consumes — `auto` or `api`. Request-time routing uses model heuristics (Auto vs API are both `INCLUDED`; BYOK PascalCase → unknown). Usage-event stats use Cursor `kind` (`INCLUDED_*` vs `USER_API_KEY`) then model heuristics for Auto vs API. Daily aggregates store `kind_family` so analytics can split Cursor GLM from BYOK. Analytics dimension `external` is BYOK token volume, not a Quota Pool.
+The billing bucket a Cursor request consumes — `auto` or `api`. Request-time routing uses model heuristics (Auto vs API are both `INCLUDED`); BYOK third-party models and requests without a model count as `auto`. There is no third pool at request time. Usage-event stats use Cursor `kind` (`INCLUDED_*` vs `USER_API_KEY`) then model heuristics for Auto vs API. Daily aggregates store `kind_family` so analytics can split Cursor GLM from BYOK. Analytics dimension `external` is BYOK token volume, not a Quota Pool.
 _Avoid_: Pool (alone; ambiguous with the credential list), billing pool (implementation phrase); treating BYOK `USER_API_KEY` rows as included API spend; calling BYOK a Quota Pool
 
 **Sticky Credential**:
-The pool credential bound to a CLI session JWT for a Quota Pool until that pool is exhausted on that credential, then rotated within pool order.
+The pool credential bound to a CLI session JWT for one Quota Pool. Each session has two independent slots (auto, api); each is filled and rotated only from its own pool's order — an api request never reuses the auto slot's credential just because it has api headroom.
 _Avoid_: Session key, sticky session (overload with HTTP sessions)
 
 **Credential Pool**:
@@ -57,7 +57,7 @@ Newest AccountQuotaSnapshot per account, bulk-loaded for board / lender / Creden
 _Avoid_: Per-account N+1 snapshot queries
 
 **Snapshot Headroom rules**:
-Pure OR/AND checks on auto_pct/api_pct used by Credential Pool Intake and mirrored in the Go proxy (`pctQuotaOK` / `snapshotIntakeOK`).
+Pure OR/AND checks on auto_pct/api_pct used by Credential Pool Intake and mirrored in the Go proxy (`pctQuotaOK`).
 _Avoid_: Embedding these rules only inside burn scoring
 
 **Loan Lifecycle**:
@@ -77,7 +77,7 @@ Optional per-account delta (`proxy_score_adjust`) added to the computed ranking 
 _Avoid_: pin, sticky priority, treating this as a replacement for the computed score
 
 **Pool-scoped Headroom**:
-Snapshot Headroom read for one Quota Pool (`auto` vs `api`) instead of the included total, used when a target model is known. Resolved by `quota_pool.quota_pool_for_model` on the web side, mirroring Go `quotaPoolForModel`; `unknown` falls back to total and requires both buckets.
+Snapshot Headroom read for one Quota Pool (`auto` vs `api`) instead of the included total, used when a target model is known. Resolved by `quota_pool.quota_pool_for_model` on the web side, mirroring Go `quotaPoolForModel` for non-empty models. `unknown` (loan issuance without a target model only) falls back to total and requires both buckets.
 _Avoid_: Per-pool cents as an exact figure (Cursor exposes per-bucket percents only; cents are a monotone share of `limit_cents`)
 
 **Owner Reserve**:

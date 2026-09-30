@@ -8,20 +8,23 @@ import (
 	"time"
 )
 
-// SeatAdvisor asks Pulse which credential to move to. release is true when
-// current is being left (quota exhaustion). advised false or a non-nil error
-// means fail open. advised true with an empty assignment means fail closed.
-type SeatAdvisor func(binding *SessionBinding, current string, release bool) (assigned string, blocked []string, advised bool, err error)
+// SeatAdvisor asks Pulse which credential this session should use for pool.
+// current is the pool's sticky credential ("" when the slot is empty); release
+// is true when current is being left. Pulse picks from pool's order only.
+// advised false or a non-nil error means fail open. advised true with an empty
+// assignment means fail closed.
+type SeatAdvisor func(binding *SessionBinding, current string, release bool, pool quotaPoolKind) (assigned string, blocked []string, advised bool, err error)
 
-// StickySelect picks and rotates the sticky credential for a CLI session JWT
-// within a known quota pool. Callers resolve the pool kind (auto vs api)
-// before Select; mark-on-failure stays with the MITM handler.
+// StickySelect picks and rotates a CLI session's sticky credentials. Each
+// Quota Pool has its own slot, filled from that pool's order; callers resolve
+// the pool (auto vs api) before Select. Mark-on-failure stays with the MITM
+// handler.
 type StickySelect struct {
 	pool     *Pool
 	sessions *SessionMap
-	// minDwell suppresses quota-driven rotation while the sticky credential was
-	// bound less than this long ago. Auth failure and pool-wide exhaustion still
-	// rotate: a session must never get stuck on an unusable account.
+	// minDwell suppresses quota-driven rotation while the slot was active less
+	// than this long ago. Auth failure and pool-wide exhaustion still rotate: a
+	// session must never get stuck on an unusable account.
 	minDwell time.Duration
 	advisor  SeatAdvisor
 }
@@ -47,17 +50,21 @@ func (s *StickySelect) SetAdvisor(fn SeatAdvisor) {
 	s.advisor = fn
 }
 
-// dwellActive reports whether the session is still "active" for Switch dwell:
-// the idle gap since the last successful Select is inside minDwell. Legacy
-// bindings may only have StickySince (time of last switch); that is used as a
-// fallback until StickyLastActive is populated.
-func (s *StickySelect) dwellActive(binding *SessionBinding, now time.Time) bool {
+// dwellActive reports whether pool's slot is still "active" for Switch dwell:
+// a request is still being relayed on it (a long agent stream has not ended),
+// or the idle gap since it last served is inside minDwell. A slot that has no
+// LastActive yet falls back to Since.
+func (s *StickySelect) dwellActive(binding *SessionBinding, pool quotaPoolKind, now time.Time) bool {
 	if s.minDwell <= 0 {
 		return false
 	}
-	ref := binding.StickyLastActive
+	if binding.inFlight[pool] > 0 {
+		return true
+	}
+	slot := binding.sticky(pool)
+	ref := slot.LastActive
 	if ref.IsZero() {
-		ref = binding.StickySince
+		ref = slot.Since
 	}
 	if ref.IsZero() {
 		return false
@@ -65,139 +72,256 @@ func (s *StickySelect) dwellActive(binding *SessionBinding, now time.Time) bool 
 	return now.Sub(ref) < s.minDwell
 }
 
-func (s *StickySelect) touchActive(sessionJWT string, binding *SessionBinding, now time.Time) {
-	if binding == nil {
+// persist stores only pool's slot (plus the latest seat advice when
+// withBlocked) so a concurrent request on the other slot is not overwritten.
+func (s *StickySelect) persist(sessionJWT string, binding *SessionBinding, pool quotaPoolKind, withBlocked bool) {
+	if sessionJWT == "" {
 		return
 	}
-	binding.StickyLastActive = now
-	if sessionJWT != "" {
+	slot := *binding.sticky(pool)
+	blocked := binding.BlockedCredentialIDs
+	if !s.sessions.Update(sessionJWT, func(stored *SessionBinding) {
+		*stored.sticky(pool) = slot
+		if withBlocked {
+			stored.BlockedCredentialIDs = blocked
+		}
+	}) {
 		s.sessions.Bind(sessionJWT, *binding)
 	}
 }
 
-// bindSticky records a sticky binding, refreshing StickySince only when the
-// credential actually changed (a re-bind of the same credential keeps the clock).
-func (s *StickySelect) bindSticky(sessionJWT string, binding *SessionBinding, credentialID string, now time.Time) {
-	if binding.StickyCredentialID != credentialID || binding.StickySince.IsZero() {
-		binding.StickySince = now
+// refreshSlots picks up slots other requests on this session stored since
+// binding was copied, so Select neither refills a slot twice nor reports a
+// stale held credential.
+func (s *StickySelect) refreshSlots(sessionJWT string, binding *SessionBinding) {
+	if sessionJWT == "" {
+		return
 	}
-	binding.StickyCredentialID = credentialID
-	binding.StickyLastActive = now
-	if sessionJWT != "" {
-		s.sessions.Bind(sessionJWT, *binding)
+	if stored, ok := s.sessions.Lookup(sessionJWT); ok {
+		binding.AutoSticky = stored.AutoSticky
+		binding.APISticky = stored.APISticky
+		binding.inFlight = stored.inFlight
 	}
 }
 
-// Select returns a JWT for the session's sticky credential when that
-// credential still has quota for pool; otherwise rotates sticky within the
-// pool order and persists via sessions.Bind.
+// Track marks a request on pool's slot as in flight until the returned func
+// runs, which also refreshes LastActive: a long agent stream counts as active
+// for its whole run, and Switch dwell is measured from when it ended.
+func (s *StickySelect) Track(sessionJWT string, pool quotaPoolKind) (done func()) {
+	if s == nil || sessionJWT == "" {
+		return func() {}
+	}
+	if !s.sessions.Update(sessionJWT, func(b *SessionBinding) { b.inFlight[pool]++ }) {
+		return func() {}
+	}
+	return func() {
+		s.sessions.Update(sessionJWT, func(b *SessionBinding) {
+			if b.inFlight[pool] > 0 {
+				b.inFlight[pool]--
+			}
+			if slot := b.sticky(pool); slot.CredentialID != "" {
+				slot.LastActive = time.Now()
+			}
+		})
+	}
+}
+
+func (s *StickySelect) touchActive(sessionJWT string, binding *SessionBinding, pool quotaPoolKind, now time.Time) {
+	slot := binding.sticky(pool)
+	if slot.Since.IsZero() {
+		slot.Since = now
+	}
+	slot.LastActive = now
+	s.persist(sessionJWT, binding, pool, false)
+}
+
+// bindSticky fills pool's slot, refreshing Since only when the credential
+// actually changed (a re-bind of the same credential keeps the clock).
+func (s *StickySelect) bindSticky(sessionJWT string, binding *SessionBinding, pool quotaPoolKind, credentialID string, now time.Time) {
+	slot := binding.sticky(pool)
+	if slot.CredentialID != credentialID || slot.Since.IsZero() {
+		slot.Since = now
+	}
+	slot.CredentialID = credentialID
+	slot.LastActive = now
+	s.persist(sessionJWT, binding, pool, true)
+}
+
+// Select returns a JWT for pool's sticky credential while it still has quota
+// for pool; otherwise picks a new one from pool's order and persists that slot.
+// An empty slot is filled from pool's order as well.
 // sessionJWT is the CLI session JWT used as the SessionMap key (not a Proxy Key).
 func (s *StickySelect) Select(ctx context.Context, sessionJWT string, binding *SessionBinding, pool quotaPoolKind) (*keyEntry, string, error) {
 	now := time.Now()
+	s.refreshSlots(sessionJWT, binding)
 	// nil for shared-pool keys; a ranked candidate set for loan_alias bindings.
 	allowed := binding.allowedSet()
-	if binding.StickyCredentialID != "" {
-		stickyID := binding.StickyCredentialID
-		entry := s.pool.findEntry(stickyID)
-		// A credential dropped from the candidate set must not keep serving.
-		if entry != nil && allowed != nil && !allowed[stickyID] {
-			log.Printf("[pool] sticky credential %s left the candidate set — rotating", stickyID)
-			entry = nil
+	slot := binding.sticky(pool)
+	stickyID := slot.CredentialID
+	if stickyID == "" {
+		return s.fill(ctx, sessionJWT, binding, pool, allowed, now)
+	}
+	if !binding.slotActive(pool, now) {
+		id, err := s.reseat(sessionJWT, binding, pool, stickyID, allowed, now)
+		if err != nil {
+			return nil, "", err
 		}
-		if entry != nil && !entry.authCooling(now) && entry.availableFor(pool) {
-			got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
-			if err == nil {
-				// StickySince is bind time only; dwell uses StickyLastActive
-				// (refreshed below). Only backfill legacy zero StickySince.
-				if binding.StickySince.IsZero() {
-					binding.StickySince = now
-				}
-				s.touchActive(sessionJWT, binding, now)
+		stickyID = id
+	}
+
+	entry := s.pool.findEntry(stickyID)
+	// A credential dropped from the candidate set must not keep serving.
+	if entry != nil && allowed != nil && !allowed[stickyID] {
+		log.Printf("[pool] %s sticky credential %s left the candidate set — rotating", pool, stickyID)
+		entry = nil
+	}
+	switch {
+	case entry != nil && !entry.authCooling(now) && entry.availableFor(pool):
+		got, tok, err := s.pool.tokenForCredential(ctx, stickyID)
+		if err == nil {
+			s.touchActive(sessionJWT, binding, pool, now)
+			return got, tok, nil
+		}
+		// Transient exchange errors must not rotate sticky (align with tokenSkipping).
+		if got != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
+			return got, "", err
+		}
+		if got != nil && isPermanentExchangeErr(err) {
+			// Exchange/auth bad-key marking belongs here with sticky
+			// rotation; MITM failKind quota marks stay in Server.mark.
+			log.Printf("[pool] %s sticky credential %s exchange failed: %v - marking bad", pool, stickyID, err)
+			s.pool.markBad(got)
+		}
+	case entry != nil && !entry.authCooling(now):
+		if s.dwellActive(binding, pool, now) {
+			// Switch dwell: keep the account for now rather than hop on the
+			// first sign of bucket exhaustion. The request may still fail on
+			// quota, which is a clearer signal than silent account churn.
+			log.Printf("[pool] %s sticky credential %s lacks quota (auto_pct=%s api_pct=%s) — holding within dwell",
+				pool, stickyID, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
+			if got, tok, err := s.pool.tokenForCredential(ctx, stickyID); err == nil {
+				s.touchActive(sessionJWT, binding, pool, now)
 				return got, tok, nil
 			}
-			// Transient exchange errors must not rotate sticky (align with tokenSkipping).
-			if got != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
-				return got, "", err
-			}
-			if got != nil && isPermanentExchangeErr(err) {
-				// Exchange/auth bad-key marking belongs here with sticky
-				// rotation; MITM failKind quota marks stay in Server.mark.
-				log.Printf("[pool] sticky credential %s exchange failed: %v - marking bad", stickyID, err)
-				s.pool.markBad(got)
-			}
-		} else if entry != nil && !entry.authCooling(now) && !entry.availableFor(pool) {
-			if s.dwellActive(binding, now) {
-				// Switch dwell: keep the account for now rather than hop on the
-				// first sign of bucket exhaustion. The request may still fail on
-				// quota, which is a clearer signal than silent account churn.
-				log.Printf("[pool] sticky credential %s lacks %s quota (auto_pct=%s api_pct=%s) — holding within dwell",
-					stickyID, pool, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
-				if got, tok, err := s.pool.tokenForCredential(ctx, stickyID); err == nil {
-					s.touchActive(sessionJWT, binding, now)
-					return got, tok, nil
-				}
-			}
-			log.Printf("[pool] sticky credential %s lacks %s quota (auto_pct=%s api_pct=%s) — rotating",
-				stickyID, pool, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
-		} else if entry != nil && entry.authCooling(now) {
-			log.Printf("[pool] sticky credential %s auth cooling — rotating", stickyID)
 		}
-		if id, handled, err := s.chooseAssigned(binding, stickyID, true, pool, allowed); handled {
-			if err != nil {
-				return nil, "", err
-			}
-			s.bindSticky(sessionJWT, binding, id, now)
-			log.Printf("[pool] session sticky rotated to credential %s for pool %s (seat)", id, pool)
-			return s.pool.tokenForCredential(ctx, id)
+		log.Printf("[pool] %s sticky credential %s lacks quota (auto_pct=%s api_pct=%s) — rotating",
+			pool, stickyID, formatSnapshotPct(entry.autoPct), formatSnapshotPct(entry.apiPct))
+	case entry != nil:
+		log.Printf("[pool] %s sticky credential %s auth cooling — rotating", pool, stickyID)
+	}
+
+	if id, handled, err := s.chooseAssigned(binding, stickyID, true, pool, allowed); handled {
+		if err != nil {
+			return nil, "", err
 		}
-		next := s.pool.nextAvailableForQuotaWithin(stickyID, pool, allowed, binding.blockedSet())
-		if next == nil {
-			return nil, "", errAllExhausted
+		s.bindSticky(sessionJWT, binding, pool, id, now)
+		log.Printf("[pool] %s sticky rotated to credential %s (seat)", pool, id)
+		return s.pool.tokenForCredential(ctx, id)
+	}
+	next := s.pool.nextAvailableForQuotaWithin(stickyID, pool, allowed, binding.blockedSet())
+	if next == nil {
+		return nil, "", errAllExhausted
+	}
+	s.bindSticky(sessionJWT, binding, pool, next.credentialID, now)
+	log.Printf("[pool] %s sticky rotated to credential %s", pool, next.credentialID)
+	return s.pool.tokenForCredential(ctx, next.credentialID)
+}
+
+// reseat re-reports an idle slot's credential before it serves again: its
+// seat was left to expire, so the account may have filled up meanwhile. Pulse
+// keeps the credential when there is room (cache stays warm) or assigns
+// another from pool's order. Quota checks stay with the caller so Switch
+// dwell still applies. Advice unavailable keeps the credential (fail open).
+func (s *StickySelect) reseat(sessionJWT string, binding *SessionBinding, pool quotaPoolKind, stickyID string, allowed map[string]bool, now time.Time) (string, error) {
+	if s.advisor == nil || strings.TrimSpace(binding.PulseKey) == "" {
+		return stickyID, nil
+	}
+	assigned, blocked, advised, err := s.advisor(binding, stickyID, false, pool)
+	if err != nil || !advised {
+		log.Printf("[pool] seat advice unavailable: %v", err)
+		return stickyID, nil
+	}
+	binding.BlockedCredentialIDs = blocked
+	assigned = strings.TrimSpace(assigned)
+	if assigned == "" {
+		return "", errAllExhausted
+	}
+	if assigned == stickyID {
+		return stickyID, nil
+	}
+	if (allowed != nil && !allowed[assigned]) || s.pool.findEntry(assigned) == nil {
+		// Pulse already seated us on an account we cannot use here: release
+		// that seat and ask again, like any other unusable assignment.
+		id, handled, err := s.chooseAssigned(binding, assigned, true, pool, allowed)
+		if !handled {
+			return stickyID, nil
 		}
-		s.bindSticky(sessionJWT, binding, next.credentialID, now)
-		log.Printf("[pool] session sticky rotated to credential %s for pool %s", next.credentialID, pool)
-		return s.pool.tokenForCredential(ctx, next.credentialID)
+		if err != nil {
+			return "", err
+		}
+		assigned = id
+	}
+	if assigned == stickyID {
+		return stickyID, nil
+	}
+	s.bindSticky(sessionJWT, binding, pool, assigned, now)
+	log.Printf("[pool] %s sticky re-seated from %s to credential %s after idle", pool, stickyID, assigned)
+	return assigned, nil
+}
+
+// fill picks the first credential for an empty slot from pool's order: Pulse
+// seat advice when available, else the local order.
+func (s *StickySelect) fill(ctx context.Context, sessionJWT string, binding *SessionBinding, pool quotaPoolKind, allowed map[string]bool, now time.Time) (*keyEntry, string, error) {
+	if id, handled, err := s.chooseAssigned(binding, "", false, pool, allowed); handled {
+		if err != nil {
+			return nil, "", err
+		}
+		s.bindSticky(sessionJWT, binding, pool, id, now)
+		log.Printf("[pool] %s sticky bound to credential %s (seat)", pool, id)
+		return s.pool.tokenForCredential(ctx, id)
 	}
 	entry, tok, err := s.pool.tokenForQuotaPoolWithin(ctx, pool, binding.blockedSet(), allowed)
 	if err != nil {
 		return nil, "", err
 	}
-	s.bindSticky(sessionJWT, binding, entry.credentialID, now)
+	s.bindSticky(sessionJWT, binding, pool, entry.credentialID, now)
 	return entry, tok, nil
 }
 
-// RotateOnExhaustion advances sticky to the next credential with quota for
-// pool after the current one was marked exhausted. No-op when none remain.
-// This path is driven by an observed quota failure, so Switch dwell does not
-// apply — the account is known-unusable.
+// RotateOnExhaustion replaces pool's sticky credential after it was marked
+// exhausted. No-op when the slot has already moved or none remain. This path
+// is driven by an observed quota failure, so Switch dwell does not apply —
+// the account is known-unusable.
 func (s *StickySelect) RotateOnExhaustion(sessionJWT string, binding *SessionBinding, exhaustedCredID string, pool quotaPoolKind) {
 	if s == nil || sessionJWT == "" || binding == nil {
 		return
 	}
+	s.refreshSlots(sessionJWT, binding)
+	if binding.sticky(pool).CredentialID != exhaustedCredID {
+		return
+	}
 	if id, handled, err := s.chooseAssigned(binding, exhaustedCredID, true, pool, binding.allowedSet()); handled {
-		if err != nil || id == "" || id == binding.StickyCredentialID {
-			log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
+		if err != nil || id == "" || id == exhaustedCredID {
+			log.Printf("[pool] %s sticky: no credential available after %s", pool, exhaustedCredID)
 			return
 		}
-		s.bindSticky(sessionJWT, binding, id, time.Now())
-		log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s, seat)", id, pool)
+		s.bindSticky(sessionJWT, binding, pool, id, time.Now())
+		log.Printf("[pool] %s sticky advanced to credential %s for next request (seat)", pool, id)
 		return
 	}
 	next := s.pool.nextAvailableForQuotaWithin(exhaustedCredID, pool, binding.allowedSet(), binding.blockedSet())
 	if next == nil {
-		log.Printf("[pool] session sticky: no credential available after %s for pool %s", exhaustedCredID, pool)
+		log.Printf("[pool] %s sticky: no credential available after %s", pool, exhaustedCredID)
 		return
 	}
-	if next.credentialID == binding.StickyCredentialID {
-		return
-	}
-	s.bindSticky(sessionJWT, binding, next.credentialID, time.Now())
-	log.Printf("[pool] session sticky advanced to credential %s for next request (pool %s)", next.credentialID, pool)
+	s.bindSticky(sessionJWT, binding, pool, next.credentialID, time.Now())
+	log.Printf("[pool] %s sticky advanced to credential %s for next request", pool, next.credentialID)
 }
 
-// chooseAssigned asks Pulse for a credential that is in the pool, in the
-// allowlist, and still has quota. handled means the caller must not fall
-// through to a local pick: either use id, or treat err as exhaustion.
+// chooseAssigned asks Pulse for a credential from pool's order that is in the
+// pool, in the allowlist, and still has quota for pool. handled means the
+// caller must not fall through to a local pick: either use id, or treat err as
+// exhaustion.
 func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, release bool, pool quotaPoolKind, allowed map[string]bool) (string, bool, error) {
 	if s == nil || s.advisor == nil || binding == nil || strings.TrimSpace(binding.PulseKey) == "" {
 		return "", false, nil
@@ -210,7 +334,7 @@ func (s *StickySelect) chooseAssigned(binding *SessionBinding, current string, r
 		limit = 1
 	}
 	for i := 0; i < limit; i++ {
-		assigned, blocked, advised, err := s.advisor(binding, released, askRelease)
+		assigned, blocked, advised, err := s.advisor(binding, released, askRelease, pool)
 		if advised {
 			binding.BlockedCredentialIDs = blocked
 		}

@@ -64,10 +64,13 @@ func TestSessionWithinTTLSkipsReauthorize(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Use bound JWT from pool exchange path — bind manually with fresh BoundAt.
+	// A filled, active auto slot: an empty or idle one would legitimately ask
+	// Pulse for a seat.
 	sessions.Bind("jwt-fresh", SessionBinding{
 		ProxyKeyID: "pk1",
 		PulseKey:   "pk_ok",
 		BoundAt:    time.Now(),
+		AutoSticky: stickySlot{CredentialID: "local-0", LastActive: time.Now()},
 	})
 	bizReq.Header.Set("Authorization", "Bearer jwt-fresh")
 	bizReq.Header.Set("Content-Type", "application/proto")
@@ -82,6 +85,19 @@ func TestSessionWithinTTLSkipsReauthorize(t *testing.T) {
 	}
 	if authCalls.Load() != callsAfterExchange {
 		t.Fatalf("authorize called within TTL: before=%d after=%d", callsAfterExchange, authCalls.Load())
+	}
+	io.ReadAll(bizResp.Body)
+	bizResp.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		b, _ := sessions.Lookup("jwt-fresh")
+		if b.inFlight == [2]int{} && b.AutoSticky.LastActive.After(time.Now().Add(-time.Minute)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("relay should release its in-flight mark: inFlight=%v", b.inFlight)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
