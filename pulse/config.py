@@ -195,11 +195,12 @@ class LoanSelectionConfig(BaseModel):
     weight_surplus: float = Field(default=0.25, ge=0)
     weight_load: float = Field(default=0.15, ge=0)
     weight_freshness: float = Field(default=0.10, ge=0)
-    # 代理池：快到期优先消化 + 剩余额度优先 + 保留主使用人 headroom
+    # 代理池：快到期优先消化（主目标）+ 余量/空闲额度作次要因素
+    # urgency 权重须明显高于 headroom/surplus，否则长周期空闲号会压过即将重置的号
     proxy_deadline_power: float = Field(default=1.75, ge=1.0)
-    proxy_weight_urgency: float = Field(default=0.52, ge=0)
-    proxy_weight_headroom: float = Field(default=0.28, ge=0)
-    proxy_weight_surplus: float = Field(default=0.17, ge=0)
+    proxy_weight_urgency: float = Field(default=0.70, ge=0)
+    proxy_weight_headroom: float = Field(default=0.15, ge=0)
+    proxy_weight_surplus: float = Field(default=0.12, ge=0)
     proxy_weight_freshness: float = Field(default=0.03, ge=0)
     # 驻留：账号刚绑定/刚切走时降权，避免借用人在账号间抖动
     min_switch_minutes: float = Field(default=20.0, ge=0)

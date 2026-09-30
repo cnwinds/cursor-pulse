@@ -7,10 +7,14 @@ from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.burn_rate import (
     LenderCandidate,
     analyze_burn_rate,
+    deadline_relevance,
     digestion_urgency,
     display_api_remaining_cents,
     display_remaining_cents,
     explain_lender_selection,
+    hours_until_deadline,
+    lender_deadline_at,
+    pool_surplus_cents,
     projected_surplus_cents,
     quota_progress,
     recommend_lenders,
@@ -720,6 +724,119 @@ def test_proxy_pool_urgency_uses_hourly_deadline_power():
     near = digestion_urgency(surplus, 24.0, deadline_power=1.75, hourly_power=True)
     far = digestion_urgency(surplus, 120.0, deadline_power=1.75, hourly_power=True)
     assert near > far
+
+
+def test_proxy_pool_near_reset_with_low_api_headroom_beats_long_cycle():
+    """API 已用很多、外推 surplus=0，但桶里仍有余量且即将重置 → 仍应优先于长周期空闲号。"""
+    near = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 13),
+        cycle_end_at=NOW + timedelta(hours=47),
+        account_id="near-api-tight",
+        limit_cents=20000,
+        used_cents=10000,
+        remaining_cents=10000,
+        total_pct=50.0,
+        auto_pct=46.0,
+        api_pct=91.0,
+    )
+    long_idle = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 4),
+        account_id="long-idle",
+        limit_cents=20000,
+        used_cents=1000,
+        remaining_cents=19000,
+        total_pct=5.0,
+        auto_pct=4.0,
+        api_pct=16.0,
+    )
+    assert (
+        pool_surplus_cents(near, "api", hours_until_deadline(
+            lender_deadline_at(near.cycle_end, None, cycle_end_at=near.cycle_end_at), NOW
+        ) / 24.0, TODAY)
+        == 0.0
+    )
+    ranked = recommend_lenders(
+        [
+            _candidate(near, account_id="near-api-tight"),
+            _candidate(long_idle, account_id="long-idle"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+        pool="api",
+    )
+    assert [r["account_id"] for r in ranked] == ["near-api-tight", "long-idle"]
+    # 余量项衰减后，快到期低 headroom 应明显领先长周期空闲号
+    assert ranked[0]["score"] - ranked[1]["score"] > 0.1
+
+
+def test_deadline_relevance_seven_day_countdown():
+    """7 天窗外为 0；窗内临近到期高于靠窗边缘；长周期巨额 surplus 乘完仍低于近端小额。"""
+    assert deadline_relevance(0) == 1.0
+    assert deadline_relevance(7 * 24) == 0.0
+    assert deadline_relevance(24 * 24) == 0.0
+    assert deadline_relevance(24) > deadline_relevance(6 * 24)
+    near = 243.0 * deadline_relevance(42.6)
+    far = 5713.0 * deadline_relevance(578.0)
+    assert near > far
+
+
+def test_proxy_pool_near_reset_beats_long_cycle_idle_despite_hours_outlier():
+    """即将重置且仍有余量的号，不能被「几小时级 outlier + 长周期空闲号」挤到后面。
+
+    复现线上打分表：2 小时即将作废的号 urgency 极大，min-max 后把 1～3 天账号
+    的紧迫度压成≈0，排序退化成 24 天空闲号排在即将重置号前面。
+    """
+    hours_outlier = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 11),
+        cycle_end_at=NOW + timedelta(hours=2, minutes=18),
+        account_id="hours-outlier",
+        limit_cents=20000,
+        used_cents=18000,
+        remaining_cents=2000,
+        total_pct=90.0,
+        auto_pct=89.0,
+        api_pct=100.0,
+    )
+    long_idle = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 8, 4),
+        account_id="long-idle",
+        limit_cents=20000,
+        used_cents=800,
+        remaining_cents=19200,
+        total_pct=4.0,
+        auto_pct=4.0,
+        api_pct=14.0,
+    )
+    near_reset = _snapshot(
+        cycle_start=date(2026, 7, 1),
+        cycle_end=date(2026, 7, 13),
+        account_id="near-reset",
+        limit_cents=20000,
+        used_cents=7600,
+        remaining_cents=12400,
+        total_pct=38.0,
+        auto_pct=38.0,
+        api_pct=21.0,
+    )
+    ranked = recommend_lenders(
+        [
+            _candidate(hours_outlier, account_id="hours-outlier"),
+            _candidate(long_idle, account_id="long-idle"),
+            _candidate(near_reset, account_id="near-reset"),
+        ],
+        today=TODAY,
+        now=NOW,
+        enforce_loan_cap=False,
+        pool="auto",
+    )
+    ids = [r["account_id"] for r in ranked]
+    assert ids.index("near-reset") < ids.index("long-idle"), ids
+    assert ids[0] == "hours-outlier"
 
 
 def test_proxy_pool_prefers_idle_headroom_over_slightly_sooner():

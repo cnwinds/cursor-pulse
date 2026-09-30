@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
@@ -357,6 +358,19 @@ def digestion_urgency(
     return surplus / max(days**deadline_power, day_floor**deadline_power)
 
 
+def deadline_relevance(hours: float, *, window_days: float = 7.0) -> float:
+    """7 天倒计时指数：给 headroom / surplus 用。
+
+    重置前权重=1，窗外=0；窗内 ``exp(-3 * days/7)``，越临近越高。
+    长周期空闲号的余量不再参与比拼，只和同样快到期的号比余量。
+    """
+    days = max(hours / 24.0, 0.0)
+    window = max(window_days, 1e-6)
+    if days >= window:
+        return 0.0
+    return math.exp(-3.0 * days / window)
+
+
 @dataclass(frozen=True)
 class _ScoringProfile:
     weight_urgency: float
@@ -605,6 +619,13 @@ def _rank_passing_candidates(
         days = (deadline - today).days
         hours = round(hours_until_deadline(deadline_at, now), 1)
         surplus = pool_surplus_cents(snapshot, pool, hours / 24.0, today)
+        headroom = pool_headroom_pct(snapshot, pool)
+        if profile.hourly_power:
+            # 代理池紧迫度用「当前桶还剩多少」，不用消耗外推的 surplus。
+            # 外推会把「API 已用 91%、还剩 2 天」算成 surplus=0，快到期余量反而不被消化。
+            digestible = headroom / 100.0 * max(float(snapshot.limit_cents), 0.0)
+        else:
+            digestible = surplus
         if enforce_loan_cap:
             load_factor = 1.0 - cand.active_loans / max(cfg.max_active_loans_per_account, 1)
         else:
@@ -618,9 +639,9 @@ def _rank_passing_candidates(
                 "days": days,
                 "hours": hours,
                 "surplus": surplus,
-                "headroom": pool_headroom_pct(snapshot, pool),
+                "headroom": headroom,
                 "urgency": digestion_urgency(
-                    surplus,
+                    digestible,
                     hours,
                     deadline_power=profile.deadline_power,
                     hourly_power=profile.hourly_power,
@@ -636,9 +657,16 @@ def _rank_passing_candidates(
     if not rows:
         return [], excluded
 
-    u_norm = _min_max([row["urgency"] for row in rows])
-    s_norm = _min_max([row["surplus"] for row in rows])
-    h_norm = _min_max([row["headroom"] for row in rows])
+    # log1p：极短 deadline（几小时）的 urgency 会比 1～3 天高几个数量级；
+    # 直接 min-max 会把其余账号的紧迫度压成≈0，排序退化成比谁 headroom/surplus 大。
+    u_norm = _min_max([math.log1p(row["urgency"]) for row in rows])
+    if profile.hourly_power:
+        # 代理池：余量项乘 7 天倒计时指数，窗外长周期号不靠 headroom/surplus 压过快到期号
+        s_norm = _min_max([row["surplus"] * deadline_relevance(row["hours"]) for row in rows])
+        h_norm = _min_max([row["headroom"] * deadline_relevance(row["hours"]) for row in rows])
+    else:
+        s_norm = _min_max([row["surplus"] for row in rows])
+        h_norm = _min_max([row["headroom"] for row in rows])
     ranked: list[tuple[float, float, dict]] = []
     for idx, row in enumerate(rows):
         score = (
@@ -711,9 +739,11 @@ def recommend_lenders(
 
     借用路径：urgency ≈ 余量/剩余天数；U/S 池内归一化后加权。
     代理池路径（enforce_loan_cap=False）：
-    - urgency = 余量/剩余小时^proxy_deadline_power（快到期优先消化，减少周期末浪费）
-    - surplus = projected_surplus_cents 归一化（Snapshot Headroom 推算的空闲余量，多者优先）
-    - headroom = remaining_headroom_pct 归一化（余量紧张的留给主使用人）
+    - urgency = 当前桶剩余(headroom×limit)/剩余小时^proxy_deadline_power
+      （快到期优先消化；分子不用消耗外推，避免「已用很多、还剩两天」被算成 0）
+    - 排序前对 urgency 做 log1p 再 min-max，避免几小时级 outlier 压垮 1～3 天账号
+    - surplus / headroom 乘 7 天倒计时指数后再归一化；窗外长周期号余量项为 0，
+      窗内越临近权重越高，同期作废时仍是余量多的优先
     - score_adjust 非空时加在算法综合分上再排序（微调，不绕过硬过滤）
     pool 非空时上述余量/空闲额度按该 Quota Pool 计算。
     同分按 hours_to_deadline 升序、surplus_cents 降序、account_id 打平。

@@ -16,9 +16,9 @@ def test_loan_selection_defaults():
     assert sel.weight_load == 0.15
     assert sel.weight_freshness == 0.10
     assert sel.proxy_deadline_power == 1.75
-    assert sel.proxy_weight_urgency == 0.52
-    assert sel.proxy_weight_headroom == 0.28
-    assert sel.proxy_weight_surplus == 0.17
+    assert sel.proxy_weight_urgency == 0.70
+    assert sel.proxy_weight_headroom == 0.15
+    assert sel.proxy_weight_surplus == 0.12
     assert sel.proxy_weight_freshness == 0.03
     assert sel.max_concurrent_users == 3
     assert sel.concurrent_ttl_seconds == 180
