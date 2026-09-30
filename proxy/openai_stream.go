@@ -1,9 +1,10 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -12,9 +13,12 @@ const openAIStreamScanMax = 8 << 20 // match MITM stream usage tap cap
 
 // ensureOpenAIStreamUsageInRequest sets stream_options.include_usage so upstream
 // emits token usage on the final SSE chunk (OpenAI-compatible).
+// Numbers and raw "<", ">", "&" in the original JSON are preserved.
 func ensureOpenAIStreamUsageInRequest(body []byte) []byte {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := dec.Decode(&payload); err != nil {
 		return body
 	}
 	stream, _ := payload["stream"].(bool)
@@ -30,11 +34,13 @@ func ensureOpenAIStreamUsageInRequest(body []byte) []byte {
 		return body
 	}
 	so["include_usage"] = true
-	out, err := json.Marshal(payload)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
 		return body
 	}
-	return out
+	return bytes.TrimRight(buf.Bytes(), "\n")
 }
 
 type openAIStreamUsageTap struct {
@@ -85,26 +91,106 @@ func openAIChunkUsage(jsonPayload []byte) (model string, usage map[string]any) {
 	return model, usage
 }
 
-// relayOpenAISSEStream copies an upstream SSE body to w and returns usage seen on the stream.
+// sseLineTap parses SSE lines without altering the bytes forwarded to the client.
+// A single line over max is skipped for parsing; following lines are still read.
+type sseLineTap struct {
+	tap  *openAIStreamUsageTap
+	line []byte
+	skip bool
+	max  int
+}
+
+func (t *sseLineTap) feed(p []byte) {
+	max := t.max
+	if max <= 0 {
+		max = openAIStreamScanMax
+	}
+	for _, b := range p {
+		if t.skip {
+			if b == '\n' {
+				t.skip = false
+			}
+			continue
+		}
+		if b == '\n' {
+			line := t.line
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			t.tap.ingestSSELine(line)
+			t.line = t.line[:0]
+			continue
+		}
+		if len(t.line) >= max {
+			t.skip = true
+			t.line = t.line[:0]
+			continue
+		}
+		t.line = append(t.line, b)
+	}
+}
+
+func (t *sseLineTap) flush() {
+	if t.skip || len(t.line) == 0 {
+		return
+	}
+	line := t.line
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	t.tap.ingestSSELine(line)
+	t.line = t.line[:0]
+}
+
+// relayOpenAISSEStream copies upstream SSE bytes unchanged and returns usage seen on the stream.
+// Client disconnects do not stop the upstream read, so a trailing usage chunk is still recorded.
 func relayOpenAISSEStream(w http.ResponseWriter, body io.Reader) openAIStreamUsageTap {
 	var tap openAIStreamUsageTap
-	sc := bufio.NewScanner(body)
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, openAIStreamScanMax)
+	lineTap := sseLineTap{tap: &tap, max: openAIStreamScanMax}
 	var flusher http.Flusher
 	if f, ok := w.(http.Flusher); ok {
 		flusher = f
 	}
-	for sc.Scan() {
-		line := sc.Bytes()
-		_, _ = w.Write(line)
-		_, _ = w.Write([]byte("\n"))
-		if flusher != nil {
-			flusher.Flush()
+	buf := make([]byte, 32*1024)
+	clientOK := true
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			lineTap.feed(buf[:n])
+			if clientOK {
+				if werr := writeAll(w, buf[:n]); werr != nil {
+					clientOK = false
+				} else if flusher != nil {
+					flusher.Flush()
+				}
+			}
 		}
-		tap.ingestSSELine(line)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("[openai] stream read: %v", err)
+			break
+		}
 	}
+	lineTap.flush()
 	return tap
+}
+
+func writeAll(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if n > 0 {
+			p = p[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func copyOpenAIUpstreamHeaders(w http.ResponseWriter, upResp *http.Response) {

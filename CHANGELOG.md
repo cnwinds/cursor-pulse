@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **OpenAI 网关流式用量**：`POST /openai/v1/chat/completions` 在 `stream: true` 时边转发 SSE 边解析末包 `usage`，写入 proxy 明细；请求会补上 `stream_options.include_usage`。需重新部署 Go 代理后生效。
+
 ## [0.6.0] - 2026-09-29
 
 ### 变更
