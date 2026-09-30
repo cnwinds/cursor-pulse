@@ -1,0 +1,20 @@
+{
+  "object": "list",
+  "data": [
+    {"id": "glm-5.3", "object": "model", "owned_by": "glm"},
+    {"id": "glm-5.3-flash", "object": "model", "owned_by": "glm"},
+    {"id": "glm-5-turbo", "object": "model", "owned_by": "glm"},
+    {"id": "glm-5.2", "object": "model", "owned_by": "glm"},
+    {"id": "glm-5.1", "object": "model", "owned_by": "glm"},
+    {"id": "glm-5", "object": "model", "owned_by": "glm"},
+    {"id": "glm-4.7", "object": "model", "owned_by": "glm"},
+    {"id": "MiniMax-M3", "object": "model", "owned_by": "minimax"},
+    {"id": "MiniMax-M2.7", "object": "model", "owned_by": "minimax"},
+    {"id": "MiniMax-M2.5", "object": "model", "owned_by": "minimax"},
+    {"id": "kimi-for-coding", "object": "model", "owned_by": "kimi"},
+    {"id": "kimi-for-coding-highspeed", "object": "model", "owned_by": "kimi"},
+    {"id": "k3", "object": "model", "owned_by": "kimi"},
+    {"id": "k3-256k", "object": "model", "owned_by": "kimi"},
+    {"id": "kimi-k2.5", "object": "model", "owned_by": "kimi"}
+  ]
+}

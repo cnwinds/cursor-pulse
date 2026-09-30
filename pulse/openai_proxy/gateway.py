@@ -7,6 +7,7 @@ import logging
 from fastapi import Depends, HTTPException, Request, Response
 from pulse.openai_proxy.authorize import authorize_pkcp
 from pulse.openai_proxy.forward import _openai_error, forward_chat_completions
+from pulse.openai_proxy.models_catalog import openai_models_payload
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -66,12 +67,4 @@ def register_openai_gateway_routes(app, get_db, config) -> None:
     @app.get("/openai/v1/models")
     def openai_models_stub(session: Session = Depends(get_db)):
         del session
-        return {
-            "object": "list",
-            "data": [
-                {"id": "glm-4.7", "object": "model", "owned_by": "glm"},
-                {"id": "glm-5.2", "object": "model", "owned_by": "glm"},
-                {"id": "MiniMax-M2.5", "object": "model", "owned_by": "minimax"},
-                {"id": "kimi-k2.5", "object": "model", "owned_by": "kimi"},
-            ],
-        }
+        return openai_models_payload()

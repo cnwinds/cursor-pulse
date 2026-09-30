@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,31 @@ func TestOpenAIModelsEndpoint(t *testing.T) {
 	body, _ := io.ReadAll(rr.Body)
 	if len(body) < 20 {
 		t.Fatalf("short body: %q", body)
+	}
+	if !bytes.Equal(body, codingPlanOpenAIModelsJSON) {
+		t.Fatalf("models body must match embedded catalog")
+	}
+	var parsed struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if parsed.Object != "list" || len(parsed.Data) < 3 {
+		t.Fatalf("unexpected catalog: %+v", parsed)
+	}
+	ids := map[string]struct{}{}
+	for _, m := range parsed.Data {
+		ids[m.ID] = struct{}{}
+	}
+	for _, required := range []string{"glm-5.2", "MiniMax-M2.5", "kimi-k2.5", "glm-5.3", "MiniMax-M3", "kimi-for-coding"} {
+		if _, ok := ids[required]; !ok {
+			t.Fatalf("missing model id %q", required)
+		}
 	}
 }
 

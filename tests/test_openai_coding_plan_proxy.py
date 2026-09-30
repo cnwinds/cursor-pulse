@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import pytest
 from pulse.ingestion.crypto import encrypt_secret
 from pulse.openai_proxy.authorize import authorize_pkcp
+from pulse.openai_proxy.models_catalog import openai_models_payload
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries, pick_cp_credential
 from pulse.openai_proxy.upstream import coding_plan_gateway_public_base, cp_gateway_endpoints, openai_base_url
 from pulse.openai_proxy.usage import parse_openai_usage
@@ -34,6 +35,20 @@ def test_coding_plan_gateway_public_base():
     assert (
         coding_plan_gateway_public_base(proxy_public_url="http://127.0.0.1:8317") == "http://127.0.0.1:8317/openai/v1"
     )
+
+
+def test_openai_models_catalog_includes_upstream_and_latest():
+    payload = openai_models_payload()
+    assert payload["object"] == "list"
+    ids = {row["id"] for row in payload["data"]}
+    # 与上游 /openai/v1/models 快照一致的核心型号
+    assert {"glm-5.2", "MiniMax-M2.5", "kimi-k2.5"} <= ids
+    # Coding Plan 当前常用最新型号（对齐 cc-switch / 厂家文档）
+    assert "glm-5.3" in ids
+    assert "MiniMax-M3" in ids
+    assert "kimi-for-coding" in ids
+    owned = {row["owned_by"] for row in payload["data"]}
+    assert owned == {"glm", "minimax", "kimi"}
 
 
 def test_openai_base_url_glm_regions():
@@ -504,7 +519,6 @@ def test_cp_sticky_uses_request_gap_not_bind_age(session):
 
 def test_cp_key_reveal_endpoint():
     from fastapi.testclient import TestClient
-
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
     from pulse.web.app import create_app
     from pulse.web.auth_tokens import create_access_token

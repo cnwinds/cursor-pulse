@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 )
+
+//go:embed coding_plan_openai_models.json
+var codingPlanOpenAIModelsJSON []byte
 
 func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 	if s.pulse == nil {
@@ -184,10 +188,7 @@ func escapeJSON(s string) string {
 
 func writeOpenAIModels(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"object":"list","data":[` +
-		`{"id":"glm-5.2","object":"model","owned_by":"glm"},` +
-		`{"id":"MiniMax-M2.5","object":"model","owned_by":"minimax"},` +
-		`{"id":"kimi-k2.5","object":"model","owned_by":"kimi"}]}`))
+	_, _ = w.Write(codingPlanOpenAIModelsJSON)
 }
 
 func (s *Server) rememberCpSticky(pulseKey, credentialID string) {
