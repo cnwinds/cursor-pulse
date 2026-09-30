@@ -9,20 +9,21 @@ def _msg(result):
 from datetime import UTC, date, datetime, timezone
 
 import pytest
-from sqlalchemy import select
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.quota_self_read import (
     _format_user_message,
     handle_quota_self_read,
 )
 from pulse.capabilities.invoke import HANDLERS, invoke_capability
 from pulse.config import AppConfig, CredentialConfig
-from pulse.storage.db import init_db
 from pulse.integrations.coding_plan.types import CodingPlanExtra, QuotaTier
+from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot, AiPlan, AiVendor
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
+
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 @pytest.fixture

@@ -17,7 +17,7 @@ _KIMI_USAGES_URL = "https://api.kimi.com/coding/v1/usages"
 def _parse_float(value: Any) -> float | None:
     if value is None:
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         try:

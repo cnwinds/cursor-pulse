@@ -10,9 +10,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
-from pulse.tool_center.auto_lender import try_force_jev_refresh
-from pulse.web.deps import PortalUser
-from pulse.web.permissions import has_permission
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.settings.team_store import effective_loan_selection
@@ -24,7 +21,7 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
-from pulse.tool_center.auto_lender import rank_lenders
+from pulse.tool_center.auto_lender import rank_lenders, try_force_jev_refresh
 from pulse.tool_center.burn_rate import (
     analyze_burn_rate,
     display_api_remaining_cents,

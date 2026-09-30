@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-
 from pulse.authz.actor import can_manage_guide_image
 from pulse.channels.dingtalk.guide_image import save_guide_image_override
 from pulse.storage.models import Member

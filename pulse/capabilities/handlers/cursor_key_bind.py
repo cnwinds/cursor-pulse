@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-
 from pulse.channels.admin_gate import is_channel_admin
 from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
 from pulse.ingestion.sync import CursorSyncService

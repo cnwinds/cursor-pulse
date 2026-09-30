@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from sqlalchemy import select
-
+import pytest
 from pulse.ingestion.coding_plan_sync import CodingPlanQuotaSyncService
 from pulse.ingestion.credentials import CredentialService
 from pulse.integrations.coding_plan.types import CodingPlanQuotaResult
@@ -17,11 +16,11 @@ from pulse.integrations.coding_plan.zhipu import (
     fetch_zhipu_team_quota,
     parse_zhipu_token_tiers,
 )
+from pulse.storage.db import init_db
 from pulse.storage.models import AiAccountPlanHistory, AiPlan, AiVendor, Member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
-import pytest
-from pulse.storage.db import init_db
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 FIXTURE_DATA = json.loads((Path(__file__).parent / "fixtures/coding_plan/zhipu_two_tiers.json").read_text())["data"]

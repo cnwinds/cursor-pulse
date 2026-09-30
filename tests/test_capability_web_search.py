@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.manifest import get_manifest, list_operations
 from pulse.capabilities.web.fetch import safe_fetch
@@ -17,6 +16,8 @@ from pulse.config import WebSearchConfig, load_config
 from pulse.storage.db import init_db
 from pulse.storage.models import Member
 from tests.conftest import make_team_repo
+
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 @pytest.fixture

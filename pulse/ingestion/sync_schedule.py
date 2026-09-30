@@ -62,7 +62,7 @@ def apply_sync_failure(
     now: datetime | None = None,
 ) -> None:
     now = now or datetime.now(UTC)
-    classified = exc if isinstance(exc, (RetryableSyncError, FatalSyncError)) else None
+    classified = exc if isinstance(exc, RetryableSyncError | FatalSyncError) else None
     if classified is None:
         from pulse.ingestion.sync_errors import classify_sync_error
 

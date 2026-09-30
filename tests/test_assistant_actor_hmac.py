@@ -11,13 +11,14 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("fastapi")
 
+from pulse.web.assistant_actor import sign_actor_headers
+from tests.assistant_actor_helpers import signed_actor_headers
+
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.conversation.session_store import attach_user_message
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.storage.db import init_assistant_db
-from pulse.web.assistant_actor import sign_actor_headers
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-hmac-secret"
 TEAM_ID = "team-hmac"

@@ -88,7 +88,6 @@ def _authorize_proxy_key(session: Session, plaintext: str, *, now: datetime | No
 
 
 def _authorize_loan_passthrough(session: Session, plaintext: str) -> dict:
-
     h = hash_proxy_key(plaintext)
     cred = session.scalar(
         select(AiAccountCredential).where(

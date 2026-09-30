@@ -4,7 +4,6 @@ from datetime import date
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-
 from pulse.ingestion.coding_plan_sync import CODING_PLAN_VENDORS
 from pulse.storage.models import AiAccount, Member
 from pulse.tool_center.account_pick import filter_cursor_accounts

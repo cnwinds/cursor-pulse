@@ -1206,9 +1206,7 @@ def test_authorize_treats_legacy_unknown_pool_as_auto(env):
     reset_occupancy()
     full_cred = _seed_api_full_account(env)
     (plain,) = _seat_keys(env, 1)
-    body = _authorize(
-        env, plain, current_credential_id=env["cred_id"], release_current=True, quota_pool="unknown"
-    )
+    body = _authorize(env, plain, current_credential_id=env["cred_id"], release_current=True, quota_pool="unknown")
     assert body["status"] == "ok"
     assert body["assigned_credential_id"] == full_cred
 

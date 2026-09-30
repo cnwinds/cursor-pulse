@@ -33,9 +33,7 @@ def test_count_by_account_respects_ttl():
 
 
 def _begin(book, now, boot="", holder="pk:k1"):
-    book.begin_call(
-        holder_id=holder, account_id="a1", credential_id="c1", boot_id=boot, hold_seconds=1200, now=now
-    )
+    book.begin_call(holder_id=holder, account_id="a1", credential_id="c1", boot_id=boot, hold_seconds=1200, now=now)
 
 
 def _end(book, now, boot="", holder="pk:k1", recreate=False):

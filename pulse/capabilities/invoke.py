@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-
 from pulse.capabilities.handlers.cursor_key_bind import handle_cursor_key_bind
 from pulse.capabilities.handlers.guide_image_update import handle_guide_image_update
 from pulse.capabilities.handlers.key_loan import (

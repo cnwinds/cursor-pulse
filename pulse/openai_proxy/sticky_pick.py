@@ -316,5 +316,3 @@ def _touch_seat(
         max_concurrent=int(selection.max_concurrent_users or 0),
         ttl_seconds=float(selection.concurrent_ttl_seconds or 180),
     )
-
-

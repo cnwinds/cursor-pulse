@@ -8,7 +8,6 @@ def _msg(result):
 
 from unittest.mock import patch
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.key_loan import handle_key_loan_request
 from pulse.capabilities.handlers.text_capabilities import handle_submission_self_read
 from pulse.capabilities.invoke import invoke_capability
@@ -18,6 +17,8 @@ from pulse.storage.db import init_db
 from pulse.storage.models import Team
 from pulse.storage.repository import Repository
 from sqlalchemy import select
+
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 def _team_repo(session):

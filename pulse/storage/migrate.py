@@ -688,9 +688,7 @@ def migrate_schema(engine: Engine) -> None:
                 cond = " OR ".join(f"{c} IS NOT NULL" for c in legacy_limit_cols)
                 scope = "mode IS NULL OR mode = 'quota'" if "mode" in columns else "1=1"
                 sets = [f"{c} = NULL" for c in legacy_limit_cols]
-                n = conn.execute(
-                    text(f"UPDATE proxy_keys SET {', '.join(sets)} WHERE ({cond}) AND ({scope})")
-                ).rowcount
+                n = conn.execute(text(f"UPDATE proxy_keys SET {', '.join(sets)} WHERE ({cond}) AND ({scope})")).rowcount
                 if n:
                     logger.info("Cleared legacy proxy_keys limits on %d row(s)", n)
             if "mode" in columns:

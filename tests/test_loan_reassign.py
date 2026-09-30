@@ -6,8 +6,6 @@ from datetime import UTC, date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import select
-
 from pulse.ingestion.credentials import CredentialService
 from pulse.proxy.keys import hash_proxy_key
 from pulse.storage.models import AccountQuotaSnapshot, AiAccountCredential, KeyLoan
@@ -21,6 +19,7 @@ from pulse.tool_center.key_loans import (
 )
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.web.auth_tokens import create_access_token
+from sqlalchemy import select
 from tests.conftest import mock_cursor_key_exchange
 from tests.test_quota_api import TEST_KEY, _headers, _make_active_loan
 

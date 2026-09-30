@@ -57,18 +57,18 @@ class JevAnswer:
         raw = self.raw
         if isinstance(raw, bool):
             return 1.0 if raw else 0.0
-        if isinstance(raw, (int, float)):
+        if isinstance(raw, int | float):
             return float(raw)
         if isinstance(raw, dict):
             for key in ("probability", "p", "noul"):
                 value = raw.get(key)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if isinstance(value, int | float) and not isinstance(value, bool):
                     return float(value)
             probs = raw.get("probabilities")
             if isinstance(probs, dict):
                 for key in ("true", "True", "yes"):
                     value = probs.get(key)
-                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if isinstance(value, int | float) and not isinstance(value, bool):
                         return float(value)
         return None
 
@@ -76,7 +76,7 @@ class JevAnswer:
     def confidence(self) -> float | None:
         if isinstance(self.raw, dict):
             value = self.raw.get("confidence")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if isinstance(value, int | float) and not isinstance(value, bool):
                 return float(value)
         return None
 
@@ -87,9 +87,7 @@ class JevAnswer:
             probs = self.raw.get("probabilities")
             if isinstance(probs, dict):
                 return {
-                    str(k): float(v)
-                    for k, v in probs.items()
-                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    str(k): float(v) for k, v in probs.items() if isinstance(v, int | float) and not isinstance(v, bool)
                 }
         return {}
 

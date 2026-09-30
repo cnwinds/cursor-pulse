@@ -14,7 +14,6 @@ from pulse.ingestion.on_demand import (
     resolve_on_demand_notify_dingtalk_ids,
 )
 from pulse.ingestion.sync_dispatch import sync_account_by_vendor
-from pulse.integrations.cursor_api import CursorApiClient
 from pulse.ingestion.sync_errors import FatalSyncError, classify_sync_error
 from pulse.ingestion.sync_schedule import (
     account_jitter_sec,
@@ -23,6 +22,7 @@ from pulse.ingestion.sync_schedule import (
     elevate_month_close_if_needed,
     is_due_for_sync,
 )
+from pulse.integrations.cursor_api import CursorApiClient
 from pulse.storage.models import AiAccount, AiAccountCredential
 
 logger = logging.getLogger(__name__)

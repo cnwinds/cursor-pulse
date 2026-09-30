@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
-from pulse.tool_center.auto_lender import try_force_jev_refresh
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
 from pulse.settings.team_store import effective_config_for_saved_tenant
@@ -21,6 +20,7 @@ from pulse.storage.models import (
     ProxyKey,
     ProxyKeyUsage,
 )
+from pulse.tool_center.auto_lender import try_force_jev_refresh
 from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.web.deps import PortalUser
 from pulse.web.permissions import has_permission

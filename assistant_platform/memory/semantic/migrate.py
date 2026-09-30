@@ -67,7 +67,7 @@ def _normalize_legacy_row(row: dict, columns: tuple[str, ...]) -> dict:
         val = payload.get(col)
         if val is None:
             payload[col] = _JSON_COLUMN_DEFAULTS[col]
-        elif isinstance(val, (dict, list)):
+        elif isinstance(val, dict | list):
             payload[col] = json.dumps(val, ensure_ascii=False)
     return payload
 

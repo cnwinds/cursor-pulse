@@ -752,9 +752,12 @@ def test_proxy_pool_near_reset_with_low_api_headroom_beats_long_cycle():
         api_pct=16.0,
     )
     assert (
-        pool_surplus_cents(near, "api", hours_until_deadline(
-            lender_deadline_at(near.cycle_end, None, cycle_end_at=near.cycle_end_at), NOW
-        ) / 24.0, TODAY)
+        pool_surplus_cents(
+            near,
+            "api",
+            hours_until_deadline(lender_deadline_at(near.cycle_end, None, cycle_end_at=near.cycle_end_at), NOW) / 24.0,
+            TODAY,
+        )
         == 0.0
     )
     ranked = recommend_lenders(

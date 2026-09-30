@@ -37,8 +37,10 @@ from pulse.web.deps import PortalUser, require_portal_user
 from pulse.web.ingestion_status_api import register_ingestion_status_routes
 from pulse.web.internal_capabilities_api import register_internal_capabilities_routes
 from pulse.web.internal_channel_api import register_internal_channel_routes
+from pulse.web.internal_openai_proxy_api import register_internal_openai_proxy_routes
 from pulse.web.internal_proxy_api import register_internal_proxy_routes
 from pulse.web.knowledge_api import register_knowledge_routes
+from pulse.web.openai_proxy_api import register_openai_proxy_admin_routes
 from pulse.web.permissions import has_permission
 from pulse.web.portal_auth_api import register_portal_auth_routes
 from pulse.web.portal_users_api import register_portal_users_routes
@@ -49,8 +51,6 @@ from pulse.web.schemas import ChatBody
 from pulse.web.settings_api import register_settings_routes
 from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
 from pulse.web.usage_analytics_api import register_usage_analytics_routes
-from pulse.web.internal_openai_proxy_api import register_internal_openai_proxy_routes
-from pulse.web.openai_proxy_api import register_openai_proxy_admin_routes
 
 logger = logging.getLogger(__name__)
 

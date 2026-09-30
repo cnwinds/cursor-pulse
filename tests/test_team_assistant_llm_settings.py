@@ -1,12 +1,13 @@
 import pytest
 
 pytest.importorskip("fastapi")
-from assistant_platform.config import AssistantConfig, AssistantLlmConfig, load_assistant_config
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.web.auth_tokens import create_access_token
 from pulse.web.portal import bootstrap_portal_owner
 from pulse.web.settings_store import patch_team_setting
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
+
+from assistant_platform.config import AssistantConfig, AssistantLlmConfig, load_assistant_config
 
 
 @pytest.fixture(scope="module")

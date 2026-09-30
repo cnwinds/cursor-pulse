@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-
 from pulse.authz.actor import is_channel_admin
 from pulse.capabilities.handlers.common import resolve_actor_member
 from pulse.query.llm_query import (

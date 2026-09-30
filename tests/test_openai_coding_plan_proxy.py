@@ -236,9 +236,7 @@ def test_cp_seats_restored_from_sticky_binding_after_web_restart(session):
 
     reset_occupancy()
     _team, member = _seed_cp_pressure_accounts(session, {"fresh@test": 0.0, "stale@test": 0.0})
-    creds = {
-        c.account_id: c for c in session.scalars(select(AiAccountCredential)).all()
-    }
+    creds = {c.account_id: c for c in session.scalars(select(AiAccountCredential)).all()}
     accounts = {a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()}
     now = datetime.now(UTC)
     for ident, idle_min in (("fresh@test", 5), ("stale@test", 25)):
@@ -271,9 +269,7 @@ def test_cp_end_after_failover_does_not_resurrect_old_seat(session):
 
     reset_occupancy()
     team, member = _seed_cp_pressure_accounts(session, {"old@test": 0.0, "new@test": 0.0})
-    by_ident = {
-        a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()
-    }
+    by_ident = {a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()}
     creds = {c.account_id: c.id for c in session.scalars(select(AiAccountCredential)).all()}
     key, _plain = create_coding_plan_key(
         session, name="fo", member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
@@ -623,7 +619,6 @@ def test_cp_sticky_uses_request_gap_not_bind_age(session):
 
 def test_cp_key_reveal_endpoint():
     from fastapi.testclient import TestClient
-
     from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
     from pulse.web.app import create_app
     from pulse.web.auth_tokens import create_access_token
@@ -846,9 +841,7 @@ def test_cp_dwell_expired_reranks_despite_gateway_current(session):
     from pulse.storage.models import CpOpenAiStickyBinding
 
     session.add(
-        CpOpenAiStickyBinding(
-            proxy_key_id=key.id, credential_id=creds["a-used@test"], sticky_since=t0, updated_at=t0
-        )
+        CpOpenAiStickyBinding(proxy_key_id=key.id, credential_id=creds["a-used@test"], sticky_since=t0, updated_at=t0)
     )
     session.commit()
     assert pick(creds["a-used@test"], t0 + timedelta(minutes=5)) == "a-used@test"
@@ -873,12 +866,8 @@ def test_cp_admin_accounts_score_and_pick_order(session):
         session,
         {"a-used@test": 4.0, "b-idle@test": 0.0, "c-idle@test": 0.0, "d-nosnap@test": None},
     )
-    by_ident = {
-        r["account_identifier"]: r["id"] for r in list_cp_admin_accounts(session, vendor_slug="glm")
-    }
-    rows = list_cp_admin_accounts(
-        session, vendor_slug="glm", account_load={by_ident["b-idle@test"]: 2}
-    )
+    by_ident = {r["account_identifier"]: r["id"] for r in list_cp_admin_accounts(session, vendor_slug="glm")}
+    rows = list_cp_admin_accounts(session, vendor_slug="glm", account_load={by_ident["b-idle@test"]: 2})
     assert [r["account_identifier"] for r in rows] == [
         "c-idle@test",
         "b-idle@test",

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.usage_query import handle_usage_query
 from pulse.capabilities.invoke import HANDLERS
 from pulse.config import AppConfig, CollectionConfig, CredentialConfig
 from pulse.storage.db import init_db
 from tests.conftest import make_team_repo
+
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 def test_usage_query_registered():

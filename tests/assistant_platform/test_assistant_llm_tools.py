@@ -126,11 +126,7 @@ def test_complete_with_tools_stream_assembles_tool_calls_and_reasoning():
                     }
                 ]
             },
-            {
-                "choices": [
-                    {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'iod":"month"}'}}]}}
-                ]
-            },
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'iod":"month"}'}}]}}]},
             {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
         ]
     )
@@ -146,9 +142,7 @@ def test_complete_with_tools_stream_assembles_tool_calls_and_reasoning():
 
     assert result["content"] == "好的，我来查"
     assert result["reasoning"] == "想一下"
-    assert result["tool_calls"] == [
-        {"id": "call_1", "name": "usage_self_read", "arguments": '{"period":"month"}'}
-    ]
+    assert result["tool_calls"] == [{"id": "call_1", "name": "usage_self_read", "arguments": '{"period":"month"}'}]
     raw = result["raw_assistant_message"]
     assert raw["reasoning_content"] == "想一下"
     assert raw["tool_calls"][0]["function"]["arguments"] == '{"period":"month"}'

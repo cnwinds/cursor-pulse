@@ -5,7 +5,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.cursor_key_bind import handle_cursor_key_bind
 from pulse.capabilities.invoke import HANDLERS, invoke_capability
 from pulse.config import AppConfig, CredentialConfig, TenantConfig
@@ -16,6 +15,8 @@ from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from sqlalchemy import select
 from tests.conftest import make_team_repo, mock_cursor_key_exchange
+
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 FULL_API_KEY = "crsr_test_key_1234567890"

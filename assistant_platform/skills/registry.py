@@ -233,7 +233,7 @@ class SkillRegistry:
             return []
         if isinstance(raw, str):
             items = [raw]
-        elif isinstance(raw, (list, tuple)):
+        elif isinstance(raw, list | tuple):
             items = list(raw)
         else:
             return []
