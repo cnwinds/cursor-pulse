@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.handlers.common import resolve_actor_member
 from pulse.periods import current_period
 from pulse.tool_center.knowledge import KnowledgeService, TipSubmissionError

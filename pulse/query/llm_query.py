@@ -4,9 +4,9 @@ import json
 from typing import Any
 
 import pandas as pd
+from assistant_platform.llm.client import AssistantLlmClient
 from sqlalchemy.orm import Session
 
-from assistant_platform.llm.client import AssistantLlmClient
 from pulse.periods import current_period
 from pulse.query.engine import load_usage_dataframe
 

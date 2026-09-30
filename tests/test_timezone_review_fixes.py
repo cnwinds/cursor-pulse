@@ -3,13 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock
 
+from assistant_platform.contracts.provider import CapabilityInvokeResult
 from pulse.capabilities.handlers.quota_self_read import _format_user_message
 from pulse.channels.capability_bridge import format_capability_reply
 from pulse.tool_center.usage_self import format_usage_self_message
 from pulse.util.datetime_fmt import format_data_updated_line
 from pulse.util.timezone_ctx import activate_display_timezone
-
-from assistant_platform.contracts.provider import CapabilityInvokeResult
 
 
 def test_format_capability_reply_respects_display_timezone_context():

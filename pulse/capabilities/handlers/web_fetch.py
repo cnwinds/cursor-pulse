@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.handlers.common import resolve_actor_member
 from pulse.capabilities.web.fetch import safe_fetch
 from pulse.capabilities.web.provider import SearchProviderError

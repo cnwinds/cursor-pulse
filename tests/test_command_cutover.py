@@ -9,12 +9,11 @@ def _msg(result):
 from unittest.mock import MagicMock, patch
 
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig, CollectionConfig, TenantConfig
 from pulse.storage.db import init_db
 from tests.conftest import make_team_repo
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 def _invoke_request(*, member_id: str, team_id: str, capability_key: str, arguments: dict | None = None):
@@ -30,11 +29,10 @@ def _invoke_request(*, member_id: str, team_id: str, capability_key: str, argume
     )
 
 
+from assistant_platform.conversation.intents import match_capability_intent
 from pulse.channels.commands import _looks_like_help, _looks_like_self_loan_read
 from pulse.channels.dingtalk.handler import DingTalkChannelHandler
 from pulse.config import AssistantMirrorConfig
-
-from assistant_platform.conversation.intents import match_capability_intent
 
 
 @pytest.mark.parametrize(

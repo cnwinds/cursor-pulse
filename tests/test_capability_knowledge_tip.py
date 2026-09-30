@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import load_config
 from pulse.storage.db import init_db
@@ -9,8 +10,6 @@ from pulse.tool_center.knowledge import KnowledgeService, TipSubmissionError, ev
 from pulse.tool_center.seed import seed_v2_catalog
 from sqlalchemy import select
 from tests.conftest import make_team_repo
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 @pytest.fixture

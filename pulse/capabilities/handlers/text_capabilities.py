@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from sqlalchemy import select
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from pulse.capabilities.handlers.common import (
     _fail,
     _success,

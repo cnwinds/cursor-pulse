@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.handlers.common import resolve_actor_member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.usage_self import build_usage_self_payload

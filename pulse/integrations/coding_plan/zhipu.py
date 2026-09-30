@@ -37,7 +37,7 @@ def _classify_zhipu_window(item: dict) -> str | None:
 
 
 def parse_zhipu_token_tiers(data: dict) -> list[QuotaTier]:
-    type Entry = tuple[int | None, float, str | None]
+    Entry = tuple[int | None, float, str | None]
     five_hour: Entry | None = None
     weekly: Entry | None = None
     unclassified: list[Entry] = []

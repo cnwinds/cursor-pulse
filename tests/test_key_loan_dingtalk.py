@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig, CredentialConfig, LoanSelectionConfig, TenantConfig
 from pulse.ingestion.credentials import CredentialService
@@ -26,8 +27,6 @@ from tests.conftest import (
     make_team_repo,
     mock_cursor_key_exchange,
 )
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 

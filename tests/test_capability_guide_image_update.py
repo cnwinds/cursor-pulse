@@ -10,13 +10,12 @@ import base64
 from pathlib import Path
 
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.guide_image_update import handle_guide_image_update
 from pulse.capabilities.invoke import HANDLERS
 from pulse.config import AdminConfig, AppConfig, StorageConfig, TenantConfig
 from pulse.storage.db import init_db
 from tests.conftest import make_team_repo
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 # Minimal valid PNG (1x1)
 PNG_BYTES = (

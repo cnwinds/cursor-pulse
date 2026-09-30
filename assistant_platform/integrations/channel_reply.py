@@ -5,9 +5,8 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from pulse.util.datetime_fmt import serialize_datetime
-
 from assistant_platform.config import AssistantConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 

@@ -190,10 +190,9 @@ def test_invoke_duplicate_idempotency_returns_same_result(api_env):
 
 
 def test_invoke_handles_concurrent_idempotency_conflict(api_env, monkeypatch):
+    from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
     from pulse.capabilities import invocation_store
     from pulse.web import internal_capabilities_api as api_module
-
-    from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 
     team_id = api_env["team"].id
     actor_id = api_env["actor"].id

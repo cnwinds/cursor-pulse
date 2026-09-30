@@ -4,11 +4,11 @@ import hmac
 from dataclasses import asdict
 from typing import Annotated, Any
 
+from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from pulse.capabilities.invocation_store import (
     get_by_idempotency,
     get_by_invocation_id,

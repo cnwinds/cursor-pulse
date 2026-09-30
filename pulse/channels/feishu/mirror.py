@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
+
 from pulse.channels.dingtalk.mirror import (
     _post_to_assistant,
     _post_to_assistant_async,

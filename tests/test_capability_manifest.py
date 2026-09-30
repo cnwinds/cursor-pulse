@@ -1,7 +1,6 @@
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.manifest import get_manifest, list_operations
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 def test_manifest_contains_three_phase1_ops():

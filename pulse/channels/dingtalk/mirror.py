@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-
 from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.domain.identity import DEFAULT_ASSISTANT_ID
 from assistant_platform.secrets.redact import redact_text
+
 from pulse.config import AppConfig, AssistantMirrorConfig
 from pulse.http_clients import internal_async_client, internal_client
 from pulse.util.datetime_fmt import serialize_datetime

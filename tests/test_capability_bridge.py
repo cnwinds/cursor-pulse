@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeResult
 from pulse.channels.capability_bridge import (
     format_capability_reply,
     invoke_capability_local,
@@ -25,8 +26,6 @@ from pulse.storage.db import init_db
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from tests.conftest import make_team_repo
-
-from assistant_platform.contracts.provider import CapabilityInvokeResult
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
 

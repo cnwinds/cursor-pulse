@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client

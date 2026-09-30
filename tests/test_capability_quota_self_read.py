@@ -9,6 +9,7 @@ def _msg(result):
 from datetime import UTC, date, datetime, timezone
 
 import pytest
+from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.quota_self_read import (
     _format_user_message,
     handle_quota_self_read,
@@ -22,8 +23,6 @@ from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
 from sqlalchemy import select
 from tests.conftest import make_team_repo
-
-from assistant_platform.contracts.provider import CapabilityInvokeRequest
 
 
 @pytest.fixture

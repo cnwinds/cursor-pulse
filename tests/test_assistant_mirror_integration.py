@@ -6,13 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
-from pulse.channels.dingtalk.mirror import mirror_dingtalk_message_sync
-from pulse.config import AppConfig, AssistantMirrorConfig
-
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.storage.db import init_assistant_db
+from fastapi.testclient import TestClient
+from pulse.channels.dingtalk.mirror import mirror_dingtalk_message_sync
+from pulse.config import AppConfig, AssistantMirrorConfig
 
 
 @pytest.fixture
@@ -76,9 +75,8 @@ def test_mirror_posts_to_assistant_and_creates_session(assistant_client):
     assert kwargs["headers"]["Authorization"] == "Bearer mirror-test-token"
 
     with session_factory() as session:
-        from sqlalchemy import select
-
         from assistant_platform.conversation.models import ChatSessionRow
+        from sqlalchemy import select
 
         row = session.scalar(select(ChatSessionRow).where(ChatSessionRow.team_id == "team-mirror"))
         assert row is not None
