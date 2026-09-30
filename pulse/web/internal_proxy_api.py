@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
+from pulse.proxy.occupancy import get_occupancy
 
 
 class AuthorizeBody(BaseModel):
@@ -55,6 +56,7 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
     def require_internal_service(
         authorization: Annotated[str | None, Header()] = None,
         x_pulse_internal_token: Annotated[str | None, Header(alias="X-Pulse-Internal-Token")] = None,
+        x_proxy_boot: Annotated[str | None, Header(alias="X-Proxy-Boot")] = None,
     ) -> None:
         expected = (config.internal.service_token or "").strip()
         if not expected:
@@ -66,6 +68,8 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             provided = x_pulse_internal_token.strip()
         if not provided or not hmac.compare_digest(provided, expected):
             raise HTTPException(status_code=401, detail="Unauthorized")
+        # Pool polls double as the data-plane liveness heartbeat for in-flight gateway seats.
+        get_occupancy().note_boot((x_proxy_boot or "").strip()[:64])
 
     @app.post(
         "/api/internal/v1/proxy/authorize",

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,7 +106,10 @@ func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 	return &PulseClient{
 		baseURL: stringsTrimRightSlash(baseURL),
 		token:   token,
-		client:  &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: bootHeaderTransport{boot: newBootID(), next: http.DefaultTransport},
+		},
 		authTTL: authTTL,
 		authCache: map[string]struct {
 			res    AuthResult
@@ -116,6 +121,27 @@ func NewPulseClient(baseURL, token string, authTTL time.Duration) *PulseClient {
 		usageBufMax:     defaultUsageBufMax,
 		stopCh:          make(chan struct{}),
 	}
+}
+
+// bootHeaderTransport stamps every Pulse call with this process's boot id. Pulse uses
+// it (plus the periodic pool poll) to tell when a proxy died with gateway calls in flight.
+type bootHeaderTransport struct {
+	boot string
+	next http.RoundTripper
+}
+
+func (t bootHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("X-Proxy-Boot", t.boot)
+	return t.next.RoundTrip(req)
+}
+
+func newBootID() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("t%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func stringsTrimRightSlash(s string) string {
@@ -321,6 +347,50 @@ func (c *PulseClient) ResolveOpenAI(
 		return OpenAIResolveResult{}, err
 	}
 	return res, nil
+}
+
+var endOpenAIBackoff = []time.Duration{time.Second, 5 * time.Second, 30 * time.Second}
+
+// EndOpenAI tells Pulse a gateway call finished so the seat is kept for the dwell window.
+// Retries a few times: a lost end leaves the seat in flight until this process stops polling.
+func (c *PulseClient) EndOpenAI(proxyKeyID, credentialID string) {
+	body, _ := json.Marshal(map[string]any{
+		"proxy_key_id":  proxyKeyID,
+		"credential_id": credentialID,
+	})
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		lastErr = c.postEndOpenAI(body)
+		if lastErr == nil {
+			return
+		}
+		if attempt >= len(endOpenAIBackoff) {
+			break
+		}
+		time.Sleep(endOpenAIBackoff[attempt])
+	}
+	log.Printf("[openai] end call: %v", lastErr)
+}
+
+func (c *PulseClient) postEndOpenAI(body []byte) error {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/openai-proxy/end", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := c.client.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *PulseClient) RecordOpenAIUsage(proxyKeyID, credentialID, model string, usage map[string]any) error {

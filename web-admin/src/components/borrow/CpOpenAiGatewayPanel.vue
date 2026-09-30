@@ -22,6 +22,23 @@
               <CodingPlanTierBars :tiers="row.quota_tiers" />
             </template>
           </el-table-column>
+          <el-table-column width="112" align="right" header-align="right">
+            <template #header>
+              <el-tooltip
+                content="打分 = 100 − 额度压力（已用 %，越高越优先）；同分时代理占座少者优先，再按账号名。#N 为选号名次，仅对生效入池账号排名；列表按选号顺序排列。"
+                placement="top"
+              >
+                <span class="col-header-tip">打分</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <div class="score-cell" :class="{ 'score-muted': row.rank == null }">
+                <span v-if="row.rank != null" class="score-rank">#{{ row.rank }}</span>
+                <span class="score-value">{{ row.score.toFixed(1) }}</span>
+              </div>
+              <div v-if="row.concurrent_seats" class="score-seats">占座 {{ row.concurrent_seats }}</div>
+            </template>
+          </el-table-column>
           <el-table-column label="就绪" width="100">
             <template #default="{ row }">
               <el-tag :type="row.pool_ready ? 'success' : 'danger'" size="small">
@@ -431,6 +448,10 @@ interface CpAccount {
   pool_ready: boolean
   pool_ready_reason: string | null
   tier_pressure_pct: number
+  score: number
+  rank: number | null
+  concurrent_seats: number
+  pool_effective: boolean
   quota_tiers?: Array<{ name: string; label?: string; utilization_pct?: number | null }>
 }
 
@@ -1014,6 +1035,28 @@ defineExpose({
 .col-header-tip {
   cursor: help;
   border-bottom: 1px dashed var(--el-border-color);
+}
+.score-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.score-rank {
+  font-size: var(--pulse-text-xs);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+.score-value {
+  font-size: var(--pulse-text-base);
+  color: var(--el-text-color-primary);
+}
+.score-muted .score-value {
+  color: var(--el-text-color-placeholder);
+}
+.score-seats {
+  font-size: var(--pulse-text-xs);
+  color: var(--el-text-color-secondary);
 }
 .usage-slash-block {
   padding: 2px 0;

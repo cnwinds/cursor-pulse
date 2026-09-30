@@ -58,6 +58,13 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 	currentCred = s.cpStickyCred[pulseKey]
 	s.cpStickyMu.Unlock()
 
+	var seated OpenAIResolveResult
+	defer func() {
+		if seated.ProxyKeyID != "" && seated.CredentialID != "" {
+			go s.pulse.EndOpenAI(seated.ProxyKeyID, seated.CredentialID)
+		}
+	}()
+
 	const maxAttempts = 8
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		res, err := s.pulse.ResolveOpenAI(pulseKey, excluded, currentCred, releaseCurrent)
@@ -79,6 +86,7 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key provided")
 			return
 		}
+		seated = res
 		upResp, upErr := s.forwardOpenAIChat(res, body)
 		if upErr != nil {
 			log.Printf("[openai] upstream error: %v", upErr)

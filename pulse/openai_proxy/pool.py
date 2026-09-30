@@ -30,6 +30,17 @@ def _tier_pressure(snap) -> float:
     return max(pcts) if pcts else 50.0
 
 
+def cp_pool_score(pressure: float | None) -> float:
+    """Selection score shown in admin UI: remaining quota % (higher is picked first)."""
+    p = 50.0 if pressure is None else float(pressure)
+    return round(max(0.0, 100.0 - p), 1)
+
+
+def cp_rank_key(*, pressure: float | None, load: int, identifier: str | None) -> tuple:
+    """Shared order for gateway pick and admin list: score desc, fewer proxy seats, name."""
+    return (-cp_pool_score(pressure), int(load), str(identifier or ""))
+
+
 def list_cp_pool_entries(
     session: Session,
     *,
@@ -75,7 +86,7 @@ def list_cp_pool_entries(
             continue
         candidates.append((pressure, cred, acc))
 
-    candidates.sort(key=lambda x: (x[0], x[2].account_identifier))
+    candidates.sort(key=lambda x: cp_rank_key(pressure=x[0], load=0, identifier=x[2].account_identifier))
     enc = encryption_key.strip()
     out: list[dict[str, Any]] = []
     for pressure, cred, acc in candidates:
@@ -96,8 +107,13 @@ def list_cp_pool_entries(
     return out
 
 
-def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[str, Any]]:
-    """All Coding Plan accounts for admin UI (入池开关 + 额度压力)."""
+def list_cp_admin_accounts(
+    session: Session,
+    *,
+    vendor_slug: str,
+    account_load: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """All Coding Plan accounts for admin UI, in gateway pick order (effective pool first)."""
     from pulse.storage.models import AiAccount, AiAccountCredential, AiVendor
 
     slug = vendor_slug.strip().lower()
@@ -129,6 +145,7 @@ def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[s
         if c.status == "active" and c.key_role == "primary":
             active_primary[c.account_id] = active_primary.get(c.account_id, 0) + 1
     snaps = latest_snapshots_for_accounts(session, account_ids)
+    load = account_load or {}
     out: list[dict[str, Any]] = []
     for acc in accounts:
         n = active_primary.get(acc.id, 0)
@@ -149,11 +166,28 @@ def list_cp_admin_accounts(session: Session, *, vendor_slug: str) -> list[dict[s
                 "pool_ready": pool_ready,
                 "pool_ready_reason": pool_ready_reason,
                 "tier_pressure_pct": pressure,
+                "score": cp_pool_score(pressure),
+                "concurrent_seats": int(load.get(acc.id, 0)),
+                "rank": None,
                 "quota_tiers": quota_tiers_for_board(snap) if snap is not None else [],
                 "pool_effective": bool(acc.cp_proxy_enabled and pool_ready and pressure < MAX_TIER_PCT),
             }
         )
-    return out
+    effective = sorted(
+        (r for r in out if r["pool_effective"]),
+        key=lambda r: cp_rank_key(
+            pressure=r["tier_pressure_pct"],
+            load=r["concurrent_seats"],
+            identifier=r["account_identifier"],
+        ),
+    )
+    for i, row in enumerate(effective, start=1):
+        row["rank"] = i
+    rest = sorted(
+        (r for r in out if not r["pool_effective"]),
+        key=lambda r: (not r["cp_proxy_enabled"], -r["score"], str(r["account_identifier"] or "")),
+    )
+    return effective + rest
 
 
 def pick_cp_credential(

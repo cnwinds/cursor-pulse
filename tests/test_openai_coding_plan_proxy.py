@@ -181,6 +181,125 @@ def test_internal_openai_resolve():
     session.close()
 
 
+def test_internal_openai_seat_held_during_call_and_dwell_after():
+    import time
+
+    from fastapi.testclient import TestClient
+    from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
+    from pulse.proxy.occupancy import get_occupancy, reset_occupancy
+    from pulse.web.app import create_app
+
+    reset_occupancy()
+    config = AppConfig(
+        web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
+        tenant=TenantConfig(slug="test", name="Test"),
+        credentials=CredentialConfig(encryption_key=TEST_KEY),
+        internal=InternalApiConfig(service_token="internal-token"),
+    )
+    session_factory = init_db("sqlite:///:memory:")
+    client = TestClient(create_app(config, session_factory=session_factory))
+    session = session_factory()
+    _team, member = _seed_cp_pressure_accounts(session, {"glm-seat@test": 0.0})
+    _key, plain = create_coding_plan_key(
+        session, name="seat", member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+    )
+    session.commit()
+    headers = {"Authorization": "Bearer internal-token", "X-Proxy-Boot": "boot-1"}
+    res = client.post("/api/internal/v1/openai-proxy/resolve", json={"pulse_key": plain}, headers=headers).json()
+    account_id = session.get(AiAccountCredential, res["credential_id"]).account_id
+    book = get_occupancy()
+    t0 = time.monotonic()
+
+    book.note_boot("boot-1", now=t0 + 3500)
+    assert book.count_by_account(ttl_seconds=180, now=t0 + 3600) == {account_id: 1}
+
+    # Pulse (Web) restart mid-call wipes memory; the end call must still leave the dwell seat.
+    reset_occupancy()
+    end_body = {"proxy_key_id": res["proxy_key_id"], "credential_id": res["credential_id"]}
+    ended = client.post("/api/internal/v1/openai-proxy/end", json=end_body, headers=headers)
+    assert ended.json() == {"ended": 1}
+    t1 = time.monotonic()
+    assert book.count_by_account(ttl_seconds=180, now=t1 + 19 * 60) == {account_id: 1}
+    assert book.count_by_account(ttl_seconds=180, now=t1 + 21 * 60) == {}
+    session.close()
+    reset_occupancy()
+
+
+def test_cp_seats_restored_from_sticky_binding_after_web_restart(session):
+    import time
+    from datetime import timedelta
+
+    from pulse.config import AppConfig, TenantConfig
+    from pulse.openai_proxy.sticky_pick import restore_cp_seats
+    from pulse.proxy.occupancy import get_occupancy, reset_occupancy
+    from pulse.storage.models import CpOpenAiStickyBinding
+
+    reset_occupancy()
+    _team, member = _seed_cp_pressure_accounts(session, {"fresh@test": 0.0, "stale@test": 0.0})
+    creds = {
+        c.account_id: c for c in session.scalars(select(AiAccountCredential)).all()
+    }
+    accounts = {a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()}
+    now = datetime.now(UTC)
+    for ident, idle_min in (("fresh@test", 5), ("stale@test", 25)):
+        key, _plain = create_coding_plan_key(
+            session, name=ident, member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+        )
+        session.add(
+            CpOpenAiStickyBinding(
+                proxy_key_id=key.id,
+                credential_id=creds[accounts[ident]].id,
+                sticky_since=now - timedelta(minutes=idle_min),
+                updated_at=now - timedelta(minutes=idle_min),
+            )
+        )
+    session.commit()
+
+    restore_cp_seats(session, config=AppConfig(tenant=TenantConfig(slug="t", name="T")), now=now)
+    mono = time.monotonic()
+    book = get_occupancy()
+    assert book.count_by_account(ttl_seconds=180, now=mono + 14 * 60) == {accounts["fresh@test"]: 1}
+    assert book.count_by_account(ttl_seconds=180, now=mono + 16 * 60) == {}
+    reset_occupancy()
+
+
+def test_cp_end_after_failover_does_not_resurrect_old_seat(session):
+    from pulse.config import AppConfig, TenantConfig
+    from pulse.openai_proxy.sticky_pick import end_cp_call
+    from pulse.proxy.occupancy import get_occupancy, reset_occupancy
+    from pulse.storage.models import CpOpenAiStickyBinding
+
+    reset_occupancy()
+    team, member = _seed_cp_pressure_accounts(session, {"old@test": 0.0, "new@test": 0.0})
+    by_ident = {
+        a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()
+    }
+    creds = {c.account_id: c.id for c in session.scalars(select(AiAccountCredential)).all()}
+    key, _plain = create_coding_plan_key(
+        session, name="fo", member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+    )
+    session.add(
+        CpOpenAiStickyBinding(
+            proxy_key_id=key.id,
+            credential_id=creds[by_ident["new@test"]],
+            sticky_since=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+    get_occupancy().cp_restored = True
+
+    end_cp_call(
+        session,
+        proxy_key_id=key.id,
+        credential_id=creds[by_ident["old@test"]],
+        config=AppConfig(tenant=TenantConfig(slug="t", name="T")),
+        team_id=team.id,
+    )
+    assert get_occupancy().count_by_account(ttl_seconds=180) == {}
+    reset_occupancy()
+
+
 def test_cp_gateway_endpoints_uses_team_proxy_addresses(session):
     from pulse.config import AppConfig, ProxyConfig, TenantConfig
 
@@ -607,3 +726,100 @@ def test_cp_admin_accounts_list(session):
     rows = list_cp_admin_accounts(session, vendor_slug="glm")
     assert any(r["account_identifier"] == "glm-admin@test" for r in rows)
     assert rows[0]["pool_ready"] is False
+    assert rows[0]["rank"] is None
+
+
+def _seed_cp_pressure_accounts(session, pressures: dict[str, float | None]):
+    from datetime import date
+
+    from pulse.storage.models import AccountQuotaSnapshot
+
+    team, _repo = make_team_repo(session)
+    member = Member(team_id=team.id, channel_user_id="m-rank", display_name="MRank")
+    session.add(member)
+    seed_v2_catalog(session, team)
+    vendor = session.scalar(select(AiVendor).where(AiVendor.slug == "glm"))
+    plan = session.scalar(select(AiPlan).where(AiPlan.vendor_id == vendor.id))
+    for ident, pct in pressures.items():
+        acc = AiAccount(
+            team_id=team.id,
+            vendor_id=vendor.id,
+            plan_id=plan.id,
+            account_identifier=ident,
+            api_region="zai",
+            cp_proxy_enabled=True,
+        )
+        session.add(acc)
+        session.flush()
+        session.add(
+            AiAccountCredential(
+                account_id=acc.id,
+                vendor_id=vendor.id,
+                credential_type="coding_plan_api_key",
+                encrypted_value=encrypt_secret(f"key-{ident}", TEST_KEY),
+                key_hint="k…",
+                key_role="primary",
+                bound_by_member_id=member.id,
+                last_sync_status="success",
+                last_sync_at=datetime.now(UTC),
+            )
+        )
+        if pct is not None:
+            session.add(
+                AccountQuotaSnapshot(
+                    account_id=acc.id,
+                    captured_at=datetime.now(UTC),
+                    sync_kind="coding_plan",
+                    cycle_start=date(2026, 9, 25),
+                    cycle_end=date(2026, 9, 28),
+                    total_pct=pct,
+                )
+            )
+    session.commit()
+    return team, member
+
+
+def test_cp_sticky_prefers_zero_pressure_over_low_pressure(session):
+    from pulse.config import AppConfig, LoanSelectionConfig, TenantConfig, ToolCenterConfig
+    from pulse.openai_proxy.sticky_pick import resolve_cp_credential
+
+    team, member = _seed_cp_pressure_accounts(session, {"a-used@test": 4.0, "z-idle@test": 0.0})
+    key, _plain = create_coding_plan_key(
+        session, name="rank", member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+    )
+    session.commit()
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        tool_center=ToolCenterConfig(loan_selection=LoanSelectionConfig(min_switch_minutes=0)),
+    )
+    picked = resolve_cp_credential(
+        session,
+        proxy_key_id=key.id,
+        vendor_slug="glm",
+        encryption_key=TEST_KEY,
+        config=config,
+        team_id=team.id,
+    )
+    assert picked and picked["account_identifier"] == "z-idle@test"
+
+
+def test_cp_admin_accounts_score_and_pick_order(session):
+    _seed_cp_pressure_accounts(
+        session,
+        {"a-used@test": 4.0, "b-idle@test": 0.0, "c-idle@test": 0.0, "d-nosnap@test": None},
+    )
+    by_ident = {
+        r["account_identifier"]: r["id"] for r in list_cp_admin_accounts(session, vendor_slug="glm")
+    }
+    rows = list_cp_admin_accounts(
+        session, vendor_slug="glm", account_load={by_ident["b-idle@test"]: 2}
+    )
+    assert [r["account_identifier"] for r in rows] == [
+        "c-idle@test",
+        "b-idle@test",
+        "a-used@test",
+        "d-nosnap@test",
+    ]
+    assert [r["rank"] for r in rows] == [1, 2, 3, 4]
+    assert [r["score"] for r in rows] == [100.0, 100.0, 96.0, 50.0]
+    assert rows[1]["concurrent_seats"] == 2

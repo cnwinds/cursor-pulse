@@ -6,10 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.openai_proxy.pool import list_cp_admin_accounts, list_cp_pool_entries
+from pulse.openai_proxy.sticky_pick import restore_cp_seats
 from pulse.openai_proxy.upstream import CP_VENDORS, cp_gateway_endpoints
 from pulse.proxy import key_crud
 from pulse.proxy import service as proxy_service
+from pulse.proxy.occupancy import get_occupancy
 from pulse.proxy.usage_rollup import rollup_proxy_usages
+from pulse.settings.team_store import effective_loan_selection
 from pulse.storage.models import AiAccount, AiVendor, Member, ProxyKey, ProxyKeyUsage
 from pulse.web.deps import PortalUser
 
@@ -57,15 +60,16 @@ def register_openai_proxy_admin_routes(app, get_db, require_capability, config) 
         enc = (config.credentials.encryption_key or "").strip()
         return list_cp_pool_entries(session, vendor_slug=vendor, encryption_key=enc, include_api_keys=False)
 
-    @app.get(
-        "/api/v2/openai-proxy/accounts",
-        dependencies=[Depends(require_capability("proxy:read"))],
-    )
+    @app.get("/api/v2/openai-proxy/accounts")
     def list_cp_accounts(
         vendor: str = Query(..., pattern="^(glm|minimax|kimi)$"),
+        user: PortalUser = Depends(require_capability("proxy:read")),
         session: Session = Depends(get_db),
     ):
-        return list_cp_admin_accounts(session, vendor_slug=vendor)
+        restore_cp_seats(session, config=config)
+        selection = effective_loan_selection(session, config, user.member.team_id)
+        load = get_occupancy().count_by_account(ttl_seconds=float(selection.concurrent_ttl_seconds or 180))
+        return list_cp_admin_accounts(session, vendor_slug=vendor, account_load=load)
 
     @app.post(
         "/api/v2/openai-proxy/accounts/{account_id}",

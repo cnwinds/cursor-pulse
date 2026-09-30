@@ -156,6 +156,8 @@ func TestOpenAIStreamGatewayRecordsUsage(t *testing.T) {
 			usagePosts.Add(1)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"recorded":1}`))
+		case "/api/internal/v1/openai-proxy/end":
+			w.WriteHeader(http.StatusOK)
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

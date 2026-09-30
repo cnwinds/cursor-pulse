@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+# 进行中的调用若一直收不到结束通知，最多占这么久（兜底，如上游挂死）。
+MAX_INFLIGHT_SECONDS = 2 * 3600.0
+# 数据面进程（boot id）超过这么久没有任何内部调用，视为已退出；它名下进行中的调用
+# 按最后一次出现的时间结束。Go 每 60s 拉一次池，天然就是心跳。
+BOOT_STALE_SECONDS = 180.0
 
 
 @dataclass
@@ -18,6 +24,17 @@ class Seat:
     account_id: str
     credential_id: str
     seen_at: float
+    # boot id → 该数据面进程上进行中的调用数。
+    inflight: dict[str, int] = field(default_factory=dict)
+    hold_until: float = 0.0
+    hold_seconds: float = 0.0
+
+    def alive(self, now: float, ttl_seconds: float) -> bool:
+        if any(self.inflight.values()) and now - self.seen_at < MAX_INFLIGHT_SECONDS:
+            return True
+        if now < self.hold_until:
+            return True
+        return now - self.seen_at < ttl_seconds
 
 
 @dataclass(frozen=True)
@@ -48,10 +65,22 @@ class OccupancyBook:
         self._lock = threading.Lock()
         # (holder_id, account_id) → seat. 一人在一个账号上只有一席。
         self._seats: dict[tuple[str, str], Seat] = {}
+        # 数据面 boot id → 最后一次内部调用的时间。
+        self._boots: dict[str, float] = {}
+        self.cp_restored = False
 
     def reset(self) -> None:
         with self._lock:
             self._seats.clear()
+            self._boots.clear()
+            self.cp_restored = False
+
+    def note_boot(self, boot_id: str, now: float | None = None) -> None:
+        if not boot_id:
+            return
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._boots[boot_id] = now
 
     def choose(
         self,
@@ -125,11 +154,15 @@ class OccupancyBook:
                 account_id = accounts.get(credential_id)
                 if not account_id:
                     return
+                prev = self._seats.get((holder_id, account_id))
                 self._seats[(holder_id, account_id)] = Seat(
                     holder_id=holder_id,
                     account_id=account_id,
                     credential_id=credential_id,
                     seen_at=now,
+                    inflight=prev.inflight if prev else {},
+                    hold_until=prev.hold_until if prev else 0.0,
+                    hold_seconds=prev.hold_seconds if prev else 0.0,
                 )
 
             def drop_account(credential_id: str) -> None:
@@ -190,10 +223,105 @@ class OccupancyBook:
                 counts[account_id] = counts.get(account_id, 0) + 1
             return counts
 
+    def begin_call(
+        self,
+        *,
+        holder_id: str,
+        account_id: str,
+        credential_id: str,
+        boot_id: str = "",
+        hold_seconds: float = 0.0,
+        now: float | None = None,
+    ) -> None:
+        """一次调用开始：座位在调用结束（或所在数据面进程失联）前不按 TTL 过期。"""
+        if not account_id:
+            return
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if boot_id:
+                self._boots[boot_id] = now
+            seat = self._seats.get((holder_id, account_id))
+            if seat is None:
+                seat = Seat(holder_id=holder_id, account_id=account_id, credential_id=credential_id, seen_at=now)
+                self._seats[(holder_id, account_id)] = seat
+            seat.credential_id = credential_id
+            seat.seen_at = now
+            seat.hold_seconds = max(seat.hold_seconds, hold_seconds)
+            seat.inflight[boot_id] = seat.inflight.get(boot_id, 0) + 1
+
+    def end_call(
+        self,
+        *,
+        holder_id: str,
+        account_id: str,
+        credential_id: str,
+        hold_seconds: float,
+        boot_id: str = "",
+        recreate: bool = False,
+        now: float | None = None,
+    ) -> None:
+        """一次调用结束：座位再保留 ``hold_seconds``。
+
+        座位已不在（换号释放，或 Web 重启清空）时，只有 ``recreate`` 才补建。
+        """
+        if not account_id:
+            return
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if boot_id:
+                self._boots[boot_id] = now
+            seat = self._seats.get((holder_id, account_id))
+            if seat is None:
+                if not recreate:
+                    return
+                seat = Seat(holder_id=holder_id, account_id=account_id, credential_id=credential_id, seen_at=now)
+                self._seats[(holder_id, account_id)] = seat
+            left = seat.inflight.get(boot_id, 0) - 1
+            if left > 0:
+                seat.inflight[boot_id] = left
+            else:
+                seat.inflight.pop(boot_id, None)
+            seat.seen_at = now
+            seat.hold_until = max(seat.hold_until, now + max(hold_seconds, 0.0))
+
+    def hold(
+        self,
+        *,
+        holder_id: str,
+        account_id: str,
+        credential_id: str,
+        hold_until: float,
+        now: float | None = None,
+    ) -> None:
+        """恢复一个保留到 ``hold_until`` 的座位（Web 重启后从持久化状态回填）。"""
+        if not account_id:
+            return
+        now = time.monotonic() if now is None else now
+        if hold_until <= now:
+            return
+        with self._lock:
+            seat = self._seats.get((holder_id, account_id))
+            if seat is None:
+                seat = Seat(holder_id=holder_id, account_id=account_id, credential_id=credential_id, seen_at=now)
+                self._seats[(holder_id, account_id)] = seat
+            seat.hold_until = max(seat.hold_until, hold_until)
+
+    def _reap_dead_boots_unlocked(self, now: float) -> None:
+        dead = {b: seen for b, seen in self._boots.items() if now - seen >= BOOT_STALE_SECONDS}
+        if not dead:
+            return
+        for seat in self._seats.values():
+            for boot_id in [b for b in seat.inflight if b in dead]:
+                seat.inflight.pop(boot_id, None)
+                seat.hold_until = max(seat.hold_until, dead[boot_id] + seat.hold_seconds)
+        for boot_id in dead:
+            self._boots.pop(boot_id, None)
+
     def _expire_unlocked(self, now: float, ttl_seconds: float) -> None:
+        self._reap_dead_boots_unlocked(now)
         if ttl_seconds <= 0:
             return
-        stale = [key for key, seat in self._seats.items() if now - seat.seen_at >= ttl_seconds]
+        stale = [key for key, seat in self._seats.items() if not seat.alive(now, ttl_seconds)]
         for key in stale:
             self._seats.pop(key, None)
 

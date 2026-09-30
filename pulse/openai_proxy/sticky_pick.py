@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from pulse.openai_proxy.pool import list_cp_pool_entries
+from pulse.openai_proxy.pool import cp_rank_key, list_cp_pool_entries
 from pulse.proxy.clock import utcnow
 from pulse.proxy.occupancy import get_occupancy, seat_holder_id
 from pulse.settings.team_store import effective_loan_selection
@@ -34,14 +34,13 @@ def _entry_map(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def _rank_for_balance(entries: list[dict[str, Any]], *, account_load: dict[str, int]) -> list[dict[str, Any]]:
-    """Lower tier pressure and fewer concurrent proxy seats first."""
+    """Higher score (lower tier pressure) and fewer concurrent proxy seats first."""
 
     def sort_key(e: dict[str, Any]) -> tuple:
-        acc = e.get("account_id") or ""
-        return (
-            float(e.get("tier_pressure_pct") or 50.0),
-            int(account_load.get(acc, 0)),
-            str(e.get("account_identifier") or ""),
+        return cp_rank_key(
+            pressure=e.get("tier_pressure_pct"),
+            load=account_load.get(e.get("account_id") or "", 0),
+            identifier=e.get("account_identifier"),
         )
 
     return sorted(entries, key=sort_key)
@@ -83,6 +82,7 @@ def resolve_cp_credential(
     release_current: bool = False,
     config,
     team_id: str | None,
+    boot_id: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
     """Pick pool credential with per-key sticky dwell, then quota + concurrency balance."""
@@ -90,6 +90,7 @@ def resolve_cp_credential(
     now = now or utcnow()
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
+    restore_cp_seats(session, config=config, now=now)
 
     entries = list_cp_pool_entries(
         session,
@@ -147,6 +148,7 @@ def resolve_cp_credential(
             sticky_since=sticky_since or now,
             now=now,
         )
+        _begin_call(holder, by_id[chosen_id], selection=selection, boot_id=boot_id)
         return by_id[chosen_id]
 
     account_load = get_occupancy().count_by_account(
@@ -196,7 +198,95 @@ def resolve_cp_credential(
         now=now,
     )
     session.flush()
+    _begin_call(holder, by_id[chosen_id], selection=selection, boot_id=boot_id)
     return by_id[chosen_id]
+
+
+def _hold_seconds(selection) -> float:
+    """Seat hold after a call ends: the Switch dwell window (never shorter than the seat TTL)."""
+    return max(
+        float(selection.min_switch_minutes or 0) * 60.0,
+        float(selection.concurrent_ttl_seconds or 180),
+    )
+
+
+def end_cp_call(
+    session: Session,
+    *,
+    proxy_key_id: str,
+    credential_id: str,
+    config,
+    team_id: str | None,
+    boot_id: str = "",
+    now: datetime | None = None,
+) -> None:
+    """Gateway call finished: keep the seat (and sticky dwell) for the window after it.
+
+    A seat that is gone is rebuilt only while the sticky binding still points at this
+    credential (Web restart); after a failover the binding moved and the old seat stays released.
+    """
+    from pulse.storage.models import AiAccountCredential
+
+    cred = session.get(AiAccountCredential, credential_id) if credential_id else None
+    if cred is None:
+        return
+    now = now or utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    binding = session.get(CpOpenAiStickyBinding, proxy_key_id)
+    still_bound = binding is not None and binding.credential_id == credential_id
+    if still_bound:
+        binding.updated_at = now
+    selection = effective_loan_selection(session, config, team_id)
+    get_occupancy().end_call(
+        holder_id=seat_holder_id(proxy_key_id=proxy_key_id),
+        account_id=cred.account_id,
+        credential_id=credential_id,
+        hold_seconds=_hold_seconds(selection),
+        boot_id=boot_id,
+        recreate=still_bound,
+    )
+
+
+def restore_cp_seats(session: Session, *, config, now: datetime | None = None) -> None:
+    """Once per Web process: rebuild gateway seats from sticky bindings still inside the hold window."""
+    import time
+
+    from pulse.storage.models import AiAccountCredential, Member, ProxyKey
+
+    book = get_occupancy()
+    if book.cp_restored:
+        return
+    book.cp_restored = True
+    now = now or utcnow()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    mono = time.monotonic()
+    for binding in session.query(CpOpenAiStickyBinding).all():
+        key = session.get(ProxyKey, binding.proxy_key_id)
+        cred = session.get(AiAccountCredential, binding.credential_id)
+        if key is None or cred is None or key.status != "active":
+            continue
+        member = session.get(Member, key.member_id)
+        selection = effective_loan_selection(session, config, member.team_id if member else None)
+        idle = (now - _aware(binding.updated_at)).total_seconds()
+        book.hold(
+            holder_id=seat_holder_id(proxy_key_id=key.id),
+            account_id=cred.account_id,
+            credential_id=cred.id,
+            hold_until=mono + _hold_seconds(selection) - idle,
+            now=mono,
+        )
+
+
+def _begin_call(holder: str, entry: dict[str, Any], *, selection, boot_id: str) -> None:
+    get_occupancy().begin_call(
+        holder_id=holder,
+        account_id=entry.get("account_id") or "",
+        credential_id=entry["credential_id"],
+        boot_id=boot_id,
+        hold_seconds=_hold_seconds(selection),
+    )
 
 
 def _touch_seat(
