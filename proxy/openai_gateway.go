@@ -47,6 +47,9 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 	}
 	stream, _ := payload["stream"].(bool)
 	model, _ := payload["model"].(string)
+	if stream {
+		body = ensureOpenAIStreamUsageInRequest(body)
+	}
 
 	excluded := []string{}
 	releaseCurrent := false
@@ -93,7 +96,10 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 		}
 		s.rememberCpSticky(pulseKey, res.CredentialID)
 		if stream {
-			copyOpenAIUpstream(w, upResp)
+			tap := copyOpenAIUpstreamStream(w, upResp)
+			if upResp.StatusCode == http.StatusOK && res.ProxyKeyID != "" {
+				s.recordOpenAIUsageMap(res, model, tap.model, tap.usage)
+			}
 			return
 		}
 		respBody, readErr := io.ReadAll(upResp.Body)
@@ -102,8 +108,9 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(w, http.StatusBadGateway, "Upstream read failed")
 			return
 		}
-		if upResp.StatusCode == 200 && res.ProxyKeyID != "" {
-			s.recordOpenAIUsage(res, model, respBody)
+		if upResp.StatusCode == http.StatusOK && res.ProxyKeyID != "" {
+			respModel, usage := usageMapFromJSONBody(respBody)
+			s.recordOpenAIUsageMap(res, model, respModel, usage)
 		}
 		copyOpenAIUpstreamBody(w, upResp.StatusCode, upResp.Header, respBody)
 		return
@@ -124,17 +131,6 @@ func (s *Server) forwardOpenAIChat(res OpenAIResolveResult, body []byte) (*http.
 	return s.transport.RoundTrip(req)
 }
 
-func copyOpenAIUpstream(w http.ResponseWriter, upResp *http.Response) {
-	defer upResp.Body.Close()
-	for k, vals := range upResp.Header {
-		for _, v := range vals {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(upResp.StatusCode)
-	_, _ = io.Copy(w, upResp.Body)
-}
-
 func copyOpenAIUpstreamBody(w http.ResponseWriter, status int, hdr http.Header, body []byte) {
 	for k, vals := range hdr {
 		if len(vals) > 0 && strings.EqualFold(k, "Content-Type") {
@@ -145,19 +141,17 @@ func copyOpenAIUpstreamBody(w http.ResponseWriter, status int, hdr http.Header, 
 	_, _ = w.Write(body)
 }
 
-func (s *Server) recordOpenAIUsage(res OpenAIResolveResult, model string, respBody []byte) {
-	var parsed struct {
-		Model string         `json:"model"`
-		Usage map[string]any `json:"usage"`
+func (s *Server) recordOpenAIUsageMap(
+	res OpenAIResolveResult,
+	requestModel string,
+	responseModel string,
+	usage map[string]any,
+) {
+	m := requestModel
+	if responseModel != "" {
+		m = responseModel
 	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return
-	}
-	m := model
-	if parsed.Model != "" {
-		m = parsed.Model
-	}
-	if err := s.pulse.RecordOpenAIUsage(res.ProxyKeyID, res.CredentialID, m, parsed.Usage); err != nil {
+	if err := s.pulse.RecordOpenAIUsage(res.ProxyKeyID, res.CredentialID, m, usage); err != nil {
 		log.Printf("[openai] usage record: %v", err)
 	}
 }

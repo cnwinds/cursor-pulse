@@ -133,6 +133,8 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | 池 exhausted 周期清零 | 30m | `PROXY_EXHAUSTED_RESET`（`0`/`off`/`false` 关闭） |
 | sticky 最小驻留 | 20m | `PROXY_STICKY_MIN_DWELL`（`0`/`off`/`false` 关闭） |
 
+`/openai/v1/chat/completions` 在 `stream: true` 时会自动注入 `stream_options.include_usage`，边转发 SSE 边解析末包 `usage` 上报 Pulse（与 Cursor MITM 流式 tap 共用 8 MiB 行缓冲上限）。
+
 ## Switch dwell（sticky 最小驻留）
 
 会话的 sticky 凭证在**两次请求间隔小于驻留阈值**期间不因「该 Quota Pool 桶耗尽」而轮转（默认 20 分钟）——只记日志并继续用当前账号。认证失败（`badUntil` 冷却）与全池耗尽仍立即轮转，避免会话卡在不可用账号上。
