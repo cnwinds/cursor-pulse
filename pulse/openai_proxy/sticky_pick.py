@@ -158,11 +158,13 @@ def resolve_cp_credential(
     ranked_pairs = [(e["credential_id"], e["account_id"]) for e in ranked_entries]
     account_by_cred = {e["credential_id"]: e["account_id"] for e in ranked_entries}
 
+    # Dwell expired (or no binding): re-rank from scratch. The gateway's remembered
+    # current credential must not win here, or a live proxy would never rotate.
     choice = get_occupancy().choose(
         holder_id=holder,
         ranked=ranked_pairs,
         account_by_credential=account_by_cred,
-        current_credential_id=current if current in by_id else None,
+        current_credential_id=None,
         release_current=False,
         pinned=False,
         pinned_credential_id=None,
@@ -190,6 +192,11 @@ def resolve_cp_credential(
             sticky_id[:8] if sticky_id else "-",
             chosen_id[:8],
         )
+    chosen_account = by_id[chosen_id]["account_id"]
+    for old_cred in {sticky_id, current or ""} - {"", chosen_id}:
+        old_account = account_by_cred.get(old_cred)
+        if old_account and old_account != chosen_account:
+            get_occupancy().release_idle(holder_id=holder, account_id=old_account)
     _upsert_binding(
         session,
         proxy_key_id=proxy_key_id,

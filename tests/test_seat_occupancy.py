@@ -81,6 +81,16 @@ def test_end_call_recreates_seat_lost_to_web_restart():
     assert book.count_by_account(ttl_seconds=180, now=1300) == {}
 
 
+def test_release_idle_keeps_seat_with_call_in_flight():
+    book = OccupancyBook()
+    _begin(book, 0)
+    book.release_idle(holder_id="pk:k1", account_id="a1")
+    assert book.count_by_account(ttl_seconds=180, now=10) == {"a1": 1}
+    _end(book, 10)
+    book.release_idle(holder_id="pk:k1", account_id="a1")
+    assert book.count_by_account(ttl_seconds=180, now=20) == {}
+
+
 def test_live_proxy_keeps_long_call_seated():
     book = OccupancyBook()
     _begin(book, 0, boot="b1")

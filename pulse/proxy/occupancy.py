@@ -284,6 +284,13 @@ class OccupancyBook:
             seat.seen_at = now
             seat.hold_until = max(seat.hold_until, now + max(hold_seconds, 0.0))
 
+    def release_idle(self, *, holder_id: str, account_id: str) -> None:
+        """换号后释放旧账号上的座位；仍有进行中的调用时保留，等它结束。"""
+        with self._lock:
+            seat = self._seats.get((holder_id, account_id))
+            if seat is not None and not any(seat.inflight.values()):
+                self._seats.pop((holder_id, account_id), None)
+
     def hold(
         self,
         *,

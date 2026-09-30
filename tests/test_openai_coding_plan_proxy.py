@@ -803,6 +803,71 @@ def test_cp_sticky_prefers_zero_pressure_over_low_pressure(session):
     assert picked and picked["account_identifier"] == "z-idle@test"
 
 
+def test_cp_dwell_expired_reranks_despite_gateway_current(session):
+    from datetime import timedelta
+
+    from pulse.config import AppConfig, LoanSelectionConfig, TenantConfig, ToolCenterConfig
+    from pulse.openai_proxy.sticky_pick import end_cp_call, resolve_cp_credential
+    from pulse.proxy.occupancy import get_occupancy, reset_occupancy
+
+    reset_occupancy()
+    team, member = _seed_cp_pressure_accounts(session, {"a-used@test": 4.0, "z-idle@test": 0.0})
+    key, _plain = create_coding_plan_key(
+        session, name="rerank", member_id=member.id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+    )
+    session.commit()
+    creds = {
+        a.account_identifier: c.id
+        for c, a in session.execute(
+            select(AiAccountCredential, AiAccount).join(AiAccount, AiAccountCredential.account_id == AiAccount.id)
+        ).all()
+    }
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        tool_center=ToolCenterConfig(loan_selection=LoanSelectionConfig(min_switch_minutes=20)),
+    )
+    t0 = datetime.now(UTC)
+
+    def pick(current, now):
+        entry = resolve_cp_credential(
+            session,
+            proxy_key_id=key.id,
+            vendor_slug="glm",
+            encryption_key=TEST_KEY,
+            current_credential_id=current,
+            config=config,
+            team_id=team.id,
+            now=now,
+        )
+        session.commit()
+        return entry["account_identifier"]
+
+    # Gateway still remembers the worse account; inside dwell the binding (not the gateway) decides.
+    from pulse.storage.models import CpOpenAiStickyBinding
+
+    session.add(
+        CpOpenAiStickyBinding(
+            proxy_key_id=key.id, credential_id=creds["a-used@test"], sticky_since=t0, updated_at=t0
+        )
+    )
+    session.commit()
+    assert pick(creds["a-used@test"], t0 + timedelta(minutes=5)) == "a-used@test"
+    end_cp_call(
+        session,
+        proxy_key_id=key.id,
+        credential_id=creds["a-used@test"],
+        config=config,
+        team_id=team.id,
+        now=t0 + timedelta(minutes=6),
+    )
+    session.commit()
+    assert pick(creds["a-used@test"], t0 + timedelta(minutes=40)) == "z-idle@test"
+    seats = get_occupancy().count_by_account(ttl_seconds=180)
+    accounts = {a.account_identifier: a.id for a in session.scalars(select(AiAccount)).all()}
+    assert accounts["a-used@test"] not in seats, "idle seat on the old account should be released on rotation"
+    reset_occupancy()
+
+
 def test_cp_admin_accounts_score_and_pick_order(session):
     _seed_cp_pressure_accounts(
         session,
