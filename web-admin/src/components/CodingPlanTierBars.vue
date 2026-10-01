@@ -65,7 +65,7 @@ function toneForPct(v: number | null | undefined): string {
 }
 .tier-row {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 30px;
+  grid-template-columns: 52px minmax(0, 1fr) 36px;
   align-items: center;
   gap: 6px;
   min-height: 18px;
@@ -108,6 +108,7 @@ function toneForPct(v: number | null | undefined): string {
   font-variant-numeric: tabular-nums;
   text-align: right;
   line-height: 1;
+  white-space: nowrap;
   color: var(--el-text-color-secondary);
 }
 .tier-row.warn .tier-pct {
