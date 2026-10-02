@@ -266,6 +266,7 @@
           <el-input-number
             v-model="loanForm.auto_cost_usd"
             :min="1"
+            :value-on-clear="null"
             :controls="false"
             placeholder="美元，可空"
             style="width: 100%"
@@ -275,6 +276,7 @@
           <el-input-number
             v-model="loanForm.api_cost_usd"
             :min="1"
+            :value-on-clear="null"
             :controls="false"
             placeholder="美元，可空"
             style="width: 100%"
@@ -533,6 +535,10 @@
 
     <el-dialog v-model="usageCapDialogVisible" title="用量封顶" width="520px">
       <p class="manual-hint">借用人：{{ usageCapLoan?.borrower_name || '—' }}</p>
+      <p v-if="usageCapLoan?.usage_cap_period" class="manual-hint">
+        当前窗口 Auto ${{ ((usageCapLoan.usage_cap_auto_used_cents ?? 0) / 100).toFixed(2) }}
+        · API ${{ ((usageCapLoan.usage_cap_api_used_cents ?? 0) / 100).toFixed(2) }}
+      </p>
       <el-form label-width="100px">
         <el-form-item label="记账周期">
           <el-select v-model="usageCapForm.usage_cap_period" clearable placeholder="不限制" style="width: 100%">
@@ -546,6 +552,7 @@
           <el-input-number
             v-model="usageCapForm.auto_cost_usd"
             :min="1"
+            :value-on-clear="null"
             :controls="false"
             placeholder="美元，可空"
             style="width: 100%"
@@ -555,6 +562,7 @@
           <el-input-number
             v-model="usageCapForm.api_cost_usd"
             :min="1"
+            :value-on-clear="null"
             :controls="false"
             placeholder="美元，可空"
             style="width: 100%"
@@ -953,6 +961,10 @@ async function requestSelfLoan() {
   }
 }
 
+function usageCapIncomplete(period: string, autoUsd: number | null | undefined, apiUsd: number | null | undefined): boolean {
+  return !!period && autoUsd == null && apiUsd == null
+}
+
 function loanUsageCapIssuePayload(): Record<string, unknown> {
   if (!loanForm.value.usage_cap_period) return {}
   const payload: Record<string, unknown> = { usage_cap_period: loanForm.value.usage_cap_period }
@@ -973,6 +985,17 @@ function openUsageCapDialog(row: LoanRow) {
 
 async function submitUsageCap(clear: boolean) {
   if (!usageCapLoan.value) return
+  if (
+    !clear &&
+    usageCapIncomplete(
+      usageCapForm.value.usage_cap_period,
+      usageCapForm.value.auto_cost_usd,
+      usageCapForm.value.api_cost_usd,
+    )
+  ) {
+    ElMessage.warning('已选记账周期时，请至少填写 Auto 或 API 上限（整数美元）')
+    return
+  }
   usageCapSubmitting.value = true
   try {
     const body: Record<string, unknown> = clear
@@ -998,6 +1021,16 @@ async function submitLoan() {
   const isAuto = loanForm.value.lender_mode === 'auto'
   if (!loanForm.value.borrower_member_id || (!isAuto && !loanForm.value.source_account_id)) {
     ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
+    return
+  }
+  if (
+    usageCapIncomplete(
+      loanForm.value.usage_cap_period,
+      loanForm.value.auto_cost_usd,
+      loanForm.value.api_cost_usd,
+    )
+  ) {
+    ElMessage.warning('已选记账周期时，请至少填写 Auto 或 API 上限（整数美元）')
     return
   }
   loanSubmitting.value = true

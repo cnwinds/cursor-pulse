@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from pulse.pricing.billing_scope import is_auto_composer_model, is_likely_byok_model
 from pulse.proxy.clock import WINDOW_7D, utcnow
-from pulse.proxy.key_crud import cents_to_usd, usd_to_cents
+from pulse.proxy.key_crud import usd_to_cents
 from pulse.storage.models import KeyLoan, ProxyKeyUsage
 from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
 from pulse.util.datetime_fmt import ensure_aware
@@ -249,7 +249,12 @@ def _pool_label(pool: CapPool) -> str:
 
 
 def _format_usd(cents: int) -> str:
-    return f"${cents_to_usd(cents) or 0}"
+    amount = int(cents)
+    sign = "-" if amount < 0 else ""
+    dollars, rem = divmod(abs(amount), 100)
+    if rem == 0:
+        return f"{sign}${dollars}"
+    return f"{sign}${dollars}.{rem:02d}"
 
 
 def _format_relative_until(target: datetime, now: datetime) -> str:

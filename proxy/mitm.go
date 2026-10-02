@@ -190,6 +190,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		model := findModelName(reqBodySnap())
 		capRes, err := s.pulse.CheckLoanUsageCap(binding.LoanID, model)
 		if err != nil {
+			log.Printf("[mitm] loan usage cap check failed loan=%s: %v", binding.LoanID, err)
 			http.Error(w, "cursor-pulse-proxy: 借用用量校验暂不可用，请稍后重试", http.StatusServiceUnavailable)
 			return
 		}
