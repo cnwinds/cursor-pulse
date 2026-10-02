@@ -284,30 +284,34 @@
             </span>
           </el-tooltip>
           <el-button
-            v-if="ranking.decision?.jev_trace"
             class="jev-trace-btn"
             size="small"
             plain
+            :disabled="!jevActionsEnabled"
             @click="jevTraceOpen = true"
           >
             Jev 报文
           </el-button>
           <el-tooltip
-            v-if="canWrite && ranking.decision?.jev_trace"
+            v-if="canWrite"
+            :disabled="!jevActionsEnabled"
             content="绕过 Jev 缓存并强制外呼（30 秒内限一次，可能产生 OpenRouter 费用）"
             placement="top"
             :show-after="200"
           >
-            <el-button
-              class="jev-force-btn"
-              size="small"
-              plain
-              type="warning"
-              :loading="rankingLoading"
-              @click="forceRefreshJev"
-            >
-              强制 Jev
-            </el-button>
+            <span class="jev-force-wrap">
+              <el-button
+                class="jev-force-btn"
+                size="small"
+                plain
+                type="warning"
+                :disabled="!jevActionsEnabled"
+                :loading="rankingLoading"
+                @click="forceRefreshJev"
+              >
+                强制 Jev
+              </el-button>
+            </span>
           </el-tooltip>
           <el-tooltip content="刷新打分表" placement="top" :show-after="200">
             <el-button
@@ -479,9 +483,16 @@ function decisionFallbackLabel(reason?: string | null): string {
   return DECISION_FALLBACK_LABELS[reason] || reason
 }
 
+const jevActionsEnabled = computed(() => {
+  const trace = ranking.value.decision?.jev_trace
+  if (!trace) return false
+  return trace.meta?.skip_reason !== 'jev_unavailable'
+})
+
 const decisionBanner = computed(() => {
   const d = ranking.value.decision
   if (!d) return null
+  if (d.fallback_reason === 'jev_unavailable') return null
   if (d.picked_by === 'jev') {
     const model = d.model || 'typesafe/jev'
     const conf = d.confidence ?? '—'
@@ -655,6 +666,9 @@ onMounted(loadRanking)
 }
 .jev-trace-btn {
   flex-shrink: 0;
+}
+.jev-force-wrap {
+  display: inline-flex;
 }
 
 .ranking-head-aside {
