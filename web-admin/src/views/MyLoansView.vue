@@ -33,6 +33,11 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="用量限制" width="108" align="center">
+        <template #default="{ row }">
+          <UsageCapStatus :rules="row.usage_caps" />
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="180">
         <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
       </el-table-column>
@@ -88,6 +93,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
@@ -101,6 +107,7 @@ interface LoanRow {
   lender_mode?: string | null
   status: string
   created_at: string
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)

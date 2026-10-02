@@ -5,7 +5,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,12 @@ logger = logging.getLogger(__name__)
 _UNSYNCABLE_STATUSES = SYNC_BLOCKER_STATUSES | {"unknown"}
 
 
+class UsageCapRuleBody(BaseModel):
+    period: Literal["5h", "week", "month"]
+    pool: Literal["auto", "api"]
+    cost_usd: int = Field(ge=1)
+
+
 class LoanKeyBody(BaseModel):
     """为成员分配 Key 的请求体。"""
 
@@ -83,6 +89,12 @@ class LoanKeyBody(BaseModel):
     lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
     model: str | None = None
+    usage_caps: list[UsageCapRuleBody] = Field(default_factory=list)
+
+
+class LoanUsageCapPatchBody(BaseModel):
+    clear: bool = False
+    usage_caps: list[UsageCapRuleBody] = Field(default_factory=list)
 
 
 class AutoPickBody(BaseModel):
@@ -97,6 +109,7 @@ class ReassignLoanBody(BaseModel):
     lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     source_account_id: str | None = None
     auto_revoke_on_reset: bool | None = None
+    usage_caps: list[UsageCapRuleBody] | None = None
 
 
 class LoanPatchBody(BaseModel):
@@ -105,6 +118,21 @@ class LoanPatchBody(BaseModel):
 
 class SelfLoanBody(BaseModel):
     note: str | None = None
+
+
+def _parsed_usage_cap_items(body) -> list[dict]:
+    raw = getattr(body, "usage_caps", None) or []
+    return [item.model_dump() if hasattr(item, "model_dump") else item for item in raw]
+
+
+def _parsed_usage_cap_rules(body) -> list[dict]:
+    from pulse.proxy.loan_usage_cap import UsageCapConfigError, parse_usage_cap_rules
+
+    try:
+        rules = parse_usage_cap_rules(_parsed_usage_cap_items(body))
+    except UsageCapConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [rule.as_dict() for rule in rules]
 
 
 def _encryption_key(config) -> str:
@@ -467,6 +495,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=400, detail="借用人不存在")
 
         enc_key = _encryption_key(config)
+        cap_rules = _parsed_usage_cap_rules(body)
         try:
             if is_auto:
                 # 管理员自动分配 = 账号池轮换，确认时不选号、不建 Cursor Key。
@@ -479,6 +508,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     model=body.model,
                     loan_selection=effective_loan_selection(session, config, team.id),
                     jev=build_jev_client(config),
+                    usage_cap_rules=cap_rules,
                 )
             else:
                 result = issue_loan_key(
@@ -499,6 +529,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     jev=build_jev_client(config),
                     jev_config=config.jev,
                     on_decision=lambda result: record_auto_lender_decision(session, result),
+                    usage_cap_rules=cap_rules,
                 )
             log_admin_action(
                 session,
@@ -643,6 +674,46 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         }
 
     @app.patch(
+        "/api/v2/loans/{loan_id}/usage-cap",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def patch_loan_usage_cap(
+        loan_id: str,
+        body: LoanUsageCapPatchBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
+        from pulse.tool_center.key_loan_delivery import DELIVERY_CURSOR_DIRECT, DELIVERY_PROXY_ALIAS
+
+        team, _ = team_repo_fn(session)
+        loan = loan_in_team(session, team.id, loan_id)
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+        if loan.status != "active":
+            raise HTTPException(status_code=400, detail="仅进行中的借用可修改封顶")
+        delivery = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+        if delivery != DELIVERY_PROXY_ALIAS:
+            raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+
+        try:
+            rules = [] if body.clear else parse_usage_cap_rules(_parsed_usage_cap_items(body))
+        except UsageCapConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        apply_usage_cap_rules(loan, rules)
+
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="quota.patch_loan_usage_cap",
+            capability="accounts:write",
+            detail=loan_id,
+        )
+        session.commit()
+        return loan_payload(loan, session)
+
+    @app.patch(
         "/api/v2/loans/{loan_id}",
         dependencies=[Depends(require_capability("accounts:write"))],
     )
@@ -695,6 +766,41 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=404, detail="借用记录不存在")
 
         enc_key = _encryption_key(config)
+        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
+
+        if body.usage_caps is not None:
+            delivery = getattr(loan, "delivery_mode", None) or ""
+            if delivery != "proxy_alias":
+                raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+            try:
+                apply_usage_cap_rules(loan, parse_usage_cap_rules(_parsed_usage_cap_items(body)))
+            except UsageCapConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        target_pool = body.lender_mode == LENDER_MODE_AUTO
+        current_pool = getattr(loan, "routing_mode", None) == ROUTING_POOL
+        assignment_same = target_pool and current_pool
+        if not target_pool and not current_pool:
+            # 自助借用是 lender_mode=auto 且仍绑着起始账号。对话框里选「指定账号」
+            # 并确认，就要走换绑把游走钉住，不能因为账号 id 相同只改用量限制。
+            already_manual = (getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL) != LENDER_MODE_AUTO
+            assignment_same = (
+                already_manual
+                and loan.source_account_id == body.source_account_id
+                and (body.auto_revoke_on_reset is None or body.auto_revoke_on_reset == loan.auto_revoke_on_reset)
+            )
+        if assignment_same and body.usage_caps is not None:
+            log_admin_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="quota.patch_loan_usage_cap",
+                capability="accounts:write",
+                detail=loan_id,
+            )
+            session.commit()
+            return loan_payload(loan, session)
+
         try:
             result = reassign_loan_source(
                 session,

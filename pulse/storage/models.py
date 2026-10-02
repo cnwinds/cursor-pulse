@@ -480,6 +480,13 @@ class KeyLoan(Base):
     lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 当前出借账号的绑定时刻；auto 模式的 30 分钟驻留窗口以此为基准
     source_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Legacy single-period caps. New writes use usage_cap_rules; these stay for rows not yet migrated.
+    usage_cap_period: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    auto_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    api_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # [{"period": "5h"|"week"|"month", "pool": "auto"|"api", "limit_cents": int}, ...]
+    # Any matching rule blocks that pool (OR). Empty list means unlimited.
+    usage_cap_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class UsageDailyAggregate(Base):
@@ -631,6 +638,7 @@ class ProxyKeyUsage(Base):
     total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    usage_cap_pool: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
 
 class CpOpenAiStickyBinding(Base):

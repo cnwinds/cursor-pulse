@@ -59,23 +59,44 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="自动回收日" width="120" align="center">
+      <el-table-column label="用量限制" width="108" align="center">
         <template #default="{ row }">
-          <el-tooltip
-            v-if="canToggleAutoRevoke(row)"
-            :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
-            placement="top"
-          >
-            <button
-              type="button"
-              class="recycle-date"
-              :disabled="autoRevokeSavingId === row.id"
-              @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+          <UsageCapStatus :rules="row.usage_caps" />
+        </template>
+      </el-table-column>
+      <el-table-column width="148" align="center">
+        <template #header>
+          <div class="when-head">
+            <span>自动回收日</span>
+            <span>归还时间</span>
+          </div>
+        </template>
+        <template #default="{ row }">
+          <div class="when-stack">
+            <el-tooltip
+              v-if="canToggleAutoRevoke(row)"
+              :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
+              placement="top"
             >
-              {{ recycleDateText(row) }}
-            </button>
-          </el-tooltip>
-          <span v-else>{{ recycleDateText(row) }}</span>
+              <button
+                type="button"
+                class="recycle-date"
+                :disabled="autoRevokeSavingId === row.id"
+                @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+              >
+                {{ recycleDateText(row) }}
+              </button>
+            </el-tooltip>
+            <span v-else class="when-recycle">{{ recycleDateText(row) }}</span>
+            <el-tooltip
+              v-if="row.revoked_at"
+              :content="formatChinaTime(row.revoked_at)"
+              placement="top"
+            >
+              <span class="when-return">{{ returnTimeText(row.revoked_at) }}</span>
+            </el-tooltip>
+            <span v-else class="when-return">—</span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="借用消耗" width="110">
@@ -93,11 +114,6 @@
       <el-table-column label="创建时间" width="96" align="center">
         <template #default="{ row }">
           <LoanTimeStack :iso="row.created_at" />
-        </template>
-      </el-table-column>
-      <el-table-column label="归还时间" width="96" align="center">
-        <template #default="{ row }">
-          <LoanTimeStack :iso="row.revoked_at" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="168" fixed="right" align="center">
@@ -192,57 +208,17 @@
         <el-form-item v-if="loanForm.lender_mode === 'auto'" label="目标模型">
           <el-input
             v-model="loanForm.model"
-            placeholder="建议填写；留空则按入池综合排序，填模型则按对应 Auto/API 池排序"
+            placeholder="可选。填写后，确认时只检查该模型所属的 Auto 或 API 池是否有号"
           />
-          <div v-if="poolPreviewLoaded && loanForm.lender_mode === 'auto'" class="manual-hint">
-            <template v-if="poolPreviewPool">
-              <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（预览）：</p>
-              <ol v-if="poolPreview.length" class="pool-preview">
-                <li v-for="row in poolPreview" :key="row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-            </template>
-            <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
-              <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
-              <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
-                <li v-for="row in poolPreviewDual.auto" :key="'a-' + row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-              <p v-if="poolPreviewDual.api.length">API 池优先：</p>
-              <ol v-if="poolPreviewDual.api.length" class="pool-preview">
-                <li v-for="row in poolPreviewDual.api" :key="'p-' + row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-            </template>
-            <p v-else>账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
-          </div>
-        </el-form-item>
-        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="目标模型">
-          <el-input
-            v-model="loanForm.model"
-            placeholder="留空按总余量打分；填模型则由系统判定它属于哪个 Quota Pool"
-          />
-          <p class="manual-hint">
-            只需填模型名，auto / api 桶由系统按既有计费口径自动判定，无需人工判断。
+          <p v-if="poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+            账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
           </p>
-          <el-button
-            v-if="manualJevTrace"
-            link
-            type="primary"
-            class="jev-trace-link"
-            @click="loanJevTraceOpen = true"
-          >
-            查看 Jev 选号报文（按借用人 + 模型预览）
-          </el-button>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
+        </el-form-item>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="loanForm.usage_caps" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -250,12 +226,6 @@
         <el-button type="primary" :loading="loanSubmitting" @click="submitLoan">确认分配</el-button>
       </template>
     </el-dialog>
-
-    <JevTraceDrawer
-      v-model="loanJevTraceOpen"
-      :trace="loanJevTraceActive"
-      :accounts="loanJevTraceAccountsActive"
-    />
 
     <el-dialog v-model="reassignDialogVisible" title="调整出借方式" width="520px">
       <p class="manual-hint">
@@ -294,37 +264,15 @@
         <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="reassignForm.auto_revoke_on_reset" />
         </el-form-item>
-        <div v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
-          <p>
-            自动分配使用账号池：使用过程中在已入池账号之间轮换，确认时不锁定某一个账号。
-          </p>
-          <template v-if="poolPreviewPool && poolPreview.length">
-            <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（会变，不是锁定）：</p>
-            <ol class="pool-preview">
-              <li v-for="row in poolPreview" :key="row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-          </template>
-          <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
-            <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
-            <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
-              <li v-for="row in poolPreviewDual.auto" :key="'ra-' + row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-            <p v-if="poolPreviewDual.api.length">API 池优先：</p>
-            <ol v-if="poolPreviewDual.api.length" class="pool-preview">
-              <li v-for="row in poolPreviewDual.api" :key="'rp-' + row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-          </template>
-          <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
-        </div>
+        <p v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
+          使用过程中在已入池账号之间轮换，不锁定某一个账号。
+        </p>
+        <p v-if="reassignForm.lender_mode === 'auto' && poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+          账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
+        </p>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="reassignForm.usage_caps" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reassignDialogVisible = false">取消</el-button>
@@ -515,15 +463,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
-import { formatChinaTime } from '@/utils/time'
+import { formatChinaDateTimeParts, formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
-import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
-import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
+import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 
 withDefaults(
   defineProps<{
@@ -639,6 +587,7 @@ interface LoanRow {
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)
@@ -660,6 +609,7 @@ const loanForm = ref({
   note: '',
   model: '',
   auto_revoke_on_reset: true,
+  usage_caps: [] as UsageCapRule[],
 })
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
   [],
@@ -670,13 +620,11 @@ const poolPreviewDual = ref<{
 }>({ auto: [], api: [] })
 const poolPreviewPool = ref<'auto' | 'api' | null>(null)
 const poolPreviewLoaded = ref(false)
-const manualJevTrace = ref<JevTrace | null>(null)
-const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
-const loanJevTraceOpen = ref(false)
-
-const loanJevTraceActive = computed(() => manualJevTrace.value)
-const loanJevTraceAccountsActive = computed(() => manualJevTraceAccounts.value)
-
+const poolHasCandidates = computed(() => {
+  if (poolPreviewPool.value) return poolPreview.value.length > 0
+  if (poolPreview.value.length > 0) return true
+  return poolPreviewDual.value.auto.length + poolPreviewDual.value.api.length > 0
+})
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
 const reassignLoan = ref<LoanRow | null>(null)
@@ -684,6 +632,7 @@ const reassignForm = ref({
   lender_mode: 'manual' as 'manual' | 'auto',
   source_account_id: '',
   auto_revoke_on_reset: true,
+  usage_caps: [] as UsageCapRule[],
 })
 const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
@@ -831,7 +780,38 @@ function onPageSizeChange() {
   loadLoans()
 }
 
+function prepareUsageCaps(
+  rules: UsageCapRule[],
+): { error: string } | { caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] } {
+  const seen = new Set<string>()
+  const caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] = []
+  for (const rule of rules) {
+    if (rule.cost_usd == null) return { error: '请填写每条用量限制的整数美元' }
+    const key = `${rule.period}:${rule.pool}`
+    if (seen.has(key)) return { error: '同一周期和同一类型（Auto / API）只能有一条限制' }
+    seen.add(key)
+    caps.push({ period: rule.period, pool: rule.pool, cost_usd: rule.cost_usd })
+  }
+  return { caps }
+}
+
+function usageCapsFromRow(row: LoanRow): UsageCapRule[] {
+  return (row.usage_caps || []).map((rule) => ({
+    period: rule.period as UsageCapRule['period'],
+    pool: rule.pool as UsageCapRule['pool'],
+    cost_usd: rule.cost_usd ?? null,
+  }))
+}
+
+function usageCapsSignature(rules: { period: string; pool: string; cost_usd: number | null }[]) {
+  return [...rules]
+    .map((rule) => `${rule.period}:${rule.pool}:${rule.cost_usd ?? ''}`)
+    .sort()
+    .join('|')
+}
+
 async function openLoanDialog() {
+  loanForm.value.usage_caps = []
   await loadLoanDialogData()
   loanDialogVisible.value = true
 }
@@ -865,6 +845,11 @@ async function submitLoan() {
     ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
+  const prepared = prepareUsageCaps(loanForm.value.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
+    return
+  }
   loanSubmitting.value = true
   try {
     const res = await client.post(
@@ -875,13 +860,15 @@ async function submitLoan() {
         auto_revoke_on_reset: isAuto ? false : loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
-        model: loanForm.value.model.trim() || null,
+        model: isAuto ? loanForm.value.model.trim() || null : null,
+        usage_caps: prepared.caps,
       },
     )
     loanDialogVisible.value = false
     revealedKey.value = res.data
     keyRevealVisible.value = true
     loanForm.value.note = ''
+    loanForm.value.usage_caps = []
     await loadLoans()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '分配失败')
@@ -893,7 +880,6 @@ async function submitLoan() {
 watch(
   () => loanForm.value.lender_mode,
   (mode) => {
-    if (mode === 'manual') void loadManualAutoPickPreview()
     if (mode === 'auto' && loanDialogVisible.value) void loadPoolPreview(false)
   },
 )
@@ -904,13 +890,6 @@ watch(
     if (loanDialogVisible.value && loanForm.value.lender_mode === 'auto') {
       void loadPoolPreview(false)
     }
-  },
-)
-
-watch(
-  () => [loanForm.value.borrower_member_id, loanForm.value.model] as const,
-  () => {
-    if (loanForm.value.lender_mode === 'manual') void loadManualAutoPickPreview()
   },
 )
 
@@ -952,38 +931,13 @@ async function loadPoolPreview(forReassign = false) {
   }
 }
 
-async function loadManualAutoPickPreview() {
-  if (loanForm.value.lender_mode !== 'manual' || !loanForm.value.borrower_member_id) {
-    manualJevTrace.value = null
-    manualJevTraceAccounts.value = []
-    return
-  }
-  try {
-    const res = await client.post('/api/v2/loans/auto-pick', {
-      borrower_member_id: loanForm.value.borrower_member_id,
-      model: loanForm.value.model.trim() || null,
-    })
-    const ranked = res.data.ranked || []
-    manualJevTrace.value = res.data.decision?.jev_trace ?? null
-    manualJevTraceAccounts.value = ranked.map(
-      (row: { account_id: string; account_identifier?: string; primary_member_name?: string | null }) => ({
-        account_id: row.account_id,
-        account_identifier: row.account_identifier,
-        primary_member_name: row.primary_member_name,
-      }),
-    )
-  } catch {
-    manualJevTrace.value = null
-    manualJevTraceAccounts.value = []
-  }
-}
-
 async function openReassignDialog(row: LoanRow) {
   reassignLoan.value = row
   reassignForm.value = {
     lender_mode: row.routing_mode === 'pool' ? 'auto' : 'manual',
     source_account_id: row.source_account_id || '',
     auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
+    usage_caps: usageCapsFromRow(row),
   }
   reassignDialogVisible.value = true
   try {
@@ -1016,17 +970,23 @@ async function submitReassign() {
     ElMessage.warning('请选择出借账号')
     return
   }
-  if (
-    form.lender_mode === 'manual' &&
-    reassignLoan.value.routing_mode !== 'pool' &&
-    reassignLoan.value.lender_mode === 'manual' &&
-    form.source_account_id === reassignLoan.value.source_account_id
-  ) {
-    ElMessage.warning('指定账号与当前相同，请更换账号或改为自动分配')
+  const prepared = prepareUsageCaps(form.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
     return
   }
-  if (form.lender_mode === 'auto' && reassignLoan.value.routing_mode === 'pool') {
-    ElMessage.warning('已是账号池轮换，无需调整')
+  const loan = reassignLoan.value
+  const assignmentSame =
+    form.lender_mode === 'auto'
+      ? loan.routing_mode === 'pool'
+      : loan.routing_mode !== 'pool' &&
+        loan.lender_mode !== 'auto' &&
+        form.source_account_id === loan.source_account_id &&
+        form.auto_revoke_on_reset === (loan.auto_revoke_on_reset ?? true)
+  const capsSame =
+    usageCapsSignature(prepared.caps) === usageCapsSignature(usageCapsFromRow(loan))
+  if (assignmentSame && capsSame) {
+    ElMessage.warning('出借方式与用量限制都没有变化')
     return
   }
   reassignSubmitting.value = true
@@ -1036,8 +996,9 @@ async function submitReassign() {
       source_account_id: form.lender_mode === 'manual' ? form.source_account_id : null,
       auto_revoke_on_reset:
         form.lender_mode === 'manual' ? form.auto_revoke_on_reset : undefined,
+      usage_caps: prepared.caps,
     })
-    ElMessage.success('已调整出借方式（pka_ 不变）')
+    ElMessage.success(assignmentSame ? '已保存用量限制（pka_ 不变）' : '已调整出借方式（pka_ 不变）')
     reassignDialogVisible.value = false
     await loadLoans()
   } catch (e: any) {
@@ -1050,6 +1011,12 @@ async function submitReassign() {
 function recycleDateText(row: LoanRow) {
   if (!row.auto_revoke_on_reset) return '-'
   return row.loan_expires_on || '-'
+}
+
+function returnTimeText(iso: string | null) {
+  const parts = formatChinaDateTimeParts(iso)
+  if (!parts) return '—'
+  return `${parts.date} ${parts.time.slice(0, 5)}`
 }
 
 function canToggleAutoRevoke(row: LoanRow) {
@@ -1234,11 +1201,34 @@ onMounted(loadLoans)
 .loan-actions :deep(.copy-cmd-icon-btn) {
   padding: 6px;
 }
+.when-head,
+.when-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.25;
+}
+.when-head {
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-medium);
+}
+.when-recycle,
+.recycle-date,
+.when-return {
+  font-size: var(--pulse-text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.when-return {
+  color: var(--el-text-color-secondary);
+}
 .recycle-date {
   padding: 0;
   border: none;
   background: none;
   font: inherit;
+  font-size: var(--pulse-text-sm);
   color: inherit;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
