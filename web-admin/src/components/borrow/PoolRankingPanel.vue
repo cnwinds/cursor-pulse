@@ -378,7 +378,6 @@ interface RankingRow {
   reserve_pct?: number | null
   picked?: boolean
   pool?: string | null
-  pool_headroom_pct?: number | null
 }
 
 interface RankingDecision {
