@@ -108,6 +108,10 @@ _Avoid_: Treating it as a Designated Loan, or as the self-service allowlist loan
 The ranking behind both loan modes: hard filters, then the deterministic score, then the optional Jev decision (`tool_center.auto_lender`). Used at issuance to pick the starting account and, for auto-assigned loans, to build the proxy's candidate allowlist.
 _Avoid_: Treating it as the thing that switches accounts at request time (the proxy does that)
 
+**Loan Usage Cap**:
+Optional per-loan spend ceiling for a proxy-mediated Key Loan (`loan_alias` or `loan_pool`). One rolling period — 5 hours, 7 days, or 30 days — and separate Auto and API dollar limits. Unset means unlimited. Spend is the proxy ledger estimate (`ProxyKeyUsage.cost_cents`) for that loan, bucketed by `loan_usage_cap_pool` (empty model counts as Auto; BYOK model names are skipped). Enforced on `AgentService/Run` before the upstream call, with a Chinese 429 that names the bucket, the reset time, and whether the other bucket is still open. Direct `cr*` passthrough loans are outside this cap.
+_Avoid_: Reusing `quota_pool_for_model` (that maps BYOK onto Auto); treating the period as the lender's Cursor billing cycle; applying `pk_` 5h/7d windows to loans
+
 **Jev Decision**:
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.
 _Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance — the Auto-Assigned Loan candidate allowlist is ordered by the deterministic score alone)
