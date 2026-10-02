@@ -2,7 +2,6 @@
   <div class="usage-analytics" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>用量分析</h2>
         <p class="desc desc-oneline">
           所选日期的 Cursor 用量。GLM / MiniMax / Kimi 请打开
           <router-link to="/quota-board">额度看板</router-link>。
@@ -604,9 +603,6 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 16px;
-}
-.page-header h2 {
-  margin: 0 0 4px;
 }
 .desc {
   margin: 0;

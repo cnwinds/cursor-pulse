@@ -1,10 +1,7 @@
 <template>
   <div class="quota-board-page">
     <header class="page-header">
-      <div>
-        <h2>额度看板</h2>
-        <p class="desc">各平台独立卡片：Cursor 对齐 Plan &amp; Usage；GLM / MiniMax / Kimi 对齐 Coding Plan 窗口额度。</p>
-      </div>
+      <p class="desc">各平台独立卡片：Cursor 对齐 Plan &amp; Usage；GLM / MiniMax / Kimi 对齐 Coding Plan 窗口额度。</p>
     </header>
     <div class="vendor-tabs-shell">
       <el-tabs v-model="activeTab" class="vendor-tabs">

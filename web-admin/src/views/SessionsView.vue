@@ -2,7 +2,6 @@
   <div class="sessions-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>会话账本</h2>
         <p class="desc">按用户聚合查看与小脉的对话记录，点击用户可浏览跨会话的连续消息流。</p>
       </div>
       <el-button @click="loadSessions">刷新</el-button>

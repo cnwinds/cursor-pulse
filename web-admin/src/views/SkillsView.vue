@@ -2,7 +2,6 @@
   <div class="skills-page" v-loading="loading">
     <header class="pulse-page-header">
       <div>
-        <h2 class="pulse-page-title">技能一览</h2>
         <p class="pulse-desc">每个说明文件（`docs/**/*.md`）即一个技能；右侧直接展示选中文件的元数据与正文。</p>
       </div>
       <el-button @click="loadSkills">刷新</el-button>

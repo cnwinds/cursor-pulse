@@ -1,12 +1,9 @@
 <template>
   <div class="users-page" v-loading="loading">
     <header class="page-header">
-      <div>
-        <h2>用户与权限</h2>
-        <p class="desc">
-          可创建本地用户（挂台账）、审批 OAuth 首次登录，并在启用钉钉/飞书后关联渠道身份。
-        </p>
-      </div>
+      <p class="desc">
+        可创建本地用户（挂台账）、审批 OAuth 首次登录，并在启用钉钉/飞书后关联渠道身份。
+      </p>
     </header>
 
     <section class="panel pending-panel" :class="{ 'is-empty': !pendingUsers.length }">
@@ -775,9 +772,6 @@ onMounted(load)
 <style scoped>
 .users-page {
   max-width: 1100px;
-}
-.page-header h2 {
-  margin: 0 0 4px;
 }
 .desc {
   margin: 0;
