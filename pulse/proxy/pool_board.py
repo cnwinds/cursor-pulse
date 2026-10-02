@@ -83,7 +83,15 @@ def _pool_primary_context(session: Session) -> PoolPrimaryContext:
     rows = unique_rows
 
     account_ids = list({c.account_id for c in rows})
-    accounts = {a.id: a for a in session.execute(select(AiAccount).where(AiAccount.id.in_(account_ids))).scalars()}
+    accounts = {
+        a.id: a
+        for a in session.execute(
+            select(AiAccount).where(
+                AiAccount.id.in_(account_ids),
+                AiAccount.deleted_at.is_(None),
+            )
+        ).scalars()
+    }
     latest_snaps = latest_snapshots_for_accounts(session, account_ids)
 
     loan_counts: dict = dict(

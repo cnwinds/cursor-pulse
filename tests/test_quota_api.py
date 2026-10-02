@@ -145,7 +145,7 @@ def test_quota_board_never_configured_key_is_not_healthy(quota_env):
     assert matched["status"] == "no_credential"
 
 
-def test_quota_board_revoked_key_is_not_healthy(quota_env):
+def test_quota_board_excludes_revoked_primary_key(quota_env):
     sf = quota_env["session_factory"]
     account = quota_env["cursor_account"]
     owner = quota_env["owner"]
@@ -158,8 +158,25 @@ def test_quota_board_revoked_key_is_not_healthy(quota_env):
     token = create_access_token(quota_env["config"], quota_env["owner"])
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
-    matched = next(item for item in res.json() if item["account_id"] == account.id)
-    assert matched["status"] == "key_revoked"
+    assert not any(item["account_id"] == account.id for item in res.json())
+
+
+def test_quota_board_excludes_soft_deleted_account(quota_env):
+    sf = quota_env["session_factory"]
+    account_id = quota_env["cursor_account"].id
+    owner = quota_env["owner"]
+    s = sf()
+    account = s.get(AiAccount, account_id)
+    account.deleted_at = datetime.now(UTC)
+    s.add(_primary_cred(account, owner, status="active", last_sync_status="success"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    assert not any(item["account_id"] == account_id for item in res.json())
 
 
 def test_quota_board_failed_key_is_sync_failed(quota_env):

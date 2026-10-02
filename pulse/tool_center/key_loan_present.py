@@ -26,7 +26,13 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     borrower_ids = {loan.borrower_member_id for loan in loans if loan.borrower_member_id}
     account_ids = {loan.source_account_id for loan in loans if loan.source_account_id}
     accounts = {
-        account.id: account for account in session.scalars(select(AiAccount).where(AiAccount.id.in_(account_ids)))
+        account.id: account
+        for account in session.scalars(
+            select(AiAccount).where(
+                AiAccount.id.in_(account_ids),
+                AiAccount.deleted_at.is_(None),
+            )
+        )
     }
     primary_ids = {account.primary_member_id for account in accounts.values() if account.primary_member_id}
     member_ids = borrower_ids | primary_ids
