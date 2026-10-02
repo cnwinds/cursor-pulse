@@ -2,7 +2,7 @@
   <div class="pool-panel" v-loading="loading">
     <div class="panel-toolbar">
       <p class="hint">
-        开启入池后，该账号主 Key 参与自动轮换。管理员「自动分配」与进行中的池轮换借用都按「打分表」顺序选号。
+        与账号台账一致，仅展示本团队未删除的 Cursor 账号。开启入池后，该账号主 Key 参与自动轮换；自动分配与池轮换借用按「打分表」顺序选号。
       </p>
       <el-button size="small" @click="load">刷新</el-button>
     </div>

@@ -538,6 +538,7 @@ class ToolCenterRepository:
         if self.account_has_associated_data(account_id):
             account.deleted_at = now
             account.updated_at = now
+            account.proxy_enabled = False
             self.session.flush()
             return "soft"
 

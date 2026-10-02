@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from pulse.config import AppConfig, CredentialConfig, ProxyConfig, TenantConfig, WebConfig
 from pulse.ingestion.crypto import encrypt_secret
@@ -192,6 +192,20 @@ def test_pool_accounts_toggle(env):
 
     resp = client.get("/api/v2/proxy-pool/credentials", headers=_admin(env))
     assert resp.json()[0]["proxy_enabled"] is True
+
+
+def test_pool_accounts_excludes_soft_deleted(env):
+    client = env["client"]
+    s = env["sf"]()
+    account = s.get(AiAccount, env["account_id"])
+    account.deleted_at = datetime.now(UTC)
+    account.proxy_enabled = False
+    s.commit()
+    s.close()
+
+    resp = client.get("/api/v2/proxy-pool/accounts", headers=_admin(env))
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 def test_pool_accounts_reject_enable_without_primary(env):

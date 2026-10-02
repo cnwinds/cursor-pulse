@@ -78,6 +78,28 @@ def _pool_account_readiness(active_count: int) -> tuple[bool, str | None]:
     return True, None
 
 
+def _tenant_team(session: Session, config):
+    from pulse.tenant.context import team_repository
+
+    team, _ = team_repository(session, config)
+    return team
+
+
+def _get_cursor_account_for_tenant(
+    session: Session,
+    config,
+    account_id: str,
+) -> AiAccount:
+    team = _tenant_team(session, config)
+    account = session.get(AiAccount, account_id)
+    if account is None or account.deleted_at is not None or account.team_id != team.id:
+        raise HTTPException(status_code=404, detail="account 不存在")
+    vendor = session.get(AiVendor, account.vendor_id)
+    if vendor is None or vendor.slug != "cursor":
+        raise HTTPException(status_code=404, detail="account 不存在")
+    return account
+
+
 def _require_pool_ready(session: Session, account_id: str) -> None:
     from sqlalchemy import func
 
@@ -298,6 +320,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         dependencies=[Depends(require_capability("proxy:read"))],
     )
     def list_pool_accounts(session: Session = Depends(get_db)):
+        team = _tenant_team(session, config)
         accounts = (
             session.execute(
                 select(AiAccount)
@@ -305,6 +328,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
                 .where(
                     AiVendor.slug == "cursor",
                     AiAccount.deleted_at.is_(None),
+                    AiAccount.team_id == team.id,
                 )
                 .order_by(AiAccount.account_identifier)
             )
@@ -411,12 +435,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         dependencies=[Depends(require_capability("proxy:write"))],
     )
     def toggle_pool_account(account_id: str, body: ToggleProxyEnabledBody, session: Session = Depends(get_db)):
-        account = session.get(AiAccount, account_id)
-        if account is None or account.deleted_at is not None:
-            raise HTTPException(status_code=404, detail="account 不存在")
-        vendor = session.get(AiVendor, account.vendor_id)
-        if vendor is None or vendor.slug != "cursor":
-            raise HTTPException(status_code=404, detail="account 不存在")
+        account = _get_cursor_account_for_tenant(session, config, account_id)
         if body.proxy_enabled:
             _require_pool_ready(session, account.id)
         account.proxy_enabled = body.proxy_enabled
@@ -439,12 +458,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         session: Session = Depends(get_db),
     ):
         """调整账号在 Credential Pool 排名中的手工参数（人工分 / 主负责人保留量）。"""
-        account = session.get(AiAccount, account_id)
-        if account is None or account.deleted_at is not None:
-            raise HTTPException(status_code=404, detail="account 不存在")
-        vendor = session.get(AiVendor, account.vendor_id)
-        if vendor is None or vendor.slug != "cursor":
-            raise HTTPException(status_code=404, detail="account 不存在")
+        account = _get_cursor_account_for_tenant(session, config, account_id)
         # 只更新显式传入的字段：score_adjust 与 reserve_pct 互相不能误清
         fields_set = body.model_fields_set
         if "score_adjust" in fields_set:
