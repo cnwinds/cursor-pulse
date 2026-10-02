@@ -53,19 +53,6 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column width="88" align="right">
-            <template #header>
-              <ColHeader
-                :label="quotaPoolTab === 'auto' ? 'Auto 余量' : 'API 余量'"
-                :tip="`当前 Quota Pool（${quotaPoolTab}）桶的剩余额度比例；打分与硬过滤均按该桶计算。`"
-              />
-            </template>
-            <template #default="{ row }">
-              <span class="metric-pill">
-                {{ formatPoolHeadroom(row.pool_headroom_pct) }}
-              </span>
-            </template>
-          </el-table-column>
           <el-table-column width="92" align="right">
             <template #header>
               <ColHeader
@@ -391,7 +378,6 @@ interface RankingRow {
   reserve_pct?: number | null
   picked?: boolean
   pool?: string | null
-  pool_headroom_pct?: number | null
 }
 
 interface RankingDecision {
@@ -529,11 +515,6 @@ function exclusionReasonLabel(reason: string | undefined) {
       coverage_too_short: '距作废过短',
     }[reason || ''] ?? (reason || '—')
   )
-}
-
-function formatPoolHeadroom(pct: number | null | undefined): string {
-  if (pct == null || Number.isNaN(pct)) return '—'
-  return `${pct.toFixed(1)}%`
 }
 
 function formatProxySeats(row: RankingRow): string {
