@@ -15,7 +15,7 @@ from pulse.proxy.loan_usage_cap import (
     UsageCapConfigError,
     check_loan_usage_cap,
     loan_usage_cap_pool,
-    parse_usage_cap_fields,
+    parse_usage_cap_rules,
     usage_cap_enabled,
     usage_resets_at,
 )
@@ -33,9 +33,7 @@ def _loan(**kwargs) -> KeyLoan:
     defaults = {
         "delivery_mode": DELIVERY_PROXY_ALIAS,
         "status": "active",
-        "usage_cap_period": "week",
-        "auto_cost_limit_cents": 1000,
-        "api_cost_limit_cents": None,
+        "usage_cap_rules": [{"period": "week", "pool": "auto", "limit_cents": 1000}],
     }
     defaults.update(kwargs)
     return KeyLoan(**defaults)
@@ -136,8 +134,7 @@ def test_loan_pool_aggregates_credentials(cap_session):
 
 def test_no_cap_always_ok(cap_session):
     s, loan = cap_session
-    loan.usage_cap_period = None
-    loan.auto_cost_limit_cents = None
+    loan.usage_cap_rules = []
     s.flush()
     s.add(_usage(loan.id, model="composer-1", cents=99999, ts=NOW, pool="auto"))
     s.flush()
@@ -163,12 +160,35 @@ def test_record_usages_sets_usage_cap_pool(cap_session):
 
 def test_parse_usage_cap_validation():
     with pytest.raises(UsageCapConfigError):
-        parse_usage_cap_fields(usage_cap_period="week")
+        parse_usage_cap_rules([{"period": "year", "pool": "auto", "cost_usd": 10}])
     with pytest.raises(UsageCapConfigError):
-        parse_usage_cap_fields(auto_cost_usd=10)
-    parsed = parse_usage_cap_fields(usage_cap_period="week", auto_cost_usd=10)
-    assert parsed.usage_cap_period == "week"
-    assert parsed.auto_cost_limit_cents == 1000
+        parse_usage_cap_rules(
+            [
+                {"period": "week", "pool": "auto", "cost_usd": 10},
+                {"period": "week", "pool": "auto", "cost_usd": 20},
+            ]
+        )
+    parsed = parse_usage_cap_rules(
+        [
+            {"period": "5h", "pool": "auto", "cost_usd": 10},
+            {"period": "week", "pool": "auto", "cost_usd": 50},
+        ]
+    )
+    assert [rule.period for rule in parsed] == ["5h", "week"]
+    assert parsed[0].limit_cents == 1000
+
+
+def test_or_rules_either_window_blocks(cap_session):
+    s, loan = cap_session
+    loan.usage_cap_rules = [
+        {"period": "5h", "pool": "auto", "limit_cents": 1000},
+        {"period": "week", "pool": "auto", "limit_cents": 5000},
+    ]
+    s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto"))
+    s.flush()
+    assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["status"] == "limited"
+    later = NOW + timedelta(hours=5)
+    assert check_loan_usage_cap(s, loan.id, "composer-1", now=later)["status"] == "ok"
 
 
 @pytest.fixture
@@ -225,20 +245,32 @@ def test_patch_usage_cap_and_clear(api_client):
 
     bad = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
-        json={"clear": False, "usage_cap_period": "week"},
+        json={
+            "clear": False,
+            "usage_caps": [
+                {"period": "week", "pool": "auto", "cost_usd": 10},
+                {"period": "week", "pool": "auto", "cost_usd": 20},
+            ],
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert bad.status_code == 400
 
     ok = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
-        json={"clear": False, "usage_cap_period": "week", "auto_cost_usd": 10, "api_cost_usd": None},
+        json={
+            "clear": False,
+            "usage_caps": [
+                {"period": "5h", "pool": "auto", "cost_usd": 10},
+                {"period": "week", "pool": "api", "cost_usd": 50},
+            ],
+        },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert ok.status_code == 200
     data = ok.json()
-    assert data["usage_cap_period"] == "week"
-    assert data["auto_cost_usd"] == 10
+    assert len(data["usage_caps"]) == 2
+    assert data["usage_caps"][0]["cost_usd"] == 10
 
     cleared = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
@@ -246,7 +278,127 @@ def test_patch_usage_cap_and_clear(api_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert cleared.status_code == 200
-    assert cleared.json()["usage_cap_period"] is None
+    assert cleared.json()["usage_caps"] == []
+
+
+def test_reassign_same_pool_saves_usage_caps(api_client):
+    client, sf, config = api_client
+    s = sf()
+    _team, repo = make_team_repo(s, slug="t")
+    owner = bootstrap_portal_owner(repo, channel_user_id="adm3", display_name="C", password="pw")
+    loan = _loan(borrower_member_id=owner.id, routing_mode="pool")
+    s.add(loan)
+    s.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    unchanged = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={"lender_mode": "auto"},
+        headers=headers,
+    )
+    assert unchanged.status_code == 400
+
+    duplicate = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={
+            "lender_mode": "auto",
+            "usage_caps": [
+                {"period": "week", "pool": "auto", "cost_usd": 10},
+                {"period": "week", "pool": "auto", "cost_usd": 50},
+            ],
+        },
+        headers=headers,
+    )
+    assert duplicate.status_code == 400
+
+    saved = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={
+            "lender_mode": "auto",
+            "usage_caps": [
+                {"period": "5h", "pool": "auto", "cost_usd": 10},
+                {"period": "week", "pool": "auto", "cost_usd": 50},
+            ],
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    assert [(row["period"], row["pool"], row["cost_usd"]) for row in saved.json()["usage_caps"]] == [
+        ("5h", "auto", 10),
+        ("week", "auto", 50),
+    ]
+
+    cleared = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={"lender_mode": "auto", "usage_caps": []},
+        headers=headers,
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["usage_caps"] == []
+
+
+def test_reassign_pins_auto_wander_and_saves_caps(api_client):
+    """自助借用确认「指定账号」时要钉住游走，同时写入用量限制。"""
+    from pulse.storage.models import AiAccount, AiPlan, AiVendor
+
+    client, sf, config = api_client
+    s = sf()
+    team, repo = make_team_repo(s, slug="t")
+    owner = bootstrap_portal_owner(repo, channel_user_id="adm4", display_name="D", password="pw")
+    vendor = AiVendor(slug="cursor", name="Cursor")
+    s.add(vendor)
+    s.flush()
+    plan = AiPlan(
+        vendor_id=vendor.id,
+        plan_name="Pro",
+        slug="pro",
+        billing_type="subscription",
+        price_amount=20,
+        price_currency="USD",
+    )
+    s.add(plan)
+    s.flush()
+    account = AiAccount(
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        team_id=team.id,
+        account_identifier="lender@example.com",
+        status="shared",
+    )
+    s.add(account)
+    s.flush()
+    loan = _loan(
+        borrower_member_id=owner.id,
+        source_account_id=account.id,
+        routing_mode="pinned",
+        lender_mode="auto",
+        auto_revoke_on_reset=True,
+        alias_key_hash="b" * 64,
+        alias_key_hint="pka_wander",
+        alias_encrypted_key="enc",
+        usage_cap_rules=[],
+    )
+    s.add(loan)
+    s.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    saved = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={
+            "lender_mode": "manual",
+            "source_account_id": account.id,
+            "auto_revoke_on_reset": True,
+            "usage_caps": [{"period": "5h", "pool": "auto", "cost_usd": 10}],
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["lender_mode"] == "manual"
+    assert body["routing_mode"] == "pinned"
+    assert [(row["period"], row["pool"], row["cost_usd"]) for row in body["usage_caps"]] == [
+        ("5h", "auto", 10),
+    ]
 
 
 def test_cursor_direct_rejects_cap_patch(api_client):
@@ -266,7 +418,7 @@ def test_cursor_direct_rejects_cap_patch(api_client):
     token = create_access_token(config, owner)
     resp = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
-        json={"clear": False, "usage_cap_period": "week", "auto_cost_usd": 1},
+        json={"clear": False, "usage_caps": [{"period": "week", "pool": "auto", "cost_usd": 1}]},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 400
@@ -274,12 +426,27 @@ def test_cursor_direct_rejects_cap_patch(api_client):
 
 def test_passthrough_loan_not_applicable(cap_session):
     s, _ = cap_session
-    loan = KeyLoan(delivery_mode="cursor_direct", status="active", usage_cap_period="week", auto_cost_limit_cents=1)
+    loan = KeyLoan(
+        delivery_mode="cursor_direct",
+        status="active",
+        usage_cap_rules=[{"period": "week", "pool": "auto", "limit_cents": 100}],
+    )
     s.add(loan)
     s.flush()
     assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["reason"] == "not_applicable"
 
 
 def test_usage_cap_enabled():
-    assert not usage_cap_enabled(_loan(usage_cap_period=None, auto_cost_limit_cents=None))
-    assert usage_cap_enabled(_loan(usage_cap_period="week", auto_cost_limit_cents=100))
+    assert not usage_cap_enabled(_loan(usage_cap_rules=[]))
+    assert usage_cap_enabled(_loan())
+
+
+def test_legacy_columns_still_apply(cap_session):
+    s, loan = cap_session
+    loan.usage_cap_rules = None
+    loan.usage_cap_period = "5h"
+    loan.auto_cost_limit_cents = 1000
+    loan.api_cost_limit_cents = None
+    s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(minutes=30), pool="auto"))
+    s.flush()
+    assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["status"] == "limited"

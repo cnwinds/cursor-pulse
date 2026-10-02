@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from pulse.pricing.billing_scope import is_auto_composer_model, is_likely_byok_model
 from pulse.proxy.clock import WINDOW_7D, utcnow
-from pulse.proxy.key_crud import usd_to_cents
+from pulse.proxy.key_crud import cents_to_usd, usd_to_cents
 from pulse.storage.models import KeyLoan, ProxyKeyUsage
 from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
 from pulse.util.datetime_fmt import ensure_aware
@@ -29,10 +29,13 @@ class UsageCapConfigError(ValueError):
 
 
 @dataclass(frozen=True)
-class ParsedUsageCap:
-    usage_cap_period: str | None
-    auto_cost_limit_cents: int | None
-    api_cost_limit_cents: int | None
+class CapRule:
+    period: str
+    pool: CapPool
+    limit_cents: int
+
+    def as_dict(self) -> dict:
+        return {"period": self.period, "pool": self.pool, "limit_cents": self.limit_cents}
 
 
 def loan_usage_cap_pool(model: str | None) -> CapPool | None:
@@ -64,50 +67,77 @@ def cap_window_for_period(period: str) -> timedelta:
     raise UsageCapConfigError(f"未知的记账周期：{period}")
 
 
-def usage_cap_enabled(loan: KeyLoan) -> bool:
-    period = (loan.usage_cap_period or "").strip()
-    if not period:
-        return False
-    return loan.auto_cost_limit_cents is not None or loan.api_cost_limit_cents is not None
-
-
-def parse_usage_cap_fields(
-    *,
-    usage_cap_period: str | None = None,
-    auto_cost_usd: int | None = None,
-    api_cost_usd: int | None = None,
-) -> ParsedUsageCap:
-    period = (usage_cap_period or "").strip() or None
-    auto_cents = usd_to_cents(auto_cost_usd) if auto_cost_usd is not None else None
-    api_cents = usd_to_cents(api_cost_usd) if api_cost_usd is not None else None
-
-    if period is None and auto_cents is None and api_cents is None:
-        return ParsedUsageCap(None, None, None)
-
-    if period is None or (auto_cents is None and api_cents is None):
-        raise UsageCapConfigError("用量封顶须同时指定记账周期与至少一个桶的上限（美元整数 ≥ 1）")
-
+def _legacy_rules(loan: KeyLoan) -> list[CapRule]:
+    period = (getattr(loan, "usage_cap_period", None) or "").strip()
     if period not in _CAP_PERIODS:
-        raise UsageCapConfigError("记账周期须为 5h、week 或 month")
-
-    if auto_cost_usd is not None and auto_cost_usd < 1:
-        raise UsageCapConfigError("Auto 上限须为整数美元且至少 1")
-    if api_cost_usd is not None and api_cost_usd < 1:
-        raise UsageCapConfigError("API 上限须为整数美元且至少 1")
-
-    return ParsedUsageCap(period, auto_cents, api_cents)
-
-
-def apply_usage_cap_to_loan(loan: KeyLoan, parsed: ParsedUsageCap) -> None:
-    loan.usage_cap_period = parsed.usage_cap_period
-    loan.auto_cost_limit_cents = parsed.auto_cost_limit_cents
-    loan.api_cost_limit_cents = parsed.api_cost_limit_cents
+        return []
+    rules: list[CapRule] = []
+    auto_cents = getattr(loan, "auto_cost_limit_cents", None)
+    api_cents = getattr(loan, "api_cost_limit_cents", None)
+    if auto_cents is not None:
+        rules.append(CapRule(period, "auto", int(auto_cents)))
+    if api_cents is not None:
+        rules.append(CapRule(period, "api", int(api_cents)))
+    return rules
 
 
-def clear_usage_cap_on_loan(loan: KeyLoan) -> None:
+def loan_cap_rules(loan: KeyLoan) -> list[CapRule]:
+    """Stored rules, or the legacy single-period columns when rules were never written."""
+    raw = getattr(loan, "usage_cap_rules", None)
+    if isinstance(raw, list):
+        rules: list[CapRule] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            period = str(item.get("period") or "").strip()
+            pool = str(item.get("pool") or "").strip()
+            cents = item.get("limit_cents")
+            if period not in _CAP_PERIODS or pool not in ("auto", "api"):
+                continue
+            if not isinstance(cents, int) or cents < 1:
+                continue
+            rules.append(CapRule(period, pool, cents))  # type: ignore[arg-type]
+        return rules
+    return _legacy_rules(loan)
+
+
+def usage_cap_enabled(loan: KeyLoan) -> bool:
+    return bool(loan_cap_rules(loan))
+
+
+def parse_usage_cap_rules(items: list[dict] | None) -> list[CapRule]:
+    """API rows: period, pool, cost_usd. Empty list clears the cap."""
+    rules: list[CapRule] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items or []:
+        period = str(item.get("period") or "").strip()
+        pool = str(item.get("pool") or "").strip()
+        cost = item.get("cost_usd")
+        if period not in _CAP_PERIODS:
+            raise UsageCapConfigError("记账周期须为 5h、week 或 month")
+        if pool not in ("auto", "api"):
+            raise UsageCapConfigError("用量限制须指定 Auto 或 API")
+        if not isinstance(cost, int) or isinstance(cost, bool) or cost < 1:
+            raise UsageCapConfigError("用量上限须为整数美元且至少 1")
+        key = (period, pool)
+        if key in seen:
+            raise UsageCapConfigError("同一周期和同一桶只能有一条用量限制")
+        seen.add(key)
+        cents = usd_to_cents(cost)
+        assert cents is not None
+        rules.append(CapRule(period, pool, cents))  # type: ignore[arg-type]
+    return rules
+
+
+def apply_usage_cap_rules(loan: KeyLoan, rules: list[CapRule]) -> None:
+    loan.usage_cap_rules = [rule.as_dict() for rule in rules]
     loan.usage_cap_period = None
     loan.auto_cost_limit_cents = None
     loan.api_cost_limit_cents = None
+
+
+def clear_usage_cap_on_loan(loan: KeyLoan) -> None:
+    apply_usage_cap_rules(loan, [])
 
 
 def _effective_row_pool(row: ProxyKeyUsage) -> CapPool | None:
@@ -179,58 +209,83 @@ def usage_resets_at(
     return last_ts + window
 
 
-def batch_window_usage_cents(
+def _events_from_rows(
+    rows: list[ProxyKeyUsage],
+    *,
+    pool: CapPool,
+    cutoff: datetime,
+) -> list[tuple[datetime, int]]:
+    events: list[tuple[datetime, int]] = []
+    for row in rows:
+        if _effective_row_pool(row) != pool:
+            continue
+        ts = ensure_aware(row.ts) or row.ts
+        if ts <= cutoff:
+            continue
+        events.append((ts, int(row.cost_cents or 0)))
+    return events
+
+
+def usage_cap_snapshots(
     session: Session,
     loans: list[KeyLoan],
     *,
     now: datetime | None = None,
-) -> dict[str, tuple[int | None, int | None]]:
-    """Map loan_id → (auto_used, api_used) for cap-enabled loans; else (None, None)."""
+) -> dict[str, list[dict]]:
+    """Per loan, one row per rule with current-window used cents."""
     now = ensure_aware(now or utcnow()) or utcnow()
-    enabled = [loan for loan in loans if usage_cap_enabled(loan)]
+    enabled = [(loan, loan_cap_rules(loan)) for loan in loans if loan_cap_rules(loan)]
     if not enabled:
-        return {loan.id: (None, None) for loan in loans}
+        return {loan.id: [] for loan in loans}
 
-    loan_ids = [loan.id for loan in enabled]
     min_cutoff = now
-    per_loan_window: dict[str, timedelta] = {}
-    for loan in enabled:
-        period = (loan.usage_cap_period or "").strip()
-        window = cap_window_for_period(period)
-        per_loan_window[loan.id] = window
-        cutoff = _window_cutoff(now, window)
-        if cutoff < min_cutoff:
-            min_cutoff = cutoff
+    windows: dict[str, list[tuple[CapRule, timedelta, datetime]]] = {}
+    for loan, rules in enabled:
+        packed: list[tuple[CapRule, timedelta, datetime]] = []
+        for rule in rules:
+            window = cap_window_for_period(rule.period)
+            cutoff = _window_cutoff(now, window)
+            packed.append((rule, window, cutoff))
+            if cutoff < min_cutoff:
+                min_cutoff = cutoff
+        windows[loan.id] = packed
 
     rows = session.scalars(
         select(ProxyKeyUsage)
         .where(
-            ProxyKeyUsage.loan_id.in_(loan_ids),
+            ProxyKeyUsage.loan_id.in_(list(windows)),
             ProxyKeyUsage.ts > min_cutoff,
         )
         .order_by(ProxyKeyUsage.ts.asc())
     ).all()
-
-    sums: dict[str, dict[CapPool, int]] = {lid: {"auto": 0, "api": 0} for lid in loan_ids}
+    by_loan: dict[str, list[ProxyKeyUsage]] = {loan_id: [] for loan_id in windows}
     for row in rows:
-        lid = row.loan_id
-        if lid not in per_loan_window:
-            continue
-        ts = ensure_aware(row.ts) or row.ts
-        if ts <= _window_cutoff(now, per_loan_window[lid]):
-            continue
-        pool = _effective_row_pool(row)
-        if pool is None:
-            continue
-        sums[lid][pool] += int(row.cost_cents or 0)
+        if row.loan_id in by_loan:
+            by_loan[row.loan_id].append(row)
 
-    out: dict[str, tuple[int | None, int | None]] = {}
-    for loan in loans:
-        if not usage_cap_enabled(loan):
-            out[loan.id] = (None, None)
-        else:
-            s = sums.get(loan.id, {"auto": 0, "api": 0})
-            out[loan.id] = (s["auto"], s["api"])
+    out: dict[str, list[dict]] = {loan.id: [] for loan in loans}
+    for loan, _rules in enabled:
+        snapshots: list[dict] = []
+        for rule, window, cutoff in windows[loan.id]:
+            events = _events_from_rows(by_loan.get(loan.id, []), pool=rule.pool, cutoff=cutoff)
+            used = sum(cents for _, cents in events)
+            resets_at = None
+            if used >= rule.limit_cents and events:
+                resets_at = (
+                    usage_resets_at(events, rule.limit_cents, window).astimezone(UTC).isoformat().replace("+00:00", "Z")
+                )
+            snapshots.append(
+                {
+                    "period": rule.period,
+                    "pool": rule.pool,
+                    "limit_cents": rule.limit_cents,
+                    "cost_usd": cents_to_usd(rule.limit_cents),
+                    "used_cents": used,
+                    "exceeded": used >= rule.limit_cents,
+                    "resets_at": resets_at,
+                }
+            )
+        out[loan.id] = snapshots
     return out
 
 
@@ -289,36 +344,27 @@ def _other_pool(pool: CapPool) -> CapPool:
     return "api" if pool == "auto" else "auto"
 
 
-def _pool_open(
-    loan: KeyLoan,
-    pool: CapPool,
-    used: int,
-) -> bool:
-    limit = loan.auto_cost_limit_cents if pool == "auto" else loan.api_cost_limit_cents
-    if limit is None:
-        return True
-    return used < limit
+def _rule_clause(rule: CapRule, used: int, resets_at: datetime, now: datetime) -> str:
+    rel = _format_relative_until(resets_at, now)
+    wall = _format_beijing_wall(resets_at)
+    return (
+        f"{_period_label(rule.period)} {_format_usd(used)} / {_format_usd(rule.limit_cents)}"
+        f"（{rel}恢复，{wall} 北京时间）"
+    )
 
 
 def _build_limited_message(
-    loan: KeyLoan,
     pool: CapPool,
+    exceeded: list[tuple[CapRule, int, datetime]],
     *,
-    used_cents: int,
-    limit_cents: int,
-    resets_at: datetime,
     other_open: bool,
     now: datetime,
 ) -> str:
-    period = (loan.usage_cap_period or "").strip()
-    period_label = _period_label(period)
-    rel = _format_relative_until(resets_at, now)
-    wall = _format_beijing_wall(resets_at)
-    head = (
-        f"【小脉借用】{_pool_label(pool)} 额度已用尽"
-        f"（{_format_usd(used_cents)} / {_format_usd(limit_cents)}，{period_label}）。"
-        f"{rel}恢复（{wall} 北京时间）。"
-    )
+    clauses = "；".join(_rule_clause(rule, used, resets_at, now) for rule, used, resets_at in exceeded)
+    if len(exceeded) == 1:
+        head = f"【小脉借用】{_pool_label(pool)} 额度已用尽（{clauses}）。"
+    else:
+        head = f"【小脉借用】{_pool_label(pool)} 已触及多条限制（任一达到即停）：{clauses}。"
     if other_open:
         other = _other_pool(pool)
         if pool == "auto":
@@ -361,80 +407,51 @@ def check_loan_usage_cap(
     if loan.status != "active":
         return _ok_payload(reason="not_applicable")
 
-    if not usage_cap_enabled(loan):
+    rules = loan_cap_rules(loan)
+    if not rules:
         return _ok_payload(reason="cap_disabled")
 
     request_pool = loan_usage_cap_pool(model)
     if request_pool is None:
         return _ok_payload(reason="not_counted")
 
-    period = (loan.usage_cap_period or "").strip()
-    window = cap_window_for_period(period)
-    auto_used = sum_window_usage_cents(session, loan_id, window=window, pool="auto", now=now)
-    api_used = sum_window_usage_cents(session, loan_id, window=window, pool="api", now=now)
+    def exceeded_for(pool: CapPool) -> list[tuple[CapRule, int, datetime]]:
+        hit: list[tuple[CapRule, int, datetime]] = []
+        for rule in rules:
+            if rule.pool != pool:
+                continue
+            window = cap_window_for_period(rule.period)
+            events = window_usage_events(session, loan_id, window=window, pool=pool, now=now)
+            used = sum(cents for _, cents in events)
+            if used < rule.limit_cents:
+                continue
+            if not events:
+                continue
+            hit.append((rule, used, usage_resets_at(events, rule.limit_cents, window)))
+        return hit
 
-    limit = loan.auto_cost_limit_cents if request_pool == "auto" else loan.api_cost_limit_cents
-    used = auto_used if request_pool == "auto" else api_used
-
-    if limit is None or used < limit:
+    exceeded = exceeded_for(request_pool)
+    if not exceeded:
         return _ok_payload(reason=None)
 
-    events = window_usage_events(session, loan_id, window=window, pool=request_pool, now=now)
-    resets = usage_resets_at(events, limit, window)
     other = _other_pool(request_pool)
-    other_used = api_used if request_pool == "auto" else auto_used
-    other_open = _pool_open(loan, other, other_used)
+    other_open = not exceeded_for(other)
+    # A pool with no rules is still open.
+    if not any(rule.pool == other for rule in rules):
+        other_open = True
 
-    message = _build_limited_message(
-        loan,
-        request_pool,
-        used_cents=used,
-        limit_cents=limit,
-        resets_at=resets,
-        other_open=other_open,
-        now=now,
-    )
-    resets_iso = resets.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    resets = max(item[2] for item in exceeded)
+    primary = max(exceeded, key=lambda item: item[2])
+    message = _build_limited_message(request_pool, exceeded, other_open=other_open, now=now)
     return {
         "status": "limited",
         "reason": "loan_usage_cap_exceeded",
         "pool": request_pool,
-        "period": period,
-        "used_cents": used,
-        "limit_cents": limit,
-        "resets_at": resets_iso,
+        "period": primary[0].period,
+        "used_cents": primary[1],
+        "limit_cents": primary[0].limit_cents,
+        "resets_at": resets.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "other_pool": other,
         "other_pool_open": other_open,
         "message": message,
     }
-
-
-def usage_cap_resets_at_for_loan(
-    session: Session,
-    loan: KeyLoan,
-    *,
-    auto_used: int,
-    api_used: int,
-    now: datetime | None = None,
-) -> str | None:
-    """Earliest resets_at among exceeded configured buckets, for list payloads."""
-    if not usage_cap_enabled(loan):
-        return None
-    now = ensure_aware(now or utcnow()) or utcnow()
-    period = (loan.usage_cap_period or "").strip()
-    window = cap_window_for_period(period)
-    candidates: list[datetime] = []
-    for pool, used, limit in (
-        ("auto", auto_used, loan.auto_cost_limit_cents),
-        ("api", api_used, loan.api_cost_limit_cents),
-    ):
-        if limit is None or used < limit:
-            continue
-        events = window_usage_events(session, loan.id, window=window, pool=pool, now=now)
-        if not events:
-            continue
-        candidates.append(usage_resets_at(events, limit, window))
-    if not candidates:
-        return None
-    earliest = min(candidates)
-    return earliest.astimezone(UTC).isoformat().replace("+00:00", "Z")

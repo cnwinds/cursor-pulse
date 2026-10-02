@@ -111,15 +111,6 @@
             />
             <el-tooltip
               v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
-              content="用量封顶"
-              placement="top"
-            >
-              <el-button link type="primary" aria-label="用量封顶" @click="openUsageCapDialog(row)">
-                <el-icon><Histogram /></el-icon>
-              </el-button>
-            </el-tooltip>
-            <el-tooltip
-              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
               content="调整出借方式"
               placement="top"
             >
@@ -203,34 +194,9 @@
             v-model="loanForm.model"
             placeholder="建议填写；留空则按入池综合排序，填模型则按对应 Auto/API 池排序"
           />
-          <div v-if="poolPreviewLoaded && loanForm.lender_mode === 'auto'" class="manual-hint">
-            <template v-if="poolPreviewPool">
-              <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（预览）：</p>
-              <ol v-if="poolPreview.length" class="pool-preview">
-                <li v-for="row in poolPreview" :key="row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-            </template>
-            <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
-              <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
-              <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
-                <li v-for="row in poolPreviewDual.auto" :key="'a-' + row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-              <p v-if="poolPreviewDual.api.length">API 池优先：</p>
-              <ol v-if="poolPreviewDual.api.length" class="pool-preview">
-                <li v-for="row in poolPreviewDual.api" :key="'p-' + row.account_id">
-                  {{ row.account_identifier }}
-                  <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-                </li>
-              </ol>
-            </template>
-            <p v-else>账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
-          </div>
+          <p v-if="poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+            账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
+          </p>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="目标模型">
           <el-input
@@ -253,38 +219,9 @@
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
-        <el-divider content-position="left">用量封顶（可选）</el-divider>
-        <el-form-item label="记账周期">
-          <el-select v-model="loanForm.usage_cap_period" clearable placeholder="不限制" style="width: 100%">
-            <el-option label="不限制" value="" />
-            <el-option label="5 小时" value="5h" />
-            <el-option label="滚动 7 天" value="week" />
-            <el-option label="滚动 30 天" value="month" />
-          </el-select>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="loanForm.usage_caps" />
         </el-form-item>
-        <el-form-item label="Auto 上限">
-          <el-input-number
-            v-model="loanForm.auto_cost_usd"
-            :min="1"
-            :value-on-clear="null"
-            :controls="false"
-            placeholder="美元，可空"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="API 上限">
-          <el-input-number
-            v-model="loanForm.api_cost_usd"
-            :min="1"
-            :value-on-clear="null"
-            :controls="false"
-            placeholder="美元，可空"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <p class="manual-hint">
-          只统计经本代理上报的套餐用量；BYOK 与直连 Cursor Key 不计入；超出后 Cursor 对话会提示恢复时间，可改用另一桶模型。
-        </p>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
@@ -335,37 +272,15 @@
         <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="reassignForm.auto_revoke_on_reset" />
         </el-form-item>
-        <div v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
-          <p>
-            自动分配使用账号池：使用过程中在已入池账号之间轮换，确认时不锁定某一个账号。
-          </p>
-          <template v-if="poolPreviewPool && poolPreview.length">
-            <p>当前 {{ poolPreviewPool === 'api' ? 'API' : 'Auto' }} 池优先（会变，不是锁定）：</p>
-            <ol class="pool-preview">
-              <li v-for="row in poolPreview" :key="row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-          </template>
-          <template v-else-if="poolPreviewDual.auto.length || poolPreviewDual.api.length">
-            <p v-if="poolPreviewDual.auto.length">Auto 池优先：</p>
-            <ol v-if="poolPreviewDual.auto.length" class="pool-preview">
-              <li v-for="row in poolPreviewDual.auto" :key="'ra-' + row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-            <p v-if="poolPreviewDual.api.length">API 池优先：</p>
-            <ol v-if="poolPreviewDual.api.length" class="pool-preview">
-              <li v-for="row in poolPreviewDual.api" :key="'rp-' + row.account_id">
-                {{ row.account_identifier }}
-                <span v-if="row.score != null"> · 分 {{ row.score }}</span>
-              </li>
-            </ol>
-          </template>
-          <p v-else-if="poolPreviewLoaded">账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。</p>
-        </div>
+        <p v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
+          使用过程中在已入池账号之间轮换，不锁定某一个账号。
+        </p>
+        <p v-if="reassignForm.lender_mode === 'auto' && poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+          账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
+        </p>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="reassignForm.usage_caps" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reassignDialogVisible = false">取消</el-button>
@@ -533,51 +448,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="usageCapDialogVisible" title="用量封顶" width="520px">
-      <p class="manual-hint">借用人：{{ usageCapLoan?.borrower_name || '—' }}</p>
-      <p v-if="usageCapLoan?.usage_cap_period" class="manual-hint">
-        当前窗口 Auto ${{ ((usageCapLoan.usage_cap_auto_used_cents ?? 0) / 100).toFixed(2) }}
-        · API ${{ ((usageCapLoan.usage_cap_api_used_cents ?? 0) / 100).toFixed(2) }}
-      </p>
-      <el-form label-width="100px">
-        <el-form-item label="记账周期">
-          <el-select v-model="usageCapForm.usage_cap_period" clearable placeholder="不限制" style="width: 100%">
-            <el-option label="不限制" value="" />
-            <el-option label="5 小时" value="5h" />
-            <el-option label="滚动 7 天" value="week" />
-            <el-option label="滚动 30 天" value="month" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Auto 上限">
-          <el-input-number
-            v-model="usageCapForm.auto_cost_usd"
-            :min="1"
-            :value-on-clear="null"
-            :controls="false"
-            placeholder="美元，可空"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="API 上限">
-          <el-input-number
-            v-model="usageCapForm.api_cost_usd"
-            :min="1"
-            :value-on-clear="null"
-            :controls="false"
-            placeholder="美元，可空"
-            style="width: 100%"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button type="danger" plain :loading="usageCapSubmitting" @click="submitUsageCap(true)">
-          清空封顶
-        </el-button>
-        <el-button @click="usageCapDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="usageCapSubmitting" @click="submitUsageCap(false)">保存</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="cursorKeyVisible" title="底层 Cursor Key（管理员）" width="560px">
       <el-alert type="warning" :closable="false" show-icon class="mb">
         此为绑定的 Cursor 官方 Key，权限较大，请勿发给借用人。
@@ -610,6 +480,7 @@ import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
 import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
 import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
+import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
 
 withDefaults(
   defineProps<{
@@ -725,11 +596,7 @@ interface LoanRow {
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
-  usage_cap_period?: string | null
-  auto_cost_usd?: number | null
-  api_cost_usd?: number | null
-  usage_cap_auto_used_cents?: number | null
-  usage_cap_api_used_cents?: number | null
+  usage_caps?: UsageCapRule[]
 }
 
 const loading = ref(false)
@@ -751,17 +618,7 @@ const loanForm = ref({
   note: '',
   model: '',
   auto_revoke_on_reset: true,
-  usage_cap_period: '' as '' | '5h' | 'week' | 'month',
-  auto_cost_usd: undefined as number | undefined,
-  api_cost_usd: undefined as number | undefined,
-})
-const usageCapDialogVisible = ref(false)
-const usageCapSubmitting = ref(false)
-const usageCapLoan = ref<LoanRow | null>(null)
-const usageCapForm = ref({
-  usage_cap_period: '' as '' | '5h' | 'week' | 'month',
-  auto_cost_usd: undefined as number | undefined,
-  api_cost_usd: undefined as number | undefined,
+  usage_caps: [] as UsageCapRule[],
 })
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
   [],
@@ -772,6 +629,11 @@ const poolPreviewDual = ref<{
 }>({ auto: [], api: [] })
 const poolPreviewPool = ref<'auto' | 'api' | null>(null)
 const poolPreviewLoaded = ref(false)
+const poolHasCandidates = computed(() => {
+  if (poolPreviewPool.value) return poolPreview.value.length > 0
+  if (poolPreview.value.length > 0) return true
+  return poolPreviewDual.value.auto.length + poolPreviewDual.value.api.length > 0
+})
 const manualJevTrace = ref<JevTrace | null>(null)
 const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
 const loanJevTraceOpen = ref(false)
@@ -786,6 +648,7 @@ const reassignForm = ref({
   lender_mode: 'manual' as 'manual' | 'auto',
   source_account_id: '',
   auto_revoke_on_reset: true,
+  usage_caps: [] as UsageCapRule[],
 })
 const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
@@ -933,7 +796,38 @@ function onPageSizeChange() {
   loadLoans()
 }
 
+function prepareUsageCaps(
+  rules: UsageCapRule[],
+): { error: string } | { caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] } {
+  const seen = new Set<string>()
+  const caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] = []
+  for (const rule of rules) {
+    if (rule.cost_usd == null) return { error: '请填写每条用量限制的整数美元' }
+    const key = `${rule.period}:${rule.pool}`
+    if (seen.has(key)) return { error: '同一周期和同一类型（Auto / API）只能有一条限制' }
+    seen.add(key)
+    caps.push({ period: rule.period, pool: rule.pool, cost_usd: rule.cost_usd })
+  }
+  return { caps }
+}
+
+function usageCapsFromRow(row: LoanRow): UsageCapRule[] {
+  return (row.usage_caps || []).map((rule) => ({
+    period: rule.period,
+    pool: rule.pool,
+    cost_usd: rule.cost_usd,
+  }))
+}
+
+function usageCapsSignature(rules: { period: string; pool: string; cost_usd: number | null }[]) {
+  return [...rules]
+    .map((rule) => `${rule.period}:${rule.pool}:${rule.cost_usd ?? ''}`)
+    .sort()
+    .join('|')
+}
+
 async function openLoanDialog() {
+  loanForm.value.usage_caps = []
   await loadLoanDialogData()
   loanDialogVisible.value = true
 }
@@ -961,76 +855,15 @@ async function requestSelfLoan() {
   }
 }
 
-function usageCapIncomplete(period: string, autoUsd: number | null | undefined, apiUsd: number | null | undefined): boolean {
-  return !!period && autoUsd == null && apiUsd == null
-}
-
-function loanUsageCapIssuePayload(): Record<string, unknown> {
-  if (!loanForm.value.usage_cap_period) return {}
-  const payload: Record<string, unknown> = { usage_cap_period: loanForm.value.usage_cap_period }
-  if (loanForm.value.auto_cost_usd != null) payload.auto_cost_usd = loanForm.value.auto_cost_usd
-  if (loanForm.value.api_cost_usd != null) payload.api_cost_usd = loanForm.value.api_cost_usd
-  return payload
-}
-
-function openUsageCapDialog(row: LoanRow) {
-  usageCapLoan.value = row
-  usageCapForm.value = {
-    usage_cap_period: (row.usage_cap_period as '' | '5h' | 'week' | 'month') || '',
-    auto_cost_usd: row.auto_cost_usd ?? undefined,
-    api_cost_usd: row.api_cost_usd ?? undefined,
-  }
-  usageCapDialogVisible.value = true
-}
-
-async function submitUsageCap(clear: boolean) {
-  if (!usageCapLoan.value) return
-  if (
-    !clear &&
-    usageCapIncomplete(
-      usageCapForm.value.usage_cap_period,
-      usageCapForm.value.auto_cost_usd,
-      usageCapForm.value.api_cost_usd,
-    )
-  ) {
-    ElMessage.warning('已选记账周期时，请至少填写 Auto 或 API 上限（整数美元）')
-    return
-  }
-  usageCapSubmitting.value = true
-  try {
-    const body: Record<string, unknown> = clear
-      ? { clear: true }
-      : {
-          clear: false,
-          usage_cap_period: usageCapForm.value.usage_cap_period || null,
-          auto_cost_usd: usageCapForm.value.auto_cost_usd ?? null,
-          api_cost_usd: usageCapForm.value.api_cost_usd ?? null,
-        }
-    await client.patch(`/api/v2/loans/${usageCapLoan.value.id}/usage-cap`, body)
-    usageCapDialogVisible.value = false
-    ElMessage.success(clear ? '已清空用量封顶' : '已保存用量封顶')
-    await loadLoans()
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '保存失败')
-  } finally {
-    usageCapSubmitting.value = false
-  }
-}
-
 async function submitLoan() {
   const isAuto = loanForm.value.lender_mode === 'auto'
   if (!loanForm.value.borrower_member_id || (!isAuto && !loanForm.value.source_account_id)) {
     ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
-  if (
-    usageCapIncomplete(
-      loanForm.value.usage_cap_period,
-      loanForm.value.auto_cost_usd,
-      loanForm.value.api_cost_usd,
-    )
-  ) {
-    ElMessage.warning('已选记账周期时，请至少填写 Auto 或 API 上限（整数美元）')
+  const prepared = prepareUsageCaps(loanForm.value.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
     return
   }
   loanSubmitting.value = true
@@ -1044,13 +877,14 @@ async function submitLoan() {
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
         model: loanForm.value.model.trim() || null,
-        ...loanUsageCapIssuePayload(),
+        usage_caps: prepared.caps,
       },
     )
     loanDialogVisible.value = false
     revealedKey.value = res.data
     keyRevealVisible.value = true
     loanForm.value.note = ''
+    loanForm.value.usage_caps = []
     await loadLoans()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '分配失败')
@@ -1153,6 +987,7 @@ async function openReassignDialog(row: LoanRow) {
     lender_mode: row.routing_mode === 'pool' ? 'auto' : 'manual',
     source_account_id: row.source_account_id || '',
     auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
+    usage_caps: usageCapsFromRow(row),
   }
   reassignDialogVisible.value = true
   try {
@@ -1185,17 +1020,23 @@ async function submitReassign() {
     ElMessage.warning('请选择出借账号')
     return
   }
-  if (
-    form.lender_mode === 'manual' &&
-    reassignLoan.value.routing_mode !== 'pool' &&
-    reassignLoan.value.lender_mode === 'manual' &&
-    form.source_account_id === reassignLoan.value.source_account_id
-  ) {
-    ElMessage.warning('指定账号与当前相同，请更换账号或改为自动分配')
+  const prepared = prepareUsageCaps(form.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
     return
   }
-  if (form.lender_mode === 'auto' && reassignLoan.value.routing_mode === 'pool') {
-    ElMessage.warning('已是账号池轮换，无需调整')
+  const loan = reassignLoan.value
+  const assignmentSame =
+    form.lender_mode === 'auto'
+      ? loan.routing_mode === 'pool'
+      : loan.routing_mode !== 'pool' &&
+        loan.lender_mode !== 'auto' &&
+        form.source_account_id === loan.source_account_id &&
+        form.auto_revoke_on_reset === (loan.auto_revoke_on_reset ?? true)
+  const capsSame =
+    usageCapsSignature(prepared.caps) === usageCapsSignature(usageCapsFromRow(loan))
+  if (assignmentSame && capsSame) {
+    ElMessage.warning('出借方式与用量限制都没有变化')
     return
   }
   reassignSubmitting.value = true
@@ -1205,8 +1046,9 @@ async function submitReassign() {
       source_account_id: form.lender_mode === 'manual' ? form.source_account_id : null,
       auto_revoke_on_reset:
         form.lender_mode === 'manual' ? form.auto_revoke_on_reset : undefined,
+      usage_caps: prepared.caps,
     })
-    ElMessage.success('已调整出借方式（pka_ 不变）')
+    ElMessage.success(assignmentSame ? '已保存用量限制（pka_ 不变）' : '已调整出借方式（pka_ 不变）')
     reassignDialogVisible.value = false
     await loadLoans()
   } catch (e: any) {

@@ -44,6 +44,7 @@ _KEY_LOAN_USAGE_CAP_COLUMNS: dict[str, str] = {
     "usage_cap_period": "VARCHAR(16)",
     "auto_cost_limit_cents": "INTEGER",
     "api_cost_limit_cents": "INTEGER",
+    "usage_cap_rules": "JSON",
 }
 _PROXY_KEY_COLUMNS: dict[str, str] = {
     "encrypted_key": "TEXT",
@@ -751,6 +752,7 @@ def migrate_schema(engine: Engine) -> None:
                 )
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
         _relax_key_loan_account_nulls(engine)
+        _backfill_loan_usage_cap_rules(engine)
 
     if "account_quota_snapshots" in tables:
         columns = {col["name"] for col in inspector.get_columns("account_quota_snapshots")}
@@ -929,6 +931,47 @@ def _migrate_daily_agg_kind_family(engine: Engine) -> None:
 
     if schema_changed:
         _backfill_daily_kind_families(engine)
+
+
+def _backfill_loan_usage_cap_rules(engine: Engine) -> None:
+    """Copy legacy single-period caps into usage_cap_rules. Idempotent."""
+    inspector = inspect(engine)
+    if "key_loans" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("key_loans")}
+    needed = {"usage_cap_rules", "usage_cap_period", "auto_cost_limit_cents", "api_cost_limit_cents"}
+    if not needed <= columns:
+        return
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from pulse.storage.models import KeyLoan
+
+    with Session(engine) as session:
+        loans = session.scalars(
+            select(KeyLoan).where(
+                KeyLoan.usage_cap_rules.is_(None),
+                KeyLoan.usage_cap_period.is_not(None),
+            )
+        ).all()
+        updated = 0
+        for loan in loans:
+            rules = []
+            if loan.auto_cost_limit_cents is not None:
+                rules.append(
+                    {"period": loan.usage_cap_period, "pool": "auto", "limit_cents": int(loan.auto_cost_limit_cents)}
+                )
+            if loan.api_cost_limit_cents is not None:
+                rules.append(
+                    {"period": loan.usage_cap_period, "pool": "api", "limit_cents": int(loan.api_cost_limit_cents)}
+                )
+            if not rules:
+                continue
+            loan.usage_cap_rules = rules
+            updated += 1
+        if updated:
+            session.commit()
+            logger.info("Backfilled usage_cap_rules on %d key_loans row(s)", updated)
 
 
 def _backfill_proxy_usage_cap_pool(engine: Engine) -> None:
