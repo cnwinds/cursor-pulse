@@ -27,16 +27,16 @@
       </div>
     </header>
 
-    <el-table :data="loans" stripe>
-      <el-table-column label="借出人" prop="borrower_name" width="120" />
-      <el-table-column label="借出账号" min-width="168">
+    <el-table :data="loans" stripe class="loans-table">
+      <el-table-column label="借出人" prop="borrower_name" width="72" show-overflow-tooltip />
+      <el-table-column label="借出账号" width="160">
         <template #default="{ row }">
-          <template v-if="row.routing_mode === 'pool'">
+          <span v-if="row.routing_mode === 'pool'" class="pool-line">
             <span>账号池</span>
             <el-tag size="small" type="warning" class="lender-mode-tag" title="使用过程中按打分表轮换，不锁定账号">
               使用中轮换
             </el-tag>
-          </template>
+          </span>
           <div v-else class="account-stack">
             <div class="account-line1">
               <span class="account-id">{{ row.source_account_identifier }}</span>
@@ -47,24 +47,41 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="88">
         <template #default="{ row }">
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="分配方式" width="108" align="center">
+      <el-table-column label="分配方式" width="104" align="center">
         <template #default="{ row }">
           <el-tag :type="loanAssignmentTagType(row)" size="small">
             {{ loanAssignmentLabel(row) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="用量限制" width="108" align="center">
+      <el-table-column label="用量限制" width="100" align="center">
         <template #default="{ row }">
           <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
-      <el-table-column width="148" align="center">
+      <el-table-column label="借用消耗" width="88">
+        <template #default="{ row }">
+          <span class="loan-spend">${{ (row.borrowed_cents / 100).toFixed(2) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="proxy消耗" width="160" align="center">
+        <template #default="{ row }">
+          <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
+            {{ formatProxySpend(row) }}
+          </el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="96" align="center">
+        <template #default="{ row }">
+          <LoanTimeStack :iso="row.created_at" />
+        </template>
+      </el-table-column>
+      <el-table-column width="136" align="center">
         <template #header>
           <div class="when-head">
             <span>自动回收日</span>
@@ -99,24 +116,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="借用消耗" width="110">
-        <template #default="{ row }">
-          ${{ (row.borrowed_cents / 100).toFixed(2) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="proxy消耗" min-width="188" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
-            {{ formatProxySpend(row) }}
-          </el-button>
-        </template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="96" align="center">
-        <template #default="{ row }">
-          <LoanTimeStack :iso="row.created_at" />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="168" fixed="right" align="center">
+      <el-table-column label="操作" width="144" fixed="right" align="center">
         <template #default="{ row }">
           <div class="loan-actions">
             <CopyCommandDropdown
@@ -1172,12 +1172,20 @@ onMounted(loadLoans)
   color: var(--el-text-color-secondary);
   font-size: var(--pulse-text-md);
 }
+.loans-table :deep(.el-table__cell .cell) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.loan-spend {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .proxy-spend-btn {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   max-width: none;
-  padding-left: 4px;
-  padding-right: 4px;
+  padding-left: 2px;
+  padding-right: 2px;
 }
 .proxy-spend-btn :deep(span) {
   overflow: visible;
@@ -1187,19 +1195,22 @@ onMounted(loadLoans)
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 2px;
+  white-space: nowrap;
 }
 .loan-actions :deep(.el-button) {
-  padding: 6px;
+  padding: 4px;
   margin: 0;
-  min-height: 32px;
-  min-width: 32px;
+  min-height: 28px;
+  min-width: 28px;
 }
 .loan-actions :deep(.el-icon) {
   font-size: var(--pulse-text-lg);
 }
 .loan-actions :deep(.copy-cmd-icon-btn) {
-  padding: 6px;
+  padding: 4px;
+  min-height: 28px;
+  min-width: 28px;
 }
 .when-head,
 .when-stack {
@@ -1255,6 +1266,13 @@ onMounted(loadLoans)
 .filter-label {
   font-size: var(--pulse-text-md);
   color: var(--el-text-color-regular);
+}
+.pool-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: nowrap;
 }
 .account-stack {
   display: inline-flex;
