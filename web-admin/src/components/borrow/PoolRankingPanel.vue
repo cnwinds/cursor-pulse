@@ -465,7 +465,7 @@ const proxySeatsTip = computed(() => {
 })
 
 const DECISION_FALLBACK_LABELS: Record<string, string> = {
-  jev_unavailable: '未启用 Jev 主判或未配置 Key（请在「Jev 决策」页签开启）',
+  jev_unavailable: '未启用 Jev 主判或未配置 Key（请在「选号规则」中开启）',
   insufficient_candidates: '可用候选不足',
   jev_error: 'Jev 调用失败',
   circuit_open: 'Jev 熔断中',

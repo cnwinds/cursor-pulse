@@ -97,16 +97,78 @@
         </section>
       </li>
 
-      <li class="stage" :class="{ 'stage--off': !jevEnabled }">
+      <li class="stage" :class="{ 'stage--off': !draftJev.enabled }">
         <span class="node">3</span>
         <section class="stage-card">
           <header class="stage-head">
             <h3>Jev 主判</h3>
-            <el-tag :type="jevEnabled ? 'success' : 'info'" size="small" effect="plain">
-              {{ jevEnabled ? '已启用' : '未启用' }}
+            <el-tag :type="draftJev.enabled ? 'success' : 'info'" size="small" effect="plain">
+              {{ draftJev.enabled ? '已启用' : '未启用' }}
             </el-tag>
             <Tip :text="jevTip" />
           </header>
+          <div class="controls">
+            <label class="field">
+              <span class="field-label">
+                启用主判
+                <Tip text="关闭时打分表与自动分配仅走确定性算法分。" />
+              </span>
+              <el-switch v-model="draftJev.enabled" :disabled="!canWrite" />
+            </label>
+          </div>
+          <div v-if="draftJev.enabled" class="controls controls--jev">
+            <label class="field field--wide">
+              <span class="field-label">
+                Base URL
+                <Tip text="Decisions 端点拼为 {base_url}/alpha/decisions" />
+              </span>
+              <el-input
+                v-model="draftJev.base_url"
+                :disabled="!canWrite"
+                placeholder="https://openrouter.ai/api/v1"
+                size="small"
+              />
+            </label>
+            <label class="field field--wide">
+              <span class="field-label">
+                API Key
+                <Tip text="OpenRouter Key；留空或 *** 表示保存时不修改。" />
+              </span>
+              <el-input
+                v-model="draftJev.api_key"
+                :disabled="!canWrite"
+                type="password"
+                show-password
+                placeholder="sk-or-…"
+                size="small"
+                autocomplete="new-password"
+              />
+            </label>
+            <label class="field field--wide">
+              <span class="field-label">
+                模型
+                <Tip text="如 typesafe/jev-1.13" />
+              </span>
+              <el-input v-model="draftJev.model" :disabled="!canWrite" size="small" />
+            </label>
+            <label class="field">
+              <span class="field-label">
+                超时
+                <Tip text="超时即回落算法分；端到端通常 70–500ms。" />
+              </span>
+              <el-input-number
+                v-model="draftJev.timeout_seconds"
+                :min="0.5"
+                :max="120"
+                :step="0.5"
+                :precision="1"
+                :disabled="!canWrite"
+                controls-position="right"
+                size="small"
+              />
+              <span class="unit">秒</span>
+            </label>
+          </div>
         </section>
       </li>
 
@@ -197,10 +259,10 @@ const Tip = defineComponent({
 const props = withDefaults(
   defineProps<{
     selection: Record<string, unknown>
-    jevEnabled?: boolean
+    jev?: Record<string, unknown>
     layout?: 'default' | 'sidebar'
   }>(),
-  { jevEnabled: false, layout: 'default' },
+  { jev: () => ({}), layout: 'default' },
 )
 
 const emit = defineEmits<{
@@ -221,6 +283,14 @@ const draft = reactive({
   owner_reserve_pct: 0,
 })
 
+const draftJev = reactive({
+  enabled: false,
+  base_url: '',
+  api_key: '',
+  model: '',
+  timeout_seconds: 30,
+})
+
 function num(value: unknown): string {
   const n = Number(value)
   if (!Number.isFinite(n)) return '—'
@@ -238,9 +308,9 @@ const scoreTip = computed(() => {
 
 const jevTip = computed(() => {
   const s = props.selection
-  const state = props.jevEnabled
-    ? '已在「Jev 决策」启用'
-    : '未启用。请到「Jev 决策」打开主判并配好模型与 Key'
+  const state = draftJev.enabled
+    ? '已启用 OpenRouter Decisions 主判'
+    : '未启用；可在下方打开主判并配置模型与 Key'
   return (
     `${state}。启用后只重排硬过滤后的前 ${s.auto_top_n ?? 8} 名。` +
     `调用失败、置信度低于 ${num(s.auto_min_confidence)}、与次优差距小于 ${num(s.auto_min_margin)}、` +
@@ -258,7 +328,17 @@ function readSelection(raw: Record<string, unknown> | undefined) {
   draft.owner_reserve_pct = Number(src.owner_reserve_pct ?? 0)
 }
 
+function readJev(raw: Record<string, unknown> | undefined) {
+  const src = raw || {}
+  draftJev.enabled = src.enabled === true
+  draftJev.base_url = String(src.base_url ?? '')
+  draftJev.api_key = String(src.api_key ?? '')
+  draftJev.model = String(src.model ?? '')
+  draftJev.timeout_seconds = Number(src.timeout_seconds ?? 30)
+}
+
 watch(() => props.selection, (value) => readSelection(value), { immediate: true, deep: true })
+watch(() => props.jev, (value) => readJev(value), { immediate: true, deep: true })
 
 async function onSave() {
   const patch = {
@@ -288,7 +368,17 @@ async function onSave() {
   }
   saving.value = true
   try {
-    const data = await store.patchSection('tool_center', { loan_selection: patch })
+    let data = await store.patchSection('tool_center', { loan_selection: patch })
+    const jevPatch: Record<string, unknown> = {
+      enabled: draftJev.enabled,
+      base_url: draftJev.base_url.trim(),
+      model: draftJev.model.trim(),
+      timeout_seconds: draftJev.timeout_seconds,
+    }
+    const key = draftJev.api_key.trim()
+    if (key && key !== '***') jevPatch.api_key = key
+    data = await store.patchSection('jev', jevPatch)
+    readJev(data?.jev as Record<string, unknown> | undefined)
     emit('saved', data)
     ElMessage.success('已保存')
   } catch (err: any) {
@@ -379,6 +469,19 @@ async function onSave() {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+}
+.controls--jev {
+  flex-direction: column;
+  align-items: stretch;
+}
+.field--wide {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+}
+.field--wide :deep(.el-input) {
+  flex: 1 1 220px;
+  min-width: 200px;
+  max-width: 420px;
 }
 .field {
   display: inline-flex;

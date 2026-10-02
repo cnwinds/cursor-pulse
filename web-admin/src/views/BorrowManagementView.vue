@@ -19,9 +19,6 @@
       <el-tab-pane v-if="canRules" label="选号规则" name="rules" lazy>
         <PoolSelectionRulesPanel />
       </el-tab-pane>
-      <el-tab-pane v-if="canRules" label="Jev 决策" name="jev" lazy>
-        <PoolJevSettingsPanel />
-      </el-tab-pane>
       <el-tab-pane v-if="canProxy" name="openai-divider" disabled class="tab-divider-pane">
         <template #label>
           <span class="tab-group-divider" aria-hidden="true" />
@@ -47,7 +44,6 @@ import PoolAccountsPanel from '@/components/borrow/PoolAccountsPanel.vue'
 import PoolRankingPanel from '@/components/borrow/PoolRankingPanel.vue'
 import CpOpenAiGatewayPanel from '@/components/borrow/CpOpenAiGatewayPanel.vue'
 import PoolSelectionRulesPanel from '@/components/borrow/PoolSelectionRulesPanel.vue'
-import PoolJevSettingsPanel from '@/components/borrow/PoolJevSettingsPanel.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -60,7 +56,7 @@ const canRules = computed(
 )
 
 const tab = ref('loans')
-const VALID_TABS = new Set(['loans', 'pool', 'openai-gateway', 'ranking', 'rules', 'jev'])
+const VALID_TABS = new Set(['loans', 'pool', 'openai-gateway', 'ranking', 'rules'])
 
 function defaultTab(): string {
   if (canLoans.value) return 'loans'
@@ -70,6 +66,13 @@ function defaultTab(): string {
 
 function syncTabFromRoute() {
   const q = route.query.tab
+  if (q === 'jev') {
+    tab.value = canRules.value ? 'rules' : defaultTab()
+    if (route.query.tab !== 'rules') {
+      router.replace({ query: { ...route.query, tab: 'rules' } })
+    }
+    return
+  }
   if (typeof q === 'string' && VALID_TABS.has(q)) {
     if (q === 'loans' && !canLoans.value) {
       tab.value = canProxy.value ? 'pool' : defaultTab()
@@ -79,7 +82,7 @@ function syncTabFromRoute() {
       tab.value = defaultTab()
       return
     }
-    if ((q === 'rules' || q === 'jev') && !canRules.value) {
+    if (q === 'rules' && !canRules.value) {
       tab.value = defaultTab()
       return
     }

@@ -3,7 +3,7 @@
     <LoanSelectionRules
       v-if="loaded"
       :selection="loanSelection"
-      :jev-enabled="jevEnabled"
+      :jev="jevModel"
       @saved="onSaved"
     />
   </div>
@@ -21,14 +21,14 @@ const store = useSettingsStore()
 const loading = ref(false)
 const loaded = ref(false)
 const loanSelection = ref<Record<string, unknown>>({})
-const jevEnabled = ref(false)
+const jevModel = ref<Record<string, unknown>>({})
 
 async function load(silent = false) {
   if (!silent) loading.value = true
   try {
     const data = await store.load()
     loanSelection.value = { ...(data?.tool_center?.loan_selection || {}) }
-    jevEnabled.value = data?.jev?.enabled === true
+    jevModel.value = { ...(data?.jev || {}) }
     loaded.value = true
   } finally {
     loading.value = false
@@ -44,8 +44,10 @@ watch(
 
 function onSaved(data: {
   tool_center?: { loan_selection?: Record<string, unknown> }
+  jev?: Record<string, unknown>
 }) {
   loanSelection.value = { ...(data?.tool_center?.loan_selection || loanSelection.value) }
+  if (data?.jev) jevModel.value = { ...data.jev }
 }
 
 onMounted(load)

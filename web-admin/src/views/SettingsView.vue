@@ -798,7 +798,7 @@ watch(
         return
       }
       if (value === 'jev') {
-        router.replace({ path: '/borrow-management', query: { tab: 'jev' } })
+        router.replace({ path: '/borrow-management', query: { tab: 'rules' } })
         return
       }
       tab.value = value
