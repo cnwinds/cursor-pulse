@@ -2,7 +2,6 @@
   <div class="capabilities-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>工具授权</h2>
         <p class="desc">
           此处只控制谁能调用 Capability（Tool），与技能卡片说明书无关。
         </p>

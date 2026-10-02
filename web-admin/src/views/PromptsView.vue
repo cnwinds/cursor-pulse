@@ -2,7 +2,6 @@
   <div class="prompts-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>Prompt 一览</h2>
         <p class="desc">查看当前部署的人设文案片段与拼接预览。</p>
       </div>
       <el-button @click="loadPrompts">刷新</el-button>

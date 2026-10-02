@@ -2,7 +2,6 @@
   <div class="my-loans-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>我的借用</h2>
         <p class="desc">
           额度不足时可自助申请临时 Key（代理别名）。进行中 {{ activeCount }} 条。
         </p>

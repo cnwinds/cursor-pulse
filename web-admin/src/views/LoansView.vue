@@ -2,7 +2,6 @@
   <div class="loans-page" v-loading="loading">
     <header class="page-header" :class="{ embedded }">
       <div v-if="!embedded">
-        <h2>借用记录</h2>
         <p class="desc">
           管理临时 Key 借用。进行中 {{ activeCount }} 条。自动分配走账号池，使用中轮换，消耗按本笔借用归因；指定账号锁定一把 Key，消耗仍为账号用量差值近似。
         </p>
@@ -1163,9 +1162,6 @@ onMounted(loadLoans)
 .embedded-summary strong {
   color: var(--el-color-primary);
   font-weight: 600;
-}
-.page-header h2 {
-  margin: 0 0 8px;
 }
 .desc {
   margin: 0;

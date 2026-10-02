@@ -1,10 +1,7 @@
 <template>
   <div class="accounts-page">
     <header class="page-header">
-      <div>
-        <h2>AI 账号台账</h2>
-        <p class="desc">按平台分 Tab 管理 Cursor、GLM、MiniMax、Kimi 账号（Coding Plan 无历史用量，仅额度同步）。</p>
-      </div>
+      <p class="desc">按平台分 Tab 管理 Cursor、GLM、MiniMax、Kimi 账号（Coding Plan 无历史用量，仅额度同步）。</p>
     </header>
     <div class="vendor-tabs-shell">
       <el-tabs v-model="activeTab" class="vendor-tabs">
