@@ -31,7 +31,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatDurationMs } from '@/utils/time'
+import { formatDurationMs, parseApiDateTime } from '@/utils/time'
 
 export interface UsageCapSnapshot {
   period: string
@@ -96,13 +96,13 @@ function usdText(cents: number): string {
   return `$${usd.toFixed(2)}`
 }
 
-function resetTip(iso: string | null | undefined): string {
-  if (!iso) return '已达到上限'
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return '已达到上限'
+function remainingResetSuffix(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const at = parseApiDateTime(iso)
+  if (!at) return ''
   const delta = at.getTime() - Date.now()
-  if (delta <= 60_000) return '已达到上限，即将恢复'
-  return `已达到上限，约 ${formatDurationMs(delta)}后恢复`
+  if (delta <= 60_000) return '，即将重置'
+  return `，还剩 ${formatDurationMs(delta)}重置`
 }
 
 function toRow(rule: UsageCapSnapshot, index: number): CapRow | null {
@@ -118,15 +118,16 @@ function toRow(rule: UsageCapSnapshot, index: number): CapRow | null {
   const used = usdText(usedCents)
   const limit = usdText(limitCents)
   let status = `已用 ${used} / ${limit}`
-  if (exceeded) status = resetTip(rule.resets_at)
+  if (exceeded) status = '已达到上限'
   else if (pct >= 80) status = `已用 ${Math.round(pct)}%，接近上限`
+  const resetSuffix = remainingResetSuffix(rule.resets_at)
   return {
     key: `${rule.pool}-${rule.period}-${index}`,
     period: periodShort,
     money: `${used}/${limit}`,
     width: `${Math.min(100, Math.max(0, pct))}%`,
     tone,
-    tip: `${periodLong} · ${pool}，${status}`,
+    tip: `${periodLong} · ${pool}，${status}${resetSuffix}`,
     usedCents,
   }
 }

@@ -270,7 +270,7 @@ def usage_cap_snapshots(
             events = _events_from_rows(by_loan.get(loan.id, []), pool=rule.pool, cutoff=cutoff)
             used = sum(cents for _, cents in events)
             resets_at = None
-            if used >= rule.limit_cents and events:
+            if events:
                 resets_at = (
                     usage_resets_at(events, rule.limit_cents, window).astimezone(UTC).isoformat().replace("+00:00", "Z")
                 )
