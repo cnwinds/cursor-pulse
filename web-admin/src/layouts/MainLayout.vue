@@ -6,6 +6,7 @@
         <div class="brand-text">
           <div class="title">小脉</div>
           <div class="subtitle">Cursor Pulse</div>
+          <div class="app-version" :title="`当前版本 ${versionLabel}`">{{ versionLabel }}</div>
         </div>
       </div>
       <el-menu
@@ -127,6 +128,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ChatPanel from '@/components/ChatPanel.vue'
+import { pulseVersionLabel } from '@/lib/pulseVersion'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,6 +136,7 @@ const auth = useAuthStore()
 
 const active = computed(() => route.path)
 const pageTitle = computed(() => (route.meta.title as string) || '小脉后台')
+const versionLabel = pulseVersionLabel()
 
 async function onLogout() {
   await auth.logout()
@@ -187,6 +190,15 @@ async function onLogout() {
   text-transform: uppercase;
   color: var(--pulse-sidebar-text);
   margin-top: 2px;
+}
+
+.app-version {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: rgba(148, 163, 184, 0.82);
 }
 
 .nav-menu {

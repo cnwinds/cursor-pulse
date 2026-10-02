@@ -1,8 +1,27 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { fileURLToPath, URL } from 'node:url'
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+
+function readPulseVersion(): string {
+  try {
+    const text = readFileSync(join(repoRoot, 'pyproject.toml'), 'utf8')
+    const match = text.match(/^version\s*=\s*"([^"]+)"/m)
+    return match?.[1]?.trim() || '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+const pulseVersion = readPulseVersion()
 
 export default defineConfig(({ mode }) => ({
+  define: {
+    __PULSE_VERSION__: JSON.stringify(pulseVersion),
+  },
   base: mode === 'production' ? '/admin/' : '/',
   plugins: [vue()],
   resolve: {
