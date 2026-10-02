@@ -83,6 +83,16 @@ class LoanKeyBody(BaseModel):
     lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
     model: str | None = None
+    usage_cap_period: Literal["5h", "week", "month"] | None = None
+    auto_cost_usd: int | None = None
+    api_cost_usd: int | None = None
+
+
+class LoanUsageCapPatchBody(BaseModel):
+    clear: bool = False
+    usage_cap_period: Literal["5h", "week", "month"] | None = None
+    auto_cost_usd: int | None = None
+    api_cost_usd: int | None = None
 
 
 class AutoPickBody(BaseModel):
@@ -105,6 +115,20 @@ class LoanPatchBody(BaseModel):
 
 class SelfLoanBody(BaseModel):
     note: str | None = None
+
+
+def _parsed_usage_cap_from_body(body) -> tuple[str | None, int | None, int | None]:
+    from pulse.proxy.loan_usage_cap import UsageCapConfigError, parse_usage_cap_fields
+
+    try:
+        parsed = parse_usage_cap_fields(
+            usage_cap_period=getattr(body, "usage_cap_period", None),
+            auto_cost_usd=getattr(body, "auto_cost_usd", None),
+            api_cost_usd=getattr(body, "api_cost_usd", None),
+        )
+    except UsageCapConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return parsed.usage_cap_period, parsed.auto_cost_limit_cents, parsed.api_cost_limit_cents
 
 
 def _encryption_key(config) -> str:
@@ -467,6 +491,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=400, detail="借用人不存在")
 
         enc_key = _encryption_key(config)
+        cap_period, cap_auto_cents, cap_api_cents = _parsed_usage_cap_from_body(body)
         try:
             if is_auto:
                 # 管理员自动分配 = 账号池轮换，确认时不选号、不建 Cursor Key。
@@ -479,6 +504,9 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     model=body.model,
                     loan_selection=effective_loan_selection(session, config, team.id),
                     jev=build_jev_client(config),
+                    usage_cap_period=cap_period,
+                    auto_cost_limit_cents=cap_auto_cents,
+                    api_cost_limit_cents=cap_api_cents,
                 )
             else:
                 result = issue_loan_key(
@@ -499,6 +527,9 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                     jev=build_jev_client(config),
                     jev_config=config.jev,
                     on_decision=lambda result: record_auto_lender_decision(session, result),
+                    usage_cap_period=cap_period,
+                    auto_cost_limit_cents=cap_auto_cents,
+                    api_cost_limit_cents=cap_api_cents,
                 )
             log_admin_action(
                 session,
@@ -641,6 +672,61 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "cursor_api_key": cursor_key,
             "key_hint": cred.key_hint if cred else None,
         }
+
+    @app.patch(
+        "/api/v2/loans/{loan_id}/usage-cap",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def patch_loan_usage_cap(
+        loan_id: str,
+        body: LoanUsageCapPatchBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        from pulse.proxy.loan_usage_cap import (
+            UsageCapConfigError,
+            apply_usage_cap_to_loan,
+            clear_usage_cap_on_loan,
+            parse_usage_cap_fields,
+        )
+        from pulse.tool_center.key_loan_delivery import DELIVERY_CURSOR_DIRECT, DELIVERY_PROXY_ALIAS
+
+        team, _ = team_repo_fn(session)
+        loan = loan_in_team(session, team.id, loan_id)
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+        if loan.status != "active":
+            raise HTTPException(status_code=400, detail="仅进行中的借用可修改封顶")
+        delivery = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+        if delivery != DELIVERY_PROXY_ALIAS:
+            raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+
+        if body.clear:
+            clear_usage_cap_on_loan(loan)
+        else:
+            try:
+                parsed = parse_usage_cap_fields(
+                    usage_cap_period=body.usage_cap_period,
+                    auto_cost_usd=body.auto_cost_usd,
+                    api_cost_usd=body.api_cost_usd,
+                )
+            except UsageCapConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if parsed.usage_cap_period is None:
+                clear_usage_cap_on_loan(loan)
+            else:
+                apply_usage_cap_to_loan(loan, parsed)
+
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="quota.patch_loan_usage_cap",
+            capability="accounts:write",
+            detail=loan_id,
+        )
+        session.commit()
+        return loan_payload(loan, session)
 
     @app.patch(
         "/api/v2/loans/{loan_id}",

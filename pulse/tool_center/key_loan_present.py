@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
+from pulse.proxy.key_crud import cents_to_usd
+from pulse.proxy.loan_usage_cap import batch_window_usage_cents, usage_cap_enabled, usage_cap_resets_at_for_loan
 from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
@@ -36,6 +38,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     snapshots = latest_snapshots_for_accounts(session, account_ids)
     loan_ids = [loan.id for loan in loans]
     proxy_totals = loan_proxy_totals_by_loan(session, loan_ids)
+    cap_used = batch_window_usage_cents(session, loans)
     cred_ids = {
         loan.credential_id
         for loan in loans
@@ -77,6 +80,8 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
         else:
             cred = credentials.get(loan.credential_id)
             key_hint = cred.key_hint if cred else None
+        auto_used, api_used = cap_used.get(loan.id, (None, None))
+        cap_active = usage_cap_enabled(loan)
         payloads.append(
             {
                 "id": loan.id,
@@ -107,6 +112,23 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),
+                "usage_cap_period": loan.usage_cap_period if cap_active else None,
+                "auto_cost_limit_cents": loan.auto_cost_limit_cents if cap_active else None,
+                "api_cost_limit_cents": loan.api_cost_limit_cents if cap_active else None,
+                "auto_cost_usd": cents_to_usd(loan.auto_cost_limit_cents) if cap_active else None,
+                "api_cost_usd": cents_to_usd(loan.api_cost_limit_cents) if cap_active else None,
+                "usage_cap_auto_used_cents": auto_used if cap_active else None,
+                "usage_cap_api_used_cents": api_used if cap_active else None,
+                "usage_cap_resets_at": (
+                    usage_cap_resets_at_for_loan(
+                        session,
+                        loan,
+                        auto_used=auto_used or 0,
+                        api_used=api_used or 0,
+                    )
+                    if cap_active
+                    else None
+                ),
             }
         )
     return payloads

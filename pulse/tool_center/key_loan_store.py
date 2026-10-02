@@ -66,6 +66,9 @@ class KeyLoanService(KeyLoanStateMixin):
         alias_encrypted_key: str | None = None,
         lender_mode: str = LENDER_MODE_MANUAL,
         source_bound_at: datetime | None = None,
+        usage_cap_period: str | None = None,
+        auto_cost_limit_cents: int | None = None,
+        api_cost_limit_cents: int | None = None,
     ) -> KeyLoan:
         loan = KeyLoan(
             source_account_id=source_account_id,
@@ -83,6 +86,9 @@ class KeyLoanService(KeyLoanStateMixin):
             alias_encrypted_key=alias_encrypted_key,
             lender_mode=lender_mode,
             source_bound_at=source_bound_at or datetime.now(UTC),
+            usage_cap_period=usage_cap_period,
+            auto_cost_limit_cents=auto_cost_limit_cents,
+            api_cost_limit_cents=api_cost_limit_cents,
         )
         self.session.add(loan)
         self.session.flush()
