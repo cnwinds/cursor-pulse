@@ -185,6 +185,19 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// legacy passthrough path — the same predicate sticky.Select uses.
 	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && binding.allowedSet() != nil
 	quotaPool := resolveQuotaPool(req.Context(), req.URL.Path, reqBodySnap, streamFS)
+	if (binding.Mode == "loan_alias" || binding.Mode == "loan_pool") &&
+		strings.Contains(req.URL.Path, "AgentService/Run") && s.pulse != nil {
+		model := findModelName(reqBodySnap())
+		capRes, err := s.pulse.CheckLoanUsageCap(binding.LoanID, model)
+		if err != nil {
+			http.Error(w, "cursor-pulse-proxy: 借用用量校验暂不可用，请稍后重试", http.StatusServiceUnavailable)
+			return
+		}
+		if capRes.Status == "limited" {
+			writeLoanUsageCapLimited(w, capRes.Message)
+			return
+		}
+	}
 	markPool := func() quotaPoolKind {
 		return effectiveMarkQuotaPool(req.URL.Path, reqBodySnap, quotaPool)
 	}
@@ -749,6 +762,16 @@ func writeWindowLimited(w http.ResponseWriter, reason string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"code":    "resource_exhausted",
 		"message": msg,
+	})
+}
+
+func writeLoanUsageCapLimited(w http.ResponseWriter, message string) {
+	log.Printf("[mitm] reject request: loan usage cap: %s", truncate(message, 200))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    "resource_exhausted",
+		"message": message,
 	})
 }
 
