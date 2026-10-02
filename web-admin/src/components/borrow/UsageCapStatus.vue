@@ -2,27 +2,29 @@
   <span v-if="!groups.length" class="cap-empty">不限</span>
   <div v-else class="cap-list">
     <div v-for="group in groups" :key="group.pool" class="cap-group">
-      <div v-for="(row, index) in group.rows" :key="row.key" class="cap-row-wrap">
-        <el-tooltip :content="row.tip" placement="top" :show-after="280">
-          <div class="cap-row" :class="row.tone">
-            <span class="cap-pool">{{ index === 0 ? group.label : '' }}</span>
-            <span class="cap-period">
-              <span v-if="index" class="cap-or">或</span>{{ row.period }}
-            </span>
-            <span class="cap-track" aria-hidden="true">
-              <span
-                class="cap-fill"
-                :class="{ started: row.usedCents > 0 }"
-                :style="{ width: row.width }"
-              />
-            </span>
-            <span class="cap-money">
-              {{ row.money }}
-              <span v-if="row.reset" class="cap-reset">{{ row.reset }}</span>
-            </span>
-          </div>
-        </el-tooltip>
-      </div>
+      <el-tooltip
+        v-for="(row, index) in group.rows"
+        :key="row.key"
+        :content="row.tip"
+        placement="top"
+        :show-after="280"
+      >
+        <div class="cap-row" :class="row.tone">
+          <span class="cap-label">
+            <span v-if="index" class="cap-or">或</span>
+            <span v-else class="cap-pool">{{ group.label }}</span>
+            <span class="cap-period">{{ row.period }}</span>
+          </span>
+          <span class="cap-money">{{ row.money }}</span>
+          <span class="cap-track" aria-hidden="true">
+            <span
+              class="cap-fill"
+              :class="{ started: row.usedCents > 0 }"
+              :style="{ width: row.width }"
+            />
+          </span>
+        </div>
+      </el-tooltip>
     </div>
   </div>
 </template>
@@ -70,7 +72,6 @@ interface CapRow {
   key: string
   period: string
   money: string
-  reset: string
   width: string
   tone: Tone
   tip: string
@@ -95,26 +96,13 @@ function usdText(cents: number): string {
   return `$${usd.toFixed(2)}`
 }
 
-function shortReset(deltaMs: number): string {
-  const totalMinutes = Math.max(1, Math.floor(deltaMs / 60_000))
-  const days = Math.floor(totalMinutes / (60 * 24))
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
-  const minutes = totalMinutes % 60
-  if (days >= 1) return hours > 0 ? `${days}天${hours}小时后恢复` : `${days}天后恢复`
-  if (hours >= 1) return `${hours}小时后恢复`
-  return `${minutes}分后恢复`
-}
-
-function resetText(iso: string | null | undefined): { short: string; tip: string } {
-  if (!iso) return { short: '已满', tip: '已达到上限' }
+function resetTip(iso: string | null | undefined): string {
+  if (!iso) return '已达到上限'
   const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return { short: '已满', tip: '已达到上限' }
+  if (Number.isNaN(at.getTime())) return '已达到上限'
   const delta = at.getTime() - Date.now()
-  if (delta <= 60_000) return { short: '即将恢复', tip: '已达到上限，即将恢复' }
-  return {
-    short: shortReset(delta),
-    tip: `已达到上限，约 ${formatDurationMs(delta)}后恢复`,
-  }
+  if (delta <= 60_000) return '已达到上限，即将恢复'
+  return `已达到上限，约 ${formatDurationMs(delta)}后恢复`
 }
 
 function toRow(rule: UsageCapSnapshot, index: number): CapRow | null {
@@ -129,15 +117,13 @@ function toRow(rule: UsageCapSnapshot, index: number): CapRow | null {
   const pool = POOL_LABEL[rule.pool] || rule.pool
   const used = usdText(usedCents)
   const limit = usdText(limitCents)
-  const reset = exceeded ? resetText(rule.resets_at) : null
   let status = `已用 ${used} / ${limit}`
-  if (reset) status = reset.tip
+  if (exceeded) status = resetTip(rule.resets_at)
   else if (pct >= 80) status = `已用 ${Math.round(pct)}%，接近上限`
   return {
     key: `${rule.pool}-${rule.period}-${index}`,
     period: periodShort,
-    money: `${used} / ${limit}`,
-    reset: reset?.short ?? '',
+    money: `${used}/${limit}`,
     width: `${Math.min(100, Math.max(0, pct))}%`,
     tone,
     tip: `${periodLong} · ${pool}，${status}`,
@@ -175,38 +161,32 @@ const groups = computed<CapGroup[]>(() => {
 }
 
 .cap-list {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 188px;
-  padding: 2px 0;
+  vertical-align: middle;
 }
 
 .cap-group {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-}
-
-.cap-row-wrap {
-  display: block;
+  gap: 4px;
 }
 
 .cap-row {
-  display: grid;
-  grid-template-columns: 34px 62px minmax(36px, 1fr) max-content;
-  align-items: center;
-  column-gap: 6px;
-  min-height: 18px;
-  width: 100%;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  width: max-content;
   cursor: default;
 }
 
-.cap-pool,
-.cap-period,
-.cap-money {
+.cap-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
   font-size: var(--pulse-text-sm);
-  line-height: 1;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
@@ -220,12 +200,14 @@ const groups = computed<CapGroup[]>(() => {
 }
 
 .cap-or {
-  margin-right: 4px;
   color: var(--el-text-color-placeholder);
 }
 
 .cap-track {
-  height: 6px;
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-top: 2px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--el-text-color-primary) 14%, transparent);
   overflow: hidden;
@@ -254,21 +236,13 @@ const groups = computed<CapGroup[]>(() => {
 }
 
 .cap-money {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
   font-family: var(--pulse-font-mono);
+  font-size: var(--pulse-text-xs);
   font-variant-numeric: tabular-nums;
   font-weight: var(--pulse-font-medium);
+  line-height: 1.25;
+  white-space: nowrap;
   color: var(--el-text-color-primary);
-}
-
-.cap-reset {
-  font-family: var(--pulse-font-sans);
-  font-size: var(--pulse-text-xs);
-  font-weight: var(--pulse-font-regular);
-  line-height: 1;
 }
 
 .cap-row.warn .cap-money {

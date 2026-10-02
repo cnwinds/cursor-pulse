@@ -59,7 +59,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="用量限制" min-width="280">
+      <el-table-column label="用量限制" width="108" align="center">
         <template #default="{ row }">
           <UsageCapStatus :rules="row.usage_caps" />
         </template>
