@@ -8,6 +8,10 @@
 
 - **借用 Key 滚动用量限制**：管理员可为 `pka_` 借用配置多条规则（滚动 5 小时 / 7 天 / 30 天，Auto 或 API，整数美元），任一达到即限制对应桶；分配和调整出借方式里用「+」添加，没有规则时不展开。代理在 `AgentService/Run` 超限返回中文 429 与恢复时间，BYOK 与 `cr*` 直连不计入。
 
+### 变更
+
+- **指定账号分配不再填写目标模型**：账号由管理员选定，模型名不参与发 Key。自动（账号池轮换）仍可填写，用来在确认前检查对应 Auto/API 池是否有号。
+
 ### 修复
 
 - **OpenAI 网关流式用量**：`POST /openai/v1/chat/completions` 在 `stream: true` 时边转发 SSE 边解析末包 `usage`，写入 proxy 明细；请求会补上 `stream_options.include_usage`。需重新部署 Go 代理后生效。

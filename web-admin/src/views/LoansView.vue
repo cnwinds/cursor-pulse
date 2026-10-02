@@ -192,29 +192,11 @@
         <el-form-item v-if="loanForm.lender_mode === 'auto'" label="目标模型">
           <el-input
             v-model="loanForm.model"
-            placeholder="建议填写；留空则按入池综合排序，填模型则按对应 Auto/API 池排序"
+            placeholder="可选。填写后，确认时只检查该模型所属的 Auto 或 API 池是否有号"
           />
           <p v-if="poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
             账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
           </p>
-        </el-form-item>
-        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="目标模型">
-          <el-input
-            v-model="loanForm.model"
-            placeholder="留空按总余量打分；填模型则由系统判定它属于哪个 Quota Pool"
-          />
-          <p class="manual-hint">
-            只需填模型名，auto / api 桶由系统按既有计费口径自动判定，无需人工判断。
-          </p>
-          <el-button
-            v-if="manualJevTrace"
-            link
-            type="primary"
-            class="jev-trace-link"
-            @click="loanJevTraceOpen = true"
-          >
-            查看 Jev 选号报文（按借用人 + 模型预览）
-          </el-button>
         </el-form-item>
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
@@ -228,12 +210,6 @@
         <el-button type="primary" :loading="loanSubmitting" @click="submitLoan">确认分配</el-button>
       </template>
     </el-dialog>
-
-    <JevTraceDrawer
-      v-model="loanJevTraceOpen"
-      :trace="loanJevTraceActive"
-      :accounts="loanJevTraceAccountsActive"
-    />
 
     <el-dialog v-model="reassignDialogVisible" title="调整出借方式" width="520px">
       <p class="manual-hint">
@@ -478,8 +454,6 @@ import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
-import JevTraceDrawer from '@/components/borrow/jev/JevTraceDrawer.vue'
-import type { JevTrace, JevTraceAccountLookup } from '@/components/borrow/jev/jevTraceTypes'
 import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
 
 withDefaults(
@@ -634,13 +608,6 @@ const poolHasCandidates = computed(() => {
   if (poolPreview.value.length > 0) return true
   return poolPreviewDual.value.auto.length + poolPreviewDual.value.api.length > 0
 })
-const manualJevTrace = ref<JevTrace | null>(null)
-const manualJevTraceAccounts = ref<JevTraceAccountLookup[]>([])
-const loanJevTraceOpen = ref(false)
-
-const loanJevTraceActive = computed(() => manualJevTrace.value)
-const loanJevTraceAccountsActive = computed(() => manualJevTraceAccounts.value)
-
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
 const reassignLoan = ref<LoanRow | null>(null)
@@ -876,7 +843,7 @@ async function submitLoan() {
         auto_revoke_on_reset: isAuto ? false : loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
-        model: loanForm.value.model.trim() || null,
+        model: isAuto ? loanForm.value.model.trim() || null : null,
         usage_caps: prepared.caps,
       },
     )
@@ -896,7 +863,6 @@ async function submitLoan() {
 watch(
   () => loanForm.value.lender_mode,
   (mode) => {
-    if (mode === 'manual') void loadManualAutoPickPreview()
     if (mode === 'auto' && loanDialogVisible.value) void loadPoolPreview(false)
   },
 )
@@ -907,13 +873,6 @@ watch(
     if (loanDialogVisible.value && loanForm.value.lender_mode === 'auto') {
       void loadPoolPreview(false)
     }
-  },
-)
-
-watch(
-  () => [loanForm.value.borrower_member_id, loanForm.value.model] as const,
-  () => {
-    if (loanForm.value.lender_mode === 'manual') void loadManualAutoPickPreview()
   },
 )
 
@@ -952,32 +911,6 @@ async function loadPoolPreview(forReassign = false) {
     poolPreviewDual.value = { auto: [], api: [] }
   } finally {
     poolPreviewLoaded.value = true
-  }
-}
-
-async function loadManualAutoPickPreview() {
-  if (loanForm.value.lender_mode !== 'manual' || !loanForm.value.borrower_member_id) {
-    manualJevTrace.value = null
-    manualJevTraceAccounts.value = []
-    return
-  }
-  try {
-    const res = await client.post('/api/v2/loans/auto-pick', {
-      borrower_member_id: loanForm.value.borrower_member_id,
-      model: loanForm.value.model.trim() || null,
-    })
-    const ranked = res.data.ranked || []
-    manualJevTrace.value = res.data.decision?.jev_trace ?? null
-    manualJevTraceAccounts.value = ranked.map(
-      (row: { account_id: string; account_identifier?: string; primary_member_name?: string | null }) => ({
-        account_id: row.account_id,
-        account_identifier: row.account_identifier,
-        primary_member_name: row.primary_member_name,
-      }),
-    )
-  } catch {
-    manualJevTrace.value = null
-    manualJevTraceAccounts.value = []
   }
 }
 
