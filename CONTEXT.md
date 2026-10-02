@@ -109,7 +109,7 @@ The ranking behind both loan modes: hard filters, then the deterministic score, 
 _Avoid_: Treating it as the thing that switches accounts at request time (the proxy does that)
 
 **Loan Usage Cap**:
-Optional per-loan spend ceiling for a proxy-mediated Key Loan (`loan_alias` or `loan_pool`). One rolling period — 5 hours, 7 days, or 30 days — and separate Auto and API dollar limits. Unset means unlimited. Spend is the proxy ledger estimate (`ProxyKeyUsage.cost_cents`) for that loan, bucketed by `loan_usage_cap_pool` (empty model counts as Auto; BYOK model names are skipped). Enforced on `AgentService/Run` before the upstream call, with a Chinese 429 that names the bucket, the reset time, and whether the other bucket is still open. Direct `cr*` passthrough loans are outside this cap.
+Optional per-loan spend ceilings for a proxy-mediated Key Loan (`loan_alias` or `loan_pool`). Each rule is one rolling window — 5 hours, 7 days, or 30 days — plus one pool (`auto` or `api`) and an integer-dollar limit. Rules are OR: any matching rule for the request's pool blocks that pool. No rules means unlimited. Spend is the proxy ledger estimate (`ProxyKeyUsage.cost_cents`) for that loan, bucketed by `loan_usage_cap_pool` (empty model counts as Auto; BYOK model names are skipped). Enforced on `AgentService/Run` before the upstream call, with a Chinese 429 that names the bucket, the reset time, and whether the other pool is still open. Direct `cr*` passthrough loans are outside this cap.
 _Avoid_: Reusing `quota_pool_for_model` (that maps BYOK onto Auto); treating the period as the lender's Cursor billing cycle; applying `pk_` 5h/7d windows to loans
 
 **Jev Decision**:

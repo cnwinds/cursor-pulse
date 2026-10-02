@@ -1,6 +1,6 @@
 # ADR-0004：借用 Key 的滚动用量封顶
 
-- 状态：已审核，待实现
+- 状态：已实现（2026-10-02 修订为多条「或」规则）
 - 日期：2026-10-02
 - 相关：`pulse/proxy/authorize.py`、`pulse/web/internal_proxy_api.py`、`pulse/web/quota_api.py`、`proxy/mitm.go`、`web-admin/src/views/LoansView.vue`、`CONTEXT.md`
 
@@ -21,8 +21,8 @@
 
 审核时另定的实现约束（实现时不得改口径）：
 
-5. **默认不封顶。** 三个配置都为空 = 与今天行为一致。
-6. **一个借用只有一个记账周期，Auto 与 API 上限分开。** 不支持「Auto 按 5 小时、API 按 30 天」。
+5. **默认不封顶。** 一条规则都没有 = 与今天行为一致。
+6. **一个借用可以有多条规则，规则之间是「或」。** 每条规则是「周期 + Auto 或 API + 整数美元」。例如「5 小时 Auto $10」或「7 天 Auto $50」：请求所属桶里任一规则达到上限就拦截该桶。同一周期、同一桶只能有一条。Auto 与 API 仍分开，所以也可以同时限制两个桶、两个窗口。
 7. **费用单位沿用代理账本的估算美分**（`ProxyKeyUsage.cost_cents`），不是 Cursor 发票。管理端输入**整数美元**，最小 1 美元；空表示该桶不限制。换算沿用 `usd_to_cents` / `cents_to_usd`（`1 USD = 100 cents`）。
 8. **分桶不得调用 `quota_pool_for_model`。** 该函数把 BYOK 算进 `auto`，与决策 3 相反。封顶用单独的 `loan_usage_cap_pool`。
 9. **空模型算 Auto。** 与 Go `quotaPoolForModel("") == auto` 一致，避免无模型请求绕过 Auto 封顶。能识别为 BYOK 的模型名返回「不计入」。
@@ -38,15 +38,17 @@
 
 ### 配置
 
-`key_loans` 增加三列，均可空：
+`key_loans.usage_cap_rules`（JSON，可空）存规则列表。空列表 = 不限制。每一项：
 
-| 列 | 类型 | 含义 |
-| --- | --- | --- |
-| `usage_cap_period` | `VARCHAR(16)` | `5h` / `week` / `month`；空 = 不启用 |
-| `auto_cost_limit_cents` | `INTEGER` | Auto 桶上限（美分）；空 = 该桶不限制 |
-| `api_cost_limit_cents` | `INTEGER` | API 桶上限（美分）；空 = 该桶不限制 |
+| 字段 | 含义 |
+| --- | --- |
+| `period` | `5h` / `week` / `month` |
+| `pool` | `auto` 或 `api` |
+| `limit_cents` | 该桶在该窗口内的上限（美分），至少 100（1 美元） |
 
-启用条件：`usage_cap_period` 非空，且至少一个上限非空。API 拒绝只填周期或只填上限。`cursor_direct` 借用拒绝写入封顶。
+任一与请求桶相同的规则达到上限即拒绝该桶。`cursor_direct` 借用拒绝写入封顶。
+
+早期三列 `usage_cap_period`、`auto_cost_limit_cents`、`api_cost_limit_cents` 只读旧数据：`usage_cap_rules is None` 时按「同一周期、两桶各自可选上限」折成规则。新写入把规则放进 JSON，并把这三列清空。迁移把尚未写入 JSON 的旧行回填成规则列表。
 
 窗口长度：
 
@@ -127,12 +129,13 @@ def usage_resets_at(events, limit, window):
 
 文案：
 
-- 仅 Auto 超限且 API 仍可用：`【小脉借用】Auto 额度已用尽（$10 / $10，滚动 7 天）。约 1 天 5 小时后恢复（2026-10-09 14:00 北京时间）。请改用 API 模型，或等到恢复后再用 Auto。`
+- 只触及一条：`【小脉借用】Auto 额度已用尽（滚动 7 天 $10 / $10（约 1 天 5 小时后恢复，2026-10-09 14:00 北京时间））。请改用 API 模型，或等到恢复后再用 Auto。`
+- 同一桶触及多条：`【小脉借用】Auto 已触及多条限制（任一达到即停）：滚动 5 小时 …；滚动 7 天 …。`
 - 仅 API 超限且 Auto 仍可用：对称，提示改用 Auto / Composer。
-- 另一桶「仍可用」包括该桶没有上限。没有上限表示可以改用那个桶，提示里要写出切换建议。
-- 另一桶也已超限：不提示切换，只说明本桶已用尽与恢复时间。
+- 另一桶「仍可用」包括该桶没有规则，或有规则但窗口内未超限。没有规则表示可以改用那个桶，提示里要写出切换建议。
+- 另一桶也已超限：不提示切换。
 - 已用不是整数美元时，金额写到分（`$10.50`），上限仍是整数美元。
-- 两桶都超限时，当前请求所属桶用该桶自己的 `resets_at`。
+- 同一请求桶有多条超限时，响应里的 `resets_at` 取这些规则里最晚的一个（该桶要等全部超限规则都回落才能再用）。
 
 `reason` 在放行时可为 `cap_disabled`、`not_counted`（BYOK）、`not_applicable`（非代理借用或无此借用）。这些都是 `status=ok`。
 
@@ -151,36 +154,27 @@ HTTP 429。校验请求本身失败（网络、非 200、超时）时返回 503�
 
 ### 管理 API 与界面
 
-发放（`LoanKeyBody`，指定账号与账号池轮换都接受）：
-
-- `usage_cap_period`: `5h` | `week` | `month` | 省略
-- `auto_cost_usd`: 整数 ≥ 1 或省略
-- `api_cost_usd`: 整数 ≥ 1 或省略
-
-`PATCH /api/v2/loans/{loan_id}/usage-cap`（`accounts:write`）修改或清空。清空用显式 `clear: true`，避免「缺字段 = 不修改」和「缺字段 = 清空」混在一起。请求体：
+发放（`LoanKeyBody`，指定账号与账号池轮换都接受）带 `usage_caps`。省略或 `[]` 表示不限制。每一项：
 
 ```json
-{ "clear": false, "usage_cap_period": "week", "auto_cost_usd": 10, "api_cost_usd": null }
+{ "period": "5h", "pool": "auto", "cost_usd": 10 }
 ```
 
-`clear: true` 时忽略另外三个字段，三列都置空。`api_cost_usd: null` 在 `clear: false` 时表示该桶不限制。
+`cost_usd` 为整数且 ≥ 1。重复的 `period + pool` 返回 400。
 
-借用列表与详情 payload 增加：
+`PATCH /api/v2/loans/{loan_id}/usage-cap`（`accounts:write`）仍可整表替换或清空。清空用显式 `clear: true`。管理界面不再单独打开这个入口。
 
-- `usage_cap_period`
-- `auto_cost_limit_cents` / `api_cost_limit_cents`
-- `auto_cost_usd` / `api_cost_usd`（整数美元或 null）
-- `usage_cap_auto_used_cents` / `usage_cap_api_used_cents`（当前窗口；未启用封顶时为 null）
-- `usage_cap_resets_at`：若任一已配置的桶已超限，取这些超限桶里最早的 `resets_at`；否则 null
+调整出借方式 `POST /api/v2/loans/{loan_id}/reassign-source` 接受可选的 `usage_caps`。缺省表示不改规则。给出数组（含空数组）就整表替换。出借方式没有变化时只保存规则，不轮换 Key，也不返回「已是账号池轮换」。`cursor_direct` 拒绝写入。
 
-「为成员分配 Key」对话框增加「用量封顶（可选）」：
+借用列表 payload 用 `usage_caps`：每条含 `period`、`pool`、`limit_cents`、`cost_usd`、`used_cents`、`exceeded`、`resets_at`。没有规则时为 `[]`。
 
-- 记账周期：不限制（默认）/ 5 小时 / 滚动 7 天 / 滚动 30 天
-- Auto 上限（美元，可空）
-- API 上限（美元，可空）
-- 说明：只统计经本代理上报的套餐用量；BYOK 与直连 Cursor Key 不计入；超出后 Cursor 对话会提示恢复时间，可改用另一桶模型。
+界面：
 
-借用记录行提供修改入口（同一组字段，可清空）。「我的借用」只读展示周期与两桶已用/上限，不提供编辑。
+- 「为成员分配 Key」和「调整出借方式」里，用量限制默认不展开。点「+」才增加一行（周期、Auto/API、美元）。没有行就不显示输入框。
+- 有多行时说明：多条是「或」，任一达到就限制对应的 Auto 或 API。
+- 用量限制和出借方式在「调整出借方式」里一起保存。借用记录上不再单独放封顶按钮。
+- 自动分配不展示当前入池账号排序。只保留一句「使用中轮换、不锁定账号」，以及账号池为空时的提示。
+- 「我的借用」只读展示各条「周期 + 桶 + 已用/上限」，多条用「或」连接。没有规则时显示未启用。自助借 Key 不写规则。
 
 ### 明确不做
 
@@ -199,7 +193,8 @@ HTTP 429。校验请求本身失败（网络、非 200、超时）时返回 503�
 - `loan_passthrough` 不走校验函数的拒绝路径（函数对非 alias 借用返回 ok / not_applicable；Go 不调用）。
 - 未配置封顶的借用始终 ok。
 - 重置时间算法用固定时间夹具覆盖「多条小额」和「单条就超限」。
-- 发放与 PATCH 的校验：半套配置 400；`cursor_direct` 400；清空后列表回到 null。
+- 发放、PATCH 与「调整出借方式」：重复的周期+桶 400；`cursor_direct` 400；清空后 `usage_caps` 为 `[]`。账号池轮换在出借方式不变时仍可只改规则。
+- 同一桶两条规则是「或」：5 小时 $10 已满则拦截，即使 7 天 $50 仍有余量；5 小时窗口滑出后放行。
 - Go：`loan_alias` / `loan_pool` 的 Run 在 `limited` 时 429 且 body 含 Python message；`loan_passthrough` 不发起校验请求。
 
 ## 后果

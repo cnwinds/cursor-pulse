@@ -149,9 +149,7 @@ def issue_loan_key(
     on_decision=None,
     exclude_account_ids: set[str] | None = None,
     own_account_ids: set[str] | None = None,
-    usage_cap_period: str | None = None,
-    auto_cost_limit_cents: int | None = None,
-    api_cost_limit_cents: int | None = None,
+    usage_cap_rules: list | None = None,
 ) -> dict:
     mode = (delivery_mode or DELIVERY_PROXY_ALIAS).strip()
     if mode != DELIVERY_PROXY_ALIAS:
@@ -263,9 +261,7 @@ def issue_loan_key(
             alias_key_hint=alias_key_hint,
             alias_encrypted_key=alias_encrypted_key,
             lender_mode=lender_mode,
-            usage_cap_period=usage_cap_period,
-            auto_cost_limit_cents=auto_cost_limit_cents,
-            api_cost_limit_cents=api_cost_limit_cents,
+            usage_cap_rules=usage_cap_rules,
         )
     except Exception:
         # 远端 Key 已建但本地未落库 → 兜底吊销，避免残留不可回收的 Key
@@ -317,9 +313,7 @@ def issue_pool_loan(
     model: str | None = None,
     loan_selection: LoanSelectionConfig | None = None,
     jev=None,
-    usage_cap_period: str | None = None,
-    auto_cost_limit_cents: int | None = None,
-    api_cost_limit_cents: int | None = None,
+    usage_cap_rules: list | None = None,
 ) -> dict:
     """管理员自动分配：签发走账号池轮换的 pka_，不锁定出借账号、不建 Cursor Key。
 
@@ -365,9 +359,7 @@ def issue_pool_loan(
         alias_key_hint=alias_key_hint,
         alias_encrypted_key=alias_encrypted_key,
         lender_mode=LENDER_MODE_AUTO,
-        usage_cap_period=usage_cap_period,
-        auto_cost_limit_cents=auto_cost_limit_cents,
-        api_cost_limit_cents=api_cost_limit_cents,
+        usage_cap_rules=usage_cap_rules,
     )
     warning = (
         "此为账号池轮换 Key（pka_），须配置 HTTPS_PROXY 后使用。"
