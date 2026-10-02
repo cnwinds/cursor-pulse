@@ -64,23 +64,39 @@
           <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
-      <el-table-column label="自动回收日" width="120" align="center">
+      <el-table-column width="148" align="center">
+        <template #header>
+          <div class="when-head">
+            <span>自动回收日</span>
+            <span>归还时间</span>
+          </div>
+        </template>
         <template #default="{ row }">
-          <el-tooltip
-            v-if="canToggleAutoRevoke(row)"
-            :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
-            placement="top"
-          >
-            <button
-              type="button"
-              class="recycle-date"
-              :disabled="autoRevokeSavingId === row.id"
-              @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+          <div class="when-stack">
+            <el-tooltip
+              v-if="canToggleAutoRevoke(row)"
+              :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
+              placement="top"
             >
-              {{ recycleDateText(row) }}
-            </button>
-          </el-tooltip>
-          <span v-else>{{ recycleDateText(row) }}</span>
+              <button
+                type="button"
+                class="recycle-date"
+                :disabled="autoRevokeSavingId === row.id"
+                @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+              >
+                {{ recycleDateText(row) }}
+              </button>
+            </el-tooltip>
+            <span v-else class="when-recycle">{{ recycleDateText(row) }}</span>
+            <el-tooltip
+              v-if="row.revoked_at"
+              :content="formatChinaTime(row.revoked_at)"
+              placement="top"
+            >
+              <span class="when-return">{{ returnTimeText(row.revoked_at) }}</span>
+            </el-tooltip>
+            <span v-else class="when-return">—</span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="借用消耗" width="110">
@@ -98,11 +114,6 @@
       <el-table-column label="创建时间" width="96" align="center">
         <template #default="{ row }">
           <LoanTimeStack :iso="row.created_at" />
-        </template>
-      </el-table-column>
-      <el-table-column label="归还时间" width="96" align="center">
-        <template #default="{ row }">
-          <LoanTimeStack :iso="row.revoked_at" />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="168" fixed="right" align="center">
@@ -452,7 +463,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
-import { formatChinaTime } from '@/utils/time'
+import { formatChinaDateTimeParts, formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
@@ -1002,6 +1013,12 @@ function recycleDateText(row: LoanRow) {
   return row.loan_expires_on || '-'
 }
 
+function returnTimeText(iso: string | null) {
+  const parts = formatChinaDateTimeParts(iso)
+  if (!parts) return '—'
+  return `${parts.date} ${parts.time.slice(0, 5)}`
+}
+
 function canToggleAutoRevoke(row: LoanRow) {
   return canWrite.value && row.status === 'active' && row.routing_mode !== 'pool'
 }
@@ -1184,11 +1201,34 @@ onMounted(loadLoans)
 .loan-actions :deep(.copy-cmd-icon-btn) {
   padding: 6px;
 }
+.when-head,
+.when-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.25;
+}
+.when-head {
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-medium);
+}
+.when-recycle,
+.recycle-date,
+.when-return {
+  font-size: var(--pulse-text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.when-return {
+  color: var(--el-text-color-secondary);
+}
 .recycle-date {
   padding: 0;
   border: none;
   background: none;
   font: inherit;
+  font-size: var(--pulse-text-sm);
   color: inherit;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
