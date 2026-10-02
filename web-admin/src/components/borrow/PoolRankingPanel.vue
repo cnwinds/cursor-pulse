@@ -134,7 +134,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column min-width="176">
+          <el-table-column min-width="188" class-name="col-quota">
             <template #header>
               <ColHeader
                 label="额度"
@@ -211,7 +211,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column min-width="176">
+          <el-table-column min-width="188" class-name="col-quota">
             <template #header>
               <ColHeader
                 label="额度"
@@ -247,6 +247,25 @@
               <ColHeader label="在用" :tip="proxySeatsTip" />
             </template>
             <template #default="{ row }">{{ row.proxy_active_seats ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column width="100" align="right" show-overflow-tooltip>
+            <template #header>
+              <ColHeader
+                label="距作废"
+                tip="距本周期额度作废（重置）的剩余时间；越近越优先消化剩余额度。"
+              />
+            </template>
+            <template #default="{ row }">
+              {{ formatHoursUntilDeadline(row.hours_to_deadline) }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="snapshot_freshness" width="80" align="center">
+            <template #header>
+              <ColHeader
+                label="新鲜度"
+                tip="额度快照新鲜度（0–1）：越接近 1 越刚同步；过久未同步会在算法分中降权，非硬过滤。"
+              />
+            </template>
           </el-table-column>
           </el-table>
         </el-tab-pane>
@@ -727,6 +746,10 @@ onMounted(loadRanking)
   line-height: 1.2;
   padding-top: 8px;
   padding-bottom: 8px;
+}
+.rank-table :deep(td.col-quota .cell) {
+  word-break: normal;
+  overflow: visible;
 }
 .rank-table :deep(.row-picked) {
   --el-table-tr-bg-color: rgba(99, 102, 241, 0.06);

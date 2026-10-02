@@ -113,14 +113,14 @@ const rows = computed<ProgressRow[]>(() => {
 
 .quota-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 36px;
+  grid-template-columns: 38px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 6px;
   min-height: 22px;
 }
 
 .quota-row.sub {
-  grid-template-columns: 38px minmax(0, 1fr) 36px;
+  grid-template-columns: 38px minmax(0, 1fr) max-content;
   padding-left: 10px;
   min-height: 17px;
   position: relative;
