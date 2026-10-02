@@ -74,7 +74,11 @@ def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, i
     rows = session.execute(
         select(KeyLoan.source_account_id, func.count())
         .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-        .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
+        .where(
+            AiAccount.team_id == team_id,
+            AiAccount.deleted_at.is_(None),
+            KeyLoan.status == "active",
+        )
         .group_by(KeyLoan.source_account_id)
     ).all()
     return {account_id: count for account_id, count in rows}

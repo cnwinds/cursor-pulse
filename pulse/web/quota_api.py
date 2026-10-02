@@ -21,6 +21,7 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
+from pulse.tool_center.account_visibility import account_is_active_row, exclude_from_quota_board
 from pulse.tool_center.auto_lender import rank_lenders, try_force_jev_refresh
 from pulse.tool_center.burn_rate import (
     analyze_burn_rate,
@@ -260,6 +261,9 @@ def build_quota_board_items(
     creds = primary_credentials_by_account(session, [account.id for account in accounts])
     items = []
     for account in accounts:
+        sync_blocker = credential_sync_blocker(creds.get(account.id))
+        if not account_is_active_row(account) or exclude_from_quota_board(sync_blocker):
+            continue
         snapshot = snapshots.get(account.id)
         items.append(
             _board_item(
@@ -268,7 +272,7 @@ def build_quota_board_items(
                 today,
                 member_names=member_names,
                 active_loans=loan_counts.get(account.id, 0),
-                sync_blocker=credential_sync_blocker(creds.get(account.id)),
+                sync_blocker=sync_blocker,
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
