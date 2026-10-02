@@ -111,6 +111,15 @@
             />
             <el-tooltip
               v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+              content="用量封顶"
+              placement="top"
+            >
+              <el-button link type="primary" aria-label="用量封顶" @click="openUsageCapDialog(row)">
+                <el-icon><Histogram /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
               content="调整出借方式"
               placement="top"
             >
@@ -244,6 +253,36 @@
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
+        <el-divider content-position="left">用量封顶（可选）</el-divider>
+        <el-form-item label="记账周期">
+          <el-select v-model="loanForm.usage_cap_period" clearable placeholder="不限制" style="width: 100%">
+            <el-option label="不限制" value="" />
+            <el-option label="5 小时" value="5h" />
+            <el-option label="滚动 7 天" value="week" />
+            <el-option label="滚动 30 天" value="month" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Auto 上限">
+          <el-input-number
+            v-model="loanForm.auto_cost_usd"
+            :min="1"
+            :controls="false"
+            placeholder="美元，可空"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="API 上限">
+          <el-input-number
+            v-model="loanForm.api_cost_usd"
+            :min="1"
+            :controls="false"
+            placeholder="美元，可空"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <p class="manual-hint">
+          只统计经本代理上报的套餐用量；BYOK 与直连 Cursor Key 不计入；超出后 Cursor 对话会提示恢复时间，可改用另一桶模型。
+        </p>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
@@ -492,6 +531,45 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="usageCapDialogVisible" title="用量封顶" width="520px">
+      <p class="manual-hint">借用人：{{ usageCapLoan?.borrower_name || '—' }}</p>
+      <el-form label-width="100px">
+        <el-form-item label="记账周期">
+          <el-select v-model="usageCapForm.usage_cap_period" clearable placeholder="不限制" style="width: 100%">
+            <el-option label="不限制" value="" />
+            <el-option label="5 小时" value="5h" />
+            <el-option label="滚动 7 天" value="week" />
+            <el-option label="滚动 30 天" value="month" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Auto 上限">
+          <el-input-number
+            v-model="usageCapForm.auto_cost_usd"
+            :min="1"
+            :controls="false"
+            placeholder="美元，可空"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="API 上限">
+          <el-input-number
+            v-model="usageCapForm.api_cost_usd"
+            :min="1"
+            :controls="false"
+            placeholder="美元，可空"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button type="danger" plain :loading="usageCapSubmitting" @click="submitUsageCap(true)">
+          清空封顶
+        </el-button>
+        <el-button @click="usageCapDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="usageCapSubmitting" @click="submitUsageCap(false)">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="cursorKeyVisible" title="底层 Cursor Key（管理员）" width="560px">
       <el-alert type="warning" :closable="false" show-icon class="mb">
         此为绑定的 Cursor 官方 Key，权限较大，请勿发给借用人。
@@ -639,6 +717,11 @@ interface LoanRow {
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
+  usage_cap_period?: string | null
+  auto_cost_usd?: number | null
+  api_cost_usd?: number | null
+  usage_cap_auto_used_cents?: number | null
+  usage_cap_api_used_cents?: number | null
 }
 
 const loading = ref(false)
@@ -660,6 +743,17 @@ const loanForm = ref({
   note: '',
   model: '',
   auto_revoke_on_reset: true,
+  usage_cap_period: '' as '' | '5h' | 'week' | 'month',
+  auto_cost_usd: undefined as number | undefined,
+  api_cost_usd: undefined as number | undefined,
+})
+const usageCapDialogVisible = ref(false)
+const usageCapSubmitting = ref(false)
+const usageCapLoan = ref<LoanRow | null>(null)
+const usageCapForm = ref({
+  usage_cap_period: '' as '' | '5h' | 'week' | 'month',
+  auto_cost_usd: undefined as number | undefined,
+  api_cost_usd: undefined as number | undefined,
 })
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
   [],
@@ -859,6 +953,47 @@ async function requestSelfLoan() {
   }
 }
 
+function loanUsageCapIssuePayload(): Record<string, unknown> {
+  if (!loanForm.value.usage_cap_period) return {}
+  const payload: Record<string, unknown> = { usage_cap_period: loanForm.value.usage_cap_period }
+  if (loanForm.value.auto_cost_usd != null) payload.auto_cost_usd = loanForm.value.auto_cost_usd
+  if (loanForm.value.api_cost_usd != null) payload.api_cost_usd = loanForm.value.api_cost_usd
+  return payload
+}
+
+function openUsageCapDialog(row: LoanRow) {
+  usageCapLoan.value = row
+  usageCapForm.value = {
+    usage_cap_period: (row.usage_cap_period as '' | '5h' | 'week' | 'month') || '',
+    auto_cost_usd: row.auto_cost_usd ?? undefined,
+    api_cost_usd: row.api_cost_usd ?? undefined,
+  }
+  usageCapDialogVisible.value = true
+}
+
+async function submitUsageCap(clear: boolean) {
+  if (!usageCapLoan.value) return
+  usageCapSubmitting.value = true
+  try {
+    const body: Record<string, unknown> = clear
+      ? { clear: true }
+      : {
+          clear: false,
+          usage_cap_period: usageCapForm.value.usage_cap_period || null,
+          auto_cost_usd: usageCapForm.value.auto_cost_usd ?? null,
+          api_cost_usd: usageCapForm.value.api_cost_usd ?? null,
+        }
+    await client.patch(`/api/v2/loans/${usageCapLoan.value.id}/usage-cap`, body)
+    usageCapDialogVisible.value = false
+    ElMessage.success(clear ? '已清空用量封顶' : '已保存用量封顶')
+    await loadLoans()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    usageCapSubmitting.value = false
+  }
+}
+
 async function submitLoan() {
   const isAuto = loanForm.value.lender_mode === 'auto'
   if (!loanForm.value.borrower_member_id || (!isAuto && !loanForm.value.source_account_id)) {
@@ -876,6 +1011,7 @@ async function submitLoan() {
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
         model: loanForm.value.model.trim() || null,
+        ...loanUsageCapIssuePayload(),
       },
     )
     loanDialogVisible.value = false

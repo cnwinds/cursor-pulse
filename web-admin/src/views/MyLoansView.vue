@@ -33,6 +33,18 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="用量封顶" min-width="200">
+        <template #default="{ row }">
+          <span v-if="!row.usage_cap_period" class="muted">未启用</span>
+          <template v-else>
+            <div>{{ usageCapPeriodLabel(row.usage_cap_period) }}</div>
+            <div class="muted">
+              Auto：{{ formatCapBucket(row.usage_cap_auto_used_cents, row.auto_cost_usd) }}
+              · API：{{ formatCapBucket(row.usage_cap_api_used_cents, row.api_cost_usd) }}
+            </div>
+          </template>
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="180">
         <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
       </el-table-column>
@@ -101,6 +113,23 @@ interface LoanRow {
   lender_mode?: string | null
   status: string
   created_at: string
+  usage_cap_period?: string | null
+  auto_cost_usd?: number | null
+  api_cost_usd?: number | null
+  usage_cap_auto_used_cents?: number | null
+  usage_cap_api_used_cents?: number | null
+}
+
+function usageCapPeriodLabel(period: string) {
+  return (
+    { '5h': '滚动 5 小时', week: '滚动 7 天', month: '滚动 30 天' }[period] || period
+  )
+}
+
+function formatCapBucket(usedCents: number | null | undefined, limitUsd: number | null | undefined) {
+  const used = ((usedCents ?? 0) / 100).toFixed(2)
+  const limit = limitUsd != null ? `$${limitUsd}` : '不限'
+  return `$${used} / ${limit}`
 }
 
 const loading = ref(false)
