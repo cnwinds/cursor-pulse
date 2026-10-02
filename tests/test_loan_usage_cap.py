@@ -337,6 +337,70 @@ def test_reassign_same_pool_saves_usage_caps(api_client):
     assert cleared.json()["usage_caps"] == []
 
 
+def test_reassign_pins_auto_wander_and_saves_caps(api_client):
+    """自助借用确认「指定账号」时要钉住游走，同时写入用量限制。"""
+    from pulse.storage.models import AiAccount, AiPlan, AiVendor
+
+    client, sf, config = api_client
+    s = sf()
+    team, repo = make_team_repo(s, slug="t")
+    owner = bootstrap_portal_owner(repo, channel_user_id="adm4", display_name="D", password="pw")
+    vendor = AiVendor(slug="cursor", name="Cursor")
+    s.add(vendor)
+    s.flush()
+    plan = AiPlan(
+        vendor_id=vendor.id,
+        plan_name="Pro",
+        slug="pro",
+        billing_type="subscription",
+        price_amount=20,
+        price_currency="USD",
+    )
+    s.add(plan)
+    s.flush()
+    account = AiAccount(
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        team_id=team.id,
+        account_identifier="lender@example.com",
+        status="shared",
+    )
+    s.add(account)
+    s.flush()
+    loan = _loan(
+        borrower_member_id=owner.id,
+        source_account_id=account.id,
+        routing_mode="pinned",
+        lender_mode="auto",
+        auto_revoke_on_reset=True,
+        alias_key_hash="b" * 64,
+        alias_key_hint="pka_wander",
+        alias_encrypted_key="enc",
+        usage_cap_rules=[],
+    )
+    s.add(loan)
+    s.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(config, owner)}"}
+
+    saved = client.post(
+        f"/api/v2/loans/{loan.id}/reassign-source",
+        json={
+            "lender_mode": "manual",
+            "source_account_id": account.id,
+            "auto_revoke_on_reset": True,
+            "usage_caps": [{"period": "5h", "pool": "auto", "cost_usd": 10}],
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["lender_mode"] == "manual"
+    assert body["routing_mode"] == "pinned"
+    assert [(row["period"], row["pool"], row["cost_usd"]) for row in body["usage_caps"]] == [
+        ("5h", "auto", 10),
+    ]
+
+
 def test_cursor_direct_rejects_cap_patch(api_client):
     client, sf, config = api_client
     s = sf()

@@ -781,8 +781,13 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         current_pool = getattr(loan, "routing_mode", None) == ROUTING_POOL
         assignment_same = target_pool and current_pool
         if not target_pool and not current_pool:
-            assignment_same = loan.source_account_id == body.source_account_id and (
-                body.auto_revoke_on_reset is None or body.auto_revoke_on_reset == loan.auto_revoke_on_reset
+            # 自助借用是 lender_mode=auto 且仍绑着起始账号。对话框里选「指定账号」
+            # 并确认，就要走换绑把游走钉住，不能因为账号 id 相同只改用量限制。
+            already_manual = (getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL) != LENDER_MODE_AUTO
+            assignment_same = (
+                already_manual
+                and loan.source_account_id == body.source_account_id
+                and (body.auto_revoke_on_reset is None or body.auto_revoke_on_reset == loan.auto_revoke_on_reset)
             )
         if assignment_same and body.usage_caps is not None:
             log_admin_action(
