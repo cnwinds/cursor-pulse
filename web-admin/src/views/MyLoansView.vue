@@ -33,14 +33,9 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="用量限制" min-width="240">
+      <el-table-column label="用量限制" min-width="280">
         <template #default="{ row }">
-          <span v-if="!row.usage_caps?.length" class="muted">未启用</span>
-          <div v-else>
-            <div v-for="(rule, index) in row.usage_caps" :key="`${rule.period}-${rule.pool}`">
-              <span v-if="index" class="muted">或 </span>{{ usageCapRuleText(rule) }}
-            </div>
-          </div>
+          <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
       <el-table-column label="创建时间" width="180">
@@ -98,6 +93,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
@@ -111,30 +107,7 @@ interface LoanRow {
   lender_mode?: string | null
   status: string
   created_at: string
-  usage_caps?: {
-    period: string
-    pool: string
-    cost_usd?: number | null
-    used_cents?: number | null
-  }[]
-}
-
-function usageCapPeriodLabel(period: string) {
-  return (
-    { '5h': '5 小时', week: '7 天', month: '30 天' }[period] || period
-  )
-}
-
-function usageCapRuleText(rule: {
-  period: string
-  pool: string
-  cost_usd?: number | null
-  used_cents?: number | null
-}) {
-  const pool = rule.pool === 'api' ? 'API' : 'Auto'
-  const used = ((rule.used_cents ?? 0) / 100).toFixed(2)
-  const limit = rule.cost_usd != null ? `$${rule.cost_usd}` : '不限'
-  return `${usageCapPeriodLabel(rule.period)} ${pool} $${used} / ${limit}`
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)
