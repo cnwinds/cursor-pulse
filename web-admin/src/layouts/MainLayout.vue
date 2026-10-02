@@ -104,10 +104,6 @@
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
-      <div class="aside-footer">
-        <span class="pulse-dot" aria-hidden="true" />
-        <span>团队用量协调</span>
-      </div>
     </el-aside>
     <el-container class="content-shell">
       <el-header class="header">
@@ -231,37 +227,6 @@ async function onLogout() {
   background-image: var(--pulse-bg-page-pattern);
   background-size: 20px 20px;
   padding: var(--pulse-space-page) !important;
-}
-
-.aside-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 18px 18px;
-  font-size: var(--pulse-text-xs);
-  color: rgba(148, 163, 184, 0.85);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--pulse-color-accent-soft);
-  box-shadow: 0 0 10px var(--pulse-color-accent-soft);
-  animation: pulse-glow 2.4s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.55;
-    transform: scale(0.85);
-  }
 }
 
 :deep(.el-menu) {
