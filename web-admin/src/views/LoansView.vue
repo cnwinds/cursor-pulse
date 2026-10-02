@@ -59,6 +59,11 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="用量限制" min-width="280">
+        <template #default="{ row }">
+          <UsageCapStatus :rules="row.usage_caps" />
+        </template>
+      </el-table-column>
       <el-table-column label="自动回收日" width="120" align="center">
         <template #default="{ row }">
           <el-tooltip
@@ -455,6 +460,7 @@ import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
 import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 
 withDefaults(
   defineProps<{
@@ -570,7 +576,7 @@ interface LoanRow {
   lender_mode?: string | null
   routing_mode?: string | null
   source_bound_at?: string | null
-  usage_caps?: UsageCapRule[]
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)
@@ -780,9 +786,9 @@ function prepareUsageCaps(
 
 function usageCapsFromRow(row: LoanRow): UsageCapRule[] {
   return (row.usage_caps || []).map((rule) => ({
-    period: rule.period,
-    pool: rule.pool,
-    cost_usd: rule.cost_usd,
+    period: rule.period as UsageCapRule['period'],
+    pool: rule.pool as UsageCapRule['pool'],
+    cost_usd: rule.cost_usd ?? null,
   }))
 }
 
