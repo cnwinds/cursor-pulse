@@ -28,8 +28,8 @@
     </header>
 
     <el-table :data="loans" stripe class="loans-table">
-      <el-table-column label="借出人" prop="borrower_name" width="68" show-overflow-tooltip />
-      <el-table-column label="借出账号" width="176" show-overflow-tooltip>
+      <el-table-column label="借出人" prop="borrower_name" min-width="68" show-overflow-tooltip />
+      <el-table-column label="借出账号" min-width="176" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.routing_mode === 'pool'" class="pool-line">
             <span>账号池</span>
@@ -47,41 +47,41 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="84">
+      <el-table-column label="状态" min-width="84">
         <template #default="{ row }">
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="分配方式" width="96" align="center">
+      <el-table-column label="分配方式" min-width="96" align="center">
         <template #default="{ row }">
           <el-tag :type="loanAssignmentTagType(row)" size="small">
             {{ loanAssignmentLabel(row) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="用量限制" width="84" align="center">
+      <el-table-column label="用量限制" min-width="84" align="center">
         <template #default="{ row }">
           <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
-      <el-table-column label="借用消耗" width="84">
+      <el-table-column label="借用消耗" min-width="84">
         <template #default="{ row }">
           <span class="loan-spend">${{ (row.borrowed_cents / 100).toFixed(2) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="proxy消耗" width="152" align="center">
+      <el-table-column label="proxy消耗" min-width="152" align="center">
         <template #default="{ row }">
           <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
             {{ formatProxySpend(row) }}
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" width="88" align="center">
+      <el-table-column label="创建时间" min-width="88" align="center">
         <template #default="{ row }">
           <LoanTimeStack :iso="row.created_at" />
         </template>
       </el-table-column>
-      <el-table-column width="124" align="center">
+      <el-table-column min-width="124" align="center">
         <template #header>
           <div class="when-head">
             <span>自动回收日</span>
@@ -116,7 +116,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="136" fixed="right" align="center">
+      <el-table-column label="操作" min-width="136" fixed="right" align="center">
         <template #default="{ row }">
           <div class="loan-actions">
             <CopyCommandDropdown
