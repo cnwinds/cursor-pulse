@@ -116,8 +116,8 @@
               <el-switch v-model="draftJev.enabled" :disabled="!canWrite" />
             </label>
           </div>
-          <div v-if="draftJev.enabled" class="controls controls--jev">
-            <label class="field field--wide">
+          <div v-if="draftJev.enabled" class="jev-params">
+            <label class="jev-param-row">
               <span class="field-label">
                 Base URL
                 <Tip text="Decisions 端点拼为 {base_url}/alpha/decisions" />
@@ -129,7 +129,7 @@
                 size="small"
               />
             </label>
-            <label class="field field--wide">
+            <label class="jev-param-row">
               <span class="field-label">
                 API Key
                 <Tip text="OpenRouter Key；留空或 *** 表示保存时不修改。" />
@@ -144,30 +144,34 @@
                 autocomplete="new-password"
               />
             </label>
-            <label class="field field--wide">
-              <span class="field-label">
-                模型
-                <Tip text="如 typesafe/jev-1.13" />
-              </span>
-              <el-input v-model="draftJev.model" :disabled="!canWrite" size="small" />
-            </label>
-            <label class="field">
-              <span class="field-label">
-                超时
-                <Tip text="超时即回落算法分；端到端通常 70–500ms。" />
-              </span>
-              <el-input-number
-                v-model="draftJev.timeout_seconds"
-                :min="0.5"
-                :max="120"
-                :step="0.5"
-                :precision="1"
-                :disabled="!canWrite"
-                controls-position="right"
-                size="small"
-              />
-              <span class="unit">秒</span>
-            </label>
+            <div class="jev-param-split">
+              <label class="jev-param-row jev-param-row--grow">
+                <span class="field-label">
+                  模型
+                  <Tip text="如 typesafe/jev-1.13" />
+                </span>
+                <el-input v-model="draftJev.model" :disabled="!canWrite" size="small" />
+              </label>
+              <label class="jev-param-row jev-param-row--timeout">
+                <span class="field-label">
+                  超时
+                  <Tip text="超时即回落算法分；端到端通常 70–500ms。" />
+                </span>
+                <span class="jev-timeout-input">
+                  <el-input-number
+                    v-model="draftJev.timeout_seconds"
+                    :min="0.5"
+                    :max="120"
+                    :step="0.5"
+                    :precision="1"
+                    :disabled="!canWrite"
+                    controls-position="right"
+                    size="small"
+                  />
+                  <span class="unit">秒</span>
+                </span>
+              </label>
+            </div>
           </div>
         </section>
       </li>
@@ -470,18 +474,50 @@ async function onSave() {
   gap: 8px;
   margin-top: 10px;
 }
-.controls--jev {
+.jev-params {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--pulse-bg-muted);
+  border: 1px solid #eef2f6;
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
+  gap: 8px;
+  max-width: 520px;
 }
-.field--wide {
-  flex: 1 1 100%;
+.jev-param-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.jev-param-split {
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
 }
-.field--wide :deep(.el-input) {
+.jev-param-row--grow {
   flex: 1 1 220px;
-  min-width: 200px;
-  max-width: 420px;
+  min-width: 0;
+}
+.jev-param-row--timeout {
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
+  gap: 6px;
+}
+.jev-timeout-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.jev-params :deep(.el-input),
+.jev-params :deep(.el-input-number) {
+  width: 100%;
+}
+.jev-param-row--timeout :deep(.el-input-number) {
+  width: 108px;
 }
 .field {
   display: inline-flex;
