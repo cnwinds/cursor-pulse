@@ -37,6 +37,13 @@ _ACCOUNT_PROXY_COLUMNS: dict[str, str] = {
 _PROXY_USAGE_COLUMNS: dict[str, str] = {
     "request_id": "VARCHAR(64)",
     "loan_id": "VARCHAR(36)",
+    "usage_cap_pool": "VARCHAR(8)",
+}
+
+_KEY_LOAN_USAGE_CAP_COLUMNS: dict[str, str] = {
+    "usage_cap_period": "VARCHAR(16)",
+    "auto_cost_limit_cents": "INTEGER",
+    "api_cost_limit_cents": "INTEGER",
 }
 _PROXY_KEY_COLUMNS: dict[str, str] = {
     "encrypted_key": "TEXT",
@@ -719,6 +726,7 @@ def migrate_schema(engine: Engine) -> None:
         for col_name, col_type in {
             **_KEY_LOAN_ALIAS_COLUMNS,
             **_KEY_LOAN_LENDER_COLUMNS,
+            **_KEY_LOAN_USAGE_CAP_COLUMNS,
         }.items():
             if col_name not in columns:
                 with engine.begin() as conn:
@@ -765,6 +773,7 @@ def migrate_schema(engine: Engine) -> None:
 
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
     _migrate_daily_agg_kind_family(engine)
+    _backfill_proxy_usage_cap_pool(engine)
 
     Base.metadata.create_all(engine)
     _migrate_member_identities_table(engine)
@@ -920,6 +929,39 @@ def _migrate_daily_agg_kind_family(engine: Engine) -> None:
 
     if schema_changed:
         _backfill_daily_kind_families(engine)
+
+
+def _backfill_proxy_usage_cap_pool(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "proxy_key_usages" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("proxy_key_usages")}
+    if "usage_cap_pool" not in columns or "loan_id" not in columns:
+        return
+    from sqlalchemy.orm import Session
+
+    from pulse.proxy.loan_usage_cap import usage_cap_pool_column
+
+    batch = 500
+    with Session(engine) as session:
+        while True:
+            rows = session.execute(
+                text(
+                    "SELECT id, model FROM proxy_key_usages "
+                    "WHERE loan_id IS NOT NULL AND usage_cap_pool IS NULL LIMIT :lim"
+                ),
+                {"lim": batch},
+            ).fetchall()
+            if not rows:
+                break
+            for row_id, model in rows:
+                pool = usage_cap_pool_column(model)
+                session.execute(
+                    text("UPDATE proxy_key_usages SET usage_cap_pool = :pool WHERE id = :id"),
+                    {"pool": pool, "id": row_id},
+                )
+            session.commit()
+            logger.info("Backfilled usage_cap_pool on %d proxy_key_usages row(s)", len(rows))
 
 
 def _backfill_daily_kind_families(engine: Engine) -> None:
