@@ -40,6 +40,11 @@ class UsageBody(BaseModel):
     items: list[UsageItem] = Field(default_factory=list, max_length=1000)
 
 
+class LoanUsageCapBody(BaseModel):
+    loan_id: str
+    model: str | None = None
+
+
 class EventItem(BaseModel):
     event_type: str
     proxy_key_id: str | None = None
@@ -122,6 +127,15 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
                 "api": grouped["api"],
             },
         }
+
+    @app.post(
+        "/api/internal/v1/proxy/loan-usage-cap",
+        dependencies=[Depends(require_internal_service)],
+    )
+    def proxy_loan_usage_cap(body: LoanUsageCapBody, session: Session = Depends(get_db)):
+        from pulse.proxy.loan_usage_cap import check_loan_usage_cap
+
+        return check_loan_usage_cap(session, body.loan_id, body.model)
 
     @app.post(
         "/api/internal/v1/proxy/usage",

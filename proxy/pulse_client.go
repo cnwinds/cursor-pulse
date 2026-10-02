@@ -71,6 +71,20 @@ type EventItem struct {
 	Detail       string `json:"detail,omitempty"`
 }
 
+// LoanUsageCapResult is the internal loan usage cap check (HTTP 200; limited is in body).
+type LoanUsageCapResult struct {
+	Status          string `json:"status"`
+	Reason          string `json:"reason"`
+	Pool            string `json:"pool"`
+	Period          string `json:"period"`
+	UsedCents       int    `json:"used_cents"`
+	LimitCents      *int   `json:"limit_cents"`
+	ResetsAt        string `json:"resets_at"`
+	OtherPool       string `json:"other_pool"`
+	OtherPoolOpen   bool   `json:"other_pool_open"`
+	Message         string `json:"message"`
+}
+
 type PulseClient struct {
 	baseURL string
 	token   string
@@ -296,6 +310,34 @@ func (c *PulseClient) authorize(pulseKey string, seat seatReport) (AuthResult, e
 		expiry time.Time
 	}{res: cached, expiry: time.Now().Add(c.authTTL)}
 	c.authMu.Unlock()
+	return res, nil
+}
+
+func (c *PulseClient) CheckLoanUsageCap(loanID, model string) (LoanUsageCapResult, error) {
+	payload := map[string]string{
+		"loan_id": loanID,
+		"model":   model,
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/loan-usage-cap", bytes.NewReader(body))
+	if err != nil {
+		return LoanUsageCapResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return LoanUsageCapResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return LoanUsageCapResult{}, fmt.Errorf("loan usage cap HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+	var res LoanUsageCapResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return LoanUsageCapResult{}, err
+	}
 	return res, nil
 }
 

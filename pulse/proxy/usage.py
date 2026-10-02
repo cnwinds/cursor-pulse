@@ -472,6 +472,8 @@ def record_usages(session: Session, items: list[dict], *, now: datetime | None =
                 if table is None:
                     table = get_cursor_pricing_table(session=session, team_id=team_id)
                     pricing_by_team[team_id] = table
+            from pulse.proxy.loan_usage_cap import usage_cap_pool_column
+
             session.add(
                 ProxyKeyUsage(
                     proxy_key_id=None,
@@ -487,6 +489,7 @@ def record_usages(session: Session, items: list[dict], *, now: datetime | None =
                     total_tokens=total,
                     cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
                     ts=ts or now,
+                    usage_cap_pool=usage_cap_pool_column(item.get("model")),
                 )
             )
             recorded += 1

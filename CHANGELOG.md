@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **借用 Key 滚动用量封顶**：管理员可为 `pka_` 借用（指定账号或账号池轮换）配置滚动 5 小时 / 7 天 / 30 天周期下的 Auto、API 美元上限；代理在 `AgentService/Run` 超限返回中文 429 与恢复时间，BYOK 与 `cr*` 直连不计入。
+
 ### 修复
 
 - **OpenAI 网关流式用量**：`POST /openai/v1/chat/completions` 在 `stream: true` 时边转发 SSE 边解析末包 `usage`，写入 proxy 明细；请求会补上 `stream_options.include_usage`。需重新部署 Go 代理后生效。
