@@ -34,6 +34,14 @@ func makeTestJWT(t *testing.T, claims map[string]any) string {
 		enc.EncodeToString(payload) + ".upstream-signature"
 }
 
+// newSessionTokenMinterToken mints with a fresh secret: a proxy restart (or
+// another proxy) must not have its tokens owned.
+func newSessionTokenMinterToken(t *testing.T, upstream string) string {
+	t.Helper()
+	tok, _ := newSessionTokenMinter().mint(upstream)
+	return tok
+}
+
 func TestMintSessionTokenMirrorsClaimsWithoutAPIKeyID(t *testing.T) {
 	upstream := makeTestJWT(t, map[string]any{
 		"sub":        "auth0|user_lender",
@@ -77,6 +85,18 @@ func TestMintSessionTokenMirrorsClaimsWithoutAPIKeyID(t *testing.T) {
 	again, _ := m.mint(upstream)
 	if again == tok {
 		t.Fatal("two mints from the same upstream JWT must differ")
+	}
+
+	if !m.owns(tok) || !m.owns(again) {
+		t.Fatal("minter must recognize its own tokens")
+	}
+	for _, foreign := range []string{upstream, "", "no-dots", tok + "x", newSessionTokenMinterToken(t, upstream)} {
+		if m.owns(foreign) {
+			t.Fatalf("must not own %q", foreign)
+		}
+	}
+	if (*sessionTokenMinter)(nil).owns(tok) {
+		t.Fatal("nil minter owns nothing")
 	}
 }
 
@@ -132,6 +152,14 @@ func TestExchangeHidesUpstreamJWT(t *testing.T) {
 	})
 	mux.HandleFunc("/auth/full_stripe_profile", func(w http.ResponseWriter, r *http.Request) {
 		record("auth:"+r.URL.Query().Get("c"), r)
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("/tev1/v1/rgstr", func(w http.ResponseWriter, r *http.Request) {
+		record("telemetry:"+r.URL.Query().Get("c"), r)
+		w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("/aiserver.v1.DashboardService/GetMe", func(w http.ResponseWriter, r *http.Request) {
+		record("getme", r)
 		w.Write([]byte(`{}`))
 	})
 	srv := httptest.NewUnstartedServer(mux)
@@ -197,6 +225,12 @@ func TestExchangeHidesUpstreamJWT(t *testing.T) {
 		{"/aiserver.v1.TestService/Unary", tok1, "unary", "Bearer " + upstreamJWT},
 		{"/auth/full_stripe_profile?c=bound", tok1, "auth:bound", "Bearer " + upstreamJWT},
 		{"/auth/full_stripe_profile?c=unbound", "someone-elses-token", "auth:unbound", "Bearer someone-elses-token"},
+		// A minted token is rejected upstream, so every non-billing path —
+		// telemetry, identity RPCs, unknown services — swaps it as well;
+		// only a bearer the proxy did not issue passes through untouched.
+		{"/tev1/v1/rgstr?c=bound", tok1, "telemetry:bound", "Bearer " + upstreamJWT},
+		{"/tev1/v1/rgstr?c=foreign", "ide-login-jwt", "telemetry:foreign", "Bearer ide-login-jwt"},
+		{"/aiserver.v1.DashboardService/GetMe", tok1, "getme", "Bearer " + upstreamJWT},
 	} {
 		resp := do(http.MethodPost, tc.path, tc.bearer, []byte{0x0A})
 		resp.Body.Close()

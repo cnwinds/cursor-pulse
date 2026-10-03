@@ -71,6 +71,26 @@ func (m *sessionTokenMinter) mint(upstream string) (string, time.Time) {
 	return signing + "." + enc.EncodeToString(mac.Sum(nil)), exp
 }
 
+// owns reports whether tok was minted by this process. Such a token is
+// rejected upstream, so it must never be forwarded as the client's own
+// credential. Nil-safe: with minting off nothing is owned.
+func (m *sessionTokenMinter) owns(tok string) bool {
+	if m == nil {
+		return false
+	}
+	i := strings.LastIndexByte(tok, '.')
+	if i < 0 {
+		return false
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(tok[i+1:])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, m.secret)
+	mac.Write([]byte(tok[:i]))
+	return hmac.Equal(sig, mac.Sum(nil))
+}
+
 // jwtClaims decodes a JWT payload without verifying it; non-JWT input yields
 // an empty claim set.
 func jwtClaims(tok string) map[string]any {

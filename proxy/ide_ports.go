@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -20,10 +21,35 @@ import (
 
 const defaultIDEPortBase = 9100
 
+// ideKeyCtx carries a per-key listener's proxy key through the CONNECT hop
+// into the MITM'd requests (see Server.handleConnect).
+type ideKeyCtx struct{}
+
+func withIDEKeyCtx(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, ideKeyCtx{}, key)
+}
+
+// ideKeyFromCtx returns the per-key listener's proxy key; empty on the main
+// listener.
+func ideKeyFromCtx(ctx context.Context) string {
+	k, _ := ctx.Value(ideKeyCtx{}).(string)
+	return k
+}
+
+// withIDEKeyHandler scopes a proxy key to every request served by a per-key
+// IDE listener. Context injection instead of a cloned Server: one instance,
+// so every field, lock, cache, and future addition stays shared by
+// construction — no per-field copy list to maintain.
+func withIDEKeyHandler(h http.Handler, key string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(withIDEKeyCtx(r.Context(), key)))
+	})
+}
+
 type idePortRegistry struct {
 	mu         sync.Mutex
 	base       int
-	listenHost string // host part of PROXY_LISTEN; empty / 0.0.0.0 → all interfaces
+	listenHost string         // host part of PROXY_LISTEN; empty / 0.0.0.0 → all interfaces
 	byKey      map[string]int // proxy key → allocated port
 	byPort     map[int]string // port → proxy key (conflict guard)
 	listeners  map[int]net.Listener
@@ -273,7 +299,13 @@ func (r *idePortRegistry) Close() {
 
 // serveIDEPort answers GET /ide-port?key=... with {"port": N, "proxy_host": H}
 // and DELETE /ide-port?key=... (uninstall) with 204 once the listener closes.
+// Both are main-listener bootstrap concerns: a dedicated port must not mint or
+// drop listeners for other keys.
 func (s *Server) serveIDEPort(w http.ResponseWriter, r *http.Request) {
+	if ideKeyFromCtx(r.Context()) != "" {
+		http.Error(w, "ide-port only on main listener", http.StatusNotFound)
+		return
+	}
 	if s.idePorts == nil {
 		http.Error(w, "ide ports disabled (requires Pulse mode)", http.StatusServiceUnavailable)
 		return

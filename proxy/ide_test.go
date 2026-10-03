@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"context"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -139,8 +139,8 @@ func ideUpstreamHost(t *testing.T, upstreamURL string) string {
 }
 
 // TestBillingPathClassification pins the fail-open orientation: only known
-// billing RPCs get rewritten; everything else — auth family, identity RPCs,
-// telemetry, future service families — keeps the client's own token.
+// billing RPCs are metered; everything else — auth family, identity RPCs,
+// telemetry, future service families — is served outside the pool.
 func TestBillingPathClassification(t *testing.T) {
 	billing := map[string]bool{
 		// Billable AI traffic → rewritten to a pool credential.
@@ -149,19 +149,19 @@ func TestBillingPathClassification(t *testing.T) {
 		"/aiserver.v1.AiService/StreamUnifiedCompletion":       true,
 		"/agent.v1.AgentService/RunSSE":                        true,
 		"/agent.v1.AgentService/Run":                           true,
-		// Identity RPCs inside the billing families stay client-owned.
-		"/aiserver.v1.DashboardService/GetMe":            false,
-		"/aiserver.v1.DashboardService/GetUserProfile":   false,
-		"/aiserver.v1.DashboardService/GetTeams":         false,
-		"/aiserver.v1.DashboardService/GetTeamCommands":  false,
-		"/aiserver.v1.AiService/GetUserStatus":           false,
-		// Auth family, telemetry, and unknown/future families: client-owned.
-		"/auth/full_user":              false,
-		"/auth/exchange_user_api_key":  false,
-		"/tev1/v1/rgstr":               false,
-		"/api/4508016051945472/env/":   false,
-		"/agent2.v1.AgentService/Run":  false,
-		"/aiserver.v2.AiService/Chat":  false,
+		// Identity RPCs inside the billing families stay outside the pool.
+		"/aiserver.v1.DashboardService/GetMe":           false,
+		"/aiserver.v1.DashboardService/GetUserProfile":  false,
+		"/aiserver.v1.DashboardService/GetTeams":        false,
+		"/aiserver.v1.DashboardService/GetTeamCommands": false,
+		"/aiserver.v1.AiService/GetUserStatus":          false,
+		// Auth family, telemetry, and unknown/future families: outside the pool.
+		"/auth/full_user":             false,
+		"/auth/exchange_user_api_key": false,
+		"/tev1/v1/rgstr":              false,
+		"/api/4508016051945472/env/":  false,
+		"/agent2.v1.AgentService/Run": false,
+		"/aiserver.v2.AiService/Chat": false,
 	}
 	for path, want := range billing {
 		if got := isBillingPath(path); got != want {
@@ -244,6 +244,48 @@ func TestIDEIdentityRPCPassesThroughClientToken(t *testing.T) {
 	}
 	if authCalls.Load() != 0 {
 		t.Fatalf("identity RPC must not touch Pulse, got %d authorize calls", authCalls.Load())
+	}
+}
+
+// An unknown service family answering with a Connect stream content type is
+// relayed as-is: no credential selection, no envelope parsing (an empty body
+// used to reach the billing stream relay with a nil pool entry).
+func TestUnknownFamilyConnectStreamPassesThroughOutsidePool(t *testing.T) {
+	var exchanges atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/agent2.v1.AgentService/Run", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/connect+proto")
+		w.Header().Set("X-Upstream-Auth", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	})
+	fu := httptest.NewTLSServer(mux)
+	t.Cleanup(fu.Close)
+	pulse, authCalls := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	client := connectClient(t, proxyAddr, caPEM)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+ideUpstreamHost(t, fu.URL)+"/agent2.v1.AgentService/Run",
+		bytes.NewReader([]byte{0x00, 0x00, 0x00, 0x00, 0x00}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/connect+proto")
+	req.Header.Set("Authorization", "Bearer ide-login-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Upstream-Auth") != "Bearer ide-login-jwt" {
+		t.Fatalf("status %d upstream auth %q", resp.StatusCode, resp.Header.Get("X-Upstream-Auth"))
+	}
+	if exchanges.Load() != 0 || authCalls.Load() != 0 {
+		t.Fatalf("passthrough must not touch the pool or Pulse: exchanges=%d authorize=%d", exchanges.Load(), authCalls.Load())
 	}
 }
 
@@ -651,7 +693,7 @@ func TestSafeProxyHostRejectsInjection(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://x/setup-cursor.ps1", nil)
 	req.Host = "evil.com\r\nWrite-Host pwned"
 	rr := httptest.NewRecorder()
-	(&Server{}).serveSetupScript(rr, req)
+	serveScript(rr, req, cursorIDESetupScriptTemplate)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("injected Host must 400, got %d body %q", rr.Code, rr.Body.String())
 	}
@@ -1159,6 +1201,21 @@ func TestIDEDedicatedPortHidesIdePortEndpoint(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("dedicated /ide-port: got %d want 404", resp2.StatusCode)
+	}
+
+	// Release is a main-listener concern too: DELETE on the dedicated port
+	// must 404 and leave the allocation in place.
+	req, _ := http.NewRequest(http.MethodDelete, "http://127.0.0.1:"+pr.Port+"/ide-port?key=pk_ide", nil)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Fatalf("dedicated DELETE /ide-port: got %d want 404", resp3.StatusCode)
+	}
+	if s := serverByAddr(t, proxyAddr); s.idePorts.release("pk_ide") == 0 {
+		t.Fatal("allocation must survive a DELETE on the dedicated listener")
 	}
 }
 

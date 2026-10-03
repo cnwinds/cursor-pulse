@@ -128,16 +128,6 @@ func (s *Server) SetUpstreamProxy(upstream *url.URL) {
 	s.transport = newOutboundTransport(upstream)
 }
 
-// withIDEKeyHandler scopes a proxy key to every request served by a per-key
-// IDE listener. Context injection instead of a cloned Server: one instance,
-// so every field, lock, cache, and future addition stays shared by
-// construction — no per-field copy list to maintain.
-func withIDEKeyHandler(h http.Handler, key string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.ServeHTTP(w, r.WithContext(withIDEKeyCtx(r.Context(), key)))
-	})
-}
-
 func defaultShouldMITM(authority string) bool {
 	host := authority
 	if h, _, err := net.SplitHostPort(authority); err == nil {
@@ -159,9 +149,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Plain-HTTP bootstrap endpoints so a member machine can onboard from the
 	// proxy address alone (no file distribution): trust the CA, then run the
 	// Cursor IDE setup script. Everything else stays CONNECT-only.
-	if r.URL.Path == "/ide-port" && r.Method == http.MethodDelete {
-		// Uninstall path: release a per-key listener (no dedicated-listener
-		// restriction — releasing is as safe as allocating on the main port).
+	if r.URL.Path == "/ide-port" && (r.Method == http.MethodGet || r.Method == http.MethodDelete) {
 		s.serveIDEPort(w, r)
 		return
 	}
@@ -171,19 +159,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.serveCAPEM(w)
 			return
 		case "/setup-cursor.ps1":
-			s.serveSetupScript(w, r)
+			serveScript(w, r, cursorIDESetupScriptTemplate)
 			return
 		case "/uninstall-cursor.ps1":
-			s.serveUninstallScript(w, r)
-			return
-		case "/ide-port":
-			// Allocation is a main-listener bootstrap concern; dedicated ports
-			// must not mint listeners for arbitrary other keys.
-			if ideKeyFromCtx(r.Context()) != "" {
-				http.Error(w, "ide-port only on main listener", http.StatusNotFound)
-				return
-			}
-			s.serveIDEPort(w, r)
+			serveScript(w, r, cursorIDEUninstallScriptTemplate)
 			return
 		case "/", "/health":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")

@@ -25,14 +25,10 @@ func (s *Server) serveCAPEM(w http.ResponseWriter) {
 	w.Write(pem)
 }
 
-// serveSetupScript emits a PowerShell one-liner target that installs the proxy
-// CA into the current-user trusted roots and points the local Cursor IDE at
-// this proxy. The address is taken from the Host header the member actually
-// used, so the same endpoint works for LAN-shared and local deployments. The
-// member passes their assigned Proxy Key via -Key; the script then fetches a
-// dedicated per-key IDE port from GET /ide-port so IDE usage attributes to
-// that key (the same pk_ key their agent CLI uses).
-func (s *Server) serveSetupScript(w http.ResponseWriter, r *http.Request) {
+// serveScript emits a PowerShell onboarding/offboarding template with
+// __PROXY_ADDR__ set to the Host header the member actually used, so the same
+// endpoint works for LAN-shared and local deployments.
+func serveScript(w http.ResponseWriter, r *http.Request, tmpl string) {
 	raw := strings.TrimSpace(r.Host)
 	host := ""
 	switch {
@@ -45,36 +41,15 @@ func (s *Server) serveSetupScript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid Host header", http.StatusBadRequest)
 		return
 	}
-	script := strings.ReplaceAll(cursorIDESetupScriptTemplate, "__PROXY_ADDR__", "http://"+host)
+	script := strings.ReplaceAll(tmpl, "__PROXY_ADDR__", "http://"+host)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(script))
 }
 
-// serveUninstallScript emits the offboarding counterpart of serveSetupScript:
-// removes the settings.json keys the installer added, removes the proxy CA
-// from the current-user trusted roots, and (with -Key) releases the dedicated
-// IDE port on the proxy via DELETE /ide-port.
-func (s *Server) serveUninstallScript(w http.ResponseWriter, r *http.Request) {
-	raw := strings.TrimSpace(r.Host)
-	host := ""
-	switch {
-	case raw == "":
-		host = "127.0.0.1:8317"
-	case isSafeProxyHost(raw):
-		host = raw
-	default:
-		http.Error(w, "invalid Host header", http.StatusBadRequest)
-		return
-	}
-	script := strings.ReplaceAll(cursorIDEUninstallScriptTemplate, "__PROXY_ADDR__", "http://"+host)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(script))
-}
-
-// cursorIDEUninstallScriptTemplate is emitted at GET /uninstall-cursor.ps1.
-// Same constraints as the setup template: PS 5.1 compatible, no backticks,
-// idempotent. Local cleanup (settings + CA) must proceed even when the proxy
-// is unreachable.
+// cursorIDEUninstallScriptTemplate is emitted at GET /uninstall-cursor.ps1:
+// the offboarding counterpart of the setup template. Same constraints: PS 5.1
+// compatible, no backticks, idempotent. Local cleanup (settings + CA) must
+// proceed even when the proxy is unreachable.
 const cursorIDEUninstallScriptTemplate = `param(
     [string]$Key = '',
     [string]$Proxy = '__PROXY_ADDR__'
@@ -125,7 +100,11 @@ if (Test-Path $settingsPath) {
     [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
     if ($removed.Count) { Write-Host ("  removed: {0}" -f ($removed -join ', ')) }
     else { Write-Host '  nothing to remove (already clean).' }
-    Write-Host "  pre-install backup kept at $settingsPath.bak-cursor-pulse"
+    $backup = "$settingsPath.bak-cursor-pulse"
+    if (Test-Path $backup) {
+        Write-Host "  pre-install backup kept at $backup"
+        Write-Host '  if you had your own http.proxy before onboarding, restore it from that backup.'
+    }
 } else {
     Write-Host '  settings.json not found - skipping.'
 }
@@ -146,7 +125,10 @@ Write-Host '[4/4] Done. Fully quit Cursor (all windows) and start it again;'
 Write-Host '      it now talks to Cursor directly, outside the team proxy.'
 `
 
-// cursorIDESetupScriptTemplate is emitted at GET /setup-cursor.ps1. It must run
+// cursorIDESetupScriptTemplate is emitted at GET /setup-cursor.ps1: installs
+// the proxy CA into the current-user trusted roots and points the local Cursor
+// IDE at this proxy. With -Key the script fetches a dedicated per-key port from
+// GET /ide-port so IDE usage attributes to that key. It must run
 // on Windows PowerShell 5.1 (no PS7-only features, no backticks so it survives
 // being embedded in a Go raw string). Keep it idempotent and always back up
 // settings.json before touching it.
@@ -221,6 +203,6 @@ if ($cursorRunning) {
     }
 }
 Write-Host 'Done. AI traffic is now served from the team credential pool.'
-Write-Host 'Rollback: restore the .bak-cursor-pulse file over settings.json and run:'
-Write-Host '  certutil -user -delstore Root <thumbprint of cursor-quota-proxy CA>'
+Write-Host 'Rollback: irm __PROXY_ADDR__/uninstall-cursor.ps1 | iex'
+Write-Host '  (or restore the .bak-cursor-pulse file over settings.json).'
 `

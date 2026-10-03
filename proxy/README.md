@@ -70,13 +70,13 @@ irm http://<代理地址>:8317/uninstall-cursor.ps1 | iex        # 不带 -Key
 & ([scriptblock]::Create((irm http://<代理地址>:8317/uninstall-cursor.ps1))) -Key "pk_..."
 ```
 
-脚本幂等，且在代理不可达时仍完成本地清理：移除 settings.json 的 `http.proxy` / `cursor.general.disableHttp2` / `http.systemCertificates` 三项（安装前备份保留不动）、按指纹删除代理 CA、带 `-Key` 时调 `DELETE /ide-port` 让代理关闭该 key 的专属监听并清持久化（对已吊销 key 也生效——卸载不应依赖 key 仍有效）。卸载后完全退出并重启 Cursor 即恢复直连。
+脚本幂等，且在代理不可达时仍完成本地清理：移除 settings.json 的 `http.proxy` / `cursor.general.disableHttp2` / `http.systemCertificates` 三项（安装前备份 `settings.json.bak-cursor-pulse` 保留不动；若接入前你本来配有自己的 `http.proxy`，安装时已被覆盖，卸载只删除不恢复，请从备份手工找回）、删除当前用户受信任根中 Subject 含 `cursor-quota-proxy` 的全部证书（按 Subject 匹配、逐个按指纹删除——同名的其他代理 CA 也会一并移除）、带 `-Key` 时调 `DELETE /ide-port` 让代理关闭该 key 的专属监听并清持久化（对已吊销 key 也生效——卸载不应依赖 key 仍有效；与分配一样只在主端口受理）。卸载后完全退出并重启 Cursor 即恢复直连。
 
 管理台「共享池代理 / 借用」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide` 或 `GET /api/v2/loans/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借（解析 JWT `sub`，拒绝 `alg=none`；**不校验签名**，与可达专属口上的 TOFU 信任边界一致；锁在代理内存中，重启后重新认领）。
 
 IDE 接入的行为与限制：
 
-- **只改写已知计费路径**（`/agent.v1.*`、`/aiserver.v1.*` 且非身份 RPC）：身份族 RPC（`GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`GetUserStatus`）**始终**用客户端自己的登录 token 直通（含 TOFU 绑定之后）；`/auth/*`（除 opaque 会话 token 换回）、遥测与未知服务族同样直通——改写身份 RPC 会让 IDE 身份一致性校验失败（GetMe 无限重试），未知路径默认不归因（fail-open）：新端点最多丢计量，不会断功能。
+- **授权三分**：① **计费**——只有已知计费路径（`/agent.v1.*`、`/aiserver.v1.*` 且非身份 RPC）走会话校验、池选号、失败标记与用量入账；② **会话换回**——其余路径上若 bearer 是本代理 exchange 签发的不透明 token（HMAC 可验，上游必拒），换成该会话的池凭证转发，但不计量、不标记池；③ **直通**——其余一切（IDE 登录 JWT 访问身份族 RPC `GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`GetUserStatus`，含 TOFU 绑定之后；`/auth/*`；遥测；未知服务族）原样转发客户端自己的 token，不选号、不计量、不标记。改写 IDE 身份 RPC 会让身份一致性校验失败（GetMe 无限重试）；未知路径 fail-open 为不归因：新端点最多丢计量，IDE 与 CLI 都不会断功能。
 - IDE 界面账号显示成员自己的登录账号；模型列表、用量等业务数据来自实际服务的池账号。
 - IDE 聊天走 `agent.v1.AgentService/RunSSE`：响应 Content-Type 标为 `text/event-stream` 但实体是标准 Connect 信封帧，代理按 Connect 流中继（逐帧 flush + TurnEnded usage tap），用量与 CLI 同管线入账。
 - **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
