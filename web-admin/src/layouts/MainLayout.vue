@@ -6,6 +6,7 @@
         <div class="brand-text">
           <div class="title">小脉</div>
           <div class="subtitle">Cursor Pulse</div>
+          <VersionBadge />
         </div>
       </div>
       <el-menu
@@ -135,6 +136,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import ChatPanel from '@/components/ChatPanel.vue'
+import VersionBadge from '@/components/VersionBadge.vue'
 
 const route = useRoute()
 const router = useRouter()

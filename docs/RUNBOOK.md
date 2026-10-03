@@ -68,6 +68,16 @@ git pull
 cd docker && docker compose up -d --build
 ```
 
+后台左上角的版本号在构建时写入。构建上下文里没有 `.git`，如果想区分开发版、显示 commit，需要把 git 信息传进去：
+
+```bash
+export PULSE_BUILD_DESCRIBE=$(git describe --tags --match 'v*' --dirty --always)
+export PULSE_BUILD_COMMIT=$(git rev-parse HEAD)
+cd docker && docker compose up -d --build
+```
+
+不传时只显示 `pyproject.toml` 里的版本号，按正式版样式展示。
+
 ### 从开发机迁移数据
 
 先停本地服务，再打包。加密密钥须与源环境一致（`PULSE_CREDENTIAL_ENCRYPTION_KEY`、若开 Assistant 则还有 `ASSISTANT_SECRET_KEY`）。

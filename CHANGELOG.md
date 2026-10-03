@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **后台左上角显示版本号**：构建时从 `pyproject.toml` 读版本号。HEAD 恰好在干净的 `v<版本>` tag 上算正式版，只显示 `v0.7.0`；其余情况是开发版，显示 `DEV v0.7.0 · <commit>`，有未提交改动时 commit 后带 `*`。悬停可看完整信息，点击复制。Docker 构建通过 `PULSE_BUILD_DESCRIBE` / `PULSE_BUILD_COMMIT` 构建参数传入 git 信息（见 RUNBOOK）。
+
 ### 变更
 
 - **复制命令改为弹窗**：借用管理与「我的借用」的「复制命令」从下拉菜单改为弹窗，分 CLI / IDE 两个标签，命令可预览（密钥中段打码）后逐条复制；多个代理地址时在弹窗顶部切换。IDE 标签提供**安装命令**与**恢复命令**（`irm <代理>/uninstall-cursor.ps1 | iex`，移除 Cursor 代理设置与 CA，不含密钥）；`client-setup?kind=ide` 响应新增 `uninstall_command`。

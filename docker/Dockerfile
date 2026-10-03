@@ -14,6 +14,10 @@ COPY web-admin/package.json web-admin/package-lock.json ./
 RUN npm ci
 
 COPY web-admin/ ./
+COPY pyproject.toml /app/pyproject.toml
+# No .git in the build context: version badge reads git info from these (see web-admin/build-info.ts)
+ARG PULSE_BUILD_DESCRIBE=""
+ARG PULSE_BUILD_COMMIT=""
 # outDir is ../pulse/web/static (see web-admin/vite.config.ts)
 RUN mkdir -p /app/pulse/web && npm run build
 

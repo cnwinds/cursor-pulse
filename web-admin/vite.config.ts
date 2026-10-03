@@ -1,10 +1,14 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+import { resolveBuildInfo } from './build-info'
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode, command }) => ({
   base: mode === 'production' ? '/admin/' : '/',
   plugins: [vue()],
+  define: {
+    __APP_BUILD__: JSON.stringify(resolveBuildInfo(command === 'serve')),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

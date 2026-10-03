@@ -5,6 +5,9 @@ x-app-common: &app-common
   build:
     context: ..
     dockerfile: docker/Dockerfile
+    args:
+      PULSE_BUILD_DESCRIBE: ${PULSE_BUILD_DESCRIBE:-}
+      PULSE_BUILD_COMMIT: ${PULSE_BUILD_COMMIT:-}
   env_file:
     - .env
   environment:
