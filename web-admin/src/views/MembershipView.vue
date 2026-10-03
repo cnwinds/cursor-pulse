@@ -10,61 +10,6 @@
     />
 
     <el-tabs v-model="tab">
-      <el-tab-pane label="套餐" name="plans">
-        <div class="tab-toolbar">
-          <el-button v-if="canWrite" type="primary" @click="openPlanDialog()">新建套餐</el-button>
-          <el-checkbox v-model="includeArchived" @change="loadPlans">显示已归档</el-checkbox>
-        </div>
-        <el-table :data="plans" stripe>
-          <el-table-column prop="name" label="名称" min-width="120" />
-          <el-table-column label="窗口规则" min-width="200">
-            <template #default="{ row }">
-              <span v-if="!row.rules.length" class="muted">不限</span>
-              <div v-else class="rule-chips">
-                <template v-for="(rule, index) in row.rules" :key="index">
-                  <span v-if="index" class="rule-or">或</span>
-                  <el-tag size="small" type="info">{{ formatPlanRuleChip(rule) }}</el-tag>
-                </template>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="余额模式" width="100">
-            <template #default="{ row }">{{ creditModeLabel(row.credit_mode) }}</template>
-          </el-table-column>
-          <el-table-column label="开通赠送" width="100" align="right">
-            <template #default="{ row }">
-              {{
-                row.credit_mode === 'prepaid' && row.opening_credit_cents != null
-                  ? formatUsdCents(row.opening_credit_cents)
-                  : '—'
-              }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="88" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
-                {{ row.status === 'active' ? '启用' : '已归档' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="member_count" label="成员数" width="80" align="right" />
-          <el-table-column v-if="canWrite" label="操作" width="140" fixed="right" align="center">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openPlanDialog(row)">编辑</el-button>
-              <el-button
-                v-if="row.status === 'active'"
-                link
-                type="warning"
-                @click="archivePlan(row)"
-              >
-                归档
-              </el-button>
-              <el-button v-else link type="primary" @click="unarchivePlan(row)">恢复</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
       <el-tab-pane label="成员" name="members">
         <div class="tab-toolbar">
           <el-input
@@ -154,6 +99,61 @@
               >
                 账单
               </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="套餐" name="plans">
+        <div class="tab-toolbar">
+          <el-button v-if="canWrite" type="primary" @click="openPlanDialog()">新建套餐</el-button>
+          <el-checkbox v-model="includeArchived" @change="loadPlans">显示已归档</el-checkbox>
+        </div>
+        <el-table :data="plans" stripe>
+          <el-table-column prop="name" label="名称" min-width="120" />
+          <el-table-column label="窗口规则" min-width="200">
+            <template #default="{ row }">
+              <span v-if="!row.rules.length" class="muted">不限</span>
+              <div v-else class="rule-chips">
+                <template v-for="(rule, index) in row.rules" :key="index">
+                  <span v-if="index" class="rule-or">或</span>
+                  <el-tag size="small" type="info">{{ formatPlanRuleChip(rule) }}</el-tag>
+                </template>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="余额模式" width="100">
+            <template #default="{ row }">{{ creditModeLabel(row.credit_mode) }}</template>
+          </el-table-column>
+          <el-table-column label="开通赠送" width="100" align="right">
+            <template #default="{ row }">
+              {{
+                row.credit_mode === 'prepaid' && row.opening_credit_cents != null
+                  ? formatUsdCents(row.opening_credit_cents)
+                  : '—'
+              }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="88" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
+                {{ row.status === 'active' ? '启用' : '已归档' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="member_count" label="成员数" width="80" align="right" />
+          <el-table-column v-if="canWrite" label="操作" width="140" fixed="right" align="center">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openPlanDialog(row)">编辑</el-button>
+              <el-button
+                v-if="row.status === 'active'"
+                link
+                type="warning"
+                @click="archivePlan(row)"
+              >
+                归档
+              </el-button>
+              <el-button v-else link type="primary" @click="unarchivePlan(row)">恢复</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -365,7 +365,7 @@ const settingsStore = useSettingsStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
 
 const loading = ref(false)
-const tab = ref('plans')
+const tab = ref('members')
 const plans = ref<PlanOut[]>([])
 const includeArchived = ref(false)
 const memberRows = ref<MemberMembershipRow[]>([])
