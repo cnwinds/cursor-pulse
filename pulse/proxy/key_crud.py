@@ -143,6 +143,7 @@ def build_ide_client_setup(addresses, plaintext_key: str, *, proxy_url: str | No
         "shell": "powershell",
         "kind": "ide",
         "command": build_ide_setup_command(proxy_url=ide_url, plaintext_key=plaintext_key),
+        "uninstall_command": build_ide_uninstall_command(proxy_url=ide_url),
     }
 
 
@@ -157,6 +158,11 @@ def build_ide_setup_command(*, proxy_url: str, plaintext_key: str) -> str:
     url = proxy_url.rstrip("/")
     safe_key = plaintext_key.replace("'", "''")
     return f"& ([scriptblock]::Create((irm \"{url}/setup-cursor.ps1\"))) -Key '{safe_key}'"
+
+
+def build_ide_uninstall_command(*, proxy_url: str) -> str:
+    """生成 Cursor IDE 恢复命令（PowerShell）：移除 http.proxy 等设置与代理 CA，不需要密钥。"""
+    return f'irm "{proxy_url.rstrip("/")}/uninstall-cursor.ps1" | iex'
 
 
 def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:

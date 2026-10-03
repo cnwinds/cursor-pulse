@@ -111,7 +111,7 @@
       </el-table-column>
       <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
-          <CopyCommandDropdown
+          <CopyCommandDialog
             v-if="row.status === 'active'"
             size="small"
             :setup-url="`/api/v2/loans/${row.id}/client-setup`"
@@ -151,7 +151,7 @@
           </template>
         </el-input>
         <div class="reveal-actions">
-          <CopyCommandDropdown
+          <CopyCommandDialog
             v-if="revealedKey?.loan_id"
             :setup-url="`/api/v2/loans/${revealedKey.loan_id}/client-setup`"
           />
@@ -172,7 +172,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
-import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import CopyCommandDialog from '@/components/CopyCommandDialog.vue'
 import CreditStatement from '@/components/credit/CreditStatement.vue'
 import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 import { copyText } from '@/utils/clipboard'

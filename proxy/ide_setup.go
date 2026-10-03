@@ -2,8 +2,10 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -56,49 +58,13 @@ const cursorIDEUninstallScriptTemplate = `param(
 )
 # cursor-pulse IDE offboarding - reverses setup-cursor.ps1 (its counterpart;
 # the two scripts must stay in sync about which settings keys are managed):
-# removes http.proxy and related settings, removes the proxy CA from the
-# current-user trusted roots, and (legacy) releases a dedicated IDE port when
-# the old http.proxy pointed at a non-main port.
+# removes http.proxy and related settings, and removes the proxy CA from the
+# current-user trusted roots.
 # Idempotent: safe to re-run. The pre-install backup is kept untouched.
 $ErrorActionPreference = 'Stop'
-$addr = $Proxy
-$scheme = 'http'
-if ($addr -like 'https://*') { $scheme = 'https' }
-$mainHost = ($addr -replace '^https?://', '')
-
-Write-Host '[1/4] Checking for legacy dedicated IDE port...'
 $settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
-$legacyPortRelease = $false
-if (Test-Path $settingsPath) {
-    $rawCheck = Get-Content $settingsPath -Raw -Encoding UTF8
-    try {
-        $cfgCheck = $rawCheck | ConvertFrom-Json
-        if ($cfgCheck.PSObject.Properties['http.proxy']) {
-            $oldProxy = [string]$cfgCheck.'http.proxy'
-            if ($oldProxy -match ':(\d+)(?:/|$)') {
-                $oldPort = [int]$Matches[1]
-                $mainPort = 8317
-                if ($mainHost -match ':(\d+)$') { $mainPort = [int]$Matches[1] }
-                if ($oldPort -ne $mainPort) { $legacyPortRelease = $true }
-            }
-        }
-    } catch { }
-}
-if ($legacyPortRelease -and $Key -ne '') {
-    try {
-        $rel = Invoke-WebRequest -UseBasicParsing -Method Delete -Uri ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
-        Write-Host ("  legacy dedicated port released (HTTP {0})." -f $rel.StatusCode)
-    } catch {
-        $code = $null
-        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-        if ($code -eq 404) { Write-Host '  no legacy port was allocated for this key.' }
-        else { Write-Host '  proxy unreachable - continuing with local cleanup.' }
-    }
-} else {
-    Write-Host '  no legacy dedicated port to release.'
-}
 
-Write-Host '[2/4] Removing Cursor IDE proxy settings...'
+Write-Host '[1/3] Removing Cursor IDE proxy settings...'
 if (Test-Path $settingsPath) {
     $raw = Get-Content $settingsPath -Raw -Encoding UTF8
     try {
@@ -138,7 +104,7 @@ if (Test-Path $settingsPath) {
     Write-Host '  settings.json not found - skipping.'
 }
 
-Write-Host '[3/4] Removing proxy CA from current-user trusted roots...'
+Write-Host '[2/3] Removing proxy CA from current-user trusted roots...'
 $certs = Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
     Where-Object { $_.Subject -like '*cursor-quota-proxy*' }
 if ($certs) {
@@ -150,7 +116,7 @@ if ($certs) {
     Write-Host '  CA not present - skipping.'
 }
 
-Write-Host '[4/4] Done. Fully quit Cursor (all windows) and start it again;'
+Write-Host '[3/3] Done. Fully quit Cursor (all windows) and start it again;'
 Write-Host '      it now talks to Cursor directly, outside the team proxy.'
 `
 
@@ -222,21 +188,53 @@ $json = $cfg | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "  http.proxy written with IDE key on main port (backup: $backup)."
 
-Write-Host '[3/3] Checking Cursor IDE...'
-$cursorRunning = Get-Process Cursor -ErrorAction SilentlyContinue
-if ($cursorRunning) {
-    Write-Host '  Cursor is running. Fully quit it (all windows) and start it again to apply.'
-} else {
-    $cursorExe = "$env:LOCALAPPDATA\Programs\cursor\Cursor.exe"
-    if (-not (Test-Path $cursorExe)) { $cursorExe = "$env:ProgramFiles\cursor\Cursor.exe" }
-    if (Test-Path $cursorExe) {
-        Start-Process $cursorExe
-        Write-Host '  Cursor started. Sign in and send a chat message to verify.'
-    } else {
-        Write-Host '  Cursor.exe not found in default locations - start Cursor manually.'
-    }
-}
-Write-Host 'Done. AI traffic is now served from the team credential pool.'
+Write-Host '[3/3] Done. Start Cursor yourself and it is ready to use'
+Write-Host '      (if Cursor is already open, fully quit all windows and start it again).'
+Write-Host '      AI traffic is now served from the team credential pool.'
 Write-Host 'Rollback: irm __PROXY_ADDR__/uninstall-cursor.ps1 | iex'
 Write-Host '  (or restore the .bak-cursor-pulse file over settings.json).'
 `
+
+// isSafeProxyHost allows hostname[:port], IPv4, or [IPv6]:port only — no
+// whitespace, quotes, or control characters that could break script embedding.
+func isSafeProxyHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, r := range host {
+		if r < 0x20 || r == 0x7f || r == '\'' || r == '"' || r == '`' || r == ';' || r == '$' || r == '|' {
+			return false
+		}
+	}
+	h, port, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+		port = ""
+	}
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+	}
+	if h == "" {
+		return false
+	}
+	ipCand := h
+	if strings.HasPrefix(ipCand, "[") && strings.HasSuffix(ipCand, "]") {
+		ipCand = ipCand[1 : len(ipCand)-1]
+	}
+	if ip := net.ParseIP(ipCand); ip != nil {
+		return true
+	}
+	for i, r := range h {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-'
+		if !ok {
+			return false
+		}
+		if (r == '-' || r == '.') && (i == 0 || i == len(h)-1) {
+			return false
+		}
+	}
+	return true
+}

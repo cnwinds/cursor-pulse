@@ -32,8 +32,8 @@ export async function rotateLoanIdeKey(
     await copyText(command)
     const label = res.data?.proxy_url || ''
     const suffix = label
-      ? `（${label}；其他代理地址可用「复制命令」下拉复制同一密钥）`
-      : '；其他代理地址可用「复制命令」下拉复制同一密钥'
+      ? `（${label}；其他代理地址可在「复制命令 → IDE」中复制同一密钥）`
+      : '；其他代理地址可在「复制命令 → IDE」中复制同一密钥'
     ElMessage.success(`已重置 IDE 密钥并复制 Cursor IDE 接入命令${suffix}`)
   } catch (err: any) {
     const detail = err?.response?.data?.detail

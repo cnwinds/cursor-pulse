@@ -1,8 +1,8 @@
 # ADR-0005：IDE 共享端口 + 作用域 IDE Key（pkide_）
 
-- 状态：已实现（2026-10-03）
+- 状态：已实现（2026-10-03）；专属端口过渡期已结束（v0.7.0 之后删除）
 - 日期：2026-10-03
-- 相关：`pulse/proxy/ide_keys.py`、`pulse/proxy/authorize.py`、`pulse/web/proxy_keys_api.py`、`pulse/web/quota_api.py`、`proxy/server.go`、`proxy/mitm.go`、`proxy/ide_setup.go`、`proxy/ide_ports.go`、`web-admin/src/components/CopyCommandDropdown.vue`、`CONTEXT.md`
+- 相关：`pulse/proxy/ide_keys.py`、`pulse/proxy/authorize.py`、`pulse/web/proxy_keys_api.py`、`pulse/web/quota_api.py`、`proxy/server.go`、`proxy/mitm.go`、`proxy/ide_setup.go`、`web-admin/src/components/CopyCommandDialog.vue`、`CONTEXT.md`
 
 ## 背景
 
@@ -40,7 +40,7 @@
 ### 共享主端口 + 隧道内校验
 
 - 新客户端：`http.proxy = "http://<pkide_>:x@<host>:<主端口>"`（key URL 编码；密码固定 `x`）。
-- `handleConnect` 解析 `Proxy-Authorization: Basic` 的用户名为隧道 key，**CONNECT 从不返回 407、从不拒绝**；key 与来源（`listener` 专属口遗留 / `userinfo`）写入请求上下文。
+- `handleConnect` 解析 `Proxy-Authorization: Basic` 的用户名为隧道 key，**CONNECT 从不返回 407、从不拒绝**；key 与来源（`userinfo`）写入请求上下文。
 - 计费闸门（`bindIDESession`）在隧道内业务请求层校验：
   - 隧道 key 为空 → **401** `IDE proxy key missing: re-run setup-cursor.ps1`，并限频打 `[ide] billing request on unauthenticated tunnel` 日志。
   - `userinfo` 来源且前缀不是 `pkide_` 或 `cr` → **401** `full proxy key not allowed in proxy URL; use IDE key`。
@@ -57,11 +57,11 @@
 
 setup 脚本把 `http.proxy` 追加进 `settingsSync.ignoredSettings`（去重），避免 IDE key 随 Cursor Settings Sync 同步到其他设备。uninstall 反向移除该项。
 
-### 专属端口（deprecated）
+### 专属端口（已删除）
 
-- 本版保留 `idePortRegistry`、`GET/DELETE /ide-port`、`PROXY_IDE_PORT_BASE` 与专属监听，供尚未重跑 setup 的旧客户端过渡。
-- 访问 `/ide-port` 打 deprecated 日志；**下一版删除**端口子系统、`ide_ports.json` 及 uninstall 中的遗留 `DELETE /ide-port` 段。
-- 卸载：`irm .../uninstall-cursor.ps1 | iex`；若旧 `http.proxy` 仍指向非主端口，可传 `-Key "pk_..."` 释放遗留映射。
+- v0.7.0 保留 `idePortRegistry`、`GET/DELETE /ide-port`、`PROXY_IDE_PORT_BASE` 与专属监听作为一版过渡；此后已删除端口子系统、`ide_ports.json` 持久化及 uninstall 中的遗留 `DELETE /ide-port` 段。`/ide-port` 现返回 404。
+- 仍配置 `PROXY_IDE_PORT_BASE` / `-ide-port-base` 时，与 `-ide-pulse-key` 同样处理：启动打 ERROR 并忽略。
+- 卸载：`irm .../uninstall-cursor.ps1 | iex`。
 
 ### API
 
@@ -83,11 +83,11 @@ setup 脚本把 `http.proxy` 追加进 `settingsSync.ignoredSettings`（去重�
 **Go**（`proxy/ide_test.go` 等）：
 
 - userinfo `pkide_` 归因与 RunSSE 用量记账；无凭据隧道计费 401 + 漂移日志；userinfo `pk_` 401；`pkide_` exchange 403；CLI 会话不被 userinfo 换绑；Chromium 式无凭据非计费透传。
-- `-ide-pulse-key` 配置后不生效；setup 脚本拒绝 `pk_`、写入 userinfo 主端口 URL、`ignoredSettings`；专属端口用例作兼容回归。
+- `-ide-pulse-key` 配置后不生效；setup 脚本拒绝 `pk_`、写入 userinfo 主端口 URL、`ignoredSettings`；`/ide-port` 返回 404。
 
 ## 后果
 
-- 成员需在控制台复制**新** IDE 命令（含 `pkide_`）并重跑 setup；旧专属端口 + `pk_` 本版仍可用，下版删除后未迁移客户端会 401。
+- 成员需在控制台复制**新** IDE 命令（含 `pkide_`）并重跑 setup；专属端口已删除，未迁移的客户端 `http.proxy` 指向的端口不再监听，IDE 将无法连接代理。
 - 防火墙只需放行主端口，不再规划 per-key 端口段。
 - `pkide_` 泄露仍只影响 IDE 归因通道，不能换票给 CLI；但仍应通过 rotate 与父 key 吊销级联失效。
 - Cursor 若改变计费栈分布，会先以 401 + 日志暴露，需产品侧跟进而非静默丢账。

@@ -570,6 +570,8 @@ def test_loan_client_setup_ide_kind(loan_client_env):
     )
     assert "HTTPS_PROXY" not in body["command"]
     assert "agent -k" not in body["command"]
+    assert body["uninstall_command"] == 'irm "http://wan.example:8317/uninstall-cursor.ps1" | iex'
+    assert ide_key not in body["uninstall_command"]
 
 
 def test_loan_client_setup_bash(loan_client_env):

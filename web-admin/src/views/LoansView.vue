@@ -134,7 +134,7 @@
       <el-table-column label="操作" min-width="136" fixed="right" align="center">
         <template #default="{ row }">
           <div class="loan-actions">
-            <CopyCommandDropdown
+            <CopyCommandDialog
               v-if="row.status === 'active'"
               icon-only
               size="small"
@@ -453,7 +453,7 @@
           </template>
         </el-input>
         <div class="reveal-actions">
-          <CopyCommandDropdown
+          <CopyCommandDialog
             v-if="revealedKey?.loan_id"
             :setup-url="`/api/v2/loans/${revealedKey.loan_id}/client-setup`"
           />
@@ -492,7 +492,7 @@ import { formatTokensM } from '@/utils/usage'
 import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
-import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import CopyCommandDialog from '@/components/CopyCommandDialog.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
 import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 import { formatUsdCents } from '@/utils/money'

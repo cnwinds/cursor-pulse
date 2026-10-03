@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **复制命令改为弹窗**：借用管理与「我的借用」的「复制命令」从下拉菜单改为弹窗，分 CLI / IDE 两个标签，命令可预览（密钥中段打码）后逐条复制；多个代理地址时在弹窗顶部切换。IDE 标签提供**安装命令**与**恢复命令**（`irm <代理>/uninstall-cursor.ps1 | iex`，移除 Cursor 代理设置与 CA，不含密钥）；`client-setup?kind=ide` 响应新增 `uninstall_command`。
+- **IDE 安装脚本不再自动启动 Cursor**：`setup-cursor.ps1` 完成后提示用户自行启动 Cursor（已打开的需完全退出再重开）即可使用。
+
+### 移除
+
+- **v0.7.0 过渡期结束**：从 v0.7.0 之前的版本升级，须先升到 v0.7.0 并完成全部 Go 代理升级、成员重跑 IDE setup，再升级到本版。
+- **内部 `/api/internal/v1/proxy/loan-usage-cap`**：已删除（返回 404），Go 代理统一调用 `/spend-check`；`pulse/proxy/loan_usage_cap.py` 兼容层一并删除。
+- **每 key 专属 IDE 端口**：删除 `/ide-port`（GET/DELETE，现返回 404）、专属监听与 `ide_ports.json`；uninstall 脚本不再尝试释放遗留端口。`-ide-port-base` / `PROXY_IDE_PORT_BASE` 若仍设置，启动 ERROR 并忽略。
+- **MITM 上 Cursor 的 `window_limited` 分支**：Cursor authorize 不再产生该状态（限额由 spend-check 在 `AgentService/Run` 前拦截），相关会话续期处理已删除；`pkcp_` OpenAI 网关不受影响。
+
 ## [0.7.0] - 2026-10-03
 
 ### 新增
