@@ -33,20 +33,16 @@ type Server struct {
 
 	connectAllowlist []string
 
-	// idePulseKey is the Pulse access key (pk_/pka_) that IDE-originated
-	// sessions bind to. Empty keeps the legacy behavior: business requests must
-	// present an exchange-issued session JWT (CLI-only proxy).
+	// idePulseKey is the proxy key (pk_/pka_) that IDE-originated sessions on
+	// this listener bind to. Empty on the main port without -ide-pulse-key
+	// keeps the legacy behavior: business requests must present an
+	// exchange-issued session JWT (CLI-only proxy).
 	idePulseKey string
 
-	// ideLockSub (PROXY_IDE_LOCK_SUB) pins each IDE access key to the first
-	// login identity (JWT sub) seen on it, so a leaked pk_ cannot be reused by
-	// another person's IDE. Off by default: re-login or a second account on
-	// the same machine would otherwise be rejected.
-	ideLockSub bool
-
-	// ideSubMu guards ideSubByKey (pulse key → pinned login sub).
-	ideSubMu    sync.Mutex
-	ideSubByKey map[string]string
+	// ideSub is the shared login-identity lock state (PROXY_IDE_LOCK_SUB).
+	// Held by pointer so the main port and every per-key listener enforce one
+	// consistent view. Nil means the lock is off.
+	ideSub *ideSubStore
 
 	// caPEMPath is the on-disk MITM root CA, served at GET /ca.pem so member
 	// machines can bootstrap trust from the proxy address alone.
@@ -74,6 +70,30 @@ func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Se
 // SetUpstreamProxy routes MITM upstream (Cursor) traffic via the given proxy.
 func (s *Server) SetUpstreamProxy(upstream *url.URL) {
 	s.transport = newOutboundTransport(upstream)
+}
+
+// withIDEKey returns a per-proxy-key view of this server for a dedicated IDE
+// listener: everything is shared with the parent except the pinned
+// idePulseKey and a fresh loan-key passthrough cache. Built field-by-field on
+// purpose — Server embeds locks and must never be copied wholesale; new
+// Server fields must be added here too.
+func (s *Server) withIDEKey(key string) *Server {
+	return &Server{
+		pool:             s.pool,
+		ca:               s.ca,
+		pulse:            s.pulse,
+		sessions:         s.sessions,
+		sticky:           s.sticky,
+		sessionTTL:       s.sessionTTL,
+		onRotate:         s.onRotate,
+		transport:        s.transport,
+		shouldMITM:       s.shouldMITM,
+		connectAllowlist: s.connectAllowlist,
+		idePulseKey:      key,
+		ideSub:           s.ideSub,
+		caPEMPath:        s.caPEMPath,
+		idePorts:         s.idePorts,
+	}
 }
 
 func defaultShouldMITM(authority string) bool {
@@ -106,7 +126,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "/", "/health":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /ide-port?key=... - dedicated IDE port for a Pulse access key\n")
+			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /ide-port?key=... - dedicated IDE port for a Proxy Key\n")
 			return
 		}
 	}

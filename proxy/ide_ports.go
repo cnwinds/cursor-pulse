@@ -13,19 +13,17 @@ import (
 	"sync"
 )
 
-// Per-key IDE listeners: each Pulse access key gets its own dedicated proxy
-// port, so every IDE session on that listener is attributed to that key
-// without any client cooperation (Cursor cannot carry a proxy key). The main
-// port keeps serving the CLI exchange flow and the server-wide -ide-pulse-key
-// fallback.
+// Per-key IDE listeners: each Proxy Key gets its own dedicated proxy port, so
+// every IDE session on that listener is attributed to that key without any
+// client cooperation (Cursor cannot carry a proxy key). The main port keeps
+// serving the CLI exchange flow and the server-wide -ide-pulse-key fallback.
 
 const defaultIDEPortBase = 9100
 
 type idePortRegistry struct {
 	mu        sync.Mutex
 	base      int
-	byKey     map[string]int    // pulse key → allocated port
-	byPort    map[int]string    // port → pulse key
+	byKey     map[string]int // proxy key → allocated port
 	listeners map[int]net.Listener
 	path      string // persistence file; empty disables persistence
 	parent    *Server
@@ -38,21 +36,9 @@ func newIDEPortRegistry(parent *Server, base int, path string) *idePortRegistry 
 	return &idePortRegistry{
 		base:      base,
 		byKey:     map[string]int{},
-		byPort:    map[int]string{},
 		listeners: map[int]net.Listener{},
 		path:      path,
 		parent:    parent,
-	}
-}
-
-// Close releases every per-key listener (used by tests; production listeners
-// live for the process lifetime).
-func (r *idePortRegistry) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for port, ln := range r.listeners {
-		ln.Close()
-		delete(r.listeners, port)
 	}
 }
 
@@ -76,12 +62,10 @@ func (r *idePortRegistry) load() {
 			continue
 		}
 		if _, err := r.listenLocked(key, port); err != nil {
-			log.Printf("[ide] reopen listener for %s...%s on :%d: %v",
-				maskClientToken(key), key[max(0, len(key)-4):], port, err)
+			log.Printf("[ide] reopen listener on :%d: %v", port, err)
 			continue
 		}
 		r.byKey[key] = port
-		r.byPort[port] = key
 	}
 	if len(r.byKey) > 0 {
 		log.Printf("[ide] restored %d per-key listener(s)", len(r.byKey))
@@ -100,12 +84,17 @@ func (r *idePortRegistry) saveLocked() {
 		log.Printf("[ide] save port map: %v", err)
 		return
 	}
+	// The plaintext proxy keys are persisted (0600, same trust level as the
+	// local -keys config) because restored listeners must be able to
+	// re-authorize against Pulse after a restart.
 	if err := os.WriteFile(r.path, b, 0o600); err != nil {
 		log.Printf("[ide] save port map: %v", err)
 	}
 }
 
 // listenLocked opens (or reuses) the listener for a port. Caller holds mu.
+// The listener serves a per-proxy-key view of the parent server — see
+// Server.withIDEKey.
 func (r *idePortRegistry) listenLocked(key string, port int) (net.Listener, error) {
 	if ln, ok := r.listeners[port]; ok {
 		return ln, nil
@@ -115,31 +104,11 @@ func (r *idePortRegistry) listenLocked(key string, port int) (net.Listener, erro
 		return nil, err
 	}
 	r.listeners[port] = ln
-	// A per-key view of the parent server (explicit field copy — Server holds
-	// a mutex and must never be copied by value): every session accepted here
-	// binds to this key, sharing pool, sessions and sticky state. passthrough
-	// stays nil so the clone lazily builds its own loan-key cache.
-	p := r.parent
-	srv := &Server{
-		pool:             p.pool,
-		ca:               p.ca,
-		pulse:            p.pulse,
-		sessions:         p.sessions,
-		sticky:           p.sticky,
-		sessionTTL:       p.sessionTTL,
-		onRotate:         p.onRotate,
-		transport:        p.transport,
-		shouldMITM:       p.shouldMITM,
-		connectAllowlist: p.connectAllowlist,
-		idePulseKey:      key,
-		caPEMPath:        p.caPEMPath,
-		idePorts:         p.idePorts,
-	}
-	go http.Serve(ln, srv)
+	go http.Serve(ln, r.parent.withIDEKey(key))
 	return ln, nil
 }
 
-// portForKey validates the pulse key (when Pulse is configured) and returns the
+// portForKey validates the proxy key (when Pulse is configured) and returns the
 // key's dedicated port, allocating one on first use.
 func (r *idePortRegistry) portForKey(w http.ResponseWriter, key string) (int, bool) {
 	key = strings.TrimSpace(key)
@@ -148,26 +117,8 @@ func (r *idePortRegistry) portForKey(w http.ResponseWriter, key string) (int, bo
 		return 0, false
 	}
 	if r.parent.pulse != nil {
-		res, err := r.parent.pulse.Authorize(key)
-		if err != nil {
-			log.Printf("[ide] port alloc authorize fail-closed: %v", err)
-			http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
-			return 0, false
-		}
-		switch res.Status {
-		case "ok", "window_limited":
-		case "invalid":
-			http.Error(w, "invalid key", http.StatusUnauthorized)
-			return 0, false
-		case "suspended":
-			msg := "suspended"
-			if res.Reason != nil {
-				msg = *res.Reason
-			}
-			http.Error(w, msg, http.StatusForbidden)
-			return 0, false
-		default:
-			http.Error(w, "authorize rejected", http.StatusForbidden)
+		res, ok := authorizeOrReject(w, r.parent.pulse, key)
+		if !ok {
 			return 0, false
 		}
 		if res.ProxyKeyID == "" && res.Mode != "loan_passthrough" && res.Mode != "loan_alias" {
@@ -202,10 +153,20 @@ func (r *idePortRegistry) portForKey(w http.ResponseWriter, key string) (int, bo
 		return 0, false
 	}
 	r.byKey[key] = port
-	r.byPort[port] = key
 	r.saveLocked()
-	log.Printf("[ide] allocated port %d for key %s...%s", port, maskClientToken(key), key[max(0, len(key)-4):])
+	log.Printf("[ide] allocated port %d for proxy key %s...%s", port, key[:5], key[len(key)-4:])
 	return port, true
+}
+
+// Close releases every per-key listener (used by tests; production listeners
+// live for the process lifetime).
+func (r *idePortRegistry) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for port, ln := range r.listeners {
+		ln.Close()
+		delete(r.listeners, port)
+	}
 }
 
 // serveIDEPort answers GET /ide-port?key=... with {"port": N, "proxy_host": H}.
@@ -218,7 +179,10 @@ func (s *Server) serveIDEPort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	host := requestHost(r)
+	host := sanitizeHostHeader(r)
+	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
+		host = h
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"port":       strconv.Itoa(port),
@@ -226,13 +190,13 @@ func (s *Server) serveIDEPort(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func requestHost(r *http.Request) string {
+// sanitizeHostHeader returns the Host header cleaned for echo back into
+// scripts/responses (port included; strip it via SplitHostPort when a bare
+// host is wanted).
+func sanitizeHostHeader(r *http.Request) string {
 	host := r.Host
 	if host == "" {
 		return "127.0.0.1"
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
 	}
 	return strings.ReplaceAll(strings.TrimSpace(host), "'", "")
 }

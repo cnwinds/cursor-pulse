@@ -32,7 +32,7 @@ func newFakeUpstreamIDE(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if key != "keyA" && key != "keyB" {
+		if key != "keyA" && key != "keyB" && key != "crsr_loan_key" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -486,7 +486,7 @@ func TestIDELockSubRejectsForeignLogin(t *testing.T) {
 
 	// Enable the lock on the test server (mirrors PROXY_IDE_LOCK_SUB).
 	s := serverByAddr(t, proxyAddr)
-	s.ideLockSub = true
+	s.ideLockSubInit(true)
 
 	client := connectClient(t, proxyAddr, caPEM)
 	doUnary := func(token string) int {
@@ -566,6 +566,141 @@ func serverByAddr(t *testing.T, addr string) *Server {
 	}
 	t.Fatalf("no test server for %s", addr)
 	return nil
+}
+
+func TestIDELockSubEnforcedOnPerKeyPort(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	host := ideUpstreamHost(t, fu.URL)
+
+	// Enable the lock BEFORE the per-key listener is cloned so the clone
+	// shares the store (regression: the clone used to miss the lock fields
+	// entirely, silently disabling PROXY_IDE_LOCK_SUB on IDE ports).
+	s := serverByAddr(t, proxyAddr)
+	s.ideLockSubInit(true)
+
+	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pr struct {
+		Port string `json:"port"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&pr)
+	resp.Body.Close()
+	if pr.Port == "" {
+		t.Fatal("no port allocated")
+	}
+	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
+	doUnary := func(sub string) int {
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+			bytes.NewReader([]byte("{}")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testJWT(sub))
+		r, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		io.Copy(io.Discard, r.Body)
+		return r.StatusCode
+	}
+	if code := doUnary("user-a"); code != http.StatusOK {
+		t.Fatalf("first login should bind via per-key port: %d", code)
+	}
+	if code := doUnary("user-b"); code != http.StatusForbidden {
+		t.Fatalf("foreign sub must be rejected on per-key port, got %d", code)
+	}
+}
+
+func TestIDEEmptyAuthorizationRejected(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	host := ideUpstreamHost(t, fu.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No Authorization header at all: must never be TOFU-bound to the IDE key.
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("empty Authorization: got %d want 401", resp.StatusCode)
+	}
+}
+
+// newFakePulseLoan serves a loan_alias authorize result with a candidate
+// allowlist, mirroring Auto-Assigned Loan keys used as IDE Proxy Keys.
+func newFakePulseLoan(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "proxy_key_id": "", "loan_id": "loan-1",
+			"mode": "loan_alias", "reason": nil,
+			"credential_id": "local-0", "cursor_api_key": "crsr_loan_key",
+			"credential_ids": []string{"local-0", "local-1"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestIDELoanAliasBindingFields(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := newFakePulseLoan(t)
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	host := ideUpstreamHost(t, fu.URL)
+
+	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pka_loan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pr struct {
+		Port string `json:"port"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&pr)
+	resp.Body.Close()
+
+	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testJWT("user-a"))
+	r, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("loan business request: %d %s", r.StatusCode, b)
+	}
+	binding, ok := sessions.Lookup(testJWT("user-a"))
+	if !ok {
+		t.Fatal("session not bound")
+	}
+	if binding.Mode != "loan_alias" || binding.LoanID != "loan-1" ||
+		binding.CursorAPIKey != "crsr_loan_key" ||
+		len(binding.AllowedCredentialIDs) != 2 {
+		t.Fatalf("loan binding fields wrong: %+v", binding)
+	}
 }
 
 func TestSetupBootstrapEndpoints(t *testing.T) {

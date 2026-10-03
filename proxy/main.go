@@ -25,7 +25,7 @@ func main() {
 		upstreamProxy  = flag.String("upstream-proxy", "", "HTTP(S) proxy for Cursor upstream (env PROXY_UPSTREAM_URL)")
 		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
 		stickyMinDwell = flag.Duration("sticky-min-dwell", 0, stickyMinDwellUsage)
-		idePulseKey    = flag.String("ide-pulse-key", "", "Pulse access key (pk_/pka_) that IDE-originated sessions bind to (env PROXY_IDE_PULSE_KEY, config ide_pulse_key)")
+		idePulseKey    = flag.String("ide-pulse-key", "", "proxy key (pk_/pka_) that IDE-originated sessions bind to (env PROXY_IDE_PULSE_KEY, config ide_pulse_key)")
 		idePortBase    = flag.Int("ide-port-base", 0, "first port for per-key IDE listeners (env PROXY_IDE_PORT_BASE, default 9100; Pulse mode only)")
 	)
 	flag.Parse()
@@ -150,10 +150,7 @@ Point agent at this proxy and trust the CA (PowerShell):
 		log.Printf("IDE mode: unbound sessions bind to pulse key %s...%s",
 			srv.idePulseKey[:min(4, len(srv.idePulseKey))], srv.idePulseKey[max(0, len(srv.idePulseKey)-4):])
 	}
-	srv.ideLockSub = resolveIdeLockSub()
-	if srv.ideLockSub {
-		log.Printf("IDE sub lock: each access key pins to the first login identity (PROXY_IDE_LOCK_SUB)")
-	}
+	srv.ideLockSubInit(resolveIdeLockSub())
 	if pulseMode {
 		base := *idePortBase
 		if base <= 0 {

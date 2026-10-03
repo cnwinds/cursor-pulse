@@ -45,7 +45,7 @@ Pulse web / channel
 | `PROXY_STICKY_MIN_DWELL` | A | Go sticky 最小驻留（默认 30m；`0`/`off` 关闭）。Web 侧同名语义见 `loan_selection.min_switch_minutes` |
 | `PROXY_IDE_PULSE_KEY` | A | 主端口上 IDE 会话的兜底绑定密钥；每 key 专属端口（`/ide-port`，默认 9100 起）优先且按 key 归因 |
 | `PROXY_IDE_PORT_BASE` | A | 每 key IDE 专属监听端口起始值（默认 9100） |
-| `PROXY_IDE_LOCK_SUB` | A | IDE 登录身份锁：接入密钥锁定首个 JWT `sub`，防外借（默认关闭） |
+| `PROXY_IDE_LOCK_SUB` | A | IDE 登录身份锁：代理密钥（Proxy Key）锁定首个 JWT `sub`，防外借（默认关闭） |
 
 ## 常见故障
 

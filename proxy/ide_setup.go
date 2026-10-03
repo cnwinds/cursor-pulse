@@ -29,15 +29,14 @@ func (s *Server) serveCAPEM(w http.ResponseWriter) {
 // CA into the current-user trusted roots and points the local Cursor IDE at
 // this proxy. The address is taken from the Host header the member actually
 // used, so the same endpoint works for LAN-shared and local deployments. The
-// member passes their assigned key via -Key; the script then fetches a
+// member passes their assigned Proxy Key via -Key; the script then fetches a
 // dedicated per-key IDE port from GET /ide-port so IDE usage attributes to
 // that key (the same pk_ key their agent CLI uses).
 func (s *Server) serveSetupScript(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if host == "" {
+	host := sanitizeHostHeader(r)
+	if host == "127.0.0.1" && r.Host == "" {
 		host = "127.0.0.1:8317"
 	}
-	host = strings.ReplaceAll(strings.TrimSpace(host), "'", "")
 	script := strings.ReplaceAll(cursorIDESetupScriptTemplate, "__PROXY_ADDR__", "http://"+host)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(script))
@@ -52,7 +51,7 @@ const cursorIDESetupScriptTemplate = `param(
     [string]$Proxy = '__PROXY_ADDR__'
 )
 # cursor-pulse IDE onboarding - served by cursor-pulse-proxy at __PROXY_ADDR__
-# With -Key (Pulse access key, pk_/pka_): IDE traffic gets a dedicated port and
+# With -Key (Proxy Key, pk_/pka_): IDE traffic gets a dedicated port and
 #   attributes to that key - the same key your agent CLI uses.
 # Without -Key: IDE traffic uses the proxy main port (server-wide IDE key).
 # Idempotent: safe to re-run. Rollback notes are printed at the end.
@@ -77,11 +76,11 @@ if (-not (Test-Path $settingsPath)) {
 }
 $backup = "$settingsPath.bak-cursor-pulse"
 if (-not (Test-Path $backup)) { Copy-Item $settingsPath $backup }
-$raw = Get-Content $settingsPath -Raw
+$raw = Get-Content $settingsPath -Raw -Encoding UTF8
 try {
     $cfg = $raw | ConvertFrom-Json
 } catch {
-    throw ('settings.json is not strict JSON (comments or trailing commas). Edit manually: set http.proxy to ' + $addr + ' and cursor.general.disableHttp2 to true')
+    throw ('settings.json is not strict JSON (comments or trailing commas). Edit manually: set http.proxy to your dedicated port and cursor.general.disableHttp2 to true')
 }
 $cfg | Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $addr -Force
 $cfg | Add-Member -NotePropertyName 'cursor.general.disableHttp2' -NotePropertyValue $true -Force
@@ -92,10 +91,12 @@ Write-Host "  http.proxy=$addr, disableHttp2=true written (backup: $backup)."
 
 Write-Host '[3/3] Checking Cursor IDE...'
 if ($Key -ne '') {
+    $scheme = 'http'
+    if ($addr -like 'https://*') { $scheme = 'https' }
     $mainHost = ($addr -replace '^https?://', '')
-    $portResp = Invoke-RestMethod -UseBasicParsing ('http://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
+    $portResp = Invoke-RestMethod -UseBasicParsing ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
     $addr = $portResp.proxy_host + ':' + $portResp.port
-    $raw = Get-Content $settingsPath -Raw
+    $raw = Get-Content $settingsPath -Raw -Encoding UTF8
     $cfg = $raw | ConvertFrom-Json
     $cfg | Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $addr -Force
     $json = $cfg | ConvertTo-Json -Depth 100

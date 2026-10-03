@@ -13,7 +13,7 @@ type Config struct {
 	PulseURL    string   `json:"pulse_url"`
 	PulseToken  string   `json:"pulse_token"`
 	PoolEvery   string   `json:"pool_every"`      // e.g. "60s"
-	IdePulseKey string   `json:"ide_pulse_key"`   // IDE-originated sessions bind to this access key (Pulse mode only)
+	IdePulseKey string   `json:"ide_pulse_key"`   // IDE-originated sessions bind to this Proxy Key (pk_/pka_; Pulse mode only)
 }
 
 func loadConfig(path string) (*Config, error) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,7 +42,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 
 	reqCT := req.Header.Get("Content-Type")
 	isStreamReq := strings.HasPrefix(reqCT, "application/connect")
-	if debugHeadersEnabled() {
+	if debugHeaders {
 		if req.URL.Path == "/agent.v1.AgentService/RunSSE" {
 			log.Printf("[hdr] %s %s ct=%q clen=%q te=%q expect=%q checksum=%q client-key=%q",
 				req.Method, req.URL.Path, reqCT, req.Header.Get("Content-Length"),
@@ -96,6 +97,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	if s.sessions != nil && !skipAuth {
 		cliTok = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		cliTok = strings.TrimPrefix(cliTok, "bearer ")
+		if cliTok == "" {
+			// No bearer at all must never be TOFU-bound to the IDE proxy key.
+			http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
+			return
+		}
 		b, ok := s.sessions.Lookup(cliTok)
 		if !ok {
 			ideB, handled := s.bindIDESession(w, cliTok)
@@ -316,7 +322,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// Cursor labels some Connect server-streaming responses (notably
 	// agent.v1.AgentService/RunSSE) as text/event-stream, but the body is
 	// ordinary Connect envelopes — same relay and usage tap as the CLI paths.
-	isEventStreamCT := strings.Contains(respCT, "text/event-stream")
+	// Gate by service prefix so a genuinely SSE-framed endpoint outside the
+	// Connect services keeps the legacy unary passthrough instead of being
+	// truncated by a failed envelope read.
+	isEventStreamCT := strings.Contains(respCT, "text/event-stream") &&
+		(strings.HasPrefix(req.URL.Path, "/agent.v1.") || strings.HasPrefix(req.URL.Path, "/aiserver.v1."))
 	if strings.HasPrefix(respCT, "application/connect") || isEventStreamCT {
 		flags, payload, err := readEnvelope(resp.Body)
 		if err != nil {
@@ -373,35 +383,17 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "pulse client not configured", http.StatusServiceUnavailable)
 		return
 	}
-	res, err := s.pulse.Authorize(pulseKey)
-	if err != nil {
-		log.Printf("[mitm] authorize fail-closed: %v", err)
-		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
+	res, ok := authorizeOrReject(w, s.pulse, pulseKey)
+	if !ok {
 		return
 	}
+	// window_limited defers enforcement to business requests so agent login
+	// does not collapse into the misleading "API key is invalid" warning.
 	var windowLimitReason string
-	switch res.Status {
-	case "invalid":
-		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
-		return
-	case "suspended":
-		msg := "suspended"
-		if res.Reason != nil {
-			msg = *res.Reason
-		}
-		http.Error(w, msg, http.StatusForbidden)
-		return
-	case "window_limited":
-		// Defer limit enforcement to business requests so agent login does not
-		// collapse into the misleading "API key is invalid" warning.
+	if res.Status == "window_limited" {
 		windowLimitReason = authWindowReason(res)
 		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
 			res.ProxyKeyID, windowLimitReason)
-	case "ok":
-		// continue
-	default:
-		http.Error(w, "authorize rejected", http.StatusForbidden)
-		return
 	}
 
 	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
@@ -501,6 +493,73 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
 }
 
+// ideSubStore is the login-identity lock state shared by the main port and
+// every per-key IDE listener: enabled flag plus the per-proxy-key pinned subs.
+type ideSubStore struct {
+	mu      sync.Mutex
+	enabled bool
+	byKey   map[string]string // proxy key → pinned login sub
+}
+
+// pin records/validates the login sub for a proxy key. A nil or disabled store
+// allows everything; the first sub claims the key, a different sub loses.
+func (s *ideSubStore) pin(key, sub string) bool {
+	if s == nil || !s.enabled {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byKey == nil {
+		s.byKey = map[string]string{}
+	}
+	if pinned, ok := s.byKey[key]; ok {
+		return pinned == sub
+	}
+	s.byKey[key] = sub
+	return true
+}
+
+// ideLockSubInit wires the optional login-identity lock (PROXY_IDE_LOCK_SUB).
+// The store is created before any per-key listener can be cloned so every
+// listener shares one view.
+func (s *Server) ideLockSubInit(enabled bool) {
+	if !enabled {
+		return
+	}
+	s.ideSub = &ideSubStore{enabled: true}
+	log.Printf("IDE sub lock: each proxy key pins to the first login identity (PROXY_IDE_LOCK_SUB)")
+}
+
+// authorizeOrReject maps an authorize call to the shared HTTP semantics:
+// "ok"/"window_limited" proceed (window limits are enforced on business
+// requests, not at login); everything else writes the error response itself
+// and reports handled=false.
+func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
+	res, err := pulse.Authorize(key)
+	if err != nil {
+		log.Printf("[mitm] authorize fail-closed: %v", err)
+		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
+		return res, false
+	}
+	switch res.Status {
+	case "ok", "window_limited":
+		return res, true
+	case "invalid":
+		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
+		return res, false
+	case "suspended":
+		msg := "suspended"
+		if res.Reason != nil {
+			msg = *res.Reason
+		}
+		http.Error(w, msg, http.StatusForbidden)
+		return res, false
+	default:
+		http.Error(w, "authorize rejected", http.StatusForbidden)
+		return res, false
+	}
+}
+
 // ideIdentityPassthrough reports paths the IDE serves with its own login JWT
 // that must never be rewritten to a pool credential. Rewriting GetMe makes the
 // client's identity-consistency check fail and it re-fetches in a tight loop
@@ -521,43 +580,26 @@ func ideIdentityPassthrough(path string) bool {
 // bindIDESession handles IDE-originated business requests whose bearer token
 // was never issued by an intercepted exchange: Cursor IDE authenticates with
 // its own WorkOS login JWT and never calls exchange_user_api_key. When an IDE
-// access key is configured (-ide-pulse-key), the first request seen from a
-// client token is bound to that key's pool or loan exactly like a CLI session;
-// later requests reuse the binding, including session TTL re-authorize and
-// sticky rotation. It writes the error response itself; handled=false means
-// the caller must stop.
+// proxy key is configured (-ide-pulse-key / per-key port), the first request
+// seen from a client token is bound to that key's pool or loan exactly like a
+// CLI session; later requests reuse the binding, including session TTL
+// re-authorize and sticky rotation. It writes the error response itself;
+// handled=false means the caller must stop.
 func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBinding, bool) {
 	if s.pulse == nil || s.idePulseKey == "" {
 		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 		return SessionBinding{}, false
 	}
-	res, err := s.pulse.Authorize(s.idePulseKey)
-	if err != nil {
-		log.Printf("[ide] authorize fail-closed: %v", err)
-		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
+	res, ok := authorizeOrReject(w, s.pulse, s.idePulseKey)
+	if !ok {
 		return SessionBinding{}, false
 	}
+	// window_limited still binds: the limit is enforced on business requests
+	// below, mirroring the deferred exchange behavior so IDE clients see a
+	// clear 429 resource_exhausted instead of a login failure.
 	windowLimitReason := ""
-	switch res.Status {
-	case "ok":
-	case "window_limited":
-		// Bind anyway; the window limit is enforced on business requests below,
-		// mirroring the deferred exchange behavior so IDE clients see a clear
-		// 429 resource_exhausted instead of a login failure.
+	if res.Status == "window_limited" {
 		windowLimitReason = authWindowReason(res)
-	case "invalid":
-		http.Error(w, "invalid ide access key", http.StatusUnauthorized)
-		return SessionBinding{}, false
-	case "suspended":
-		msg := "suspended"
-		if res.Reason != nil {
-			msg = *res.Reason
-		}
-		http.Error(w, msg, http.StatusForbidden)
-		return SessionBinding{}, false
-	default:
-		http.Error(w, "authorize rejected", http.StatusForbidden)
-		return SessionBinding{}, false
 	}
 
 	b := SessionBinding{PulseKey: s.idePulseKey, WindowLimitReason: windowLimitReason}
@@ -577,20 +619,18 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		}
 		b.ProxyKeyID = res.ProxyKeyID
 	}
-	if sub := jwtSub(cliTok); sub != "" {
-		if !s.pinIDESub(b, sub) {
-			http.Error(w, "ide access key already bound to another login", http.StatusForbidden)
-			if s.pulse != nil {
-				s.pulse.ReportEvent(EventItem{
-					EventType:  "ide_sub_mismatch",
-					ProxyKeyID: b.ProxyKeyID,
-					LoanID:     b.LoanID,
-					Detail:     "login identity differs from the pinned one",
-				})
-			}
-			log.Printf("[ide] sub mismatch on key %s... — rejected", maskClientToken(s.idePulseKey))
-			return SessionBinding{}, false
+	if sub := jwtSub(cliTok); sub != "" && !s.ideSub.pin(s.idePulseKey, sub) {
+		http.Error(w, "proxy key already bound to another login", http.StatusForbidden)
+		if s.pulse != nil {
+			s.pulse.ReportEvent(EventItem{
+				EventType:  "ide_sub_mismatch",
+				ProxyKeyID: b.ProxyKeyID,
+				LoanID:     b.LoanID,
+				Detail:     "login identity differs from the pinned one",
+			})
 		}
+		log.Printf("[ide] sub mismatch on key %s... — rejected", maskClientToken(s.idePulseKey))
+		return SessionBinding{}, false
 	}
 	s.sessions.Bind(cliTok, b)
 	log.Printf("[ide] session bound token=%s... proxy_key_id=%s loan_id=%s credential=%s",
@@ -603,26 +643,6 @@ func maskClientToken(tok string) string {
 		return tok
 	}
 	return tok[:12]
-}
-
-// pinIDESub enforces the optional login-identity lock: the first JWT sub seen
-// on an IDE access key claims it; a different sub is rejected. Always allowed
-// when the lock is off or the token carries no parseable sub.
-func (s *Server) pinIDESub(b SessionBinding, sub string) bool {
-	if !s.ideLockSub {
-		return true
-	}
-	s.ideSubMu.Lock()
-	defer s.ideSubMu.Unlock()
-	if s.ideSubByKey == nil {
-		s.ideSubByKey = map[string]string{}
-	}
-	pinned, ok := s.ideSubByKey[s.idePulseKey]
-	if !ok {
-		s.ideSubByKey[s.idePulseKey] = sub
-		return true
-	}
-	return pinned == sub
 }
 
 // jwtSub best-effort extracts the "sub" claim from a JWT. IDE login tokens are
@@ -653,11 +673,12 @@ func jwtSub(tok string) string {
 	return c.Sub
 }
 
-var debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""
-
-var debugHTTP = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
-
-func debugHeadersEnabled() bool { return debugHeaders }
+// PROXY_DEBUG_HEADERS / PROXY_DEBUG_HTTP enable verbose request logging
+// (off by default).
+var (
+	debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""
+	debugHTTP    = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
+)
 
 func truncateForLog(s string, n int) string {
 	if len(s) <= n {
