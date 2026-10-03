@@ -4,9 +4,12 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-03
+
 ### 新增
 
 - **会员与余额**：成员级会员套餐（窗口规则 + 余额模式 unlimited/prepaid）、钱包流水（充值/扣费/退还/调整）与账单（逐笔余额列、按天/按模型汇总）；团队可开启「必须开通会员才能使用」；内部 `POST /api/internal/v1/proxy/spend-check` 统一校验。
+- **会员管理成员列表**：只显示会员中与已取消的成员（有过会员或余额流水，余额为 0 也保留以便查账单），可按「全部 / 会员中 / 已取消」筛选；未开通成员通过「开通会员」弹窗选择开通。
 - **IDE 专用密钥（pkide_）**：控制台「复制命令 → Cursor IDE」与 `kind=ide` client-setup 签发 `pkide_`（quota 代理密钥与 `proxy_alias` 借用）；`cursor_direct` 仍交付 `cr*`。`pkide_` 仅用于 IDE `http.proxy` 归因，不能 exchange、不能给 CLI、不能走 OpenAI 网关；用量与父 key 一致。借用记录与「我的借用」可对 `proxy_alias` 活跃借用 **重置 IDE 密钥**（立即失效旧 key，复制新接入命令）。
 - **借用 Key 滚动用量限制**：管理员可为 `pka_` 借用配置多条规则（滚动 5 小时 / 7 天 / 30 天，Auto 或 API，整数美元），任一达到即限制对应桶；分配和调整出借方式里用「+」添加，没有规则时不展开。代理在 `AgentService/Run` 超限返回中文 429 与恢复时间，BYOK 与 `cr*` 直连不计入。
 
@@ -29,6 +32,7 @@
 
 - **借用 `usage_caps` 与 `PATCH /api/v2/loans/{id}/usage-cap`**：非空写入返回 400「用量限制已迁移到会员，请在「会员」中设置」。
 - **Cursor `pk_` 的 `window_5h_cost_usd` / `window_7d_cost_usd`**：非空写入同样 400；`pkcp_` 窗口不受影响。
+- **下版删除**：内部 `/api/internal/v1/proxy/loan-usage-cap`（本版委托 spend-check，供旧 Go 代理过渡）、旧版每 key 专属 IDE 端口（`/ide-port`、`PROXY_IDE_PORT_BASE`）。请在升级到下一版前完成 Go 代理升级，并让成员重新复制 IDE 接入命令。
 
 ### 修复
 
@@ -211,7 +215,8 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...v0.4.0
