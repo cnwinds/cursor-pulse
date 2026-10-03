@@ -98,9 +98,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	var binding SessionBinding
 	var cliTok string
 	rewriteAuth := !skipAuth
-	if s.sessions != nil && skipAuth && s.sessionTokens != nil {
-		// A minted client token is useless upstream, so /auth/* calls carrying
-		// one get the bound account's JWT. Unbound tokens pass through as-is.
+	// Minted CLI opaque tokens are useless upstream: rewrite /auth/* only when
+	// the bearer is a bound session. Identity RPCs (GetMe etc.) stay on the
+	// client's login JWT even after IDE TOFU bind — rewriting them causes the
+	// IDE identity-consistency retry storm and can burn pool keys on team 401s.
+	if s.sessions != nil && s.sessionTokens != nil && strings.HasPrefix(req.URL.Path, "/auth/") {
 		tok := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		tok = strings.TrimPrefix(tok, "bearer ")
 		if b, ok := s.sessions.Lookup(tok); ok {
@@ -116,6 +118,13 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			return
 		}
 		b, ok := s.sessions.Lookup(cliTok)
+		// Per-key IDE listeners share SessionMap with the main port. A login
+		// JWT previously TOFU-bound on another key's port must not keep that
+		// attribution when the client moves http.proxy to this listener.
+		if ok && s.ideDedicated && b.PulseKey != s.idePulseKey {
+			s.sessions.Delete(cliTok)
+			ok = false
+		}
 		if !ok {
 			ideB, handled := s.bindIDESession(w, cliTok)
 			if !handled {
@@ -355,8 +364,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			resp.Body.Close()
 			log.Printf("[mitm] %s %s (key %s): stream ended before first envelope: %v",
 				req.Method, req.URL.Path, entry.masked(), err)
-			copyHeaders(w.Header(), resp.Header)
-			w.WriteHeader(http.StatusOK)
+			// Do not echo a silent 200 empty body — IDE chat would hang with no
+			// retry signal and usage would never be recorded.
+			http.Error(w, "cursor-quota-proxy: upstream stream ended before first envelope", http.StatusBadGateway)
 			return
 		}
 		onTok := func(tc TokenCounts, streamProviderModel string) {
@@ -933,7 +943,25 @@ func (s *Server) ideLockSubInit(enabled bool) {
 // and reports handled=false. Seat-aware exchange keeps its own flow
 // (AuthorizeSeat + assignmentMissing) in handleExchange.
 func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
-	res, err := pulse.Authorize(key)
+	return authorizeOrRejectMode(w, pulse, key, false)
+}
+
+// authorizeOrRejectFresh bypasses the auth TTL cache so revoke/suspend is
+// visible immediately on IDE /ide-port and TOFU bind paths.
+func authorizeOrRejectFresh(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
+	return authorizeOrRejectMode(w, pulse, key, true)
+}
+
+func authorizeOrRejectMode(w http.ResponseWriter, pulse *PulseClient, key string, fresh bool) (AuthResult, bool) {
+	var (
+		res AuthResult
+		err error
+	)
+	if fresh {
+		res, err = pulse.AuthorizeFresh(key)
+	} else {
+		res, err = pulse.Authorize(key)
+	}
 	if err != nil {
 		log.Printf("[mitm] authorize fail-closed: %v", err)
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
@@ -976,7 +1004,7 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 		return SessionBinding{}, false
 	}
-	res, ok := authorizeOrReject(w, s.pulse, s.idePulseKey)
+	res, ok := authorizeOrRejectFresh(w, s.pulse, s.idePulseKey)
 	if !ok {
 		return SessionBinding{}, false
 	}
@@ -1021,18 +1049,28 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		}
 		b.ProxyKeyID = res.ProxyKeyID
 	}
-	if sub := jwtSub(cliTok); sub != "" && !s.ideSub.pin(s.idePulseKey, sub) {
-		http.Error(w, "proxy key already bound to another login", http.StatusForbidden)
-		if s.pulse != nil {
-			s.pulse.ReportEvent(EventItem{
-				EventType:  "ide_sub_mismatch",
-				ProxyKeyID: b.ProxyKeyID,
-				LoanID:     b.LoanID,
-				Detail:     "login identity differs from the pinned one",
-			})
+	if s.ideSub != nil && s.ideSub.enabled {
+		// Fail closed: an unparseable / sub-less bearer must not claim the key
+		// (and later lock out a real login), nor skip the pin check entirely.
+		sub := jwtSub(cliTok)
+		if sub == "" {
+			http.Error(w, "login identity required", http.StatusForbidden)
+			log.Printf("[ide] lock on but no JWT sub on key %s — rejected", maskClientToken(s.idePulseKey))
+			return SessionBinding{}, false
 		}
-		log.Printf("[ide] sub mismatch on key %s... — rejected", maskClientToken(s.idePulseKey))
-		return SessionBinding{}, false
+		if !s.ideSub.pin(s.idePulseKey, sub) {
+			http.Error(w, "proxy key already bound to another login", http.StatusForbidden)
+			if s.pulse != nil {
+				s.pulse.ReportEvent(EventItem{
+					EventType:  "ide_sub_mismatch",
+					ProxyKeyID: b.ProxyKeyID,
+					LoanID:     b.LoanID,
+					Detail:     "login identity differs from the pinned one",
+				})
+			}
+			log.Printf("[ide] sub mismatch on key %s — rejected", maskClientToken(s.idePulseKey))
+			return SessionBinding{}, false
+		}
 	}
 	s.sessions.Bind(cliTok, b)
 	log.Printf("[ide] session bound token=%s... proxy_key_id=%s loan_id=%s credential=%s",
@@ -1041,23 +1079,48 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 }
 
 // jwtSub best-effort extracts the "sub" claim from a JWT. IDE login tokens are
-// standard JWS shapes; failure returns "" (never blocks the request).
+// standard JWS shapes; failure returns "". Callers decide whether empty blocks
+// (PROXY_IDE_LOCK_SUB fail-closed) or is ignored (lock off).
+//
+// This does NOT verify the JWS signature (no WorkOS JWKS in-process). It does
+// reject alg=none / empty alg and control characters in sub so a trivial forged
+// token cannot claim a key under PROXY_IDE_LOCK_SUB. Full signature verify remains
+// a known trust-boundary limitation shared with CLI TOFU on reachable ports.
 func jwtSub(tok string) string {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
 		return ""
 	}
-	raw := parts[1]
-	if pad := len(raw) % 4; pad != 0 {
-		raw += strings.Repeat("=", 4-pad)
-	}
-	claims, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		if padded, err2 := base64.URLEncoding.DecodeString(raw); err2 == nil {
-			claims = padded
-		} else {
-			return ""
+	decode := func(seg string) ([]byte, bool) {
+		raw := seg
+		if pad := len(raw) % 4; pad != 0 {
+			raw += strings.Repeat("=", 4-pad)
 		}
+		if b, err := base64.RawURLEncoding.DecodeString(seg); err == nil {
+			return b, true
+		}
+		if b, err := base64.URLEncoding.DecodeString(raw); err == nil {
+			return b, true
+		}
+		return nil, false
+	}
+	hdrBytes, ok := decode(parts[0])
+	if !ok {
+		return ""
+	}
+	var hdr struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(hdrBytes, &hdr); err != nil {
+		return ""
+	}
+	alg := strings.ToUpper(strings.TrimSpace(hdr.Alg))
+	if alg == "" || alg == "NONE" {
+		return ""
+	}
+	claims, ok := decode(parts[1])
+	if !ok {
+		return ""
 	}
 	var c struct {
 		Sub string `json:"sub"`
@@ -1065,5 +1128,14 @@ func jwtSub(tok string) string {
 	if err := json.Unmarshal(claims, &c); err != nil {
 		return ""
 	}
-	return c.Sub
+	sub := c.Sub
+	if sub == "" || len(sub) > 256 {
+		return ""
+	}
+	for _, r := range sub {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return sub
 }

@@ -220,6 +220,16 @@ func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
 	return c.authorize(pulseKey, seatReport{})
 }
 
+// AuthorizeFresh drops any cached authorize result for the key, then calls
+// Authorize. Used by IDE /ide-port and TOFU bind so revoke/suspend is not
+// delayed by the auth TTL cache.
+func (c *PulseClient) AuthorizeFresh(pulseKey string) (AuthResult, error) {
+	c.authMu.Lock()
+	delete(c.authCache, pulseKey)
+	c.authMu.Unlock()
+	return c.Authorize(pulseKey)
+}
+
 // AuthorizeSeat is Authorize plus seat advice for one Quota Pool slot of a
 // session. current is that slot's credential ("" when empty); release means
 // it is being left. held lists the session's other slot credentials so their
@@ -298,8 +308,13 @@ func (c *PulseClient) authorize(pulseKey string, seat seatReport) (AuthResult, e
 	}
 	// loan_alias carries cursor_api_key; loan_pool must see revoke immediately.
 	// Seat reports must not be cached or the occupancy heartbeat dies.
-	// Neither is cached.
+	// Rejects (invalid/suspended/…) are also never cached so a recreated key
+	// is not stuck behind a stale deny, and a revoke is not masked by a prior ok
+	// once the TTL expires — callers that need immediate revoke use AuthorizeFresh.
 	if report || res.Mode == "loan_alias" || res.Mode == "loan_pool" {
+		return res, nil
+	}
+	if res.Status != "ok" && res.Status != "window_limited" {
 		return res, nil
 	}
 	cached := res

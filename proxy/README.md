@@ -55,23 +55,25 @@ $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
 **成员侧一条命令接入**（Windows；`-Key` 为 web-admin「共享池代理」分配的代理密钥（Proxy Key），与 agent CLI 用的是同一把 `pk_`）：
 
 ```powershell
-& ([scriptblock]::Create((irm http://<代理地址>:8317/setup-cursor.ps1))) -Key "pk_..."
+& ([scriptblock]::Create((irm "http://<代理地址>:8317/setup-cursor.ps1"))) -Key "pk_..."
 ```
 
 脚本做四件事：安装 CA 到当前用户受信任根 → 调 `GET /ide-port?key=...` 为这把 key 分配**专属代理端口**（首次 9100 起，持久化，重复执行返回同一端口）→ 备份并把 Cursor `settings.json` 的 `http.proxy` 指到该端口（`cursor.general.disableHttp2`、`http.systemCertificates` 一并写入）→ Cursor 未运行则自动拉起。之后登录 Cursor 即用；该端口上的所有会话 TOFU 绑定到这把 key，归因/窗口限额/吊销与 CLI 完全一致。
 
 也可以无 key 使用服务器级兜底：代理加 `-ide-pulse-key pk_...`（或 `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key`），主端口上的 IDE 未绑定会话统一归因到该 key；两者并存时专属端口优先。CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
 
-管理台「共享池代理」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借。
+管理台「共享池代理 / 借用」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide` 或 `GET /api/v2/loans/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借（解析 JWT `sub`，拒绝 `alg=none`；**不校验签名**，与可达专属口上的 TOFU 信任边界一致；锁在代理内存中，重启后重新认领）。
 
 IDE 接入的行为与限制：
 
-- 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）始终用客户端自己的登录 token 直通——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
+- 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）**始终**用客户端自己的登录 token 直通（含 TOFU 绑定之后）——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
 - IDE 界面账号显示成员自己的登录账号；模型列表、用量等业务数据来自实际服务的池账号。
 - IDE 聊天走 `agent.v1.AgentService/RunSSE`：响应 Content-Type 标为 `text/event-stream` 但实体是标准 Connect 信封帧，代理按 Connect 流中继（逐帧 flush + TurnEnded usage tap），用量与 CLI 同管线入账。
 - **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
 - 对话历史按服务账号在服务端存储：sticky 驻留期内连续，轮换后可能切换会话归属（Switch dwell 缓解）。
-- 每 key 专属端口与会话归因已生效；登录身份锁（`PROXY_IDE_LOCK_SUB`）在主端口与专属端口一致生效，但不持久化——代理重启后首个登录重新认领。
+- 每 key 专属端口与会话归因已生效；专属端口绑定地址与主端口 `PROXY_LISTEN` 同 host（主端口只听 `127.0.0.1` 时专属口不会暴露到全网）。登录身份锁（`PROXY_IDE_LOCK_SUB`）在主端口与专属端口一致生效，开启时要求可解析的 JWT `sub`（无 sub 拒绝绑定）；锁状态不持久化——代理重启后首个登录重新认领。
+- 吊销 / 挂起生效：`/ide-port` 与 TOFU 绑定走 `AuthorizeFresh`（即时）；已绑定会话与 CLI 一样，最多延迟到 `PROXY_SESSION_TTL`（默认 120s）后的重授权。`key` 会出现在 `/ide-port` URL 与本机 `ide_ports.json`（0600）——按「知晓 key 即可接入」信任边界运维。
+- 不要把同一登录会话在「专属口」与「配置了不同 `-ide-pulse-key` 的主端口」之间混用；专属口之间换 key 会重绑，主端口上的 CLI exchange 会话与 IDE 兜底 key 共用 SessionMap。
 
 调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
 

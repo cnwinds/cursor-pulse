@@ -162,6 +162,53 @@ func TestAuthorizeSeatSendsSlotAndBypassesCache(t *testing.T) {
 	}
 }
 
+func TestAuthorizeFreshBypassesCache(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "proxy_key_id": "pk1", "mode": "quota", "reason": nil,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewPulseClient(srv.URL, "tok", time.Minute)
+	if _, err := c.Authorize("pk_x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Authorize("pk_x"); err != nil || hits.Load() != 1 {
+		t.Fatalf("cached authorize hits=%d", hits.Load())
+	}
+	if _, err := c.AuthorizeFresh("pk_x"); err != nil || hits.Load() != 2 {
+		t.Fatalf("AuthorizeFresh should bypass cache hits=%d err=%v", hits.Load(), err)
+	}
+}
+
+func TestAuthorizeDoesNotCacheRejects(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		status := "invalid"
+		if n >= 2 {
+			status = "ok"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": status, "proxy_key_id": "pk1", "mode": "quota", "reason": nil,
+		})
+	}))
+	defer srv.Close()
+
+	c := NewPulseClient(srv.URL, "tok", time.Minute)
+	res, err := c.Authorize("pk_recreate")
+	if err != nil || res.Status != "invalid" {
+		t.Fatalf("first: %+v err=%v", res, err)
+	}
+	res, err = c.Authorize("pk_recreate")
+	if err != nil || res.Status != "ok" || hits.Load() != 2 {
+		t.Fatalf("reject must not cache: %+v hits=%d err=%v", res, hits.Load(), err)
+	}
+}
+
 func TestExchangeConflicts(t *testing.T) {
 	sameLoan := SessionBinding{Mode: "loan_pool", LoanID: "loan-a"}
 	if exchangeConflicts(sameLoan, "loan_pool", "", "loan-a") {

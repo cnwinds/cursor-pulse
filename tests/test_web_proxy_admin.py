@@ -987,8 +987,8 @@ def test_client_setup_ide_kind(env):
     assert body["proxy_url"] == "http://wan.example:8317"
     assert body["shell"] == "powershell"
     assert body["command"] == (
-        "& ([scriptblock]::Create((irm http://wan.example:8317/setup-cursor.ps1))) "
-        f'-Key "{plaintext}"'
+        '& ([scriptblock]::Create((irm "http://wan.example:8317/setup-cursor.ps1"))) '
+        f"-Key '{plaintext}'"
     )
     assert chr(10) not in body["command"]
 
@@ -1000,6 +1000,27 @@ def test_client_setup_ide_kind(env):
     )
     assert resp.status_code == 200
     assert resp.json()["kind"] == "cli"
+
+
+def test_client_setup_ide_rejects_pkcp(env):
+    from pulse.proxy.key_crud import create_coding_plan_key
+
+    _seed_proxy_addresses(env, [{"url": "http://lan.example:8317", "display_name": "内网"}])
+    s = env["sf"]()
+    key, _plain = create_coding_plan_key(
+        s, name="cp", member_id=env["owner"].id, coding_plan_vendor="glm", encryption_key=TEST_KEY
+    )
+    s.commit()
+    key_id = key.id
+    s.close()
+
+    resp = env["client"].get(
+        f"/api/v2/proxy-keys/{key_id}/client-setup",
+        params={"kind": "ide"},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 400
+    assert "pkcp_" in resp.json()["detail"]
 
 
 def test_client_setup_legacy_unrecoverable(env):

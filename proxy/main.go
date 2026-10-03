@@ -169,6 +169,7 @@ Point agent at this proxy and trust the CA (PowerShell):
 			}
 		}
 		reg := newIDEPortRegistry(srv, base, filepath.Join(stateDir, "ide_ports.json"))
+		reg.setListenHost(cfg.Listen)
 		srv.idePorts = reg
 		reg.load()
 	}

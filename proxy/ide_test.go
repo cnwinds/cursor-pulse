@@ -232,6 +232,57 @@ func TestIDEIdentityRPCPassesThroughClientToken(t *testing.T) {
 	}
 }
 
+// After a business request TOFU-binds the login JWT, GetMe must still forward
+// the client's token — not the pool credential selected for that session.
+func TestIDEIdentityRPCPassthroughAfterTOFUBind(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	client := connectClient(t, proxyAddr, caPEM)
+	host := ideUpstreamHost(t, fu.URL)
+
+	bindReq, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindReq.Header.Set("Authorization", "Bearer ide-login-jwt")
+	bindResp, err := client.Do(bindReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindBody, _ := io.ReadAll(bindResp.Body)
+	bindResp.Body.Close()
+	if bindResp.StatusCode != http.StatusOK {
+		t.Fatalf("TOFU bind: status %d body %s", bindResp.StatusCode, bindBody)
+	}
+	if !strings.Contains(string(bindBody), "upstream-auth=Bearer tok") {
+		t.Fatalf("business request should rewrite to pool token, got: %s", bindBody)
+	}
+
+	meReq, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.DashboardService/GetMe",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meReq.Header.Set("Authorization", "Bearer ide-login-jwt")
+	meResp, err := client.Do(meReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer meResp.Body.Close()
+	meBody, _ := io.ReadAll(meResp.Body)
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("GetMe after bind: status %d body %s", meResp.StatusCode, meBody)
+	}
+	if !strings.Contains(string(meBody), "upstream-auth=Bearer ide-login-jwt") {
+		t.Fatalf("GetMe after TOFU bind must still passthrough login JWT, got: %s", meBody)
+	}
+	if strings.Contains(string(meBody), "upstream-auth=Bearer tok") {
+		t.Fatalf("GetMe must not be rewritten to pool credential after bind: %s", meBody)
+	}
+}
+
 func TestIDEWithoutKeyStillRequiresExchange(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
@@ -557,6 +608,41 @@ func TestJwtSubParsing(t *testing.T) {
 	if got := jwtSub("a.!!!.c"); got != "" {
 		t.Fatalf("undecodable payload must yield empty, got %q", got)
 	}
+	noneHdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"attacker"}`))
+	if got := jwtSub(noneHdr + "." + payload + ".sig"); got != "" {
+		t.Fatalf("alg=none must yield empty, got %q", got)
+	}
+}
+
+func TestSafeProxyHostRejectsInjection(t *testing.T) {
+	if !isSafeProxyHost("127.0.0.1:8317") {
+		t.Fatal("loopback:port must be accepted")
+	}
+	if !isSafeProxyHost("proxy.example.com") {
+		t.Fatal("hostname must be accepted")
+	}
+	for _, bad := range []string{
+		"evil.com\r\nWrite-Host pwned",
+		"evil.com'; calc.exe #",
+		"evil.com'$(calc)",
+		"host with spaces",
+		"",
+	} {
+		if isSafeProxyHost(bad) {
+			t.Fatalf("must reject %q", bad)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://x/setup-cursor.ps1", nil)
+	req.Host = "evil.com\r\nWrite-Host pwned"
+	rr := httptest.NewRecorder()
+	(&Server{}).serveSetupScript(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("injected Host must 400, got %d body %q", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "Write-Host") {
+		t.Fatal("injected Host must not appear in response body")
+	}
 }
 
 // serverByAddr reaches into the running test proxy to flip test-only flags.
@@ -856,6 +942,204 @@ func TestAllowlistCoversCursorComBlindTunnel(t *testing.T) {
 	}
 	if hostAllowed("evil.com:443", patterns) {
 		t.Fatal("default allowlist must not allow unrelated hosts")
+	}
+}
+
+// newFakePulseKeys serves authorize ok for a fixed map of pulse key → proxy_key_id.
+func newFakePulseKeys(t *testing.T, keys map[string]string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body struct {
+			PulseKey string `json:"pulse_key"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if id, ok := keys[body.PulseKey]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "proxy_key_id": id, "mode": "quota", "reason": nil,
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid", "proxy_key_id": ""})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestIDECrossPortSessionRebindsPulseKey(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := newFakePulseKeys(t, map[string]string{
+		"pk_a": "pkA",
+		"pk_b": "pkB",
+	})
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	host := ideUpstreamHost(t, fu.URL)
+
+	alloc := func(key string) string {
+		t.Helper()
+		resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=" + key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var pr struct {
+			Port string `json:"port"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&pr)
+		if resp.StatusCode != http.StatusOK || pr.Port == "" {
+			t.Fatalf("alloc %s: status %d port %q", key, resp.StatusCode, pr.Port)
+		}
+		return pr.Port
+	}
+	portA, portB := alloc("pk_a"), alloc("pk_b")
+	tok := "same-login-jwt"
+
+	doUnary := func(port string) int {
+		t.Helper()
+		client := connectClient(t, net.JoinHostPort("127.0.0.1", port), caPEM)
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+			bytes.NewReader([]byte("{}")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+
+	if code := doUnary(portA); code != http.StatusOK {
+		t.Fatalf("bind on A: %d", code)
+	}
+	b, ok := sessions.Lookup(tok)
+	if !ok || b.PulseKey != "pk_a" || b.ProxyKeyID != "pkA" {
+		t.Fatalf("after A: ok=%v binding=%+v", ok, b)
+	}
+	if code := doUnary(portB); code != http.StatusOK {
+		t.Fatalf("rebind on B: %d", code)
+	}
+	b, ok = sessions.Lookup(tok)
+	if !ok || b.PulseKey != "pk_b" || b.ProxyKeyID != "pkB" {
+		t.Fatalf("after B must attribute to pk_b, got ok=%v binding=%+v", ok, b)
+	}
+}
+
+func TestIDEDedicatedPortHidesIdePortEndpoint(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+
+	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pr struct {
+		Port string `json:"port"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&pr)
+	resp.Body.Close()
+	if pr.Port == "" {
+		t.Fatal("expected dedicated port")
+	}
+
+	// Hitting /ide-port on the dedicated listener itself must 404.
+	resp2, err := http.Get("http://127.0.0.1:" + pr.Port + "/ide-port?key=pk_ide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("dedicated /ide-port: got %d want 404", resp2.StatusCode)
+	}
+}
+
+func TestIDELockSubRejectsMissingSub(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	host := ideUpstreamHost(t, fu.URL)
+	s := serverByAddr(t, proxyAddr)
+	s.ideLockSubInit(true)
+
+	client := connectClient(t, proxyAddr, caPEM)
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer not-a-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("lock on + no sub: got %d want 403", resp.StatusCode)
+	}
+}
+
+func TestIDEPortMapConflictReallocates(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := newFakePulseKeys(t, map[string]string{"pk_a": "pkA", "pk_b": "pkB"})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ide_ports.json")
+	// Corrupt map: two keys claim the same port.
+	if err := os.WriteFile(path, []byte(`{"pk_a":9401,"pk_b":9401}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pool := NewPool([]string{"keyA"})
+	pool.exchangeBase = fu.URL
+	pool.client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	ca, _, _, err := loadOrCreateCA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), NewSessionMap())
+	reg := newIDEPortRegistry(s, 9401, path)
+	reg.setListenHost("127.0.0.1:8317")
+	s.idePorts = reg
+	reg.load()
+	t.Cleanup(reg.Close)
+
+	reg.mu.Lock()
+	portA, okA := reg.byKey["pk_a"]
+	portB, okB := reg.byKey["pk_b"]
+	reg.mu.Unlock()
+	if !okA || !okB {
+		t.Fatalf("both keys should be restored/reallocated: a=%v b=%v", okA, okB)
+	}
+	if portA == portB {
+		t.Fatalf("conflict must yield distinct ports, both %d", portA)
+	}
+	if reg.listenHost != "127.0.0.1" {
+		t.Fatalf("listenHost=%q want 127.0.0.1", reg.listenHost)
+	}
+}
+
+func TestSetupScriptAllocatesPortBeforeWritingSettings(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	resp, err := http.Get("http://" + proxyAddr + "/setup-cursor.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	script := string(b)
+	idePortAt := strings.Index(script, "/ide-port?key=")
+	writeAt := strings.Index(script, "WriteAllText($settingsPath")
+	if idePortAt < 0 || writeAt < 0 || idePortAt > writeAt {
+		t.Fatalf("setup must call /ide-port before writing settings (idePort=%d write=%d)", idePortAt, writeAt)
 	}
 }
 

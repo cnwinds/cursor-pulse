@@ -33,9 +33,17 @@ func (s *Server) serveCAPEM(w http.ResponseWriter) {
 // dedicated per-key IDE port from GET /ide-port so IDE usage attributes to
 // that key (the same pk_ key their agent CLI uses).
 func (s *Server) serveSetupScript(w http.ResponseWriter, r *http.Request) {
-	host := sanitizeHostHeader(r)
-	if host == "127.0.0.1" && r.Host == "" {
+	raw := strings.TrimSpace(r.Host)
+	host := ""
+	switch {
+	case raw == "":
 		host = "127.0.0.1:8317"
+	case isSafeProxyHost(raw):
+		host = raw
+	default:
+		// Refuse rather than embed attacker-controlled Host into PowerShell.
+		http.Error(w, "invalid Host header", http.StatusBadRequest)
+		return
 	}
 	script := strings.ReplaceAll(cursorIDESetupScriptTemplate, "__PROXY_ADDR__", "http://"+host)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -69,10 +77,21 @@ if ($store -match 'cursor-quota-proxy') {
     Write-Host '  CA installed into user trusted roots.'
 }
 
-Write-Host '[2/3] Configuring Cursor IDE settings...'
+Write-Host '[2/3] Resolving proxy address for Cursor IDE...'
 $settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
 if (-not (Test-Path $settingsPath)) {
     throw "Cursor settings not found at $settingsPath - start Cursor once, then re-run."
+}
+# With -Key: allocate the dedicated port BEFORE writing settings.json so a
+# failed /ide-port call never leaves http.proxy pointing at the main port
+# (which has no per-member attribution without -ide-pulse-key).
+if ($Key -ne '') {
+    $scheme = 'http'
+    if ($addr -like 'https://*') { $scheme = 'https' }
+    $mainHost = ($addr -replace '^https?://', '')
+    $portResp = Invoke-RestMethod -UseBasicParsing ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
+    $addr = $scheme + '://' + $portResp.proxy_host + ':' + $portResp.port
+    Write-Host ("  per-key IDE port allocated: {0} (attributed to your key)" -f $addr)
 }
 $backup = "$settingsPath.bak-cursor-pulse"
 if (-not (Test-Path $backup)) { Copy-Item $settingsPath $backup }
@@ -90,19 +109,6 @@ $json = $cfg | ConvertTo-Json -Depth 100
 Write-Host "  http.proxy=$addr, disableHttp2=true written (backup: $backup)."
 
 Write-Host '[3/3] Checking Cursor IDE...'
-if ($Key -ne '') {
-    $scheme = 'http'
-    if ($addr -like 'https://*') { $scheme = 'https' }
-    $mainHost = ($addr -replace '^https?://', '')
-    $portResp = Invoke-RestMethod -UseBasicParsing ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
-    $addr = $portResp.proxy_host + ':' + $portResp.port
-    $raw = Get-Content $settingsPath -Raw -Encoding UTF8
-    $cfg = $raw | ConvertFrom-Json
-    $cfg | Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $addr -Force
-    $json = $cfg | ConvertTo-Json -Depth 100
-    [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Write-Host ("  per-key IDE port allocated: {0} (attributed to your key)" -f $addr)
-}
 $cursorRunning = Get-Process Cursor -ErrorAction SilentlyContinue
 if ($cursorRunning) {
     Write-Host '  Cursor is running. Fully quit it (all windows) and start it again to apply.'

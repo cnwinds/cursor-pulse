@@ -47,6 +47,12 @@ type Server struct {
 	// exchange-issued session JWT (CLI-only proxy).
 	idePulseKey string
 
+	// ideDedicated is true on per-key IDE listeners created by withIDEKey.
+	// Those listeners must rebind any session whose PulseKey does not match
+	// idePulseKey (shared SessionMap across ports). The main port keeps this
+	// false so CLI exchange sessions coexist with an optional -ide-pulse-key.
+	ideDedicated bool
+
 	// ideSub is the shared login-identity lock state (PROXY_IDE_LOCK_SUB).
 	// Held by pointer so the main port and every per-key listener enforce one
 	// consistent view. Nil means the lock is off.
@@ -148,6 +154,7 @@ func (s *Server) withIDEKey(key string) *Server {
 		shouldMITM:       s.shouldMITM,
 		connectAllowlist: s.connectAllowlist,
 		idePulseKey:      key,
+		ideDedicated:     true,
 		ideSub:           s.ideSub,
 		caPEMPath:        s.caPEMPath,
 		idePorts:         s.idePorts,
@@ -184,6 +191,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.serveSetupScript(w, r)
 			return
 		case "/ide-port":
+			// Allocation is a main-listener bootstrap concern; dedicated ports
+			// must not mint listeners for arbitrary other keys.
+			if s.ideDedicated {
+				http.Error(w, "ide-port only on main listener", http.StatusNotFound)
+				return
+			}
 			s.serveIDEPort(w, r)
 			return
 		case "/", "/health":

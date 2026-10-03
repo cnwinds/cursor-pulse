@@ -133,11 +133,14 @@ def build_ide_setup_command(*, proxy_url: str, plaintext_key: str) -> str:
 
     代理内置 /setup-cursor.ps1（装 CA、按 key 分配专属端口、改 http.proxy），
     成员整条粘贴执行即可；与 CLI 共用同一把 pk_/pka_ key。
+
+    Key 用单引号包裹，内部单引号按 PowerShell 规则加倍转义。
     """
     url = proxy_url.rstrip("/")
+    safe_key = plaintext_key.replace("'", "''")
     return (
-        f'& ([scriptblock]::Create((irm {url}/setup-cursor.ps1))) '
-        f'-Key "{plaintext_key}"'
+        f'& ([scriptblock]::Create((irm "{url}/setup-cursor.ps1"))) '
+        f"-Key '{safe_key}'"
     )
 
 

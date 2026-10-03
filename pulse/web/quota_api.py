@@ -598,6 +598,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         loan_id: str,
         shell: str = Query(default="powershell", pattern="^(bash|powershell)$"),
         proxy_url: str | None = Query(default=None),
+        kind: str = Query(default="cli", pattern="^(cli|ide)$"),
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
@@ -624,13 +625,37 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
+        delivery = getattr(loan, "delivery_mode", None) or "cursor_direct"
+        if kind == "ide":
+            # 与 proxy-keys client-setup?kind=ide 对齐：管理台「复制命令 · Cursor IDE」
+            # 走 loans 端点时必须返回 setup-cursor.ps1，不能静默回落成 CLI 命令。
+            chosen_addr = addresses[0]
+            if proxy_url:
+                wanted = proxy_url.rstrip("/")
+                chosen_addr = next(
+                    (a for a in addresses if str(a.url).rstrip("/") == wanted),
+                    chosen_addr,
+                )
+            ide_url = str(getattr(chosen_addr, "url", "")).rstrip("/")
+            return {
+                "plaintext_key": plaintext,
+                "delivery_mode": delivery,
+                "proxy_url": ide_url,
+                "shell": "powershell",
+                "kind": "ide",
+                "command": proxy_service.build_ide_setup_command(
+                    proxy_url=ide_url, plaintext_key=plaintext
+                ),
+            }
+
         commands = proxy_service.build_client_setup_commands(plaintext_key=plaintext, addresses=addresses)
         chosen = proxy_service.pick_client_setup_command(commands, shell=shell, proxy_url=proxy_url)
         return {
             "plaintext_key": plaintext,
-            "delivery_mode": getattr(loan, "delivery_mode", None) or "cursor_direct",
+            "delivery_mode": delivery,
             "proxy_url": chosen["proxy_url"],
             "shell": chosen["shell"],
+            "kind": "cli",
             "command": chosen["command"],
             "commands": commands,
         }

@@ -532,10 +532,43 @@ def test_loan_client_setup_powershell(loan_client_env):
     assert body["delivery_mode"] == "proxy_alias"
     assert body["proxy_url"] == "http://proxy.example.com:8317"
     assert body["shell"] == "powershell"
+    assert body.get("kind", "cli") == "cli"
     assert body["command"].startswith('cmd /c "set HTTPS_PROXY=')
     assert f"set CURSOR_API_KEY={api_key}" in body["command"]
     assert "agent -k" in body["command"]
     assert "\n" not in body["command"]
+
+
+def test_loan_client_setup_ide_kind(loan_client_env):
+    """管理台「复制命令 · Cursor IDE」走 loans 端点时必须返回 setup 脚本，不能回落 CLI。"""
+    env = loan_client_env
+    _seed_proxy_addresses(
+        env,
+        [
+            {"url": "http://lan.example:8317", "display_name": "内网"},
+            {"url": "http://wan.example:8317", "display_name": "公网"},
+        ],
+    )
+    loan_id, api_key = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    res = env["client"].get(
+        f"/api/v2/loans/{loan_id}/client-setup",
+        params={"kind": "ide", "proxy_url": "http://wan.example:8317"},
+        headers=_headers(token),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["kind"] == "ide"
+    assert body["shell"] == "powershell"
+    assert body["proxy_url"] == "http://wan.example:8317"
+    assert body["plaintext_key"] == api_key
+    assert body["command"] == (
+        '& ([scriptblock]::Create((irm "http://wan.example:8317/setup-cursor.ps1"))) '
+        f"-Key '{api_key}'"
+    )
+    assert "HTTPS_PROXY" not in body["command"]
+    assert "agent -k" not in body["command"]
 
 
 def test_loan_client_setup_bash(loan_client_env):

@@ -117,9 +117,9 @@ The TypeSafe System One decision model reached through OpenRouter's Decisions en
 _Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance — the Auto-Assigned Loan candidate allowlist is ordered by the deterministic score alone)
 
 **Per-key IDE Port**:
-A dedicated proxy listen port allocated per Proxy Key (`GET /ide-port`, default base 9100, persisted in `ide_ports.json`) so Cursor IDE sessions attribute to that key without client-side key support — Cursor has nowhere to enter one. Setup script fetches it and writes it into IDE `http.proxy`.
+A dedicated proxy listen port allocated per Proxy Key (`GET /ide-port` on the main listener only, default base 9100, persisted in `ide_ports.json`) so Cursor IDE sessions attribute to that key without client-side key support — Cursor has nowhere to enter one. Bind host matches `PROXY_LISTEN`. Setup script allocates the port before writing IDE `http.proxy`. Moving `http.proxy` to another key's port rebinds the login JWT so usage follows the new key.
 _Avoid_: IDE port alone (ambiguous with the main listener); machine-binding schemes (the `x-cursor-checksum` header carries no usable machine identity).
 
 **Login Identity Lock**:
-Optional pin of a Proxy Key to the first IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); a different identity is rejected with 403 and an `ide_sub_mismatch` event. Shared across the main port and every Per-key IDE Port; not persisted across restarts.
-_Avoid_: sub validation (implies server-side verification rather than first-seen pinning).
+Optional pin of a Proxy Key to the first parseable IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); rejects `alg=none` / missing sub / control characters in sub; a different identity is rejected with 403 (`ide_sub_mismatch`). Shared across the main port and every Per-key IDE Port; not persisted across restarts. Does **not** verify WorkOS JWT signatures (reachable-port TOFU trust boundary).
+_Avoid_: treating unsigned claim parsing as cryptographic identity proof.

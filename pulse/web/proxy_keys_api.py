@@ -244,6 +244,12 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
 
         if kind == "ide":
             # Cursor IDE 一键接入：仅 PowerShell，无需 shell 选择。
+            # Coding Plan 网关密钥 (pkcp_) 不走 IDE TOFU /ide-port 路径。
+            if plaintext.startswith("pkcp_"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Coding Plan 密钥 (pkcp_) 不支持 Cursor IDE 接入，请使用 pk_/pka_ 或借用密钥",
+                )
             chosen_addr = addresses[0]
             if proxy_url:
                 wanted = proxy_url.rstrip("/")
