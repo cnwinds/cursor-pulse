@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-03
+
 ### 新增
 
 - **后台左上角显示版本号**：构建时从 `pyproject.toml` 读版本号。HEAD 恰好在干净的 `v<版本>` tag 上算正式版，只显示 `v0.7.0`；其余情况是开发版，显示 `DEV v0.7.0 · <commit>`，有未提交改动时 commit 后带 `*`。悬停可看完整信息，点击复制。Docker 构建通过 `PULSE_BUILD_DESCRIBE` / `PULSE_BUILD_COMMIT` 构建参数传入 git 信息（见 RUNBOOK）。
@@ -231,7 +233,8 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...v0.5.0
