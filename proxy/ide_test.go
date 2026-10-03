@@ -138,21 +138,34 @@ func ideUpstreamHost(t *testing.T, upstreamURL string) string {
 	return host
 }
 
-func TestIDEIdentityPassthrough(t *testing.T) {
-	cases := map[string]bool{
-		"/aiserver.v1.DashboardService/GetMe":                  true,
-		"/aiserver.v1.DashboardService/GetUserProfile":         true,
-		"/aiserver.v1.DashboardService/GetTeams":               true,
-		"/aiserver.v1.DashboardService/GetTeamCommands":        true,
-		"/aiserver.v1.AiService/GetUserStatus":                 true,
-		"/aiserver.v1.DashboardService/GetFilteredUsageEvents": false,
-		"/aiserver.v1.AiService/StreamChat":                    false,
-		"/agent.v1.AgentService/RunSSE":                        false,
-		"/auth/full_user":                                      false,
+// TestBillingPathClassification pins the fail-open orientation: only known
+// billing RPCs get rewritten; everything else — auth family, identity RPCs,
+// telemetry, future service families — keeps the client's own token.
+func TestBillingPathClassification(t *testing.T) {
+	billing := map[string]bool{
+		// Billable AI traffic → rewritten to a pool credential.
+		"/aiserver.v1.DashboardService/GetFilteredUsageEvents": true,
+		"/aiserver.v1.AiService/StreamChat":                    true,
+		"/aiserver.v1.AiService/StreamUnifiedCompletion":       true,
+		"/agent.v1.AgentService/RunSSE":                        true,
+		"/agent.v1.AgentService/Run":                           true,
+		// Identity RPCs inside the billing families stay client-owned.
+		"/aiserver.v1.DashboardService/GetMe":            false,
+		"/aiserver.v1.DashboardService/GetUserProfile":   false,
+		"/aiserver.v1.DashboardService/GetTeams":         false,
+		"/aiserver.v1.DashboardService/GetTeamCommands":  false,
+		"/aiserver.v1.AiService/GetUserStatus":           false,
+		// Auth family, telemetry, and unknown/future families: client-owned.
+		"/auth/full_user":              false,
+		"/auth/exchange_user_api_key":  false,
+		"/tev1/v1/rgstr":               false,
+		"/api/4508016051945472/env/":   false,
+		"/agent2.v1.AgentService/Run":  false,
+		"/aiserver.v2.AiService/Chat":  false,
 	}
-	for path, want := range cases {
-		if got := ideIdentityPassthrough(path); got != want {
-			t.Fatalf("ideIdentityPassthrough(%q) = %v want %v", path, got, want)
+	for path, want := range billing {
+		if got := isBillingPath(path); got != want {
+			t.Fatalf("isBillingPath(%q) = %v want %v", path, got, want)
 		}
 	}
 }

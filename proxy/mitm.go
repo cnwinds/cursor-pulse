@@ -59,12 +59,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				truncate(req.Header.Get("x-client-key"), 60))
 		}
 	}
-	// skipAuth = forward the client's own Authorization untouched. Beyond the
-	// /auth/ family this covers the IDE identity RPCs: Cursor IDE sends its own
-	// WorkOS login JWT there, and rewriting it to a pool credential breaks the
-	// client's identity-consistency checks (GetMe retries in a tight loop) and
-	// lets team-scope 401s burn pool credentials.
-	skipAuth := strings.HasPrefix(req.URL.Path, "/auth/") || ideIdentityPassthrough(req.URL.Path)
+	// skipAuth = forward the client's own Authorization untouched. Only known
+	// billing RPCs are rewritten (see isBillingPath); everything else — /auth/,
+	// identity RPCs, telemetry, unknown services — stays client-owned so new
+	// endpoints fail open to no-attribution, never to identity breakage.
+	skipAuth := !isBillingPath(req.URL.Path)
 	if debugHTTP {
 		log.Printf("[mitm] >> %s %s stream=%v skipAuth=%v", req.Method, req.URL.Path, isStreamReq, skipAuth)
 	}
@@ -117,16 +116,17 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 			return
 		}
+		ideKey := ideKeyFromCtx(req.Context())
 		b, ok := s.sessions.Lookup(cliTok)
 		// Per-key IDE listeners share SessionMap with the main port. A login
 		// JWT previously TOFU-bound on another key's port must not keep that
 		// attribution when the client moves http.proxy to this listener.
-		if ok && s.ideDedicated && b.PulseKey != s.idePulseKey {
+		if ok && ideKey != "" && b.PulseKey != ideKey {
 			s.sessions.Delete(cliTok)
 			ok = false
 		}
 		if !ok {
-			ideB, handled := s.bindIDESession(w, cliTok)
+			ideB, handled := s.bindIDESession(w, req, cliTok)
 			if !handled {
 				return
 			}
@@ -251,7 +251,27 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 
 	var entry *keyEntry
 	var resp *http.Response
-	for attempt := 0; attempt < transportAttempts; attempt++ {
+	if skipAuth && !rewriteAuth {
+		// Passthrough (identity RPCs / telemetry / unknown families, and the
+		// /auth/ family when the bearer is not a bound opaque session token):
+		// forward the client's own Authorization untouched, with no credential
+		// selection and no pool marking — a failure here is the client's,
+		// never an account failure that should rotate the pool.
+		outReq, err := http.NewRequestWithContext(req.Context(), req.Method, target, bodyFor())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		copyHeaders(outReq.Header, req.Header)
+		outReq.Header.Del("Accept-Encoding")
+		resp, err = s.transport.RoundTrip(outReq)
+		if err != nil {
+			log.Printf("[mitm] %s %s passthrough: %v", req.Method, req.URL.Path, err)
+			http.Error(w, "cursor-quota-proxy: upstream unreachable: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+	} else {
+		for attempt := 0; attempt < transportAttempts; attempt++ {
 		var token string
 		var err error
 		if loanPooled {
@@ -306,6 +326,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		}
 		break
 	}
+	}
 	if resp == nil {
 		http.Error(w, "cursor-quota-proxy: upstream unreachable", http.StatusBadGateway)
 		return
@@ -319,7 +340,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		resp.Body.Close()
 		kind := classifyHTTPError(resp.StatusCode, body)
-		if shouldMarkOnFailure(req.URL.Path, kind) {
+		if entry != nil && shouldMarkOnFailure(req.URL.Path, kind) {
 			if loanBound && !loanPooled {
 				s.reportPassthroughFailure(entry, kind, binding)
 			} else {
@@ -335,10 +356,6 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			log.Printf("[mitm] %s %s (key %s): HTTP %d classified %s - pool advanced for next request",
 				req.Method, req.URL.Path, entry.masked(), resp.StatusCode, kind)
 		}
-		if kind == failAuth && isNonFatalAuthPath(req.URL.Path) {
-			log.Printf("[mitm] %s %s (key %s): HTTP %d auth ignored (non-fatal path)",
-				req.Method, req.URL.Path, entry.masked(), resp.StatusCode)
-		}
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)
@@ -348,7 +365,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// --- 200 with Connect streaming body ---
 	respCT := resp.Header.Get("Content-Type")
 	if debugHTTP {
-		log.Printf("[mitm] respCT=%q for %s (key %s)", respCT, req.URL.Path, entry.masked())
+		log.Printf("[mitm] respCT=%q for %s (key %s)", respCT, req.URL.Path, maskedEntry(entry))
 	}
 	// Cursor labels some Connect server-streaming responses (notably
 	// agent.v1.AgentService/RunSSE) as text/event-stream, but the body is
@@ -356,8 +373,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// Gate by service prefix so a genuinely SSE-framed endpoint outside the
 	// Connect services keeps the legacy unary passthrough instead of being
 	// truncated by a failed envelope read.
-	isEventStreamCT := strings.Contains(respCT, "text/event-stream") &&
-		(strings.HasPrefix(req.URL.Path, "/agent.v1.") || strings.HasPrefix(req.URL.Path, "/aiserver.v1."))
+	isEventStreamCT := strings.Contains(respCT, "text/event-stream") && isCursorRPCFamily(req.URL.Path)
 	if strings.HasPrefix(respCT, "application/connect") || isEventStreamCT {
 		flags, payload, err := readEnvelope(resp.Body)
 		if err != nil {
@@ -421,7 +437,10 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				req.Method, req.URL.Path, entry.masked(), kind)
 		}
 		proxyKeyID := binding.ProxyKeyID
-		credID := entry.credentialID
+		credID := ""
+		if entry != nil {
+			credID = entry.credentialID
+		}
 		if loanBound {
 			proxyKeyID = ""
 			credID = entry.credentialID
@@ -821,6 +840,9 @@ func writeLoanUsageCapLimited(w http.ResponseWriter, message string) {
 }
 
 func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
+	if entry == nil {
+		return
+	}
 	if kind == failAuth {
 		entry.invalidate()
 	}
@@ -835,6 +857,9 @@ func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, bindin
 }
 
 func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cliTok string, pool quotaPoolKind) {
+	if entry == nil {
+		return
+	}
 	if kind == failAuth {
 		s.pool.markBad(entry)
 	} else {
@@ -876,6 +901,15 @@ var (
 	debugHTTP    = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
 )
 
+// maskedEntry is nil-safe log labeling for passthrough requests (no pool
+// credential was selected).
+func maskedEntry(e *keyEntry) string {
+	if e == nil {
+		return "passthrough"
+	}
+	return e.masked()
+}
+
 func maskClientToken(tok string) string {
 	if len(tok) <= 12 {
 		return tok
@@ -883,11 +917,39 @@ func maskClientToken(tok string) string {
 	return tok[:12]
 }
 
-// ideIdentityPassthrough reports paths the IDE serves with its own login JWT
-// that must never be rewritten to a pool credential. Rewriting GetMe makes the
-// client's identity-consistency check fail and it re-fetches in a tight loop
-// (observed: 800+ requests/min); team-scope endpoints 401 for pool credentials
-// and would otherwise mark pool keys auth-bad.
+// ideKeyCtx carries the per-key IDE listener's proxy key through the CONNECT
+// hop into the MITM'd requests, so the Server itself is never cloned (every
+// field, lock, and cache stays shared by construction).
+type ideKeyCtx struct{}
+
+func withIDEKeyCtx(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, ideKeyCtx{}, key)
+}
+
+func ideKeyFromCtx(ctx context.Context) string {
+	k, _ := ctx.Value(ideKeyCtx{}).(string)
+	return k
+}
+
+// isCursorRPCFamily reports the Cursor AI RPC families the proxy understands.
+// It gates both auth rewriting and the event-stream envelope routing, so the
+// two stay in lockstep.
+func isCursorRPCFamily(path string) bool {
+	return strings.HasPrefix(path, "/agent.v1.") || strings.HasPrefix(path, "/aiserver.v1.")
+}
+
+// isBillingPath reports paths whose Authorization must be rewritten to a pool
+// credential. Everything else — the /auth/ family, the identity RPCs below,
+// telemetry, and future services — keeps the client's own token: an unknown
+// path fails open to no-attribution instead of breaking identity consistency
+// (observed: rewriting GetMe made the IDE re-fetch in a tight loop).
+func isBillingPath(path string) bool {
+	return isCursorRPCFamily(path) && !ideIdentityPassthrough(path)
+}
+
+// ideIdentityPassthrough reports RPC-family paths the IDE serves with its own
+// login JWT that must never be rewritten to a pool credential (team-scope
+// endpoints also 401 for pool credentials and would burn pool keys).
 func ideIdentityPassthrough(path string) bool {
 	switch path {
 	case "/aiserver.v1.DashboardService/GetMe",
@@ -999,12 +1061,18 @@ func writeAuthReject(w http.ResponseWriter, res AuthResult) {
 // CLI session; later requests reuse the binding, including session TTL
 // re-authorize and sticky rotation. It writes the error response itself;
 // handled=false means the caller must stop.
-func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBinding, bool) {
-	if s.pulse == nil || s.idePulseKey == "" {
+func (s *Server) bindIDESession(w http.ResponseWriter, req *http.Request, cliTok string) (SessionBinding, bool) {
+	// Request-scoped key: the per-key listener's context key wins, else the
+	// server-wide -ide-pulse-key fallback (main port).
+	ideKey := ideKeyFromCtx(req.Context())
+	if ideKey == "" {
+		ideKey = s.idePulseKey
+	}
+	if s.pulse == nil || ideKey == "" {
 		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 		return SessionBinding{}, false
 	}
-	res, ok := authorizeOrRejectFresh(w, s.pulse, s.idePulseKey)
+	res, ok := authorizeOrRejectFresh(w, s.pulse, ideKey)
 	if !ok {
 		return SessionBinding{}, false
 	}
@@ -1016,7 +1084,7 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		windowLimitReason = authWindowReason(res)
 	}
 
-	b := SessionBinding{PulseKey: s.idePulseKey, WindowLimitReason: windowLimitReason}
+	b := SessionBinding{PulseKey: ideKey, WindowLimitReason: windowLimitReason}
 	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
 		b.Mode = res.Mode
 		b.LoanID = res.LoanID
@@ -1055,10 +1123,10 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		sub := jwtSub(cliTok)
 		if sub == "" {
 			http.Error(w, "login identity required", http.StatusForbidden)
-			log.Printf("[ide] lock on but no JWT sub on key %s — rejected", maskClientToken(s.idePulseKey))
+			log.Printf("[ide] lock on but no JWT sub on key %s — rejected", maskClientToken(ideKey))
 			return SessionBinding{}, false
 		}
-		if !s.ideSub.pin(s.idePulseKey, sub) {
+		if !s.ideSub.pin(ideKey, sub) {
 			http.Error(w, "proxy key already bound to another login", http.StatusForbidden)
 			if s.pulse != nil {
 				s.pulse.ReportEvent(EventItem{
@@ -1068,7 +1136,7 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 					Detail:     "login identity differs from the pinned one",
 				})
 			}
-			log.Printf("[ide] sub mismatch on key %s — rejected", maskClientToken(s.idePulseKey))
+			log.Printf("[ide] sub mismatch on key %s — rejected", maskClientToken(ideKey))
 			return SessionBinding{}, false
 		}
 	}

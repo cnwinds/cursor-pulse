@@ -47,12 +47,6 @@ type Server struct {
 	// exchange-issued session JWT (CLI-only proxy).
 	idePulseKey string
 
-	// ideDedicated is true on per-key IDE listeners created by withIDEKey.
-	// Those listeners must rebind any session whose PulseKey does not match
-	// idePulseKey (shared SessionMap across ports). The main port keeps this
-	// false so CLI exchange sessions coexist with an optional -ide-pulse-key.
-	ideDedicated bool
-
 	// ideSub is the shared login-identity lock state (PROXY_IDE_LOCK_SUB).
 	// Held by pointer so the main port and every per-key listener enforce one
 	// consistent view. Nil means the lock is off.
@@ -134,31 +128,14 @@ func (s *Server) SetUpstreamProxy(upstream *url.URL) {
 	s.transport = newOutboundTransport(upstream)
 }
 
-// withIDEKey returns a per-proxy-key view of this server for a dedicated IDE
-// listener: everything is shared with the parent except the pinned
-// idePulseKey and a fresh loan-key passthrough cache. Built field-by-field on
-// purpose — Server embeds locks and must never be copied wholesale; new
-// Server fields must be added here too.
-func (s *Server) withIDEKey(key string) *Server {
-	return &Server{
-		pool:             s.pool,
-		ca:               s.ca,
-		pulse:            s.pulse,
-		sessions:         s.sessions,
-		sticky:           s.sticky,
-		sessionTTL:       s.sessionTTL,
-		sessionTokens:    s.sessionTokens,
-		cpSticky:         s.cpSticky,
-		onRotate:         s.onRotate,
-		transport:        s.transport,
-		shouldMITM:       s.shouldMITM,
-		connectAllowlist: s.connectAllowlist,
-		idePulseKey:      key,
-		ideDedicated:     true,
-		ideSub:           s.ideSub,
-		caPEMPath:        s.caPEMPath,
-		idePorts:         s.idePorts,
-	}
+// withIDEKeyHandler scopes a proxy key to every request served by a per-key
+// IDE listener. Context injection instead of a cloned Server: one instance,
+// so every field, lock, cache, and future addition stays shared by
+// construction — no per-field copy list to maintain.
+func withIDEKeyHandler(h http.Handler, key string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(withIDEKeyCtx(r.Context(), key)))
+	})
 }
 
 func defaultShouldMITM(authority string) bool {
@@ -202,7 +179,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/ide-port":
 			// Allocation is a main-listener bootstrap concern; dedicated ports
 			// must not mint listeners for arbitrary other keys.
-			if s.ideDedicated {
+			if ideKeyFromCtx(r.Context()) != "" {
 				http.Error(w, "ide-port only on main listener", http.StatusNotFound)
 				return
 			}
@@ -276,7 +253,13 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	// Serve this single connection as an HTTP server (h2 via ALPN, or h1).
 	srv := &http.Server{
-		Handler:           http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { s.handleMITM(w, req, authority) }),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// Carry the per-key listener's proxy key across the CONNECT hop.
+			if k := ideKeyFromCtx(r.Context()); k != "" {
+				req = req.WithContext(withIDEKeyCtx(req.Context(), k))
+			}
+			s.handleMITM(w, req, authority)
+		}),
 		TLSConfig:         tlsConf,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		IdleTimeout:       defaultIdleTimeout,

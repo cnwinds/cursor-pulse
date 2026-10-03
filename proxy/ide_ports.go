@@ -132,8 +132,9 @@ func (r *idePortRegistry) saveLocked() {
 }
 
 // listenLocked opens (or reuses) the listener for a port. Caller holds mu.
-// The listener serves a per-proxy-key view of the parent server — see
-// Server.withIDEKey. Refuses to reuse a port already bound to a different key.
+// The listener serves the parent server with the key scoped per request —
+// see withIDEKeyHandler. Refuses to reuse a port already bound to a different
+// key.
 func (r *idePortRegistry) listenLocked(key string, port int) (net.Listener, error) {
 	if owner, ok := r.byPort[port]; ok && owner != key {
 		return nil, fmt.Errorf("port %d already bound to another key", port)
@@ -154,7 +155,7 @@ func (r *idePortRegistry) listenLocked(key string, port int) (net.Listener, erro
 	r.byPort[port] = key
 	// Match the main port's Slowloris baseline (ReadHeaderTimeout / IdleTimeout).
 	srv := &http.Server{
-		Handler:           r.parent.withIDEKey(key),
+		Handler:           withIDEKeyHandler(r.parent, key),
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		IdleTimeout:       defaultIdleTimeout,
 	}

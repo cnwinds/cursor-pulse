@@ -76,7 +76,7 @@ irm http://<代理地址>:8317/uninstall-cursor.ps1 | iex        # 不带 -Key
 
 IDE 接入的行为与限制：
 
-- 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）**始终**用客户端自己的登录 token 直通（含 TOFU 绑定之后）——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
+- **只改写已知计费路径**（`/agent.v1.*`、`/aiserver.v1.*` 且非身份 RPC）：身份族 RPC（`GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`GetUserStatus`）**始终**用客户端自己的登录 token 直通（含 TOFU 绑定之后）；`/auth/*`（除 opaque 会话 token 换回）、遥测与未知服务族同样直通——改写身份 RPC 会让 IDE 身份一致性校验失败（GetMe 无限重试），未知路径默认不归因（fail-open）：新端点最多丢计量，不会断功能。
 - IDE 界面账号显示成员自己的登录账号；模型列表、用量等业务数据来自实际服务的池账号。
 - IDE 聊天走 `agent.v1.AgentService/RunSSE`：响应 Content-Type 标为 `text/event-stream` 但实体是标准 Connect 信封帧，代理按 Connect 流中继（逐帧 flush + TurnEnded usage tap），用量与 CLI 同管线入账。
 - **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
@@ -86,6 +86,10 @@ IDE 接入的行为与限制：
 - 不要把同一登录会话在「专属口」与「配置了不同 `-ide-pulse-key` 的主端口」之间混用；专属口之间换 key 会重绑，主端口上的 CLI exchange 会话与 IDE 兜底 key 共用 SessionMap。
 
 调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
+
+**运维模型（部署前必读）**：每接入一名成员 = 代理多监听一个专属端口（默认 9100 起，上限 1000）。防火墙需放行该端口段；端口与 key 的映射持久化在代理状态目录 `ide_ports.json`（明文保存已分配 key，0600——重启后恢复监听所需，与本地 `-keys` 配置同级信任）。吊销 key 不会自动释放端口，成员跑卸载命令或管理员删除 `ide_ports.json` 对应条目即可。
+
+**平台范围**：安装/卸载一键命令面向 **Windows**（PowerShell 5.1）。macOS/Linux 的 Cursor IDE 按手工步骤接入：① 把 `http://<代理>:8317/ca.pem` 装入系统信任 store（macOS `security add-trusted-cert`；Linux 复制到 ca-certificates 后 `update-ca-certificates`）；② 编辑 `~/.config/Cursor/User/settings.json` 写入 `http.proxy`（专属端口）、`cursor.general.disableHttp2: true`、`http.systemCertificates: true`；③ 重启 Cursor。卸载即反向移除这三项并删除 CA。
 
 
 ### 出站上游代理（翻墙）

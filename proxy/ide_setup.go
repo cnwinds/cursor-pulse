@@ -79,7 +79,8 @@ const cursorIDEUninstallScriptTemplate = `param(
     [string]$Key = '',
     [string]$Proxy = '__PROXY_ADDR__'
 )
-# cursor-pulse IDE offboarding - reverses setup-cursor.ps1:
+# cursor-pulse IDE offboarding - reverses setup-cursor.ps1 (its counterpart;
+# the two scripts must stay in sync about which settings keys are managed):
 # removes the three settings.json keys, removes the proxy CA from the
 # current-user trusted roots, and (with -Key) releases the dedicated IDE port.
 # Idempotent: safe to re-run. The pre-install backup is kept untouched.
@@ -154,6 +155,8 @@ const cursorIDESetupScriptTemplate = `param(
     [string]$Proxy = '__PROXY_ADDR__'
 )
 # cursor-pulse IDE onboarding - served by cursor-pulse-proxy at __PROXY_ADDR__
+# Counterpart: uninstall-cursor.ps1 reverses this script (it removes exactly
+# the three settings keys written below - keep the two in sync).
 # With -Key (Proxy Key, pk_/pka_): IDE traffic gets a dedicated port and
 #   attributes to that key - the same key your agent CLI uses.
 # Without -Key: IDE traffic uses the proxy main port (server-wide IDE key).
