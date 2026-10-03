@@ -65,6 +65,9 @@
             <template v-if="row.usage">
               <p class="expand-line">用量时间：{{ formatChinaTime(row.usage.ts) }}</p>
               <p class="expand-line">
+                桶：{{ poolLabel(row.usage.pool) }} · 来源：{{ row.usage.source?.label || '—' }}
+              </p>
+              <p class="expand-line">
                 Token：输入 {{ row.usage.tokens.input }} · 输出 {{ row.usage.tokens.output }} ·
                 缓存读 {{ row.usage.tokens.cache_read }} · 缓存写 {{ row.usage.tokens.cache_write }} ·
                 推理 {{ row.usage.tokens.reasoning }}
@@ -94,14 +97,8 @@
       <el-table-column label="模型" min-width="120" show-overflow-tooltip>
         <template #default="{ row }">{{ row.usage?.model || '—' }}</template>
       </el-table-column>
-      <el-table-column label="桶" width="72" align="center">
-        <template #default="{ row }">{{ poolLabel(row.usage?.pool) }}</template>
-      </el-table-column>
       <el-table-column label="客户端" width="72" align="center">
         <template #default="{ row }">{{ clientLabel(row.usage?.client) }}</template>
-      </el-table-column>
-      <el-table-column label="来源" min-width="100" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.usage?.source?.label || '—' }}</template>
       </el-table-column>
       <el-table-column label="Token" width="80" align="right">
         <template #default="{ row }">
