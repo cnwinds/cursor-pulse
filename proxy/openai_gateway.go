@@ -54,9 +54,7 @@ func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
 	excluded := []string{}
 	releaseCurrent := false
 	var currentCred string
-	s.cpStickyMu.Lock()
-	currentCred = s.cpStickyCred[pulseKey]
-	s.cpStickyMu.Unlock()
+	currentCred = s.cpSticky.get(pulseKey)
 
 	var seated OpenAIResolveResult
 	defer func() {
@@ -196,12 +194,7 @@ func (s *Server) rememberCpSticky(pulseKey, credentialID string) {
 	if pulseKey == "" || credentialID == "" {
 		return
 	}
-	s.cpStickyMu.Lock()
-	if s.cpStickyCred == nil {
-		s.cpStickyCred = map[string]string{}
-	}
-	s.cpStickyCred[pulseKey] = credentialID
-	s.cpStickyMu.Unlock()
+	s.cpSticky.set(pulseKey, credentialID)
 }
 
 func isOpenAICompatPath(r *http.Request) bool {

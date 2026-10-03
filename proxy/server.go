@@ -30,8 +30,10 @@ type Server struct {
 	passthroughMu sync.Mutex
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
 
-	cpStickyMu   sync.Mutex
-	cpStickyCred map[string]string // pkcp_ pulse key → last credential id
+	// cpSticky remembers Coding-Plan (pkcp_) gateway sticky affinity per
+	// pulse key. Pointer-held so the main port and every per-key IDE listener
+	// share one view.
+	cpSticky *cpStickyState
 
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
 	// (true for Cursor backends); other allowlisted hosts are tunneled blindly.
@@ -60,6 +62,34 @@ type Server struct {
 	idePorts *idePortRegistry
 }
 
+// cpStickyState remembers Coding-Plan (pkcp_) gateway sticky affinity:
+// which credential each pkcp_ pulse key used last. Nil-safe methods.
+type cpStickyState struct {
+	mu   sync.Mutex
+	cred map[string]string // pkcp_ pulse key → last credential id
+}
+
+func (c *cpStickyState) get(pulseKey string) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cred[pulseKey]
+}
+
+func (c *cpStickyState) set(pulseKey, credentialID string) {
+	if c == nil || pulseKey == "" || credentialID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cred == nil {
+		c.cred = map[string]string{}
+	}
+	c.cred[pulseKey] = credentialID
+}
+
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
 	s := &Server{
 		pool:             pool,
@@ -71,6 +101,7 @@ func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Se
 		transport:        newOutboundTransport(nil),
 		shouldMITM:       defaultShouldMITM,
 		connectAllowlist: resolveConnectAllowlist(),
+		cpSticky:         &cpStickyState{},
 	}
 	s.useSeatAdvisor()
 	return s
@@ -111,6 +142,7 @@ func (s *Server) withIDEKey(key string) *Server {
 		sticky:           s.sticky,
 		sessionTTL:       s.sessionTTL,
 		sessionTokens:    s.sessionTokens,
+		cpSticky:         s.cpSticky,
 		onRotate:         s.onRotate,
 		transport:        s.transport,
 		shouldMITM:       s.shouldMITM,

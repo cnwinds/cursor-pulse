@@ -706,6 +706,108 @@ func TestIDELoanAliasBindingFields(t *testing.T) {
 	}
 }
 
+// newFakePulseLoanPool serves a loan_pool authorize result (routing_mode=pool
+// pka_ key roaming across pool candidates).
+func newFakePulseLoanPool(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "proxy_key_id": "", "loan_id": "loan-pool-1",
+			"mode": "loan_pool", "reason": nil,
+			"credential_id": "local-0",
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestIDELoanPoolBindingServesViaSticky(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := newFakePulseLoanPool(t)
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	host := ideUpstreamHost(t, fu.URL)
+
+	// loan_pool keys must pass the /ide-port mode gate (regression: they used
+	// to 500 "authorize misconfigured" because the mode postdates the IDE path).
+	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pka_pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pr struct {
+		Port string `json:"port"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&pr)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || pr.Port == "" {
+		t.Fatalf("/ide-port for loan_pool: status %d port %q", resp.StatusCode, pr.Port)
+	}
+
+	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testJWT("user-a"))
+	r, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != http.StatusOK || !strings.Contains(string(b), "upstream-auth=Bearer tok") {
+		t.Fatalf("loan_pool business request: %d %s", r.StatusCode, b)
+	}
+	binding, ok := sessions.Lookup(testJWT("user-a"))
+	if !ok || binding.Mode != "loan_pool" || binding.LoanID != "loan-pool-1" {
+		t.Fatalf("loan_pool binding wrong: ok=%v %+v", ok, binding)
+	}
+}
+
+func TestIDETTLReauthorizeUsesSeatFlow(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, authCalls := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	host := ideUpstreamHost(t, fu.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	doUnary := func() int {
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+			bytes.NewReader([]byte("{}")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testJWT("user-a"))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	if code := doUnary(); code != http.StatusOK {
+		t.Fatalf("first request: %d", code)
+	}
+
+	// Expire the binding: the next request must run the seat-aware TTL
+	// re-authorize (AuthorizeSeat via the shared /authorize endpoint) and
+	// still serve with a pool credential.
+	s := serverByAddr(t, proxyAddr)
+	s.sessionTTL = 1 * time.Nanosecond
+	before := authCalls.Load()
+	if code := doUnary(); code != http.StatusOK {
+		t.Fatalf("request after TTL expiry (seat reauth): %d", code)
+	}
+	if authCalls.Load() <= before {
+		t.Fatalf("TTL expiry should re-authorize via the seat flow, calls %d -> %d", before, authCalls.Load())
+	}
+}
+
 func TestSetupBootstrapEndpoints(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)

@@ -50,13 +50,13 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			log.Printf("[hdr] %s %s ct=%q clen=%q te=%q expect=%q checksum=%q client-key=%q",
 				req.Method, req.URL.Path, reqCT, req.Header.Get("Content-Length"),
 				req.Header.Get("Transfer-Encoding"), req.Header.Get("Expect"),
-				truncateForLog(req.Header.Get("x-cursor-checksum"), 80),
-				truncateForLog(req.Header.Get("x-client-key"), 40))
+				truncate(req.Header.Get("x-cursor-checksum"), 80),
+				truncate(req.Header.Get("x-client-key"), 40))
 		} else {
 			log.Printf("[hdr] %s %s checksum=%q client-key=%q",
 				req.Method, req.URL.Path,
-				truncateForLog(req.Header.Get("x-cursor-checksum"), 160),
-				truncateForLog(req.Header.Get("x-client-key"), 60))
+				truncate(req.Header.Get("x-cursor-checksum"), 160),
+				truncate(req.Header.Get("x-client-key"), 60))
 		}
 	}
 	// skipAuth = forward the client's own Authorization untouched. Beyond the
@@ -456,30 +456,20 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 	}
 	var windowLimitReason string
 	switch res.Status {
-	case "invalid":
-		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
-		return
-	case "suspended":
-		msg := "suspended"
-		if res.Reason != nil {
-			msg = *res.Reason
-		}
-		http.Error(w, msg, http.StatusForbidden)
-		return
-	case "window_limited":
-		// Defer limit enforcement to business requests so agent login does not
-		// collapse into the misleading "API key is invalid" warning.
-		windowLimitReason = authWindowReason(res)
-		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
-			res.ProxyKeyID, windowLimitReason)
 	case "ok":
 		if assignmentMissing(res) {
 			log.Printf("[mitm] concurrency cap mode=%s loan_id=%s proxy_key=%s", res.Mode, res.LoanID, res.ProxyKeyID)
 			http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
 			return
 		}
+	case "window_limited":
+		// Defer limit enforcement to business requests so agent login does not
+		// collapse into the misleading "API key is invalid" warning.
+		windowLimitReason = authWindowReason(res)
+		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
+			res.ProxyKeyID, windowLimitReason)
 	default:
-		http.Error(w, "authorize rejected", http.StatusForbidden)
+		writeAuthReject(w, res)
 		return
 	}
 
@@ -876,13 +866,6 @@ var (
 	debugHTTP    = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
 )
 
-func truncateForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
 func maskClientToken(tok string) string {
 	if len(tok) <= 12 {
 		return tok
@@ -956,22 +939,27 @@ func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (A
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 		return res, false
 	}
-	switch res.Status {
-	case "ok", "window_limited":
+	if res.Status == "ok" || res.Status == "window_limited" {
 		return res, true
+	}
+	writeAuthReject(w, res)
+	return res, false
+}
+
+// writeAuthReject maps the rejecting authorize statuses to their shared HTTP
+// responses (used by both the plain and seat-aware flows).
+func writeAuthReject(w http.ResponseWriter, res AuthResult) {
+	switch res.Status {
 	case "invalid":
 		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
-		return res, false
 	case "suspended":
 		msg := "suspended"
 		if res.Reason != nil {
 			msg = *res.Reason
 		}
 		http.Error(w, msg, http.StatusForbidden)
-		return res, false
 	default:
 		http.Error(w, "authorize rejected", http.StatusForbidden)
-		return res, false
 	}
 }
 
@@ -1008,6 +996,22 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		b.AllowedCredentialIDs = res.CredentialIDs
 		if key := strings.TrimSpace(res.CursorAPIKey); key != "" {
 			b.CursorAPIKey = key
+		}
+	} else if res.Mode == "loan_pool" {
+		// Pool-roaming loan key (routing_mode=pool): no exchange to pin a
+		// seat here, so bind LoanID/PulseKey and let the first business
+		// request select via sticky + the seat advisor, exactly like the
+		// exchange path presets AutoSticky for CLI sessions.
+		if res.LoanID == "" {
+			log.Printf("[ide] loan_pool missing loan_id — refuse bind")
+			http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
+			return SessionBinding{}, false
+		}
+		b.Mode = res.Mode
+		b.LoanID = res.LoanID
+		b.CredentialID = res.CredentialID
+		if res.SeatAdvised {
+			b.BlockedCredentialIDs = res.BlockedCredentialIDs
 		}
 	} else {
 		if res.ProxyKeyID == "" {

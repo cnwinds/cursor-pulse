@@ -121,7 +121,7 @@ func (r *idePortRegistry) portForKey(w http.ResponseWriter, key string) (int, bo
 		if !ok {
 			return 0, false
 		}
-		if res.ProxyKeyID == "" && res.Mode != "loan_passthrough" && res.Mode != "loan_alias" {
+		if res.ProxyKeyID == "" && res.Mode != "loan_passthrough" && res.Mode != "loan_alias" && res.Mode != "loan_pool" {
 			http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
 			return 0, false
 		}
