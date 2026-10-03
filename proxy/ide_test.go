@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,11 +85,15 @@ func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string, ideKey s
 		t.Fatal(err)
 	}
 	pulse := NewPulseClient(pulseURL, "tok", time.Minute)
+	pulse.usageBatchMax = 1 // flush on every EnqueueUsage (test determinism)
 	sessions = NewSessionMap()
 	s := NewServer(pool, ca, pulse, sessions)
 	s.idePulseKey = ideKey
 	s.caPEMPath = caPath
-	s.idePorts = newIDEPortRegistry(s, 9300, filepath.Join(t.TempDir(), "ide_ports.json"))
+	reg := newIDEPortRegistry(s, 9300, filepath.Join(t.TempDir(), "ide_ports.json"))
+	s.idePorts = reg
+	reg.load()
+	t.Cleanup(reg.Close)
 	s.shouldMITM = func(string) bool { return true }
 	permitTestConnect(s)
 	s.transport = &http.Transport{
@@ -333,6 +338,121 @@ func TestIDEPerKeyPortAttribution(t *testing.T) {
 	binding, ok := sessions.Lookup("ide-login-jwt")
 	if !ok || binding.ProxyKeyID != "pkIDE1" {
 		t.Fatalf("session should bind to the per-key identity, got ok=%v binding=%+v", ok, binding)
+	}
+}
+
+// newFakeUpstreamSSE emulates agent.v1.AgentService/RunSSE exactly as Cursor's
+// backend does: Content-Type text/event-stream, body of plain Connect
+// envelopes, TurnEndedUpdate nested in InteractionUpdate field 14.
+func newFakeUpstreamSSE(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key != "keyA" && key != "keyB" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  "tok" + key[len(key)-1:],
+			"refreshToken": "r",
+		})
+	})
+	mux.HandleFunc("/agent.v1.AgentService/RunSSE", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		turnEnded := msgField(14, append(append(varintField(1, 3595), varintField(2, 998)...), varintField(3, 151103)...))
+		interaction := msgField(1, turnEnded)
+		writeEnvelope(w, 0x00, interaction)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		writeEnvelope(w, endStreamFlag, []byte(`{"metadata":{}}`))
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
+	fu := newFakeUpstreamSSE(t)
+
+	var mu sync.Mutex
+	var usageBodies []map[string]any
+	pulseSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/internal/v1/proxy/authorize":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "reason": nil,
+			})
+		case "/api/internal/v1/proxy/usage":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			usageBodies = append(usageBodies, body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"recorded":1,"suspended":[]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(pulseSrv.Close)
+
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulseSrv.URL, "")
+	portResp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pr struct {
+		Port string `json:"port"`
+	}
+	_ = json.NewDecoder(portResp.Body).Decode(&pr)
+	portResp.Body.Close()
+
+	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
+	req, err := http.NewRequest(http.MethodPost, "https://"+ideUpstreamHost(t, fu.URL)+"/agent.v1.AgentService/RunSSE",
+		bytes.NewReader([]byte{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer ide-login-jwt")
+	req.Header.Set("Content-Type", "application/connect+proto")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("RunSSE status %d body %s", resp.StatusCode, b)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(usageBodies)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(usageBodies) == 0 {
+		t.Fatal("SSE-labeled Connect stream produced no usage report")
+	}
+	items, _ := usageBodies[0]["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("usage envelope has no items: %v", usageBodies[0])
+	}
+	item, _ := items[0].(map[string]any)
+	if item["proxy_key_id"] != "pkIDE1" {
+		t.Fatalf("usage attributed to %v want pkIDE1", item["proxy_key_id"])
+	}
+	toks, _ := item["tokens"].(map[string]any)
+	if toks == nil || toks["input"] != float64(3595) || toks["output"] != float64(998) {
+		t.Fatalf("token counts mismatch: %v", item)
 	}
 }
 

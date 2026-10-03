@@ -45,6 +45,17 @@ func newIDEPortRegistry(parent *Server, base int, path string) *idePortRegistry 
 	}
 }
 
+// Close releases every per-key listener (used by tests; production listeners
+// live for the process lifetime).
+func (r *idePortRegistry) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for port, ln := range r.listeners {
+		ln.Close()
+		delete(r.listeners, port)
+	}
+}
+
 func (r *idePortRegistry) load() {
 	if r.path == "" {
 		return

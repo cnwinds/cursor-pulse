@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -269,19 +267,56 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	if debugHTTP {
 		log.Printf("[mitm] respCT=%q for %s (key %s)", respCT, req.URL.Path, entry.masked())
 	}
-	if debugStreamEnabled() && reqBodySnap != nil && strings.Contains(req.URL.Path, "RunSSE") {
-		dir := debugStreamDir
-		if dir == "" {
-			home, _ := os.UserHomeDir()
-			dir = filepath.Join(home, ".cursor-quota-proxy", "debug-stream")
+	// onTok is shared by the Connect-envelope and SSE relay paths: it converts
+	// tapped TurnEnded token counts into a Pulse usage item attributed to the
+	// binding's proxy key or loan and the credential that actually served.
+	onTok := func(tc TokenCounts, streamProviderModel string) {
+		if s.pulse == nil {
+			return
 		}
-		_ = os.MkdirAll(dir, 0o700)
-		seq := debugStreamSeq.Add(1)
-		stamp := time.Now().UTC().Format("20060102-150405")
-		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-req-%04d.bin", stamp, seq)), reqBodySnap(), 0o600)
-		log.Printf("[mitm] dumped RunSSE request body (%d bytes) for replay", len(reqBodySnap()))
+		var body []byte
+		if reqBodySnap != nil {
+			body = reqBodySnap()
+		}
+		if loanBound {
+			if binding.LoanID == "" {
+				return
+			}
+			// entry.credentialID is the account that actually served this
+			// turn: identical to binding.CredentialID on the pinned path,
+			// and the pool-selected candidate on the roaming path.
+			servedCredID := entry.credentialID
+			model := coalesceBilledModel(
+				logUsageModelTap(req.URL.Path, "", servedCredID, tc, body),
+				streamProviderModel,
+			)
+			s.pulse.EnqueueUsage(UsageItem{
+				LoanID:       binding.LoanID,
+				CredentialID: servedCredID,
+				Model:        model,
+				Tokens:       tc,
+			})
+			return
+		}
+		if binding.ProxyKeyID == "" {
+			return
+		}
+		model := coalesceBilledModel(
+			logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body),
+			streamProviderModel,
+		)
+		s.pulse.EnqueueUsage(UsageItem{
+			ProxyKeyID:   binding.ProxyKeyID,
+			CredentialID: entry.credentialID,
+			Model:        model,
+			Tokens:       tc,
+		})
 	}
-	if strings.HasPrefix(respCT, "application/connect") {
+	// Cursor labels some Connect server-streaming responses (notably
+	// agent.v1.AgentService/RunSSE) as text/event-stream, but the body is
+	// ordinary Connect envelopes — same relay and usage tap as the CLI paths.
+	isEventStreamCT := strings.Contains(respCT, "text/event-stream")
+	if strings.HasPrefix(respCT, "application/connect") || isEventStreamCT {
 		flags, payload, err := readEnvelope(resp.Body)
 		if err != nil {
 			resp.Body.Close()
@@ -290,48 +325,6 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			copyHeaders(w.Header(), resp.Header)
 			w.WriteHeader(http.StatusOK)
 			return
-		}
-		onTok := func(tc TokenCounts, streamProviderModel string) {
-			if s.pulse == nil {
-				return
-			}
-			var body []byte
-			if reqBodySnap != nil {
-				body = reqBodySnap()
-			}
-			if loanBound {
-				if binding.LoanID == "" {
-					return
-				}
-				// entry.credentialID is the account that actually served this
-				// turn: identical to binding.CredentialID on the pinned path,
-				// and the pool-selected candidate on the roaming path.
-				servedCredID := entry.credentialID
-				model := coalesceBilledModel(
-					logUsageModelTap(req.URL.Path, "", servedCredID, tc, body),
-					streamProviderModel,
-				)
-				s.pulse.EnqueueUsage(UsageItem{
-					LoanID:       binding.LoanID,
-					CredentialID: servedCredID,
-					Model:        model,
-					Tokens:       tc,
-				})
-				return
-			}
-			if binding.ProxyKeyID == "" {
-				return
-			}
-			model := coalesceBilledModel(
-				logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body),
-				streamProviderModel,
-			)
-			s.pulse.EnqueueUsage(UsageItem{
-				ProxyKeyID:   binding.ProxyKeyID,
-				CredentialID: entry.credentialID,
-				Model:        model,
-				Tokens:       tc,
-			})
 		}
 		onFailure := func(kind failKind) {
 			if loanBound && !loanPooled {
@@ -361,29 +354,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// --- 200 unary: plain passthrough ---
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(http.StatusOK)
-	if strings.Contains(respCT, "event-stream") {
-		// SSE (e.g. agent.v1.AgentService/RunSSE): plain io.Copy buffers into
-		// the 4 KiB ResponseWriter, so a slow token stream never reaches the
-		// client and the IDE reports "Connection stalled". Forward chunk by
-		// chunk with an explicit flush after every write.
-		buf := make([]byte, 32*1024)
-		for {
-			n, rerr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, werr := w.Write(buf[:n]); werr != nil {
-					break
-				}
-				if f, ok := w.(http.Flusher); ok {
-					f.Flush()
-				}
-			}
-			if rerr != nil {
-				break
-			}
-		}
-	} else {
-		io.Copy(w, resp.Body)
-	}
+	io.Copy(w, resp.Body)
 	resp.Body.Close()
 }
 

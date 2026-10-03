@@ -66,10 +66,9 @@ IDE 接入的行为与限制：
 
 - 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）始终用客户端自己的登录 token 直通——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
 - IDE 界面账号显示成员自己的登录账号；模型列表、用量等业务数据来自实际服务的池账号。
-- IDE 聊天走 `agent.v1.AgentService/RunSSE`（`text/event-stream`）。unary 直通路径对 SSE 逐块 flush——直接 `io.Copy` 会积在 ResponseWriter 缓冲里，客户端永远收不到字节（表现即 "Connection stalled"）。
+- IDE 聊天走 `agent.v1.AgentService/RunSSE`：响应 Content-Type 标为 `text/event-stream` 但实体是标准 Connect 信封帧，代理按 Connect 流中继（逐帧 flush + TurnEnded usage tap），用量与 CLI 同管线入账。
 - **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
 - 对话历史按服务账号在服务端存储：sticky 驻留期内连续，轮换后可能切换会话归属（Switch dwell 缓解）。
-- IDE 聊天流（SSE）的 usage tap 尚未接入：会话归因与窗口限额生效，但流式 token 用量暂不入账（Connect 帧路径已支持，SSE 待补）。
 - 每 key 专属端口与会话归因已生效；按登录身份（JWT `sub`）二次校验是后续增强。
 
 调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
