@@ -396,7 +396,7 @@ def test_spend_check_both_ids_and_empty_both():
     assert bad.status_code == 400
 
 
-def test_spend_check_endpoints_match():
+def test_spend_check_orphan_loan_rules():
     config = AppConfig(
         web=WebConfig(admin_token="t", jwt_secret="jwt-test"),
         tenant=TenantConfig(slug="t", name="T"),
@@ -425,15 +425,10 @@ def test_spend_check_endpoints_match():
         )
     )
     s.commit()
-    headers = {"X-Pulse-Internal-Token": "tok"}
-    old = client.post(
-        "/api/internal/v1/proxy/loan-usage-cap",
-        json={"loan_id": loan.id, "model": "composer-1"},
-        headers=headers,
-    ).json()
-    new = client.post(
+    body = client.post(
         "/api/internal/v1/proxy/spend-check",
         json={"loan_id": loan.id, "model": "composer-1"},
-        headers=headers,
+        headers={"X-Pulse-Internal-Token": "tok"},
     ).json()
-    assert old == new
+    assert body["status"] == "limited"
+    assert body["reason"] == "spend_rule_exceeded"

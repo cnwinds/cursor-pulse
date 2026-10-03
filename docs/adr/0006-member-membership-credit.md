@@ -97,11 +97,11 @@ flowchart LR
 
 响应：沿用旧 loan-usage-cap 结果形状（Go 侧类型 `SpendCheckResult`，原 `LoanUsageCapResult`）：`status`、`reason`、`message`、`resets_at`、`other_pool_open` 等。`status=limited` 时 Go 返回 HTTP **429**，body `{"code":"resource_exhausted","message":"<Python message>"}`。
 
-**`POST /api/internal/v1/proxy/loan-usage-cap`**：本版委托 `evaluate_spend`（仅 `loan_id`），供旧代理过渡；下版删除。
+**`POST /api/internal/v1/proxy/loan-usage-cap`**：v0.7.0 委托 `evaluate_spend`（仅 `loan_id`）供旧代理过渡，此后已删除；`pulse/proxy/loan_usage_cap.py` 兼容层一并删除，借用列表快照与清空封顶移入 `spend_policy.py`（`loan_rule_snapshots`、`clear_loan_rules`）。
 
 **Go**（`proxy/mitm.go`）：对 **非 `loan_passthrough`** 且路径含 **`AgentService/Run`** 的绑定（`quota`、`loan_alias`、`loan_pool` 等），在 `resolveQuotaPool` 之后、上游 `RoundTrip` 之前调用 `CheckSpend`（`proxy/pulse_client.go` → `/spend-check`）。校验失败（网络/非 200）→ HTTP **503**，`cursor-pulse-proxy: 用量校验暂不可用，请稍后重试`（fail-closed）。
 
-**`pk_` 窗口迁出授权**：`authorize.py` 中 `_authorize_proxy_key_row` 不再返回 `window_limited`；限额仅在 Run 上 spend-check。MITM 会话续期路径上的 `window_limited` 分支对 Cursor `pk_` 已是死代码，下版与端口子系统一并删除。
+**`pk_` 窗口迁出授权**：`authorize.py` 中 `_authorize_proxy_key_row` 不再返回 `window_limited`；限额仅在 Run 上 spend-check。MITM 上 Cursor 路径的 `window_limited` 分支已删除（Cursor authorize 只接受 `ok`）；`window_limited` 仅剩 `pkcp_` OpenAI 网关使用。
 
 **客户端归因**：`SessionBinding.Client` — exchange 会话为 `cli`，`bindIDESession` 为 `ide`；`UsageItem.client` 写入 `proxy_key_usages.client`。
 
@@ -147,8 +147,8 @@ flowchart LR
 
 ### 发布与清理
 
-1. **本版**：先升级 **Pulse**（迁移 + `/spend-check`，`/loan-usage-cap` 委托），再升级 **Go 代理**（`CheckSpend` 覆盖非 passthrough 绑定）。
-2. **下版删除**：`loan_usage_cap.py` 兼容层、`/loan-usage-cap`、MITM 上 `window_limited` 死代码、ADR-0005 专属端口子系统（`ide_ports` 等）。
+1. **v0.7.0**：先升级 **Pulse**（迁移 + `/spend-check`，`/loan-usage-cap` 委托），再升级 **Go 代理**（`CheckSpend` 覆盖非 passthrough 绑定）。
+2. **v0.7.0 之后（已完成）**：删除 `loan_usage_cap.py` 兼容层、`/loan-usage-cap`、MITM 上 `window_limited` 死代码、ADR-0005 专属端口子系统（`ide_ports` 等）。从 v0.7.0 之前的版本升级须先经过 v0.7.0（Go 代理全部升级）再升到之后的版本。
 
 ## 非目标
 
@@ -160,7 +160,7 @@ flowchart LR
 
 ## 测试（摘要）
 
-**Python**：`tests/test_spend_policy.py`（三档窗口、`total` 桶、OR、成员范围合并 `pk_`/`pka_`）；`tests/test_membership_credit.py`（钱包、幂等扣费、负余额、`evaluate_spend`、`spend-check` 与 `loan-usage-cap` 一致、opening credit）；`tests/test_legacy_spend_migration.py`（min-merge、幂等、orphan loan、`pkcp_` 不动）；`tests/test_proxy_service.py`（`record_usages` 扣费与 prepaid）。
+**Python**：`tests/test_spend_policy.py`（三档窗口、`total` 桶、OR、成员范围合并 `pk_`/`pka_`）；`tests/test_membership_credit.py`（钱包、幂等扣费、负余额、`evaluate_spend`、`spend-check` 对 orphan 借用按 loan 规则判定、opening credit）；`tests/test_membership_api.py`（管理 API、成员列表 `scope`）；`tests/test_legacy_spend_migration.py`（min-merge、幂等、orphan loan、`pkcp_` 不动）；`tests/test_proxy_service.py`（`record_usages` 扣费与 prepaid）。
 
 **Go**：`proxy/loan_usage_cap_test.go`、`proxy/ide_test.go`（`quota`/`loan_pool` Run 调 spend-check、`loan_passthrough` 不调、429/503、`client=cli`/`ide`）。
 

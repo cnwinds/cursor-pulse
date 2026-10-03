@@ -113,10 +113,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		}
 		tunnelKey, tunnelSrc := tunnelKeyFromCtx(req.Context())
 		b, ok := s.sessions.Lookup(cliTok)
-		// Per-key IDE listeners share SessionMap with the main port. A login
-		// JWT previously TOFU-bound on another tunnel key must not keep that
-		// attribution when the client moves http.proxy. Proxy-minted CLI
-		// exchange tokens are never rebound by a tunnel key.
+		// A login JWT previously TOFU-bound on another tunnel key must not
+		// keep that attribution when the client moves http.proxy. Proxy-minted
+		// CLI exchange tokens are never rebound by a tunnel key.
 		if ok && tunnelKey != "" && b.PulseKey != tunnelKey && !s.sessionTokens.owns(cliTok) {
 			s.sessions.Delete(cliTok)
 			ok = false
@@ -168,7 +167,6 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 					}
 				}
 				store(func(x *SessionBinding) {
-					x.WindowLimitReason = ""
 					x.BoundAt = now
 					if res.CredentialID != "" {
 						x.CredentialID = res.CredentialID
@@ -193,23 +191,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 						*x.sticky(reauthPool) = stickySlot{CredentialID: moved, Since: now}
 					}
 				})
-			case "window_limited":
-				reason := authWindowReason(res)
-				store(func(x *SessionBinding) {
-					x.WindowLimitReason = reason
-					x.BoundAt = now
-				})
-				writeWindowLimited(w, reason)
-				return
 			default:
 				s.sessions.Delete(cliTok)
 				http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 				return
 			}
-		}
-		if b.WindowLimitReason != "" {
-			writeWindowLimited(w, b.WindowLimitReason)
-			return
 		}
 		binding = b
 	}
@@ -452,7 +438,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var windowLimitReason string
 	switch res.Status {
 	case "ok":
 		if assignmentMissing(res) {
@@ -460,12 +445,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
 			return
 		}
-	case "window_limited":
-		// Defer limit enforcement to business requests so agent login does not
-		// collapse into the misleading "API key is invalid" warning.
-		windowLimitReason = authWindowReason(res)
-		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
-			res.ProxyKeyID, windowLimitReason)
 	default:
 		writeAuthReject(w, res)
 		return
@@ -506,7 +485,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				PulseKey:             pulseKey,
 				Client:               "cli",
 				CursorAPIKey:         exchangeKey,
-				WindowLimitReason:    windowLimitReason,
 				AllowedCredentialIDs: res.CredentialIDs,
 				ExpiresAt:            expiresAt,
 			}
@@ -552,7 +530,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				PulseKey:             pulseKey,
 				Client:               "cli",
 				AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
-				WindowLimitReason:    windowLimitReason,
 				BlockedCredentialIDs: res.BlockedCredentialIDs,
 				ExpiresAt:            expiresAt,
 			})
@@ -590,7 +567,6 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			PulseKey:             pulseKey,
 			Client:               "cli",
 			AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
-			WindowLimitReason:    windowLimitReason,
 			BlockedCredentialIDs: res.BlockedCredentialIDs,
 			ExpiresAt:            expiresAt,
 		})
@@ -772,37 +748,6 @@ func containsID(ids []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func authWindowReason(res AuthResult) string {
-	if res.Reason != nil && strings.TrimSpace(*res.Reason) != "" {
-		return strings.TrimSpace(*res.Reason)
-	}
-	return "window_limited"
-}
-
-func windowLimitMessage(reason string) string {
-	switch reason {
-	case "window_5h_exceeded":
-		return "pulse: 5h window cost limit exceeded; raise limit or retry later"
-	case "window_7d_exceeded":
-		return "pulse: 7d window cost limit exceeded; raise limit or retry later"
-	case "", "window_limited":
-		return "pulse: window cost limit exceeded; raise limit or retry later"
-	default:
-		return "pulse: window cost limit exceeded (" + reason + "); raise limit or retry later"
-	}
-}
-
-func writeWindowLimited(w http.ResponseWriter, reason string) {
-	msg := windowLimitMessage(reason)
-	log.Printf("[mitm] reject request: %s", msg)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusTooManyRequests)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"code":    "resource_exhausted",
-		"message": msg,
-	})
 }
 
 func writeSpendLimited(w http.ResponseWriter, message string) {
@@ -1039,8 +984,8 @@ func ideIdentityPassthrough(path string) bool {
 	return false
 }
 
-// ideSubStore is the login-identity lock state shared by the main port and
-// every per-key IDE listener: enabled flag plus the per-proxy-key pinned subs.
+// ideSubStore is the login-identity lock: enabled flag plus the
+// per-proxy-key pinned subs.
 type ideSubStore struct {
 	mu      sync.Mutex
 	enabled bool
@@ -1066,8 +1011,6 @@ func (s *ideSubStore) pin(key, sub string) bool {
 }
 
 // ideLockSubInit wires the optional login-identity lock (PROXY_IDE_LOCK_SUB).
-// The store is created before any per-key listener can be cloned so every
-// listener shares one view.
 func (s *Server) ideLockSubInit(enabled bool) {
 	if !enabled {
 		return
@@ -1076,37 +1019,16 @@ func (s *Server) ideLockSubInit(enabled bool) {
 	log.Printf("IDE sub lock: each proxy key pins to the first login identity (PROXY_IDE_LOCK_SUB)")
 }
 
-// authorizeOrReject maps a plain authorize call to the shared HTTP semantics:
-// "ok"/"window_limited" proceed (window limits are enforced on business
-// requests, not at login); everything else writes the error response itself
-// and reports handled=false. Seat-aware exchange keeps its own flow
-// (AuthorizeSeat + assignmentMissing) in handleExchange.
-func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
-	return authorizeOrRejectMode(w, pulse, key, false)
-}
-
 // authorizeOrRejectFresh bypasses the auth TTL cache so revoke/suspend is
-// visible immediately on IDE /ide-port and TOFU bind paths.
+// visible immediately on IDE TOFU bind.
 func authorizeOrRejectFresh(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
-	return authorizeOrRejectMode(w, pulse, key, true)
-}
-
-func authorizeOrRejectMode(w http.ResponseWriter, pulse *PulseClient, key string, fresh bool) (AuthResult, bool) {
-	var (
-		res AuthResult
-		err error
-	)
-	if fresh {
-		res, err = pulse.AuthorizeFresh(key)
-	} else {
-		res, err = pulse.Authorize(key)
-	}
+	res, err := pulse.AuthorizeFresh(key)
 	if err != nil {
 		log.Printf("[mitm] authorize fail-closed: %v", err)
 		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 		return res, false
 	}
-	if res.Status == "ok" || res.Status == "window_limited" {
+	if res.Status == "ok" {
 		return res, true
 	}
 	writeAuthReject(w, res)
@@ -1153,11 +1075,11 @@ func allowedUserinfoIDEKey(key string) bool {
 // bindIDESession handles IDE-originated business requests whose bearer token
 // was never issued by an intercepted exchange: Cursor IDE authenticates with
 // its own WorkOS login JWT and never calls exchange_user_api_key. When a
-// tunnel key is present (per-key listener or Proxy-Authorization userinfo),
-// the first request seen from a client token is bound to that key's pool or
-// loan exactly like a CLI session; later requests reuse the binding, including
-// session TTL re-authorize and sticky rotation. It writes the error response
-// itself; handled=false means the caller must stop.
+// tunnel key is present (Proxy-Authorization userinfo), the first request
+// seen from a client token is bound to that key's pool or loan exactly like a
+// CLI session; later requests reuse the binding, including session TTL
+// re-authorize and sticky rotation. It writes the error response itself;
+// handled=false means the caller must stop.
 func (s *Server) bindIDESession(w http.ResponseWriter, tunnelKey string, tunnelSrc tunnelKeySource, path, cliTok string) (SessionBinding, bool) {
 	if s.pulse == nil {
 		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
@@ -1176,15 +1098,8 @@ func (s *Server) bindIDESession(w http.ResponseWriter, tunnelKey string, tunnelS
 	if !ok {
 		return SessionBinding{}, false
 	}
-	// window_limited still binds: the limit is enforced on business requests
-	// below, mirroring the deferred exchange behavior so IDE clients see a
-	// clear 429 resource_exhausted instead of a login failure.
-	windowLimitReason := ""
-	if res.Status == "window_limited" {
-		windowLimitReason = authWindowReason(res)
-	}
 
-	b := SessionBinding{PulseKey: tunnelKey, Client: "ide", WindowLimitReason: windowLimitReason}
+	b := SessionBinding{PulseKey: tunnelKey, Client: "ide"}
 	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
 		b.Mode = res.Mode
 		b.LoanID = res.LoanID

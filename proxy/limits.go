@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	defaultMaxRequestBody   = 32 << 20 // 32 MiB
+	defaultMaxRequestBody    = 32 << 20 // 32 MiB
 	defaultMaxUsageTapBuffer = 8 << 20  // 8 MiB
 	defaultReadHeaderTimeout = 30 * time.Second
 	defaultIdleTimeout       = 120 * time.Second
-	defaultExhaustedReset = 30 * time.Minute // override with PROXY_EXHAUSTED_RESET; 0/off/false disables
+	defaultExhaustedReset    = 30 * time.Minute // override with PROXY_EXHAUSTED_RESET; 0/off/false disables
 )
 
 // maxUsageTapBuffer caps usageTapWriter accumulation; tests may temporarily lower it.

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -26,7 +25,7 @@ func main() {
 		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
 		stickyMinDwell = flag.Duration("sticky-min-dwell", 0, stickyMinDwellUsage)
 		idePulseKey    = flag.String("ide-pulse-key", "", "removed/ignored: IDE sessions use pkide_ in http.proxy userinfo (re-run setup-cursor.ps1)")
-		idePortBase    = flag.Int("ide-port-base", 0, "deprecated: first port for per-key IDE listeners (env PROXY_IDE_PORT_BASE, default 9100; Pulse mode only)")
+		idePortBase    = flag.Int("ide-port-base", 0, "removed/ignored: dedicated IDE listeners are gone; use the shared main port with a pkide_ key")
 	)
 	flag.Parse()
 
@@ -153,21 +152,10 @@ Point agent at this proxy and trust the CA (PowerShell):
 	if removedIDEPulseKeySet(*idePulseKey, os.Getenv("PROXY_IDE_PULSE_KEY"), cfg.IdePulseKey) {
 		log.Printf("ERROR: -ide-pulse-key / PROXY_IDE_PULSE_KEY / config ide_pulse_key has been removed and is ignored; IDE clients must re-run setup-cursor.ps1 with an IDE key (pkide_) from the console")
 	}
-	srv.ideLockSubInit(resolveIdeLockSub())
-	if pulseMode {
-		base := *idePortBase
-		if base <= 0 {
-			if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("PROXY_IDE_PORT_BASE"))); err == nil && v > 0 {
-				base = v
-			} else {
-				base = defaultIDEPortBase
-			}
-		}
-		reg := newIDEPortRegistry(srv, base, filepath.Join(stateDir, "ide_ports.json"))
-		reg.setListenHost(cfg.Listen)
-		srv.idePorts = reg
-		reg.load()
+	if removedIDEPortBaseSet(*idePortBase, os.Getenv("PROXY_IDE_PORT_BASE")) {
+		log.Printf("ERROR: -ide-port-base / PROXY_IDE_PORT_BASE has been removed and is ignored; IDE clients must use the shared main port with a pkide_ key (re-run setup-cursor.ps1)")
 	}
+	srv.ideLockSubInit(resolveIdeLockSub())
 
 	upstreamRaw := firstNonEmpty(*upstreamProxy, os.Getenv("PROXY_UPSTREAM_URL"))
 	upstream, err := parseUpstreamProxy(upstreamRaw)
@@ -238,6 +226,13 @@ func firstNonEmpty(vals ...string) string {
 // still configured (-ide-pulse-key flag, PROXY_IDE_PULSE_KEY, or ide_pulse_key).
 func removedIDEPulseKeySet(flagVal, envVal, cfgVal string) bool {
 	return firstNonEmpty(flagVal, envVal, cfgVal) != ""
+}
+
+// removedIDEPortBaseSet reports whether the removed dedicated-IDE-port config
+// is still set (-ide-port-base flag or PROXY_IDE_PORT_BASE). A zero flag is
+// the unset default; any non-empty env value counts as configured.
+func removedIDEPortBaseSet(flagVal int, envVal string) bool {
+	return flagVal != 0 || strings.TrimSpace(envVal) != ""
 }
 
 const defaultSessionTTL = 120 * time.Second

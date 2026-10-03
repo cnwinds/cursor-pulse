@@ -22,7 +22,6 @@ func buildModelTapEnvelope(cands []string) []byte {
 	return frame
 }
 
-
 func buildRequestedModel(modelID string, maxMode, fast bool) []byte {
 	var m []byte
 	m = append(m, strField(1, modelID)...)

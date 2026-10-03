@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
@@ -12,8 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,7 +96,7 @@ func ideTunnelClient(t *testing.T, proxyAddr string, caPEM []byte) *http.Client 
 }
 
 // newIDETestProxy wires a Pulse-mode proxy against the given upstream and fake
-// Pulse, mirroring newPulseTestProxy but with TLS test upstream and IDE ports.
+// Pulse, mirroring newPulseTestProxy but with TLS test upstream.
 func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string) (addr string, caPEM []byte, sessions *SessionMap) {
 	t.Helper()
 	pool := NewPool([]string{"keyA", "keyB"})
@@ -115,10 +112,6 @@ func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string) (addr st
 	sessions = NewSessionMap()
 	s := NewServer(pool, ca, pulse, sessions)
 	s.caPEMPath = caPath
-	reg := newIDEPortRegistry(s, 9300, filepath.Join(t.TempDir(), "ide_ports.json"))
-	s.idePorts = reg
-	reg.load()
-	t.Cleanup(reg.Close)
 	s.shouldMITM = func(string) bool { return true }
 	permitTestConnect(s)
 	s.transport = &http.Transport{
@@ -410,58 +403,13 @@ func TestIDESuspendedKeyRejected(t *testing.T) {
 	}
 }
 
-func TestIDEPerKeyPortAttribution(t *testing.T) {
+func TestIDEUserinfoAttributionBindsSession(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
 	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 
-	// Allocate a per-key IDE port via the bootstrap endpoint.
-	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var portResp struct {
-		Port      string `json:"port"`
-		ProxyHost string `json:"proxy_host"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&portResp); err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || portResp.Port == "" {
-		t.Fatalf("/ide-port: status %d resp %v", resp.StatusCode, portResp)
-	}
-
-	// Same key returns the same port (idempotent allocation).
-	resp2, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var portResp2 struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(resp2.Body).Decode(&portResp2)
-	resp2.Body.Close()
-	if portResp2.Port != portResp.Port {
-		t.Fatalf("port changed on re-alloc: %s -> %s", portResp.Port, portResp2.Port)
-	}
-
-	// Invalid key is rejected.
-	resp3, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_unknown")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp3.Body.Close()
-	if resp3.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unknown key: status %d want 401", resp3.StatusCode)
-	}
-
-	// A business request through the dedicated port binds to the key with no
-	// server-wide -ide-pulse-key configured. (Authorize results are cached by
-	// PulseClient, so call counting cannot observe the bind — assert the
-	// resulting session binding instead.)
-	client := connectClient(t, net.JoinHostPort("127.0.0.1", portResp.Port), caPEM)
 	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 		bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -475,11 +423,11 @@ func TestIDEPerKeyPortAttribution(t *testing.T) {
 	defer r.Body.Close()
 	b, _ := io.ReadAll(r.Body)
 	if r.StatusCode != http.StatusOK || !strings.Contains(string(b), "upstream-auth=Bearer tok") {
-		t.Fatalf("per-key port request: status %d body %s", r.StatusCode, b)
+		t.Fatalf("userinfo request: status %d body %s", r.StatusCode, b)
 	}
 	binding, ok := sessions.Lookup("ide-login-jwt")
-	if !ok || binding.ProxyKeyID != "pkIDE1" {
-		t.Fatalf("session should bind to the per-key identity, got ok=%v binding=%+v", ok, binding)
+	if !ok || binding.ProxyKeyID != "pkIDE1" || binding.PulseKey != testIDEKey || binding.Client != "ide" {
+		t.Fatalf("session should bind to the userinfo IDE key, got ok=%v binding=%+v", ok, binding)
 	}
 }
 
@@ -515,7 +463,7 @@ func newFakeUpstreamSSE(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
+func TestIDERunSSEUsageTappedThroughUserinfo(t *testing.T) {
 	fu := newFakeUpstreamSSE(t)
 
 	var mu sync.Mutex
@@ -523,8 +471,16 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 	pulseSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/internal/v1/proxy/authorize":
+			var body struct {
+				PulseKey string `json:"pulse_key"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if !strings.HasPrefix(body.PulseKey, "pkide_") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "reason": nil,
+				"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "scope": "ide",
 			})
 		case "/api/internal/v1/proxy/spend-check":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
@@ -543,17 +499,7 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 	t.Cleanup(pulseSrv.Close)
 
 	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulseSrv.URL)
-	portResp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pr struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(portResp.Body).Decode(&pr)
-	portResp.Body.Close()
-
-	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	req, err := http.NewRequest(http.MethodPost, "https://"+ideUpstreamHost(t, fu.URL)+"/agent.v1.AgentService/RunSSE",
 		bytes.NewReader([]byte{}))
 	if err != nil {
@@ -593,6 +539,9 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 	item, _ := items[0].(map[string]any)
 	if item["proxy_key_id"] != "pkIDE1" {
 		t.Fatalf("usage attributed to %v want pkIDE1", item["proxy_key_id"])
+	}
+	if item["client"] != "ide" {
+		t.Fatalf("usage client=%v want ide", item["client"])
 	}
 	toks, _ := item["tokens"].(map[string]any)
 	if toks == nil || toks["input"] != float64(3595) || toks["output"] != float64(998) {
@@ -732,54 +681,6 @@ func serverByAddr(t *testing.T, addr string) *Server {
 	return nil
 }
 
-func TestIDELockSubEnforcedOnPerKeyPort(t *testing.T) {
-	fu := newFakeUpstreamIDE(t)
-	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
-	host := ideUpstreamHost(t, fu.URL)
-
-	// Enable the lock BEFORE the per-key listener is cloned so the clone
-	// shares the store (regression: the clone used to miss the lock fields
-	// entirely, silently disabling PROXY_IDE_LOCK_SUB on IDE ports).
-	s := serverByAddr(t, proxyAddr)
-	s.ideLockSubInit(true)
-
-	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pr struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&pr)
-	resp.Body.Close()
-	if pr.Port == "" {
-		t.Fatal("no port allocated")
-	}
-	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
-	doUnary := func(sub string) int {
-		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
-			bytes.NewReader([]byte("{}")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Authorization", "Bearer "+testJWT(sub))
-		r, err := client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer r.Body.Close()
-		io.Copy(io.Discard, r.Body)
-		return r.StatusCode
-	}
-	if code := doUnary("user-a"); code != http.StatusOK {
-		t.Fatalf("first login should bind via per-key port: %d", code)
-	}
-	if code := doUnary("user-b"); code != http.StatusForbidden {
-		t.Fatalf("foreign sub must be rejected on per-key port, got %d", code)
-	}
-}
-
 func TestIDEEmptyAuthorizationRejected(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
@@ -829,18 +730,8 @@ func TestIDELoanAliasBindingFields(t *testing.T) {
 	pulse := newFakePulseLoan(t)
 	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
+	client := connectClientAuth(t, proxyAddr, caPEM, "pkide_loan", "x")
 
-	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pka_loan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pr struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&pr)
-	resp.Body.Close()
-
-	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
 	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 		bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -891,23 +782,8 @@ func TestIDELoanPoolBindingServesViaSticky(t *testing.T) {
 	pulse := newFakePulseLoanPool(t)
 	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
+	client := connectClientAuth(t, proxyAddr, caPEM, "pkide_pool", "x")
 
-	// loan_pool keys must pass the /ide-port mode gate (regression: they used
-	// to 500 "authorize misconfigured" because the mode postdates the IDE path).
-	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pka_pool")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pr struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&pr)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || pr.Port == "" {
-		t.Fatalf("/ide-port for loan_pool: status %d port %q", resp.StatusCode, pr.Port)
-	}
-
-	client := connectClient(t, net.JoinHostPort("127.0.0.1", pr.Port), caPEM)
 	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 		bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -966,72 +842,6 @@ func TestIDETTLReauthorizeUsesSeatFlow(t *testing.T) {
 	}
 	if authCalls.Load() <= before {
 		t.Fatalf("TTL expiry should re-authorize via the seat flow, calls %d -> %d", before, authCalls.Load())
-	}
-}
-
-func TestIDEPortReleaseLifecycle(t *testing.T) {
-	fu := newFakeUpstreamIDE(t)
-	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
-
-	getPort := func(key string) (int, int) {
-		resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=" + key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		var pr struct {
-			Port string `json:"port"`
-		}
-		if resp.StatusCode != http.StatusOK {
-			return 0, resp.StatusCode
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&pr)
-		n, _ := strconv.Atoi(pr.Port)
-		return n, resp.StatusCode
-	}
-
-	port1, code := getPort("pk_ide")
-	if code != http.StatusOK || port1 == 0 {
-		t.Fatalf("allocate: port=%d code=%d", port1, code)
-	}
-	// DELETE with the wrong key leaves the listener alone.
-	req, _ := http.NewRequest(http.MethodDelete, "http://"+proxyAddr+"/ide-port?key=pk_other", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("release unknown key: %d want 404", resp.StatusCode)
-	}
-	if p, _ := getPort("pk_ide"); p != port1 {
-		t.Fatalf("allocation changed after foreign release: %d -> %d", port1, p)
-	}
-
-	// DELETE with the right key releases: 204, port closes, next allocate
-	// may reuse the same port, persistence shrinks.
-	req, _ = http.NewRequest(http.MethodDelete, "http://"+proxyAddr+"/ide-port?key=pk_ide", nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("release: %d want 204", resp.StatusCode)
-	}
-	// The released listener is closed: dialing it must fail quickly.
-	dialCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port1)))
-	if err == nil {
-		conn.Close()
-		t.Fatalf("listener on :%d should be closed after release", port1)
-	}
-	// Re-allocating the same key yields a working port again.
-	port2, code := getPort("pk_ide")
-	if code != http.StatusOK || port2 == 0 {
-		t.Fatalf("re-allocate: port=%d code=%d", port2, code)
 	}
 }
 
@@ -1132,37 +942,19 @@ func newFakePulseKeys(t *testing.T, keys map[string]string) *httptest.Server {
 	return srv
 }
 
-func TestIDECrossPortSessionRebindsPulseKey(t *testing.T) {
+func TestIDEUserinfoSessionRebindsPulseKey(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse := newFakePulseKeys(t, map[string]string{
-		"pk_a": "pkA",
-		"pk_b": "pkB",
+		"pkide_a": "pkA",
+		"pkide_b": "pkB",
 	})
 	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
-
-	alloc := func(key string) string {
-		t.Helper()
-		resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=" + key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		var pr struct {
-			Port string `json:"port"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&pr)
-		if resp.StatusCode != http.StatusOK || pr.Port == "" {
-			t.Fatalf("alloc %s: status %d port %q", key, resp.StatusCode, pr.Port)
-		}
-		return pr.Port
-	}
-	portA, portB := alloc("pk_a"), alloc("pk_b")
 	tok := "same-login-jwt"
 
-	doUnary := func(port string) int {
+	doUnary := func(key string) int {
 		t.Helper()
-		client := connectClient(t, net.JoinHostPort("127.0.0.1", port), caPEM)
+		client := connectClientAuth(t, proxyAddr, caPEM, key, "x")
 		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 			bytes.NewReader([]byte("{}")))
 		if err != nil {
@@ -1178,63 +970,33 @@ func TestIDECrossPortSessionRebindsPulseKey(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	if code := doUnary(portA); code != http.StatusOK {
+	if code := doUnary("pkide_a"); code != http.StatusOK {
 		t.Fatalf("bind on A: %d", code)
 	}
 	b, ok := sessions.Lookup(tok)
-	if !ok || b.PulseKey != "pk_a" || b.ProxyKeyID != "pkA" {
+	if !ok || b.PulseKey != "pkide_a" || b.ProxyKeyID != "pkA" {
 		t.Fatalf("after A: ok=%v binding=%+v", ok, b)
 	}
-	if code := doUnary(portB); code != http.StatusOK {
+	if code := doUnary("pkide_b"); code != http.StatusOK {
 		t.Fatalf("rebind on B: %d", code)
 	}
 	b, ok = sessions.Lookup(tok)
-	if !ok || b.PulseKey != "pk_b" || b.ProxyKeyID != "pkB" {
-		t.Fatalf("after B must attribute to pk_b, got ok=%v binding=%+v", ok, b)
+	if !ok || b.PulseKey != "pkide_b" || b.ProxyKeyID != "pkB" {
+		t.Fatalf("after B must attribute to pkide_b, got ok=%v binding=%+v", ok, b)
 	}
 }
 
-func TestIDEDedicatedPortHidesIdePortEndpoint(t *testing.T) {
+func TestIdePortEndpointGone(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
 	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
-
-	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
+	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pkide_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pr struct {
-		Port string `json:"port"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&pr)
 	resp.Body.Close()
-	if pr.Port == "" {
-		t.Fatal("expected dedicated port")
-	}
-
-	// Hitting /ide-port on the dedicated listener itself must 404.
-	resp2, err := http.Get("http://127.0.0.1:" + pr.Port + "/ide-port?key=pk_ide")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp2.Body.Close()
-	if resp2.StatusCode != http.StatusNotFound {
-		t.Fatalf("dedicated /ide-port: got %d want 404", resp2.StatusCode)
-	}
-
-	// Release is a main-listener concern too: DELETE on the dedicated port
-	// must 404 and leave the allocation in place.
-	req, _ := http.NewRequest(http.MethodDelete, "http://127.0.0.1:"+pr.Port+"/ide-port?key=pk_ide", nil)
-	resp3, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp3.Body.Close()
-	if resp3.StatusCode != http.StatusNotFound {
-		t.Fatalf("dedicated DELETE /ide-port: got %d want 404", resp3.StatusCode)
-	}
-	if s := serverByAddr(t, proxyAddr); s.idePorts.release("pk_ide") == 0 {
-		t.Fatal("allocation must survive a DELETE on the dedicated listener")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /ide-port: got %d want 404", resp.StatusCode)
 	}
 }
 
@@ -1261,45 +1023,6 @@ func TestIDELockSubRejectsMissingSub(t *testing.T) {
 	io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("lock on + no sub: got %d want 403", resp.StatusCode)
-	}
-}
-
-func TestIDEPortMapConflictReallocates(t *testing.T) {
-	fu := newFakeUpstreamIDE(t)
-	pulse := newFakePulseKeys(t, map[string]string{"pk_a": "pkA", "pk_b": "pkB"})
-	dir := t.TempDir()
-	path := filepath.Join(dir, "ide_ports.json")
-	// Corrupt map: two keys claim the same port.
-	if err := os.WriteFile(path, []byte(`{"pk_a":9401,"pk_b":9401}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	pool := NewPool([]string{"keyA"})
-	pool.exchangeBase = fu.URL
-	pool.client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	ca, _, _, err := loadOrCreateCA(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), NewSessionMap())
-	reg := newIDEPortRegistry(s, 9401, path)
-	reg.setListenHost("127.0.0.1:8317")
-	s.idePorts = reg
-	reg.load()
-	t.Cleanup(reg.Close)
-
-	reg.mu.Lock()
-	portA, okA := reg.byKey["pk_a"]
-	portB, okB := reg.byKey["pk_b"]
-	reg.mu.Unlock()
-	if !okA || !okB {
-		t.Fatalf("both keys should be restored/reallocated: a=%v b=%v", okA, okB)
-	}
-	if portA == portB {
-		t.Fatalf("conflict must yield distinct ports, both %d", portA)
-	}
-	if reg.listenHost != "127.0.0.1" {
-		t.Fatalf("listenHost=%q want 127.0.0.1", reg.listenHost)
 	}
 }
 
@@ -1341,8 +1064,8 @@ func TestSetupScriptWritesUserinfoURLAndRejectsFullKey(t *testing.T) {
 	if !strings.Contains(us, "ignoredSettings") || !strings.Contains(us, "http.proxy") {
 		t.Fatal("uninstall must clean settingsSync.ignoredSettings for http.proxy")
 	}
-	if !strings.Contains(us, "legacyPortRelease") || !strings.Contains(us, "/ide-port") {
-		t.Fatal("uninstall must conditionally call legacy DELETE /ide-port")
+	if strings.Contains(us, "/ide-port") {
+		t.Fatal("uninstall must not request /ide-port")
 	}
 	if strings.Contains(us, "exit ") {
 		t.Fatal("uninstall script must not call exit (terminates the host PowerShell session)")
@@ -1361,6 +1084,21 @@ func TestRemovedIDEPulseKeySet(t *testing.T) {
 	}
 	if removedIDEPulseKeySet("", "", "") {
 		t.Fatal("empty sources should not be detected")
+	}
+}
+
+func TestRemovedIDEPortBaseSet(t *testing.T) {
+	if !removedIDEPortBaseSet(9100, "") {
+		t.Fatal("flag value should be detected")
+	}
+	if !removedIDEPortBaseSet(0, "9100") {
+		t.Fatal("env value should be detected")
+	}
+	if removedIDEPortBaseSet(0, "") {
+		t.Fatal("unset sources should not be detected")
+	}
+	if removedIDEPortBaseSet(0, "  ") {
+		t.Fatal("whitespace-only env should not be detected")
 	}
 }
 
@@ -1618,85 +1356,6 @@ func TestChromiumStylePassthroughWithoutTunnelKey(t *testing.T) {
 	}
 	if authCalls.Load() != 0 {
 		t.Fatalf("passthrough must not authorize, got %d", authCalls.Load())
-	}
-}
-
-func TestIDEUserinfoWindowLimited429MatchesCLIExchange(t *testing.T) {
-	fu := newFakeUpstreamIDE(t)
-	const limitReason = "window_5h_exceeded"
-	pulse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var body struct {
-			PulseKey string `json:"pulse_key"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		switch body.PulseKey {
-		case "pk_limited":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "window_limited", "proxy_key_id": "pkIDE1", "mode": "quota",
-				"reason": limitReason,
-			})
-		case testIDEKey:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "window_limited", "proxy_key_id": "pkIDE1", "mode": "quota",
-				"reason": limitReason, "scope": "ide",
-			})
-		default:
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
-		}
-	}))
-	t.Cleanup(pulse.Close)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
-	host := ideUpstreamHost(t, fu.URL)
-	billingPath := "/aiserver.v1.TestService/Unary"
-
-	cliClient := connectClient(t, proxyAddr, caPEM)
-	exReq, _ := http.NewRequest(http.MethodPost, "https://"+host+exchangePath, bytes.NewReader([]byte("{}")))
-	exReq.Header.Set("Authorization", "Bearer pk_limited")
-	exReq.Header.Set("Content-Type", "application/json")
-	exResp, err := cliClient.Do(exReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var exOut struct {
-		AccessToken string `json:"accessToken"`
-	}
-	_ = json.NewDecoder(exResp.Body).Decode(&exOut)
-	exResp.Body.Close()
-	if exResp.StatusCode != http.StatusOK || exOut.AccessToken == "" {
-		t.Fatalf("exchange window_limited: %d", exResp.StatusCode)
-	}
-
-	cliBiz, _ := http.NewRequest(http.MethodPost, "https://"+host+billingPath, bytes.NewReader([]byte("{}")))
-	cliBiz.Header.Set("Authorization", "Bearer "+exOut.AccessToken)
-	cliResp, err := cliClient.Do(cliBiz)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cliBody, _ := io.ReadAll(cliResp.Body)
-	cliResp.Body.Close()
-
-	ideClient := ideTunnelClient(t, proxyAddr, caPEM)
-	ideReq, _ := http.NewRequest(http.MethodPost, "https://"+host+billingPath, bytes.NewReader([]byte("{}")))
-	ideReq.Header.Set("Authorization", "Bearer ide-login-jwt")
-	ideResp, err := ideClient.Do(ideReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ideBody, _ := io.ReadAll(ideResp.Body)
-	ideResp.Body.Close()
-
-	if cliResp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("CLI window_limited: status %d body %s", cliResp.StatusCode, cliBody)
-	}
-	if ideResp.StatusCode != cliResp.StatusCode {
-		t.Fatalf("status mismatch: CLI %d IDE %d", cliResp.StatusCode, ideResp.StatusCode)
-	}
-	if !bytes.Equal(cliBody, ideBody) {
-		t.Fatalf("window_limited bodies differ:\nCLI: %s\nIDE: %s", cliBody, ideBody)
 	}
 }
 

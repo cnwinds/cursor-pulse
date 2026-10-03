@@ -757,10 +757,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         if not body.clear and _parsed_usage_cap_items(body):
             raise HTTPException(status_code=400, detail=usage_caps_migrated_message())
 
-        from pulse.proxy.loan_usage_cap import clear_usage_cap_on_loan
+        from pulse.proxy.spend_policy import clear_loan_rules
 
         if body.clear or not _parsed_usage_cap_items(body):
-            clear_usage_cap_on_loan(loan)
+            clear_loan_rules(loan)
 
         log_admin_action(
             session,

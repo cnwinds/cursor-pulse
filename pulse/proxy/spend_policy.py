@@ -128,6 +128,13 @@ def legacy_loan_rules(loan: KeyLoan) -> list[SpendRule]:
     return rules
 
 
+def clear_loan_rules(loan: KeyLoan) -> None:
+    loan.usage_cap_rules = []
+    loan.usage_cap_period = None
+    loan.auto_cost_limit_cents = None
+    loan.api_cost_limit_cents = None
+
+
 def min_merge_rules(existing: list[SpendRule], incoming: list[SpendRule]) -> list[SpendRule]:
     merged: dict[tuple[str, str], int] = {}
     for rule in existing + incoming:
@@ -514,6 +521,67 @@ def rule_snapshots(
             }
         )
     return snapshots
+
+
+def loan_rule_snapshots(
+    session: Session,
+    loans: list[KeyLoan],
+    *,
+    now: datetime | None = None,
+) -> dict[str, list[dict]]:
+    """Loan-scoped snapshots for many loans in one usage query (loan list pages)."""
+    from pulse.proxy.key_crud import cents_to_usd
+
+    now = ensure_aware(now or utcnow()) or utcnow()
+    enabled = [(loan, rules) for loan in loans if (rules := legacy_loan_rules(loan))]
+    out: dict[str, list[dict]] = {loan.id: [] for loan in loans}
+    if not enabled:
+        return out
+
+    min_cutoff = now
+    windows: dict[str, list[tuple[SpendRule, timedelta, datetime]]] = {}
+    for loan, rules in enabled:
+        packed: list[tuple[SpendRule, timedelta, datetime]] = []
+        for rule in rules:
+            window = cap_window_for_period(rule.period)
+            cutoff = now - window
+            packed.append((rule, window, cutoff))
+            min_cutoff = min(min_cutoff, cutoff)
+        windows[loan.id] = packed
+
+    rows = session.scalars(
+        select(ProxyKeyUsage)
+        .where(ProxyKeyUsage.loan_id.in_(list(windows)), ProxyKeyUsage.ts > min_cutoff)
+        .order_by(ProxyKeyUsage.ts.asc())
+    ).all()
+    by_loan: dict[str, list[ProxyKeyUsage]] = {loan_id: [] for loan_id in windows}
+    for row in rows:
+        if row.loan_id in by_loan:
+            by_loan[row.loan_id].append(row)
+
+    for loan_id, packed in windows.items():
+        snapshots: list[dict] = []
+        for rule, window, cutoff in packed:
+            events = _events_from_rows(by_loan[loan_id], pool=rule.pool, cutoff=cutoff)
+            used = sum(cents for _, cents in events)
+            resets_at = None
+            if events:
+                resets_at = (
+                    usage_resets_at(events, rule.limit_cents, window).astimezone(UTC).isoformat().replace("+00:00", "Z")
+                )
+            snapshots.append(
+                {
+                    "period": rule.period,
+                    "pool": rule.pool,
+                    "limit_cents": rule.limit_cents,
+                    "cost_usd": cents_to_usd(rule.limit_cents),
+                    "used_cents": used,
+                    "exceeded": used >= rule.limit_cents,
+                    "resets_at": resets_at,
+                }
+            )
+        out[loan_id] = snapshots
+    return out
 
 
 def check_spend_rules(

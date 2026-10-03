@@ -11,12 +11,12 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
 from pulse.proxy import service as proxy_service
-from pulse.proxy.loan_usage_cap import (
-    UsageCapConfigError,
-    check_loan_usage_cap,
+from pulse.proxy.membership import evaluate_spend
+from pulse.proxy.spend_policy import (
+    SpendPolicyConfigError,
+    legacy_loan_rules,
     loan_usage_cap_pool,
-    parse_usage_cap_rules,
-    usage_cap_enabled,
+    parse_spend_rules,
     usage_resets_at,
 )
 from pulse.storage.models import KeyLoan, ProxyKeyUsage
@@ -39,13 +39,16 @@ def _loan(**kwargs) -> KeyLoan:
     return KeyLoan(**defaults)
 
 
+def check_loan_usage_cap(session, loan_id: str, model: str, *, now: datetime) -> dict:
+    return evaluate_spend(session, loan_id=loan_id, model=model, now=now)
+
+
 def _sync_member_rules(session, loan: KeyLoan) -> None:
     if not loan.borrower_member_id:
         return
-    from pulse.proxy.loan_usage_cap import loan_cap_rules
     from pulse.proxy.membership import active_membership, change_membership, open_membership
 
-    rules = [r.as_dict() for r in loan_cap_rules(loan)]
+    rules = [r.as_dict() for r in legacy_loan_rules(loan)]
     membership = active_membership(session, loan.borrower_member_id)
     if membership is None:
         open_membership(
@@ -192,16 +195,16 @@ def test_record_usages_sets_usage_cap_pool(cap_session):
 
 
 def test_parse_usage_cap_validation():
-    with pytest.raises(UsageCapConfigError):
-        parse_usage_cap_rules([{"period": "year", "pool": "auto", "cost_usd": 10}])
-    with pytest.raises(UsageCapConfigError):
-        parse_usage_cap_rules(
+    with pytest.raises(SpendPolicyConfigError):
+        parse_spend_rules([{"period": "year", "pool": "auto", "cost_usd": 10}])
+    with pytest.raises(SpendPolicyConfigError):
+        parse_spend_rules(
             [
                 {"period": "week", "pool": "auto", "cost_usd": 10},
                 {"period": "week", "pool": "auto", "cost_usd": 20},
             ]
         )
-    parsed = parse_usage_cap_rules(
+    parsed = parse_spend_rules(
         [
             {"period": "5h", "pool": "auto", "cost_usd": 10},
             {"period": "week", "pool": "auto", "cost_usd": 50},
@@ -240,7 +243,7 @@ def api_client():
     return client, sf, config
 
 
-def test_internal_loan_usage_cap_endpoint(api_client):
+def test_internal_loan_usage_cap_endpoint_removed(api_client):
     client, sf, _config = api_client
     s = sf()
     loan = _loan()
@@ -248,11 +251,17 @@ def test_internal_loan_usage_cap_endpoint(api_client):
     s.flush()
     s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto"))
     s.commit()
-    assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["status"] == "limited"
-    resp = client.post(
+    headers = {"X-Pulse-Internal-Token": "tok"}
+    removed = client.post(
         "/api/internal/v1/proxy/loan-usage-cap",
         json={"loan_id": loan.id, "model": "composer-1"},
-        headers={"X-Pulse-Internal-Token": "tok"},
+        headers=headers,
+    )
+    assert removed.status_code in (404, 405)
+    resp = client.post(
+        "/api/internal/v1/proxy/spend-check",
+        json={"loan_id": loan.id, "model": "composer-1"},
+        headers=headers,
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -528,9 +537,9 @@ def test_passthrough_loan_not_applicable(cap_session):
     assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["reason"] == "not_applicable"
 
 
-def test_usage_cap_enabled():
-    assert not usage_cap_enabled(_loan(usage_cap_rules=[]))
-    assert usage_cap_enabled(_loan())
+def test_legacy_loan_rules_enabled():
+    assert not legacy_loan_rules(_loan(usage_cap_rules=[]))
+    assert legacy_loan_rules(_loan())
 
 
 def test_legacy_columns_still_apply(cap_session):

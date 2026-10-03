@@ -4,8 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
-from pulse.proxy.loan_usage_cap import usage_cap_snapshots
 from pulse.proxy.membership import batch_borrower_membership_context
+from pulse.proxy.spend_policy import loan_rule_snapshots
 from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
@@ -44,7 +44,7 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     snapshots = latest_snapshots_for_accounts(session, account_ids)
     loan_ids = [loan.id for loan in loans]
     proxy_totals = loan_proxy_totals_by_loan(session, loan_ids)
-    cap_rows = usage_cap_snapshots(session, loans)
+    cap_rows = loan_rule_snapshots(session, loans)
     member_caps, member_summaries = batch_borrower_membership_context(
         session,
         borrower_ids,

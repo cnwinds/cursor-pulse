@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from pulse.proxy.loan_usage_cap import loan_cap_rules
 from pulse.proxy.membership import active_membership, effective_policy
+from pulse.proxy.spend_policy import legacy_loan_rules
 from pulse.storage.migrate import _migrate_legacy_spend_limits, migrate_schema
 from pulse.storage.models import Base, KeyLoan, ProxyKey
 from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
@@ -65,7 +65,7 @@ def test_migration_min_merge_and_idempotent():
     rules = effective_policy(s, m).rules
     assert any(r.period == "week" and r.pool == "auto" and r.limit_cents == 1000 for r in rules)
     assert any(r.period == "5h" and r.pool == "total" and r.limit_cents == 500 for r in rules)
-    assert loan_cap_rules(s.get(KeyLoan, loan_id)) == []
+    assert legacy_loan_rules(s.get(KeyLoan, loan_id)) == []
     assert s.get(ProxyKey, key_id).window_5h_cost_limit_cents is None
 
     _migrate_legacy_spend_limits(engine)
@@ -90,7 +90,7 @@ def test_orphan_loan_keeps_rules():
     s.close()
     _migrate_legacy_spend_limits(engine)
     s = sf()
-    assert loan_cap_rules(s.get(KeyLoan, loan_id))[0].pool == "api"
+    assert legacy_loan_rules(s.get(KeyLoan, loan_id))[0].pool == "api"
     s.close()
 
 

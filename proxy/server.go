@@ -32,8 +32,7 @@ type Server struct {
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
 
 	// cpSticky remembers Coding-Plan (pkcp_) gateway sticky affinity per
-	// pulse key. Pointer-held so the main port and every per-key IDE listener
-	// share one view.
+	// pulse key.
 	cpSticky *cpStickyState
 
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
@@ -42,19 +41,13 @@ type Server struct {
 
 	connectAllowlist []string
 
-	// ideSub is the shared login-identity lock state (PROXY_IDE_LOCK_SUB).
-	// Held by pointer so the main port and every per-key listener enforce one
-	// consistent view. Nil means the lock is off.
+	// ideSub is the login-identity lock state (PROXY_IDE_LOCK_SUB).
+	// Nil means the lock is off.
 	ideSub *ideSubStore
 
 	// caPEMPath is the on-disk MITM root CA, served at GET /ca.pem so member
 	// machines can bootstrap trust from the proxy address alone.
 	caPEMPath string
-
-	// idePorts allocates one dedicated listen port per Pulse access key so IDE
-	// sessions attribute to a member without client-side key support. Nil on
-	// non-Pulse deployments.
-	idePorts *idePortRegistry
 }
 
 // cpStickyState remembers Coding-Plan (pkcp_) gateway sticky affinity:
@@ -143,11 +136,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Plain-HTTP bootstrap endpoints so a member machine can onboard from the
 	// proxy address alone (no file distribution): trust the CA, then run the
-	// Cursor IDE setup script. Everything else stays CONNECT-only.
-	if r.URL.Path == "/ide-port" && (r.Method == http.MethodGet || r.Method == http.MethodDelete) {
-		s.serveIDEPort(w, r)
-		return
-	}
+	// Cursor IDE setup script. Unknown GET paths 404; everything else stays
+	// CONNECT-only.
 	if r.Method == http.MethodGet {
 		switch r.URL.Path {
 		case "/ca.pem":
@@ -161,7 +151,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "/", "/health":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /uninstall-cursor.ps1 - one-line Cursor IDE offboarding\nGET /ide-port?key=... - deprecated dedicated IDE port (DELETE releases)\n")
+			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /uninstall-cursor.ps1 - one-line Cursor IDE offboarding\n")
+			return
+		default:
+			http.NotFound(w, r)
 			return
 		}
 	}
@@ -219,13 +212,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		NextProtos:   []string{"h2", "http/1.1"},
 		MinVersion:   tls.VersionTLS12,
 	}
-	tunnelKey, tunnelSrc := tunnelKeyFromCtx(r.Context())
-	if tunnelKey == "" {
-		if user, _, ok := parseProxyAuthBasic(r.Header.Get("Proxy-Authorization")); ok {
-			tunnelKey = strings.TrimSpace(user)
-			if tunnelKey != "" {
-				tunnelSrc = tunnelKeySourceUserinfo
-			}
+	var tunnelKey string
+	var tunnelSrc tunnelKeySource
+	if user, _, ok := parseProxyAuthBasic(r.Header.Get("Proxy-Authorization")); ok {
+		tunnelKey = strings.TrimSpace(user)
+		if tunnelKey != "" {
+			tunnelSrc = tunnelKeySourceUserinfo
 		}
 	}
 

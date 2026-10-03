@@ -152,10 +152,10 @@ _Avoid_: Configuring caps on loans or proxy keys instead of the member membershi
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.
 _Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance — the Auto-Assigned Loan candidate allowlist is ordered by the deterministic score alone)
 
-**Per-key IDE Port** (deprecated):
-Legacy dedicated proxy listen port per Proxy Key (`GET /ide-port`, default base 9100, `ide_ports.json`). **Superseded by IDE Key on the shared main port** (ADR 0005). Still works this release for clients that have not re-run setup; **removed next release**.
-_Avoid_: New deployments using `/ide-port` or per-key ports instead of `pkide_` userinfo on the main port
+**Per-key IDE Port** (removed):
+Former dedicated proxy listen port per Proxy Key (`GET /ide-port`, default base 9100, `ide_ports.json`). **Superseded by IDE Key on the shared main port** (ADR 0005); kept for one transition release (v0.7.0) and removed afterwards — `/ide-port` now returns 404.
+_Avoid_: Reintroducing per-key ports instead of `pkide_` userinfo on the main port
 
 **Login Identity Lock**:
-Optional pin of a Proxy Key to the first parseable IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); rejects `alg=none` / missing sub / control characters in sub; a different identity is rejected with 403 (`ide_sub_mismatch`). Applies on the shared main port (and on legacy per-key IDE ports until removed); not persisted across restarts. Does **not** verify WorkOS JWT signatures (TOFU trust boundary).
+Optional pin of a Proxy Key to the first parseable IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); rejects `alg=none` / missing sub / control characters in sub; a different identity is rejected with 403 (`ide_sub_mismatch`). Applies on the shared main port; not persisted across restarts. Does **not** verify WorkOS JWT signatures (TOFU trust boundary).
 _Avoid_: treating unsigned claim parsing as cryptographic identity proof.

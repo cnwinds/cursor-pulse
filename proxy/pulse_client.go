@@ -223,8 +223,8 @@ func (c *PulseClient) Authorize(pulseKey string) (AuthResult, error) {
 }
 
 // AuthorizeFresh drops any cached authorize result for the key, then calls
-// Authorize. Used by IDE /ide-port and TOFU bind so revoke/suspend is not
-// delayed by the auth TTL cache.
+// Authorize. Used by IDE TOFU bind so revoke/suspend is not delayed by the
+// auth TTL cache.
 func (c *PulseClient) AuthorizeFresh(pulseKey string) (AuthResult, error) {
 	c.authMu.Lock()
 	delete(c.authCache, pulseKey)
@@ -316,7 +316,7 @@ func (c *PulseClient) authorize(pulseKey string, seat seatReport) (AuthResult, e
 	if report || res.Mode == "loan_alias" || res.Mode == "loan_pool" {
 		return res, nil
 	}
-	if res.Status != "ok" && res.Status != "window_limited" {
+	if res.Status != "ok" {
 		return res, nil
 	}
 	cached := res

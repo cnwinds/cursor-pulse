@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-
 func TestLoanPassthroughExchangeEmptyPool(t *testing.T) {
 	const loanKey = "crsr_test_loan_key_abc"
 	var upstreamAuth string
@@ -53,12 +52,12 @@ func TestLoanPassthroughExchangeEmptyPool(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":         "ok",
-			"mode":           "loan_passthrough",
-			"proxy_key_id":   nil,
-			"loan_id":        "loan-1",
-			"credential_id":  "cred-1",
-			"reason":         nil,
+			"status":        "ok",
+			"mode":          "loan_passthrough",
+			"proxy_key_id":  nil,
+			"loan_id":       "loan-1",
+			"credential_id": "cred-1",
+			"reason":        nil,
 		})
 	}))
 	t.Cleanup(pulse.Close)
@@ -763,5 +762,3 @@ func TestLoanAliasPooledUnary429RotatesWithinAllowlist(t *testing.T) {
 		t.Fatalf("expected 2 upstream unary calls, got %d", got)
 	}
 }
-
-

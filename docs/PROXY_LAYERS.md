@@ -44,8 +44,7 @@ Pulse web / channel
 | `HTTP_PROXY` / `HTTPS_PROXY`（宿主机） | C | Python 出站（Cursor sync、钉钉 OAuth 等） |
 | `JEV_BASE_URL` / `JEV_API_KEY` | C | Jev（OpenRouter Decisions）——Auto Lender 主判，走 `outbound_client`（可翻墙） |
 | `PROXY_STICKY_MIN_DWELL` | A | Go sticky 最小驻留（默认 20m；`0`/`off` 关闭）。Web 侧同名语义见 `loan_selection.min_switch_minutes` |
-| `PROXY_IDE_PULSE_KEY` | A | 主端口上 IDE 会话的兜底绑定密钥；每 key 专属端口（`/ide-port`，默认 9100 起）优先且按 key 归因 |
-| `PROXY_IDE_PORT_BASE` | A | 每 key IDE 专属监听端口起始值（默认 9100）；绑定 host 与 `PROXY_LISTEN` 一致 |
+| `PROXY_IDE_PULSE_KEY` / `PROXY_IDE_PORT_BASE` | A | **已移除**（仍设置则启动 ERROR 并忽略）。IDE 统一走主端口 + `http.proxy` userinfo 中的 `pkide_`（ADR 0005） |
 | `PROXY_IDE_LOCK_SUB` | A | IDE 登录身份锁：代理密钥锁定首个可解析 JWT `sub`（拒 `alg=none`/无 sub；不验签；默认关闭；重启清空） |
 
 ## 常见故障

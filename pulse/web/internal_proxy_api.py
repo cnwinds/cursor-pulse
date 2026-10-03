@@ -41,11 +41,6 @@ class UsageBody(BaseModel):
     items: list[UsageItem] = Field(default_factory=list, max_length=1000)
 
 
-class LoanUsageCapBody(BaseModel):
-    loan_id: str
-    model: str | None = None
-
-
 class SpendCheckBody(BaseModel):
     proxy_key_id: str | None = None
     loan_id: str | None = None
@@ -152,15 +147,6 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             loan_id=loan_id,
             model=body.model,
         )
-
-    @app.post(
-        "/api/internal/v1/proxy/loan-usage-cap",
-        dependencies=[Depends(require_internal_service)],
-    )
-    def proxy_loan_usage_cap(body: LoanUsageCapBody, session: Session = Depends(get_db)):
-        from pulse.proxy.membership import evaluate_spend
-
-        return evaluate_spend(session, loan_id=body.loan_id, model=body.model)
 
     @app.post(
         "/api/internal/v1/proxy/usage",

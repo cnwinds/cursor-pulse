@@ -36,11 +36,7 @@ type SessionBinding struct {
 	// CursorAPIKey is set for loan_alias so re-exchange uses the bound Cursor key
 	// rather than the client-facing pka_ alias.
 	CursorAPIKey string
-	// WindowLimitReason is set when authorize reports window_limited. Exchange
-	// still mints a session JWT so agent login succeeds; business requests then
-	// surface a clear resource_exhausted limit error instead of "invalid API key".
-	WindowLimitReason string
-	BoundAt           time.Time
+	BoundAt      time.Time
 	// ExpiresAt is the exp of the proxy-minted client token; Prune drops the
 	// binding after sessionPruneGrace. Zero never expires.
 	ExpiresAt time.Time

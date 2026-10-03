@@ -94,7 +94,7 @@ IDE 接入的行为与限制：
 
 调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
 
-**遗留：每 key 专属端口（deprecated）**：尚未重跑新 setup 的客户端仍可使用 `GET /ide-port` 分配的专属端口 + `pk_`；访问 `/ide-port` 会打 deprecated 日志。卸载时若 `http.proxy` 仍指向非主端口，可传 `-Key "pk_..."` 尝试 `DELETE /ide-port` 释放映射（本版仍受理，**下版删除**端口子系统）。新部署只需放行主端口，不再规划 per-key 端口段。
+**每 key 专属端口已删除**：v0.7.0 之后不再提供 `/ide-port`（返回 404）与专属监听；仍指向旧专属端口的客户端须在控制台复制新 IDE 命令重跑 setup。防火墙只需放行主端口。
 
 **平台范围**：安装/卸载一键命令面向 **Windows**（PowerShell 5.1）。macOS/Linux 的 Cursor IDE 按手工步骤接入：① 把 `http://<代理>:8317/ca.pem` 装入系统信任 store（macOS `security add-trusted-cert`；Linux 复制到 ca-certificates 后 `update-ca-certificates`）；② 编辑 `~/.config/Cursor/User/settings.json` 写入 `http.proxy`（带 userinfo 的主端口 URL，如 `http://<pkide_>:x@host:8317`）、`cursor.general.disableHttp2: true`、`http.systemCertificates: true`，并可选把 `http.proxy` 加入 `settingsSync.ignoredSettings`；③ 重启 Cursor。卸载即反向移除这三项（及 `settingsSync.ignoredSettings` 中的 `http.proxy`）并删除 CA。
 
@@ -161,7 +161,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 ## 原理（简述）
 
 - agent 的 API key 用于向 `api2.cursor.sh/auth/exchange_user_api_key` 换取 JWT；Pulse 模式下该 exchange 由代理拦截，用 `pk_...`（共享池）或 `pka_...`（借贷 alias）授权并映射到池内 Cursor 凭证。会话绑定默认 **120s** 后向 Pulse 重新 authorize（`-session-ttl` / `PROXY_SESSION_TTL`）。
-- **窗口费用限额**（5h / 7d）在 **业务请求** 时以 `429 resource_exhausted` 拒绝，不在 exchange 登录阶段失败（避免 CLI 误报 “API key is invalid”）。撤销 / 停用 / 未知 key 仍在 exchange 失败。
+- **会员用量规则与余额**（ADR-0006）在 `AgentService/Run` 前经 Pulse `spend-check` 校验，超限以 `429 resource_exhausted` 拒绝，不在 exchange 登录阶段失败（避免 CLI 误报 “API key is invalid”）；校验不可用时 fail-closed 返回 503。撤销 / 停用 / 未知 key 仍在 exchange 失败。
 - 配额/限流错误时自动换凭证重放，CLI 侧无感（流式路径在尚未转发数据时可整体重放）。
 - 通过 `HTTPS_PROXY` + 自签 CA（MITM `*.cursor.sh`）实现，无需修改 agent 本体。
 
@@ -176,8 +176,8 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | `-session-ttl` | 会话重授权间隔 | 环境变量 `PROXY_SESSION_TTL`（默认 120s） |
 | `-sticky-min-dwell` | sticky 最小驻留（Switch dwell） | 环境变量 `PROXY_STICKY_MIN_DWELL`（默认 20m；`0`/`off` 关闭） |
 | `-ide-pulse-key` | **已移除**（若仍设置则启动 ERROR 并忽略） | 曾用环境变量 `PROXY_IDE_PULSE_KEY`、配置 `ide_pulse_key`；请改用控制台 IDE 命令中的 `pkide_` |
-| `-ide-port-base` | **deprecated** 每 key 专属端口起始值（下版删除） | 环境变量 `PROXY_IDE_PORT_BASE`（默认 9100）；新客户端请用主端口 + `pkide_` userinfo |
-| — | IDE 登录身份锁：每把代理密钥锁定首次出现的登录 JWT `sub`（不同身份 403；主端口与遗留专属口共享锁状态） | 环境变量 `PROXY_IDE_LOCK_SUB=1`（默认关闭） |
+| `-ide-port-base` | **已移除**（若仍设置则启动 ERROR 并忽略） | 曾用环境变量 `PROXY_IDE_PORT_BASE`；请改用主端口 + `pkide_` userinfo |
+| — | IDE 登录身份锁：每把代理密钥锁定首次出现的登录 JWT `sub`（不同身份 403） | 环境变量 `PROXY_IDE_LOCK_SUB=1`（默认关闭） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |

@@ -23,9 +23,9 @@ const (
 
 // RequestedModel / ModelDetails field numbers.
 const (
-	modelFieldModelID  = 1
-	modelFieldMaxMode  = 2 // RequestedModel
-	modelFieldParams   = 3 // RequestedModel.parameters
+	modelFieldModelID   = 1
+	modelFieldMaxMode   = 2 // RequestedModel
+	modelFieldParams    = 3 // RequestedModel.parameters
 	modelDetailsMaxMode = 7 // ModelDetails.max_mode
 )
 

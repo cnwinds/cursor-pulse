@@ -62,7 +62,7 @@ func matchHostPattern(host, pattern string) bool {
 	}
 	if strings.HasPrefix(pattern, "*.") {
 		suffix := pattern[1:] // ".cursor.sh"
-		apex := pattern[2:]  // "cursor.sh"
+		apex := pattern[2:]   // "cursor.sh"
 		return host == apex || strings.HasSuffix(host, suffix)
 	}
 	return host == pattern
