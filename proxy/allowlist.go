@@ -6,7 +6,11 @@ import (
 	"strings"
 )
 
-const defaultConnectAllowlist = "*.cursor.sh,cursor.sh"
+// Default CONNECT allowlist: Cursor backends are MITM'd (shouldMITM) while the
+// remaining first-party Cursor hosts (extension marketplace cursorapi.com,
+// cursor.com web) pass through as blind tunnels — the IDE needs them reachable
+// but they carry no pool traffic.
+const defaultConnectAllowlist = "*.cursor.sh,cursor.sh,*.cursorapi.com,cursorapi.com,*.cursor.com,cursor.com"
 
 func parseConnectAllowlist(raw string) []string {
 	raw = strings.TrimSpace(raw)
@@ -21,7 +25,7 @@ func parseConnectAllowlist(raw string) []string {
 		}
 	}
 	if len(out) == 0 {
-		return []string{"*.cursor.sh", "cursor.sh"}
+		return parseConnectAllowlist(defaultConnectAllowlist)
 	}
 	return out
 }

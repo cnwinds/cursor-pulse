@@ -32,6 +32,20 @@ type Server struct {
 	shouldMITM func(authority string) bool
 
 	connectAllowlist []string
+
+	// idePulseKey is the Pulse access key (pk_/pka_) that IDE-originated
+	// sessions bind to. Empty keeps the legacy behavior: business requests must
+	// present an exchange-issued session JWT (CLI-only proxy).
+	idePulseKey string
+
+	// caPEMPath is the on-disk MITM root CA, served at GET /ca.pem so member
+	// machines can bootstrap trust from the proxy address alone.
+	caPEMPath string
+
+	// idePorts allocates one dedicated listen port per Pulse access key so IDE
+	// sessions attribute to a member without client-side key support. Nil on
+	// non-Pulse deployments.
+	idePorts *idePortRegistry
 }
 
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
@@ -62,11 +76,31 @@ func defaultShouldMITM(authority string) bool {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodConnect {
-		http.Error(w, "cursor-quota-proxy: CONNECT only", http.StatusBadRequest)
+	if r.Method == http.MethodConnect {
+		s.handleConnect(w, r)
 		return
 	}
-	s.handleConnect(w, r)
+	// Plain-HTTP bootstrap endpoints so a member machine can onboard from the
+	// proxy address alone (no file distribution): trust the CA, then run the
+	// Cursor IDE setup script. Everything else stays CONNECT-only.
+	if r.Method == http.MethodGet {
+		switch r.URL.Path {
+		case "/ca.pem":
+			s.serveCAPEM(w)
+			return
+		case "/setup-cursor.ps1":
+			s.serveSetupScript(w, r)
+			return
+		case "/ide-port":
+			s.serveIDEPort(w, r)
+			return
+		case "/", "/health":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /ide-port?key=... - dedicated IDE port for a Pulse access key\n")
+			return
+		}
+	}
+	http.Error(w, "cursor-quota-proxy: CONNECT only", http.StatusBadRequest)
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -39,7 +42,29 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 
 	reqCT := req.Header.Get("Content-Type")
 	isStreamReq := strings.HasPrefix(reqCT, "application/connect")
-	skipAuth := strings.HasPrefix(req.URL.Path, "/auth/")
+	if debugHeadersEnabled() {
+		if req.URL.Path == "/agent.v1.AgentService/RunSSE" {
+			log.Printf("[hdr] %s %s ct=%q clen=%q te=%q expect=%q checksum=%q client-key=%q",
+				req.Method, req.URL.Path, reqCT, req.Header.Get("Content-Length"),
+				req.Header.Get("Transfer-Encoding"), req.Header.Get("Expect"),
+				truncateForLog(req.Header.Get("x-cursor-checksum"), 80),
+				truncateForLog(req.Header.Get("x-client-key"), 40))
+		} else {
+			log.Printf("[hdr] %s %s checksum=%q client-key=%q",
+				req.Method, req.URL.Path,
+				truncateForLog(req.Header.Get("x-cursor-checksum"), 160),
+				truncateForLog(req.Header.Get("x-client-key"), 60))
+		}
+	}
+	// skipAuth = forward the client's own Authorization untouched. Beyond the
+	// /auth/ family this covers the IDE identity RPCs: Cursor IDE sends its own
+	// WorkOS login JWT there, and rewriting it to a pool credential breaks the
+	// client's identity-consistency checks (GetMe retries in a tight loop) and
+	// lets team-scope 401s burn pool credentials.
+	skipAuth := strings.HasPrefix(req.URL.Path, "/auth/") || ideIdentityPassthrough(req.URL.Path)
+	if debugHTTP {
+		log.Printf("[mitm] >> %s %s stream=%v skipAuth=%v", req.Method, req.URL.Path, isStreamReq, skipAuth)
+	}
 	target := "https://" + authority + req.URL.RequestURI()
 
 	// Prepare a replayable body source + snapshot for model extraction.
@@ -74,8 +99,11 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		cliTok = strings.TrimPrefix(cliTok, "bearer ")
 		b, ok := s.sessions.Lookup(cliTok)
 		if !ok {
-			http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
-			return
+			ideB, handled := s.bindIDESession(w, cliTok)
+			if !handled {
+				return
+			}
+			b = ideB
 		}
 		if s.pulse != nil && s.sessionTTL > 0 && time.Since(b.BoundAt) > s.sessionTTL {
 			res, err := s.pulse.Authorize(b.PulseKey)
@@ -195,6 +223,9 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			}
 			continue
 		}
+		if debugHTTP {
+			log.Printf("[mitm] << %d %s (key %s)", resp.StatusCode, req.URL.Path, entry.masked())
+		}
 		break
 	}
 	if resp == nil {
@@ -235,6 +266,21 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 
 	// --- 200 with Connect streaming body ---
 	respCT := resp.Header.Get("Content-Type")
+	if debugHTTP {
+		log.Printf("[mitm] respCT=%q for %s (key %s)", respCT, req.URL.Path, entry.masked())
+	}
+	if debugStreamEnabled() && reqBodySnap != nil && strings.Contains(req.URL.Path, "RunSSE") {
+		dir := debugStreamDir
+		if dir == "" {
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, ".cursor-quota-proxy", "debug-stream")
+		}
+		_ = os.MkdirAll(dir, 0o700)
+		seq := debugStreamSeq.Add(1)
+		stamp := time.Now().UTC().Format("20060102-150405")
+		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("%s-req-%04d.bin", stamp, seq)), reqBodySnap(), 0o600)
+		log.Printf("[mitm] dumped RunSSE request body (%d bytes) for replay", len(reqBodySnap()))
+	}
 	if strings.HasPrefix(respCT, "application/connect") {
 		flags, payload, err := readEnvelope(resp.Body)
 		if err != nil {
@@ -315,7 +361,29 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// --- 200 unary: plain passthrough ---
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Body)
+	if strings.Contains(respCT, "event-stream") {
+		// SSE (e.g. agent.v1.AgentService/RunSSE): plain io.Copy buffers into
+		// the 4 KiB ResponseWriter, so a slow token stream never reaches the
+		// client and the IDE reports "Connection stalled". Forward chunk by
+		// chunk with an explicit flush after every write.
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					break
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+			if rerr != nil {
+				break
+			}
+		}
+	} else {
+		io.Copy(w, resp.Body)
+	}
 	resp.Body.Close()
 }
 
@@ -459,6 +527,108 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
+}
+
+// ideIdentityPassthrough reports paths the IDE serves with its own login JWT
+// that must never be rewritten to a pool credential. Rewriting GetMe makes the
+// client's identity-consistency check fail and it re-fetches in a tight loop
+// (observed: 800+ requests/min); team-scope endpoints 401 for pool credentials
+// and would otherwise mark pool keys auth-bad.
+func ideIdentityPassthrough(path string) bool {
+	switch path {
+	case "/aiserver.v1.DashboardService/GetMe",
+		"/aiserver.v1.DashboardService/GetUserProfile",
+		"/aiserver.v1.DashboardService/GetTeams",
+		"/aiserver.v1.DashboardService/GetTeamCommands",
+		"/aiserver.v1.AiService/GetUserStatus":
+		return true
+	}
+	return false
+}
+
+// bindIDESession handles IDE-originated business requests whose bearer token
+// was never issued by an intercepted exchange: Cursor IDE authenticates with
+// its own WorkOS login JWT and never calls exchange_user_api_key. When an IDE
+// access key is configured (-ide-pulse-key), the first request seen from a
+// client token is bound to that key's pool or loan exactly like a CLI session;
+// later requests reuse the binding, including session TTL re-authorize and
+// sticky rotation. It writes the error response itself; handled=false means
+// the caller must stop.
+func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBinding, bool) {
+	if s.pulse == nil || s.idePulseKey == "" {
+		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
+		return SessionBinding{}, false
+	}
+	res, err := s.pulse.Authorize(s.idePulseKey)
+	if err != nil {
+		log.Printf("[ide] authorize fail-closed: %v", err)
+		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
+		return SessionBinding{}, false
+	}
+	windowLimitReason := ""
+	switch res.Status {
+	case "ok":
+	case "window_limited":
+		// Bind anyway; the window limit is enforced on business requests below,
+		// mirroring the deferred exchange behavior so IDE clients see a clear
+		// 429 resource_exhausted instead of a login failure.
+		windowLimitReason = authWindowReason(res)
+	case "invalid":
+		http.Error(w, "invalid ide access key", http.StatusUnauthorized)
+		return SessionBinding{}, false
+	case "suspended":
+		msg := "suspended"
+		if res.Reason != nil {
+			msg = *res.Reason
+		}
+		http.Error(w, msg, http.StatusForbidden)
+		return SessionBinding{}, false
+	default:
+		http.Error(w, "authorize rejected", http.StatusForbidden)
+		return SessionBinding{}, false
+	}
+
+	b := SessionBinding{PulseKey: s.idePulseKey, WindowLimitReason: windowLimitReason}
+	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
+		b.Mode = res.Mode
+		b.LoanID = res.LoanID
+		b.CredentialID = res.CredentialID
+		b.AllowedCredentialIDs = res.CredentialIDs
+		if key := strings.TrimSpace(res.CursorAPIKey); key != "" {
+			b.CursorAPIKey = key
+		}
+	} else {
+		if res.ProxyKeyID == "" {
+			log.Printf("[ide] authorize ok but missing proxy_key_id mode=%q — refuse bind", res.Mode)
+			http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
+			return SessionBinding{}, false
+		}
+		b.ProxyKeyID = res.ProxyKeyID
+	}
+	s.sessions.Bind(cliTok, b)
+	log.Printf("[ide] session bound token=%s... proxy_key_id=%s loan_id=%s credential=%s",
+		maskClientToken(cliTok), res.ProxyKeyID, res.LoanID, res.CredentialID)
+	return b, true
+}
+
+func maskClientToken(tok string) string {
+	if len(tok) <= 12 {
+		return tok
+	}
+	return tok[:12]
+}
+
+var debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""
+
+var debugHTTP = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
+
+func debugHeadersEnabled() bool { return debugHeaders }
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func authWindowReason(res AuthResult) string {

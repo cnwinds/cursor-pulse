@@ -23,12 +23,14 @@ $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
 ```
 
 - 默认监听 `0.0.0.0:8317`（Docker 友好）；本机开发建议 `127.0.0.1:8317` 或 `PROXY_LISTEN=127.0.0.1:8317`。
-- CONNECT 目标默认仅允许 `*.cursor.sh` 与 `cursor.sh`（`PROXY_CONNECT_ALLOWLIST`）；其它主机返回 403。
+- CONNECT 目标默认允许 `*.cursor.sh`、`*.cursorapi.com`（扩展市场）与 `*.cursor.com`（后两类 blind tunnel，不 MITM）；`PROXY_CONNECT_ALLOWLIST` 可覆盖，非匹配主机返回 403。
 - 也可通过 `-pulse-url` / `-pulse-token` 或配置文件 `pulse_url` / `pulse_token` 传入。
 - CA 证书：`%USERPROFILE%\.cursor-quota-proxy\ca.pem`（首次运行自动生成）。
 - 启动后代理会周期性从 Pulse 拉取凭证池；日志中应出现 `[pool] hot-updated: N credential(s)`。
 
 ## 客户端
+
+### Cursor CLI（agent）
 
 让 agent 走 HTTPS 代理，并使用 Pulse 签发的 proxy key（`pk_...`）：
 
@@ -39,6 +41,39 @@ agent -k
 ```
 
 不想配 CA 时，用 `-k` / `--insecure` 即可；也可设 `$env:NODE_EXTRA_CA_CERTS` 指向 `ca.pem`。
+
+### Cursor IDE（一键接入）
+
+IDE 与 CLI 走同一代理与凭证池，但认证形态不同：CLI 用 API key 调 `exchange_user_api_key` 换会话 JWT，IDE 用 WorkOS 登录 JWT 直接请求业务端点。代理以 **Pulse 模式** 启动即可同时服务两种客户端（无需 IDE 专用配置）：
+
+```powershell
+$env:PULSE_BASE_URL = "http://127.0.0.1:8080"
+$env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
+.\cursor-pulse-proxy.exe -listen 0.0.0.0:8317
+```
+
+**成员侧一条命令接入**（Windows；`-Key` 为 web-admin「共享池代理」分配的接入密钥，与 agent CLI 用的 `pk_` 通用）：
+
+```powershell
+& ([scriptblock]::Create((irm http://<代理地址>:8317/setup-cursor.ps1))) -Key "pk_..."
+```
+
+脚本做四件事：安装 CA 到当前用户受信任根 → 调 `GET /ide-port?key=...` 为这把 key 分配**专属代理端口**（首次 9100 起，持久化，重复执行返回同一端口）→ 备份并把 Cursor `settings.json` 的 `http.proxy` 指到该端口（`cursor.general.disableHttp2`、`http.systemCertificates` 一并写入）→ Cursor 未运行则自动拉起。之后登录 Cursor 即用；该端口上的所有会话 TOFU 绑定到这把 key，归因/窗口限额/吊销与 CLI 完全一致。
+
+也可以无 key 使用服务器级兜底：代理加 `-ide-pulse-key pk_...`（或 `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key`），主端口上的 IDE 未绑定会话统一归因到该 key；两者并存时专属端口优先。CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
+
+IDE 接入的行为与限制：
+
+- 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）始终用客户端自己的登录 token 直通——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
+- IDE 界面账号显示成员自己的登录账号；模型列表、用量等业务数据来自实际服务的池账号。
+- IDE 聊天走 `agent.v1.AgentService/RunSSE`（`text/event-stream`）。unary 直通路径对 SSE 逐块 flush——直接 `io.Copy` 会积在 ResponseWriter 缓冲里，客户端永远收不到字节（表现即 "Connection stalled"）。
+- **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
+- 对话历史按服务账号在服务端存储：sticky 驻留期内连续，轮换后可能切换会话归属（Switch dwell 缓解）。
+- IDE 聊天流（SSE）的 usage tap 尚未接入：会话归因与窗口限额生效，但流式 token 用量暂不入账（Connect 帧路径已支持，SSE 待补）。
+- 每 key 专属端口与会话归因已生效；按登录身份（JWT `sub`）二次校验是后续增强。
+
+调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
+
 
 ### 出站上游代理（翻墙）
 
@@ -116,6 +151,8 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | `-upstream-proxy` | Cursor 出站上游代理 | 环境变量 `PROXY_UPSTREAM_URL` |
 | `-session-ttl` | 会话重授权间隔 | 环境变量 `PROXY_SESSION_TTL`（默认 120s） |
 | `-sticky-min-dwell` | sticky 最小驻留（Switch dwell） | 环境变量 `PROXY_STICKY_MIN_DWELL`（默认 30m；`0`/`off` 关闭） |
+| `-ide-pulse-key` | IDE 会话绑定的接入密钥（`pk_`/`pka_`），主端口兜底 | 环境变量 `PROXY_IDE_PULSE_KEY`、配置 `ide_pulse_key`；仅 Pulse 模式 |
+| `-ide-port-base` | 每 key IDE 专属监听端口起始值 | 环境变量 `PROXY_IDE_PORT_BASE`（默认 9100；仅 Pulse 模式） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |

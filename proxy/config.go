@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	Listen     string   `json:"listen"`
-	Keys       []string `json:"keys,omitempty"` // optional local fallback; Pulse mode overrides via pool
-	PulseURL   string   `json:"pulse_url"`
-	PulseToken string   `json:"pulse_token"`
-	PoolEvery  string   `json:"pool_every"` // e.g. "60s"
+	Listen      string   `json:"listen"`
+	Keys        []string `json:"keys,omitempty"` // optional local fallback; Pulse mode overrides via pool
+	PulseURL    string   `json:"pulse_url"`
+	PulseToken  string   `json:"pulse_token"`
+	PoolEvery   string   `json:"pool_every"`      // e.g. "60s"
+	IdePulseKey string   `json:"ide_pulse_key"`   // IDE-originated sessions bind to this access key (Pulse mode only)
 }
 
 func loadConfig(path string) (*Config, error) {

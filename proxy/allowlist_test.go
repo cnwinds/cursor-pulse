@@ -6,8 +6,14 @@ import (
 
 func TestParseConnectAllowlist(t *testing.T) {
 	got := parseConnectAllowlist("")
-	if len(got) != 2 || got[0] != "*.cursor.sh" || got[1] != "cursor.sh" {
+	want := []string{"*.cursor.sh", "cursor.sh", "*.cursorapi.com", "cursorapi.com", "*.cursor.com", "cursor.com"}
+	if len(got) != len(want) {
 		t.Fatalf("default: %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("default[%d]: got %s want %s", i, got[i], want[i])
+		}
 	}
 	got = parseConnectAllowlist(" example.com , *.example.com ")
 	if len(got) != 2 || got[0] != "example.com" || got[1] != "*.example.com" {
