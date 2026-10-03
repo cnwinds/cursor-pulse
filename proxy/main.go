@@ -150,6 +150,10 @@ Point agent at this proxy and trust the CA (PowerShell):
 		log.Printf("IDE mode: unbound sessions bind to pulse key %s...%s",
 			srv.idePulseKey[:min(4, len(srv.idePulseKey))], srv.idePulseKey[max(0, len(srv.idePulseKey)-4):])
 	}
+	srv.ideLockSub = resolveIdeLockSub()
+	if srv.ideLockSub {
+		log.Printf("IDE sub lock: each access key pins to the first login identity (PROXY_IDE_LOCK_SUB)")
+	}
 	if pulseMode {
 		base := *idePortBase
 		if base <= 0 {
@@ -246,4 +250,12 @@ func resolveSessionTTL(flagVal time.Duration) time.Duration {
 		return d
 	}
 	return defaultSessionTTL
+}
+
+func resolveIdeLockSub() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PROXY_IDE_LOCK_SUB"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

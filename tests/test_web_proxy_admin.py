@@ -934,6 +934,44 @@ def test_client_setup_multiple_addresses_pick_proxy_url(env):
     assert len(body["commands"]) == 4
 
 
+def test_client_setup_ide_kind(env):
+    _seed_proxy_addresses(
+        env,
+        [
+            {"url": "http://lan.example:8317", "display_name": "内网"},
+            {"url": "http://wan.example:8317", "display_name": "公网"},
+        ],
+    )
+    created = _create_key(env).json()
+    key_id = created["id"]
+    plaintext = created["plaintext_key"]
+
+    resp = env["client"].get(
+        f"/api/v2/proxy-keys/{key_id}/client-setup",
+        params={"kind": "ide", "proxy_url": "http://wan.example:8317"},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["kind"] == "ide"
+    assert body["proxy_url"] == "http://wan.example:8317"
+    assert body["shell"] == "powershell"
+    assert body["command"] == (
+        "& ([scriptblock]::Create((irm http://wan.example:8317/setup-cursor.ps1))) "
+        f'-Key "{plaintext}"'
+    )
+    assert chr(10) not in body["command"]
+
+    # kind 未指定时保持 CLI 语义不变（默认 kind=cli 且响应回显）
+    resp = env["client"].get(
+        f"/api/v2/proxy-keys/{key_id}/client-setup",
+        params={"shell": "bash"},
+        headers=_admin(env),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "cli"
+
+
 def test_client_setup_legacy_unrecoverable(env):
     s = env["sf"]()
     key = ProxyKey(

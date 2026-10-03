@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
@@ -15,6 +16,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+)
+
+// testServers lets sub-lock tests flip flags on a running harness server.
+var (
+	srvMu       sync.Mutex
+	testServers = map[string]*Server{}
 )
 
 // newFakeUpstreamIDE emulates api2.cursor.sh for IDE tests: the token exchange
@@ -105,7 +112,15 @@ func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string, ideKey s
 		t.Fatal(err)
 	}
 	go http.Serve(ln, s)
-	t.Cleanup(func() { ln.Close() })
+	srvMu.Lock()
+	testServers[ln.Addr().String()] = s
+	srvMu.Unlock()
+	t.Cleanup(func() {
+		ln.Close()
+		srvMu.Lock()
+		delete(testServers, ln.Addr().String())
+		srvMu.Unlock()
+	})
 
 	pemBytes, err := os.ReadFile(caPath)
 	if err != nil {
@@ -454,6 +469,103 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 	if toks == nil || toks["input"] != float64(3595) || toks["output"] != float64(998) {
 		t.Fatalf("token counts mismatch: %v", item)
 	}
+}
+
+// testJWT builds a minimal JWS-shaped token whose payload carries the sub.
+func testJWT(sub string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
+	return header + "." + payload + ".sig"
+}
+
+func TestIDELockSubRejectsForeignLogin(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	host := ideUpstreamHost(t, fu.URL)
+
+	// Enable the lock on the test server (mirrors PROXY_IDE_LOCK_SUB).
+	s := serverByAddr(t, proxyAddr)
+	s.ideLockSub = true
+
+	client := connectClient(t, proxyAddr, caPEM)
+	doUnary := func(token string) int {
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+			bytes.NewReader([]byte("{}")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+
+	if code := doUnary(testJWT("user-a")); code != http.StatusOK {
+		t.Fatalf("first login should bind: %d", code)
+	}
+	// Same identity, new token: allowed.
+	if code := doUnary(testJWT("user-a")); code != http.StatusOK {
+		t.Fatalf("same sub should pass: %d", code)
+	}
+	// Different identity on the same IDE key: rejected.
+	if code := doUnary(testJWT("user-b")); code != http.StatusForbidden {
+		t.Fatalf("foreign sub must be rejected, got %d", code)
+	}
+}
+
+func TestIDELockSubOffAllowsAnyLogin(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	host := ideUpstreamHost(t, fu.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+
+	for _, sub := range []string{"user-a", "user-b"} {
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+			bytes.NewReader([]byte("{}")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testJWT(sub))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("lock off: sub %s got %d", sub, resp.StatusCode)
+		}
+	}
+}
+
+func TestJwtSubParsing(t *testing.T) {
+	if got := jwtSub(testJWT("github|user_123")); got != "github|user_123" {
+		t.Fatalf("jwtSub: %q", got)
+	}
+	if got := jwtSub("not-a-jwt"); got != "" {
+		t.Fatalf("non-JWT must yield empty, got %q", got)
+	}
+	if got := jwtSub("a.!!!.c"); got != "" {
+		t.Fatalf("undecodable payload must yield empty, got %q", got)
+	}
+}
+
+// serverByAddr reaches into the running test proxy to flip test-only flags.
+func serverByAddr(t *testing.T, addr string) *Server {
+	t.Helper()
+	srvMu.Lock()
+	defer srvMu.Unlock()
+	if s, ok := testServers[addr]; ok {
+		return s
+	}
+	t.Fatalf("no test server for %s", addr)
+	return nil
 }
 
 func TestSetupBootstrapEndpoints(t *testing.T) {

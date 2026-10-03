@@ -95,6 +95,19 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
     return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
 
+def build_ide_setup_command(*, proxy_url: str, plaintext_key: str) -> str:
+    """生成 Cursor IDE 一键接入命令（PowerShell）。
+
+    代理内置 /setup-cursor.ps1（装 CA、按 key 分配专属端口、改 http.proxy），
+    成员整条粘贴执行即可；与 CLI 共用同一把 pk_/pka_ key。
+    """
+    url = proxy_url.rstrip("/")
+    return (
+        f'& ([scriptblock]::Create((irm {url}/setup-cursor.ps1))) '
+        f'-Key "{plaintext_key}"'
+    )
+
+
 def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:
     commands: list[dict] = []
     for addr in addresses:

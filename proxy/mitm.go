@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log"
@@ -576,6 +577,21 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 		}
 		b.ProxyKeyID = res.ProxyKeyID
 	}
+	if sub := jwtSub(cliTok); sub != "" {
+		if !s.pinIDESub(b, sub) {
+			http.Error(w, "ide access key already bound to another login", http.StatusForbidden)
+			if s.pulse != nil {
+				s.pulse.ReportEvent(EventItem{
+					EventType:  "ide_sub_mismatch",
+					ProxyKeyID: b.ProxyKeyID,
+					LoanID:     b.LoanID,
+					Detail:     "login identity differs from the pinned one",
+				})
+			}
+			log.Printf("[ide] sub mismatch on key %s... — rejected", maskClientToken(s.idePulseKey))
+			return SessionBinding{}, false
+		}
+	}
 	s.sessions.Bind(cliTok, b)
 	log.Printf("[ide] session bound token=%s... proxy_key_id=%s loan_id=%s credential=%s",
 		maskClientToken(cliTok), res.ProxyKeyID, res.LoanID, res.CredentialID)
@@ -587,6 +603,54 @@ func maskClientToken(tok string) string {
 		return tok
 	}
 	return tok[:12]
+}
+
+// pinIDESub enforces the optional login-identity lock: the first JWT sub seen
+// on an IDE access key claims it; a different sub is rejected. Always allowed
+// when the lock is off or the token carries no parseable sub.
+func (s *Server) pinIDESub(b SessionBinding, sub string) bool {
+	if !s.ideLockSub {
+		return true
+	}
+	s.ideSubMu.Lock()
+	defer s.ideSubMu.Unlock()
+	if s.ideSubByKey == nil {
+		s.ideSubByKey = map[string]string{}
+	}
+	pinned, ok := s.ideSubByKey[s.idePulseKey]
+	if !ok {
+		s.ideSubByKey[s.idePulseKey] = sub
+		return true
+	}
+	return pinned == sub
+}
+
+// jwtSub best-effort extracts the "sub" claim from a JWT. IDE login tokens are
+// standard JWS shapes; failure returns "" (never blocks the request).
+func jwtSub(tok string) string {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw := parts[1]
+	if pad := len(raw) % 4; pad != 0 {
+		raw += strings.Repeat("=", 4-pad)
+	}
+	claims, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		if padded, err2 := base64.URLEncoding.DecodeString(raw); err2 == nil {
+			claims = padded
+		} else {
+			return ""
+		}
+	}
+	var c struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(claims, &c); err != nil {
+		return ""
+	}
+	return c.Sub
 }
 
 var debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""

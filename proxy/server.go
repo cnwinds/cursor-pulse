@@ -38,6 +38,16 @@ type Server struct {
 	// present an exchange-issued session JWT (CLI-only proxy).
 	idePulseKey string
 
+	// ideLockSub (PROXY_IDE_LOCK_SUB) pins each IDE access key to the first
+	// login identity (JWT sub) seen on it, so a leaked pk_ cannot be reused by
+	// another person's IDE. Off by default: re-login or a second account on
+	// the same machine would otherwise be rejected.
+	ideLockSub bool
+
+	// ideSubMu guards ideSubByKey (pulse key → pinned login sub).
+	ideSubMu    sync.Mutex
+	ideSubByKey map[string]string
+
 	// caPEMPath is the on-disk MITM root CA, served at GET /ca.pem so member
 	// machines can bootstrap trust from the proxy address alone.
 	caPEMPath string

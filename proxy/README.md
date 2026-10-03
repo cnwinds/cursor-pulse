@@ -62,6 +62,8 @@ $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
 
 也可以无 key 使用服务器级兜底：代理加 `-ide-pulse-key pk_...`（或 `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key`），主端口上的 IDE 未绑定会话统一归因到该 key；两者并存时专属端口优先。CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
 
+管理台「共享池代理」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把接入密钥锁定到首次使用的登录身份，防 key 外借。
+
 IDE 接入的行为与限制：
 
 - 身份族 RPC（`DashboardService/GetMe`、`GetUserProfile`、`GetTeams`、`GetTeamCommands`、`AiService/GetUserStatus`）始终用客户端自己的登录 token 直通——改写会让 IDE 身份一致性校验失败（GetMe 无限重试），且团队域 401 会误烧池 key。
@@ -152,6 +154,7 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | `-sticky-min-dwell` | sticky 最小驻留（Switch dwell） | 环境变量 `PROXY_STICKY_MIN_DWELL`（默认 30m；`0`/`off` 关闭） |
 | `-ide-pulse-key` | IDE 会话绑定的接入密钥（`pk_`/`pka_`），主端口兜底 | 环境变量 `PROXY_IDE_PULSE_KEY`、配置 `ide_pulse_key`；仅 Pulse 模式 |
 | `-ide-port-base` | 每 key IDE 专属监听端口起始值 | 环境变量 `PROXY_IDE_PORT_BASE`（默认 9100；仅 Pulse 模式） |
+| — | IDE 登录身份锁：每把接入密钥锁定首次出现的登录 JWT `sub`，防止 key 外借后被他人 IDE 使用（不同身份 403 并上报 `ide_sub_mismatch` 事件） | 环境变量 `PROXY_IDE_LOCK_SUB=1`（默认关闭；换号/多账号登录需重开代理或保持关闭） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |

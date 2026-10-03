@@ -186,6 +186,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         key_id: str,
         shell: str = Query(default="powershell", pattern="^(bash|powershell)$"),
         proxy_url: str | None = Query(default=None),
+        kind: str = Query(default="cli", pattern="^(cli|ide)$"),
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("proxy:read")),
     ):
@@ -209,6 +210,26 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
+        if kind == "ide":
+            # Cursor IDE 一键接入：仅 PowerShell，无需 shell 选择。
+            chosen_addr = addresses[0]
+            if proxy_url:
+                wanted = proxy_url.rstrip("/")
+                chosen_addr = next(
+                    (a for a in addresses if str(a.url).rstrip("/") == wanted),
+                    chosen_addr,
+                )
+            ide_url = str(getattr(chosen_addr, "url", "")).rstrip("/")
+            return {
+                "plaintext_key": plaintext,
+                "proxy_url": ide_url,
+                "shell": "powershell",
+                "kind": "ide",
+                "command": proxy_service.build_ide_setup_command(
+                    proxy_url=ide_url, plaintext_key=plaintext
+                ),
+            }
+
         commands = proxy_service.build_client_setup_commands(
             plaintext_key=plaintext, addresses=addresses
         )
@@ -219,6 +240,7 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             "plaintext_key": plaintext,
             "proxy_url": chosen["proxy_url"],
             "shell": chosen["shell"],
+            "kind": "cli",
             "command": chosen["command"],
             "commands": commands,
         }

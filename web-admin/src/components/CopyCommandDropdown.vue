@@ -36,6 +36,7 @@ export interface ProxyCommandMenuItem {
   proxy_url: string
   proxy_name: string
   shell: ShellKind
+  kind?: 'cli' | 'ide'
   label: string
 }
 
@@ -51,6 +52,14 @@ const menuItems = computed<ProxyCommandMenuItem[]>(() =>
   addresses.value.flatMap((addr) => {
     const name = addr.display_name || addr.url
     return [
+      {
+        key: `${addr.url}|ide`,
+        proxy_url: addr.url,
+        proxy_name: name,
+        shell: 'powershell',
+        kind: 'ide',
+        label: `${name} · Cursor IDE`,
+      },
       {
         key: `${addr.url}|powershell`,
         proxy_url: addr.url,
@@ -106,7 +115,11 @@ async function onVisible(visible: boolean) {
 async function copyItem(item: ProxyCommandMenuItem) {
   try {
     const res = await client.get(props.setupUrl, {
-      params: { shell: item.shell, proxy_url: item.proxy_url },
+      params: {
+        shell: item.shell,
+        proxy_url: item.proxy_url,
+        ...(item.kind === 'ide' ? { kind: 'ide' } : {}),
+      },
     })
     const command = res.data?.command
     if (!command) {
@@ -114,11 +127,15 @@ async function copyItem(item: ProxyCommandMenuItem) {
       return
     }
     await copyText(command)
-    ElMessage.success(
-      item.shell === 'powershell'
-        ? `已复制 ${item.proxy_name} · PowerShell 命令`
-        : `已复制 ${item.proxy_name} · Linux 命令`,
-    )
+    if (item.kind === 'ide') {
+      ElMessage.success(`已复制 ${item.proxy_name} · Cursor IDE 接入命令`)
+    } else {
+      ElMessage.success(
+        item.shell === 'powershell'
+          ? `已复制 ${item.proxy_name} · PowerShell 命令`
+          : `已复制 ${item.proxy_name} · Linux 命令`,
+      )
+    }
   } catch (err: any) {
     const status = err?.response?.status
     const detail = err?.response?.data?.detail

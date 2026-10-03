@@ -18,6 +18,7 @@ from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
 from pulse.proxy.key_crud import (
     build_client_command,
     build_client_setup_commands,
+    build_ide_setup_command,
     cents_to_usd,
     create_key,
     evaluate_key,
@@ -54,6 +55,7 @@ __all__ = [
     "authorize_status",
     "build_client_command",
     "build_client_setup_commands",
+    "build_ide_setup_command",
     "pick_client_setup_command",
     "canonical_turn_ended_tokens",
     "cents_to_usd",
