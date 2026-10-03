@@ -6,10 +6,16 @@
 
 ### 新增
 
+- **会员与余额**：成员级会员套餐（窗口规则 + 余额模式 unlimited/prepaid）、钱包流水（充值/扣费/退还/调整）与账单（逐笔余额列、按天/按模型汇总）；团队可开启「必须开通会员才能使用」；内部 `POST /api/internal/v1/proxy/spend-check` 统一校验。
+- **IDE 专用密钥（pkide_）**：控制台「复制命令 → Cursor IDE」与 `kind=ide` client-setup 签发 `pkide_`（quota 代理密钥与 `proxy_alias` 借用）；`cursor_direct` 仍交付 `cr*`。`pkide_` 仅用于 IDE `http.proxy` 归因，不能 exchange、不能给 CLI、不能走 OpenAI 网关；用量与父 key 一致。借用记录与「我的借用」可对 `proxy_alias` 活跃借用 **重置 IDE 密钥**（立即失效旧 key，复制新接入命令）。
 - **借用 Key 滚动用量限制**：管理员可为 `pka_` 借用配置多条规则（滚动 5 小时 / 7 天 / 30 天，Auto 或 API，整数美元），任一达到即限制对应桶；分配和调整出借方式里用「+」添加，没有规则时不展开。代理在 `AgentService/Run` 超限返回中文 429 与恢复时间，BYOK 与 `cr*` 直连不计入。
 
 ### 变更
 
+- **限额统一到会员**：`pk_` / `pka_` / `pkide_` 用量按成员合计；窗口规则支持 5h/7d/30d × Auto/API/合计，多条为「或」；仅在 `AgentService/Run` 前 spend-check 拦截（不再在 authorize 返回 `window_limited`）。
+- **借用用量限制与 pk_ 窗口迁移**：升级时合并为成员自定义会员（同周期同桶取最小限额，`credit_mode=unlimited`）；清空借用封顶列与 Cursor `pk_` 窗口列。升级后建议管理员在「会员」中核对规则（成员范围现含名下全部 key 用量，部分成员可能立即超限）。
+- **IDE 接入改为共享主端口 + userinfo**：`setup-cursor.ps1` 不再分配 `/ide-port`，将 `http://<pkide_>:x@主端口` 写入 `http.proxy`，并把 `http.proxy` 加入 `settingsSync.ignoredSettings`。拒绝在 IDE 脚本中传入 `pk_` / `pka_`。计费隧道无 key 或 userinfo 为全权 key 时返回明确 401；`pkide_` 调 exchange 返回 403。
+- **移除 `-ide-pulse-key` 兜底**：`-ide-pulse-key` / `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key` 已删除；若仍配置则启动 ERROR 并忽略。旧版每 key 专属端口（`/ide-port`、`PROXY_IDE_PORT_BASE`）本版仍可用但标记 deprecated，**下版删除**。
 - **借用记录展示用量限制**：借用记录和「我的借用」按 Auto / API 显示每条滚动限额的已用/上限和短进度，列宽固定；同一类型的多条用「或」连接；未设置显示「不限」。恢复时间在悬停里。
 - **借用记录合并回收与归还**：自动回收日和归还时间收成一列两行。归还时间悬停可看精确到秒。
 - **打分表去掉余量列**：入选排序不再显示 Auto 余量 / API 余量。额度列仍显示 Auto / API 用量比例，打分仍按该桶余量计算。
@@ -18,6 +24,11 @@
 - **管理端页标题**：各页去掉与顶栏重复的 h2，保留说明文案与操作区。
 - **额度看板隐藏已删账号**：软删除账号与 primary Key 已吊销（Key已删除）的账号不再出现在额度看板；其它列表继续按 `deleted_at` 过滤。
 - **指定账号分配不再填写目标模型**：账号由管理员选定，模型名不参与发 Key。自动（账号池轮换）仍可填写，用来在确认前检查对应 Auto/API 池是否有号。
+
+### 弃用
+
+- **借用 `usage_caps` 与 `PATCH /api/v2/loans/{id}/usage-cap`**：非空写入返回 400「用量限制已迁移到会员，请在「会员」中设置」。
+- **Cursor `pk_` 的 `window_5h_cost_usd` / `window_7d_cost_usd`**：非空写入同样 400；`pkcp_` 窗口不受影响。
 
 ### 修复
 

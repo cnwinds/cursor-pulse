@@ -162,10 +162,21 @@ func newTestProxy(t *testing.T, fu *fakeUpstream) (addr string, caPEM []byte) {
 // connectClient returns an HTTP client that dials addr through the CONNECT
 // proxy at proxyAddr, trusting proxyCA.
 func connectClient(t *testing.T, proxyAddr string, caPEM []byte) *http.Client {
+	return connectClientAuth(t, proxyAddr, caPEM, "", "")
+}
+
+// connectClientAuth dials through CONNECT at proxyAddr, optionally sending
+// Proxy-Authorization: Basic user:pass on the CONNECT request.
+func connectClientAuth(t *testing.T, proxyAddr string, caPEM []byte, user, pass string) *http.Client {
 	t.Helper()
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(caPEM) {
 		t.Fatal("bad CA PEM")
+	}
+	var proxyAuthLine string
+	if user != "" || pass != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+		proxyAuthLine = "Proxy-Authorization: Basic " + auth + "\r\n"
 	}
 	return &http.Client{
 		Timeout: 30 * time.Second,
@@ -176,7 +187,7 @@ func connectClient(t *testing.T, proxyAddr string, caPEM []byte) *http.Client {
 				if err != nil {
 					return nil, err
 				}
-				fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", addr, addr)
+				fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", addr, addr, proxyAuthLine)
 				br := bufio.NewReader(conn)
 				resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
 				if err != nil {

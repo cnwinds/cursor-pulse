@@ -40,6 +40,7 @@ from pulse.web.internal_channel_api import register_internal_channel_routes
 from pulse.web.internal_openai_proxy_api import register_internal_openai_proxy_routes
 from pulse.web.internal_proxy_api import register_internal_proxy_routes
 from pulse.web.knowledge_api import register_knowledge_routes
+from pulse.web.membership_api import register_membership_routes
 from pulse.web.openai_proxy_api import register_openai_proxy_admin_routes
 from pulse.web.permissions import has_permission
 from pulse.web.portal_auth_api import register_portal_auth_routes
@@ -318,6 +319,7 @@ def create_app(
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
     register_quota_routes(app, get_db, require_capability, _team_repo, config)
+    register_membership_routes(app, get_db, require_capability, _team_repo)
     register_usage_analytics_routes(app, get_db, require_capability, _team_repo, config)
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)

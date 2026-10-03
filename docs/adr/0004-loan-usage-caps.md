@@ -1,5 +1,7 @@
 # ADR-0004：借用 Key 的滚动用量封顶
 
+> **部分取代**：借用封顶与 Cursor `pk_` 的 5h/7d 窗口已迁移为成员级统一用量规则与可选预付余额，见 [ADR-0006](0006-member-membership-credit.md)。下文保留历史决策与实现细节供对照；新功能请以 ADR-0006 为准。
+
 - 状态：已实现（2026-10-02 修订为多条「或」规则）
 - 日期：2026-10-02
 - 相关：`pulse/proxy/authorize.py`、`pulse/web/internal_proxy_api.py`、`pulse/web/quota_api.py`、`proxy/mitm.go`、`web-admin/src/views/LoansView.vue`、`CONTEXT.md`

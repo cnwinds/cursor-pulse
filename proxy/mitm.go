@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -110,23 +111,18 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 			return
 		}
-		// listenerKey is set only on per-key IDE listeners; ideKey adds the
-		// main port's server-wide -ide-pulse-key fallback for TOFU binding.
-		listenerKey := ideKeyFromCtx(req.Context())
-		ideKey := listenerKey
-		if ideKey == "" {
-			ideKey = s.idePulseKey
-		}
+		tunnelKey, tunnelSrc := tunnelKeyFromCtx(req.Context())
 		b, ok := s.sessions.Lookup(cliTok)
 		// Per-key IDE listeners share SessionMap with the main port. A login
-		// JWT previously TOFU-bound on another key's port must not keep that
-		// attribution when the client moves http.proxy to this listener.
-		if ok && listenerKey != "" && b.PulseKey != listenerKey {
+		// JWT previously TOFU-bound on another tunnel key must not keep that
+		// attribution when the client moves http.proxy. Proxy-minted CLI
+		// exchange tokens are never rebound by a tunnel key.
+		if ok && tunnelKey != "" && b.PulseKey != tunnelKey && !s.sessionTokens.owns(cliTok) {
 			s.sessions.Delete(cliTok)
 			ok = false
 		}
 		if !ok {
-			ideB, handled := s.bindIDESession(w, ideKey, cliTok)
+			ideB, handled := s.bindIDESession(w, tunnelKey, tunnelSrc, req.URL.Path, cliTok)
 			if !handled {
 				return
 			}
@@ -227,17 +223,19 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// legacy passthrough path — the same predicate sticky.Select uses.
 	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && binding.allowedSet() != nil
 	quotaPool := resolveQuotaPool(req.Context(), req.URL.Path, reqBodySnap, streamFS)
-	if (binding.Mode == "loan_alias" || binding.Mode == "loan_pool") &&
+	if binding.Mode != "loan_passthrough" &&
+		(binding.ProxyKeyID != "" || binding.LoanID != "") &&
 		strings.Contains(req.URL.Path, "AgentService/Run") && s.pulse != nil {
 		model := findModelName(reqBodySnap())
-		capRes, err := s.pulse.CheckLoanUsageCap(binding.LoanID, model)
+		spendRes, err := s.pulse.CheckSpend(binding.ProxyKeyID, binding.LoanID, model)
 		if err != nil {
-			log.Printf("[mitm] loan usage cap check failed loan=%s: %v", binding.LoanID, err)
-			http.Error(w, "cursor-pulse-proxy: 借用用量校验暂不可用，请稍后重试", http.StatusServiceUnavailable)
+			log.Printf("[mitm] spend check failed proxy_key_id=%s loan_id=%s: %v",
+				binding.ProxyKeyID, binding.LoanID, err)
+			http.Error(w, "cursor-pulse-proxy: 用量校验暂不可用，请稍后重试", http.StatusServiceUnavailable)
 			return
 		}
-		if capRes.Status == "limited" {
-			writeLoanUsageCapLimited(w, capRes.Message)
+		if spendRes.Status == "limited" {
+			writeSpendLimited(w, spendRes.Message)
 			return
 		}
 	}
@@ -378,6 +376,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 					LoanID:       binding.LoanID,
 					CredentialID: servedCredID,
 					Model:        model,
+					Client:       binding.Client,
 					Tokens:       tc,
 				})
 				return
@@ -393,6 +392,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				ProxyKeyID:   binding.ProxyKeyID,
 				CredentialID: entry.credentialID,
 				Model:        model,
+				Client:       binding.Client,
 				Tokens:       tc,
 			})
 		}
@@ -437,6 +437,10 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "missing pulse key", http.StatusUnauthorized)
 		return
 	}
+	if strings.HasPrefix(pulseKey, "pkide_") {
+		http.Error(w, "IDE key not allowed for exchange", http.StatusForbidden)
+		return
+	}
 	if s.pulse == nil {
 		http.Error(w, "pulse client not configured", http.StatusServiceUnavailable)
 		return
@@ -464,6 +468,10 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			res.ProxyKeyID, windowLimitReason)
 	default:
 		writeAuthReject(w, res)
+		return
+	}
+	if res.Scope == "ide" {
+		http.Error(w, "IDE key not allowed for exchange", http.StatusForbidden)
 		return
 	}
 
@@ -496,6 +504,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				LoanID:               res.LoanID,
 				CredentialID:         res.CredentialID,
 				PulseKey:             pulseKey,
+				Client:               "cli",
 				CursorAPIKey:         exchangeKey,
 				WindowLimitReason:    windowLimitReason,
 				AllowedCredentialIDs: res.CredentialIDs,
@@ -541,6 +550,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				Mode:                 res.Mode,
 				LoanID:               res.LoanID,
 				PulseKey:             pulseKey,
+				Client:               "cli",
 				AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
 				WindowLimitReason:    windowLimitReason,
 				BlockedCredentialIDs: res.BlockedCredentialIDs,
@@ -578,6 +588,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		s.sessions.Bind(clientTok, SessionBinding{
 			ProxyKeyID:           res.ProxyKeyID,
 			PulseKey:             pulseKey,
+			Client:               "cli",
 			AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
 			WindowLimitReason:    windowLimitReason,
 			BlockedCredentialIDs: res.BlockedCredentialIDs,
@@ -794,8 +805,8 @@ func writeWindowLimited(w http.ResponseWriter, reason string) {
 	})
 }
 
-func writeLoanUsageCapLimited(w http.ResponseWriter, message string) {
-	log.Printf("[mitm] reject request: loan usage cap: %s", truncate(message, 200))
+func writeSpendLimited(w http.ResponseWriter, message string) {
+	log.Printf("[mitm] reject request: spend limited: %s", truncate(message, 200))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -1119,21 +1130,49 @@ func writeAuthReject(w http.ResponseWriter, res AuthResult) {
 	}
 }
 
+var ideUnauthBillingLastLog atomic.Int64
+
+func logIDEUnauthBilling(path string) {
+	now := time.Now().UnixNano()
+	for {
+		last := ideUnauthBillingLastLog.Load()
+		if last != 0 && now-last < int64(time.Minute) {
+			return
+		}
+		if ideUnauthBillingLastLog.CompareAndSwap(last, now) {
+			log.Printf("[ide] billing request on unauthenticated tunnel path=%s", path)
+			return
+		}
+	}
+}
+
+func allowedUserinfoIDEKey(key string) bool {
+	return strings.HasPrefix(key, "pkide_") || strings.HasPrefix(key, "cr")
+}
+
 // bindIDESession handles IDE-originated business requests whose bearer token
 // was never issued by an intercepted exchange: Cursor IDE authenticates with
-// its own WorkOS login JWT and never calls exchange_user_api_key. When an IDE
-// proxy key is configured (-ide-pulse-key / per-key port), the first request
-// seen from a client token is bound to that key's pool or loan exactly like a
-// CLI session; later requests reuse the binding, including session TTL
-// re-authorize and sticky rotation. It writes the error response itself;
-// handled=false means the caller must stop. ideKey is the request's effective
-// key (per-key listener, else -ide-pulse-key); empty means no IDE binding.
-func (s *Server) bindIDESession(w http.ResponseWriter, ideKey, cliTok string) (SessionBinding, bool) {
-	if s.pulse == nil || ideKey == "" {
+// its own WorkOS login JWT and never calls exchange_user_api_key. When a
+// tunnel key is present (per-key listener or Proxy-Authorization userinfo),
+// the first request seen from a client token is bound to that key's pool or
+// loan exactly like a CLI session; later requests reuse the binding, including
+// session TTL re-authorize and sticky rotation. It writes the error response
+// itself; handled=false means the caller must stop.
+func (s *Server) bindIDESession(w http.ResponseWriter, tunnelKey string, tunnelSrc tunnelKeySource, path, cliTok string) (SessionBinding, bool) {
+	if s.pulse == nil {
 		http.Error(w, "session expired; re-exchange", http.StatusUnauthorized)
 		return SessionBinding{}, false
 	}
-	res, ok := authorizeOrRejectFresh(w, s.pulse, ideKey)
+	if tunnelKey == "" {
+		logIDEUnauthBilling(path)
+		http.Error(w, "IDE proxy key missing: re-run setup-cursor.ps1", http.StatusUnauthorized)
+		return SessionBinding{}, false
+	}
+	if tunnelSrc == tunnelKeySourceUserinfo && !allowedUserinfoIDEKey(tunnelKey) {
+		http.Error(w, "full proxy key not allowed in proxy URL; use IDE key", http.StatusUnauthorized)
+		return SessionBinding{}, false
+	}
+	res, ok := authorizeOrRejectFresh(w, s.pulse, tunnelKey)
 	if !ok {
 		return SessionBinding{}, false
 	}
@@ -1145,7 +1184,7 @@ func (s *Server) bindIDESession(w http.ResponseWriter, ideKey, cliTok string) (S
 		windowLimitReason = authWindowReason(res)
 	}
 
-	b := SessionBinding{PulseKey: ideKey, WindowLimitReason: windowLimitReason}
+	b := SessionBinding{PulseKey: tunnelKey, Client: "ide", WindowLimitReason: windowLimitReason}
 	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
 		b.Mode = res.Mode
 		b.LoanID = res.LoanID
@@ -1184,10 +1223,10 @@ func (s *Server) bindIDESession(w http.ResponseWriter, ideKey, cliTok string) (S
 		sub := jwtSub(cliTok)
 		if sub == "" {
 			http.Error(w, "login identity required", http.StatusForbidden)
-			log.Printf("[ide] lock on but no JWT sub on key %s — rejected", maskClientToken(ideKey))
+			log.Printf("[ide] lock on but no JWT sub on key %s — rejected", maskClientToken(tunnelKey))
 			return SessionBinding{}, false
 		}
-		if !s.ideSub.pin(ideKey, sub) {
+		if !s.ideSub.pin(tunnelKey, sub) {
 			http.Error(w, "proxy key already bound to another login", http.StatusForbidden)
 			if s.pulse != nil {
 				s.pulse.ReportEvent(EventItem{
@@ -1197,7 +1236,7 @@ func (s *Server) bindIDESession(w http.ResponseWriter, ideKey, cliTok string) (S
 					Detail:     "login identity differs from the pinned one",
 				})
 			}
-			log.Printf("[ide] sub mismatch on key %s — rejected", maskClientToken(ideKey))
+			log.Printf("[ide] sub mismatch on key %s — rejected", maskClientToken(tunnelKey))
 			return SessionBinding{}, false
 		}
 	}

@@ -31,6 +31,7 @@ class UsageItem(BaseModel):
     loan_id: str | None = None
     credential_id: str | None = None
     model: str | None = None
+    client: str | None = None
     tokens: dict[str, int] = {}
     ts: datetime | None = None
     request_id: str | None = None
@@ -42,6 +43,12 @@ class UsageBody(BaseModel):
 
 class LoanUsageCapBody(BaseModel):
     loan_id: str
+    model: str | None = None
+
+
+class SpendCheckBody(BaseModel):
+    proxy_key_id: str | None = None
+    loan_id: str | None = None
     model: str | None = None
 
 
@@ -129,13 +136,31 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         }
 
     @app.post(
+        "/api/internal/v1/proxy/spend-check",
+        dependencies=[Depends(require_internal_service)],
+    )
+    def proxy_spend_check(body: SpendCheckBody, session: Session = Depends(get_db)):
+        from pulse.proxy.membership import evaluate_spend
+
+        proxy_key_id = (body.proxy_key_id or "").strip() or None
+        loan_id = (body.loan_id or "").strip() or None
+        if not proxy_key_id and not loan_id:
+            raise HTTPException(status_code=400, detail="proxy_key_id 与 loan_id 至少提供一个")
+        return evaluate_spend(
+            session,
+            proxy_key_id=proxy_key_id,
+            loan_id=loan_id,
+            model=body.model,
+        )
+
+    @app.post(
         "/api/internal/v1/proxy/loan-usage-cap",
         dependencies=[Depends(require_internal_service)],
     )
     def proxy_loan_usage_cap(body: LoanUsageCapBody, session: Session = Depends(get_db)):
-        from pulse.proxy.loan_usage_cap import check_loan_usage_cap
+        from pulse.proxy.membership import evaluate_spend
 
-        return check_loan_usage_cap(session, body.loan_id, body.model)
+        return evaluate_spend(session, loan_id=body.loan_id, model=body.model)
 
     @app.post(
         "/api/internal/v1/proxy/usage",

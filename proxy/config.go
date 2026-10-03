@@ -12,8 +12,8 @@ type Config struct {
 	Keys        []string `json:"keys,omitempty"` // optional local fallback; Pulse mode overrides via pool
 	PulseURL    string   `json:"pulse_url"`
 	PulseToken  string   `json:"pulse_token"`
-	PoolEvery   string   `json:"pool_every"`      // e.g. "60s"
-	IdePulseKey string   `json:"ide_pulse_key"`   // IDE-originated sessions bind to this Proxy Key (pk_/pka_; Pulse mode only)
+	PoolEvery   string   `json:"pool_every"`    // e.g. "60s"
+	IdePulseKey string   `json:"ide_pulse_key"` // deprecated/ignored; detected at startup for migration logging only
 }
 
 func loadConfig(path string) (*Config, error) {

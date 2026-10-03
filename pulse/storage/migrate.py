@@ -38,6 +38,8 @@ _PROXY_USAGE_COLUMNS: dict[str, str] = {
     "request_id": "VARCHAR(64)",
     "loan_id": "VARCHAR(36)",
     "usage_cap_pool": "VARCHAR(8)",
+    "member_id": "VARCHAR(36)",
+    "client": "VARCHAR(8)",
 }
 
 _KEY_LOAN_USAGE_CAP_COLUMNS: dict[str, str] = {
@@ -51,6 +53,9 @@ _PROXY_KEY_COLUMNS: dict[str, str] = {
     "window_5h_cost_limit_cents": "INTEGER",
     "window_7d_cost_limit_cents": "INTEGER",
     "coding_plan_vendor": "VARCHAR(16)",
+    "ide_key_hash": "VARCHAR(64)",
+    "ide_key_hint": "VARCHAR(32)",
+    "ide_encrypted_key": "TEXT",
 }
 _PROXY_EVENT_COLUMNS: dict[str, str] = {"loan_id": "VARCHAR(36)"}
 
@@ -61,6 +66,12 @@ _KEY_LOAN_ALIAS_COLUMNS: dict[str, str] = {
     "alias_encrypted_key": "TEXT",
     "expires_on": "DATE",
     "routing_mode": "VARCHAR(16) DEFAULT 'pinned'",
+}
+
+_KEY_LOAN_IDE_COLUMNS: dict[str, str] = {
+    "ide_key_hash": "VARCHAR(64)",
+    "ide_key_hint": "VARCHAR(32)",
+    "ide_encrypted_key": "TEXT",
 }
 
 _KEY_LOAN_LENDER_COLUMNS: dict[str, str] = {
@@ -681,6 +692,13 @@ def migrate_schema(engine: Engine) -> None:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE proxy_key_usages ADD COLUMN {col_name} {col_type}"))
                 logger.info("Added %s column to proxy_key_usages", col_name)
+        index_names = {idx["name"] for idx in inspector.get_indexes("proxy_key_usages")}
+        if "ix_proxy_key_usages_member_ts" not in index_names:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_proxy_key_usages_member_ts ON proxy_key_usages (member_id, ts)")
+                )
+            logger.info("Added index ix_proxy_key_usages_member_ts on proxy_key_usages")
 
     if "proxy_keys" in tables:
         columns = {col["name"] for col in inspector.get_columns("proxy_keys")}
@@ -713,6 +731,13 @@ def migrate_schema(engine: Engine) -> None:
                         text(f"UPDATE proxy_keys SET status = 'active', suspended_reason = NULL WHERE {legacy_suspend}")
                     )
                     logger.info("Reactivated proxy_keys suspended for legacy limit reasons")
+        index_names = {idx["name"] for idx in inspector.get_indexes("proxy_keys")}
+        if "ix_proxy_keys_ide_key_hash" not in index_names:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("CREATE UNIQUE INDEX IF NOT EXISTS ix_proxy_keys_ide_key_hash ON proxy_keys (ide_key_hash)")
+                )
+            logger.info("Added unique index ix_proxy_keys_ide_key_hash on proxy_keys")
 
     if "proxy_events" in tables:
         columns = {col["name"] for col in inspector.get_columns("proxy_events")}
@@ -726,6 +751,7 @@ def migrate_schema(engine: Engine) -> None:
         columns = {col["name"] for col in inspector.get_columns("key_loans")}
         for col_name, col_type in {
             **_KEY_LOAN_ALIAS_COLUMNS,
+            **_KEY_LOAN_IDE_COLUMNS,
             **_KEY_LOAN_LENDER_COLUMNS,
             **_KEY_LOAN_USAGE_CAP_COLUMNS,
         }.items():
@@ -751,6 +777,12 @@ def migrate_schema(engine: Engine) -> None:
                     text("CREATE UNIQUE INDEX IF NOT EXISTS ix_key_loans_alias_key_hash ON key_loans (alias_key_hash)")
                 )
             logger.info("Added unique index ix_key_loans_alias_key_hash on key_loans")
+        if "ix_key_loans_ide_key_hash" not in index_names:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("CREATE UNIQUE INDEX IF NOT EXISTS ix_key_loans_ide_key_hash ON key_loans (ide_key_hash)")
+                )
+            logger.info("Added unique index ix_key_loans_ide_key_hash on key_loans")
         _relax_key_loan_account_nulls(engine)
         _backfill_loan_usage_cap_rules(engine)
 
@@ -776,9 +808,11 @@ def migrate_schema(engine: Engine) -> None:
     _sqlite_rebuild_proxy_key_usages_nullable_proxy_key(engine)
     _migrate_daily_agg_kind_family(engine)
     _backfill_proxy_usage_cap_pool(engine)
+    _backfill_proxy_usage_member_id(engine)
 
     Base.metadata.create_all(engine)
     _migrate_member_identities_table(engine)
+    _migrate_legacy_spend_limits(engine)
     _ensure_read_path_indexes(engine)
     # personamem tables are initialized by assistant_platform (assistant.db), not pulse.db.
 
@@ -979,20 +1013,17 @@ def _backfill_proxy_usage_cap_pool(engine: Engine) -> None:
     if "proxy_key_usages" not in inspector.get_table_names():
         return
     columns = {col["name"] for col in inspector.get_columns("proxy_key_usages")}
-    if "usage_cap_pool" not in columns or "loan_id" not in columns:
+    if "usage_cap_pool" not in columns:
         return
     from sqlalchemy.orm import Session
 
-    from pulse.proxy.loan_usage_cap import usage_cap_pool_column
+    from pulse.proxy.spend_policy import usage_cap_pool_column
 
     batch = 500
     with Session(engine) as session:
         while True:
             rows = session.execute(
-                text(
-                    "SELECT id, model FROM proxy_key_usages "
-                    "WHERE loan_id IS NOT NULL AND usage_cap_pool IS NULL LIMIT :lim"
-                ),
+                text("SELECT id, model FROM proxy_key_usages WHERE usage_cap_pool IS NULL LIMIT :lim"),
                 {"lim": batch},
             ).fetchall()
             if not rows:
@@ -1005,6 +1036,174 @@ def _backfill_proxy_usage_cap_pool(engine: Engine) -> None:
                 )
             session.commit()
             logger.info("Backfilled usage_cap_pool on %d proxy_key_usages row(s)", len(rows))
+
+
+def _backfill_proxy_usage_member_id(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "proxy_key_usages" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("proxy_key_usages")}
+    if "member_id" not in columns:
+        return
+    batch = 500
+    with engine.begin() as conn:
+        while True:
+            n = conn.execute(
+                text(
+                    """
+                    UPDATE proxy_key_usages
+                    SET member_id = (
+                        SELECT proxy_keys.member_id FROM proxy_keys
+                        WHERE proxy_keys.id = proxy_key_usages.proxy_key_id
+                    )
+                    WHERE member_id IS NULL AND proxy_key_id IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1 FROM proxy_keys WHERE proxy_keys.id = proxy_key_usages.proxy_key_id
+                    )
+                    AND id IN (
+                        SELECT id FROM proxy_key_usages
+                        WHERE member_id IS NULL AND proxy_key_id IS NOT NULL
+                        LIMIT :lim
+                    )
+                    """
+                ),
+                {"lim": batch},
+            ).rowcount
+            if n:
+                logger.info("Backfilled member_id from proxy_keys on %d row(s)", n)
+            if n < batch:
+                break
+    with engine.begin() as conn:
+        while True:
+            n = conn.execute(
+                text(
+                    """
+                    UPDATE proxy_key_usages
+                    SET member_id = (
+                        SELECT key_loans.borrower_member_id FROM key_loans
+                        WHERE key_loans.id = proxy_key_usages.loan_id
+                    )
+                    WHERE member_id IS NULL AND loan_id IS NOT NULL
+                    AND EXISTS (
+                        SELECT 1 FROM key_loans WHERE key_loans.id = proxy_key_usages.loan_id
+                    )
+                    AND id IN (
+                        SELECT id FROM proxy_key_usages
+                        WHERE member_id IS NULL AND loan_id IS NOT NULL
+                        LIMIT :lim
+                    )
+                    """
+                ),
+                {"lim": batch},
+            ).rowcount
+            if n:
+                logger.info("Backfilled member_id from key_loans on %d row(s)", n)
+            if n < batch:
+                break
+
+
+def _migrate_legacy_spend_limits(engine: Engine) -> None:
+    """一次性：借用封顶 + pk_ 窗口合并到成员会员，并清空旧字段。"""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    needed = {"members", "memberships", "proxy_keys", "key_loans"}
+    if not needed.issubset(tables):
+        return
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from pulse.proxy.membership import active_membership, change_membership, open_membership
+    from pulse.proxy.spend_policy import SpendRule, legacy_loan_rules, min_merge_rules
+    from pulse.storage.models import KeyLoan, Member, ProxyKey
+    from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+
+    def _pk_window_rules(key: ProxyKey) -> list[SpendRule]:
+        rules: list[SpendRule] = []
+        if key.window_5h_cost_limit_cents is not None:
+            rules.append(SpendRule("5h", "total", int(key.window_5h_cost_limit_cents)))
+        if key.window_7d_cost_limit_cents is not None:
+            rules.append(SpendRule("week", "total", int(key.window_7d_cost_limit_cents)))
+        return rules
+
+    def _rules_to_json(rules: list[SpendRule]) -> list[dict]:
+        return [r.as_dict() for r in rules]
+
+    with Session(engine) as session:
+        members = session.scalars(select(Member)).all()
+        changed = False
+        for member in members:
+            legacy: list[SpendRule] = []
+            loans = session.scalars(
+                select(KeyLoan).where(
+                    KeyLoan.borrower_member_id == member.id,
+                    KeyLoan.status == "active",
+                    KeyLoan.delivery_mode == DELIVERY_PROXY_ALIAS,
+                )
+            ).all()
+            for loan in loans:
+                legacy = min_merge_rules(legacy, legacy_loan_rules(loan))
+            keys = session.scalars(
+                select(ProxyKey).where(
+                    ProxyKey.member_id == member.id,
+                    ProxyKey.status != "revoked",
+                    ProxyKey.mode == "quota",
+                )
+            ).all()
+            for key in keys:
+                legacy = min_merge_rules(legacy, _pk_window_rules(key))
+
+            if not legacy:
+                continue
+
+            membership = active_membership(session, member.id)
+            if membership:
+                from pulse.proxy.membership import effective_policy
+
+                before_rules = effective_policy(session, membership).rules
+            else:
+                before_rules = []
+            merged = min_merge_rules(before_rules, legacy)
+            before = _rules_to_json(before_rules)
+            logger.info(
+                "legacy spend migration member=%s before=%s legacy=%s merged=%s",
+                member.id,
+                before,
+                _rules_to_json(legacy),
+                _rules_to_json(merged),
+            )
+            merged_json = _rules_to_json(merged)
+            if membership is None:
+                open_membership(
+                    session,
+                    member_id=member.id,
+                    plan_id=None,
+                    created_by_member_id=None,
+                    rules_override=merged_json,
+                    credit_mode_override="unlimited",
+                )
+            else:
+                change_membership(session, membership, rules_override=merged_json)
+            changed = True
+
+            for loan in loans:
+                if (
+                    loan.usage_cap_rules
+                    or loan.usage_cap_period
+                    or loan.auto_cost_limit_cents
+                    or loan.api_cost_limit_cents
+                ):
+                    loan.usage_cap_rules = []
+                    loan.usage_cap_period = None
+                    loan.auto_cost_limit_cents = None
+                    loan.api_cost_limit_cents = None
+            for key in keys:
+                if key.window_5h_cost_limit_cents is not None or key.window_7d_cost_limit_cents is not None:
+                    key.window_5h_cost_limit_cents = None
+                    key.window_7d_cost_limit_cents = None
+
+        if changed:
+            session.commit()
+            logger.info("Completed legacy spend limits migration for members")
 
 
 def _backfill_daily_kind_families(engine: Engine) -> None:

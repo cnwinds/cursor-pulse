@@ -475,6 +475,9 @@ class KeyLoan(Base):
     alias_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     alias_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
     alias_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ide_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    ide_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ide_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # manual: 固定出借账号；auto: 自助白名单游走，或配合 routing_mode=pool 的账号池轮换
     # 取值见 pulse.tool_center.key_loan_delivery；存储层不反向依赖，故内联默认值
     lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
@@ -613,6 +616,9 @@ class ProxyKey(Base):
     status: Mapped[str] = mapped_column(String(16), default="active")  # active|suspended|revoked
     suspended_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ide_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    ide_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ide_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -622,14 +628,17 @@ class ProxyKeyUsage(Base):
     __table_args__ = (
         Index("ix_proxy_key_usages_key_ts", "proxy_key_id", "ts"),
         Index("ix_proxy_key_usages_loan_ts", "loan_id", "ts"),
+        Index("ix_proxy_key_usages_member_ts", "member_id", "ts"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     proxy_key_id: Mapped[str | None] = mapped_column(ForeignKey("proxy_keys.id"), nullable=True, index=True)
     loan_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
     credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    client: Mapped[str | None] = mapped_column(String(8), nullable=True)
     tokens_input: Mapped[int] = mapped_column(BigInteger, default=0)
     tokens_output: Mapped[int] = mapped_column(BigInteger, default=0)
     tokens_cache_read: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -639,6 +648,64 @@ class ProxyKeyUsage(Base):
     cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
     usage_cap_pool: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+
+class MembershipPlan(Base):
+    __tablename__ = "membership_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    rules: Mapped[list] = mapped_column(JSON, default=list)
+    credit_mode: Mapped[str] = mapped_column(String(16), default="unlimited")
+    opening_credit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (Index("ix_memberships_member_status", "member_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
+    plan_id: Mapped[str | None] = mapped_column(ForeignKey("membership_plans.id"), nullable=True, index=True)
+    rules_override: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    credit_mode_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_by_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CreditAccount(Base):
+    __tablename__ = "credit_accounts"
+
+    member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), primary_key=True)
+    balance_cents: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+    __table_args__ = (Index("ix_credit_transactions_member_id", "member_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    member_id: Mapped[str] = mapped_column(ForeignKey("members.id"))
+    kind: Mapped[str] = mapped_column(String(16))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    balance_after_cents: Mapped[int] = mapped_column(Integer)
+    usage_id: Mapped[str | None] = mapped_column(
+        ForeignKey("proxy_key_usages.id"), nullable=True, unique=True, index=True
+    )
+    ref_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("credit_transactions.id"), nullable=True, unique=True, index=True
+    )
+    actor_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class CpOpenAiStickyBinding(Base):

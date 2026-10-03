@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from pulse.proxy.authorize import authorize_status
 from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
+from pulse.proxy.ide_keys import find_ide_key_parent, get_or_issue_ide_key, rotate_ide_key
 from pulse.proxy.key_crud import (
     build_client_command,
     build_client_setup_commands,
+    build_ide_client_setup,
     build_ide_setup_command,
     cents_to_usd,
     create_key,
@@ -55,6 +57,7 @@ __all__ = [
     "authorize_status",
     "build_client_command",
     "build_client_setup_commands",
+    "build_ide_client_setup",
     "build_ide_setup_command",
     "pick_client_setup_command",
     "canonical_turn_ended_tokens",
@@ -62,7 +65,9 @@ __all__ = [
     "create_key",
     "estimate_cost_cents",
     "evaluate_key",
+    "find_ide_key_parent",
     "find_key_by_plaintext",
+    "get_or_issue_ide_key",
     "key_summaries",
     "key_summary",
     "list_pool_credentials",
@@ -73,6 +78,7 @@ __all__ = [
     "record_usages",
     "reprice_proxy_usages",
     "resume_key",
+    "rotate_ide_key",
     "reveal_plaintext",
     "suspend_key",
     "total_tokens_from_canonical",

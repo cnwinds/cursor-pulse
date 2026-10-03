@@ -37,6 +37,13 @@ ACTION_LABELS: dict[str, str] = {
     "quota.reassign_loan_source": "更换出借账号",
     "quota.patch_loan": "修改借用设置",
     "quota.request_self_loan": "自助申请 Key",
+    "membership.plan.create": "创建会员套餐",
+    "membership.plan.update": "更新会员套餐",
+    "membership.open_or_change": "开通或变更会员",
+    "membership.cancel": "取消会员",
+    "credit.grant": "会员充值",
+    "credit.adjust": "余额调整",
+    "credit.refund": "退还扣费",
     "usage.manual_submit": "手动提交用量（历史）",
     # Historical / reserved (AccessRequest API not shipped)
     "access_request.approve": "批准工具申请（未实现）",

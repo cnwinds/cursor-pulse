@@ -63,7 +63,40 @@ def test_key_loans_alias_columns_and_unique_index_migrated(tmp_path):
     assert "alias_key_hash" in cols
     assert "alias_key_hint" in cols
     assert "alias_encrypted_key" in cols
+    assert "ide_key_hash" in cols
+    assert "ide_key_hint" in cols
+    assert "ide_encrypted_key" in cols
     assert "expires_on" in cols
     indexes = {idx["name"]: idx for idx in inspect(engine).get_indexes("key_loans")}
     assert "ix_key_loans_alias_key_hash" in indexes
     assert bool(indexes["ix_key_loans_alias_key_hash"].get("unique"))
+    assert "ix_key_loans_ide_key_hash" in indexes
+    assert bool(indexes["ix_key_loans_ide_key_hash"].get("unique"))
+
+
+def test_proxy_keys_ide_columns_migrated(tmp_path):
+    """存量 proxy_keys 无 ide 字段时，migrate 应补齐列与唯一索引。"""
+    url = f"sqlite:///{tmp_path / 'legacy-pk.db'}"
+    engine = make_test_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE proxy_keys (
+                    id VARCHAR(36) PRIMARY KEY,
+                    key_hash VARCHAR(64),
+                    key_hint VARCHAR(16),
+                    name VARCHAR(128),
+                    member_id VARCHAR(36),
+                    mode VARCHAR(16),
+                    status VARCHAR(16)
+                )
+                """
+            )
+        )
+    migrate_schema(engine)
+    cols = {c["name"] for c in inspect(engine).get_columns("proxy_keys")}
+    assert {"ide_key_hash", "ide_key_hint", "ide_encrypted_key"} <= cols
+    indexes = {idx["name"]: idx for idx in inspect(engine).get_indexes("proxy_keys")}
+    assert "ix_proxy_keys_ide_key_hash" in indexes
+    assert bool(indexes["ix_proxy_keys_ide_key_hash"].get("unique"))

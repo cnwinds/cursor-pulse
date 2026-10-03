@@ -116,13 +116,13 @@ def _seed_proxy_addresses(env, addresses=None):
 
 
 def test_create_and_list_proxy_key(env):
-    resp = _create_key(env, window_5h_cost_usd=10)
+    resp = _create_key(env)
     assert resp.status_code == 200
     body = resp.json()
     assert body["plaintext_key"].startswith("pk_")
     assert body["mode"] == "quota"
     assert body["name"] == "Admin"
-    assert body["window_5h_cost_usd"] == 10
+    assert body["window_5h_cost_usd"] is None
     assert body["recoverable"] is True
     assert body["proxy_url"] == "http://proxy.example.com:8317"
 
@@ -146,17 +146,15 @@ def test_create_key_empty_windows_allowed(env):
 
 def test_update_revoke_resume_flow(env):
     client = env["client"]
-    key_id = _create_key(env, window_5h_cost_usd=10).json()["id"]
+    key_id = _create_key(env).json()["id"]
 
     resp = client.patch(
         f"/api/v2/proxy-keys/{key_id}",
-        json={"window_5h_cost_usd": 20, "name": "k2"},
+        json={"name": "k2"},
         headers=_admin(env),
     )
     assert resp.status_code == 200
     assert resp.json()["name"] == "k2"
-    assert resp.json()["window_5h_cost_usd"] == 20
-    assert resp.json()["window_5h_cost_limit_cents"] == 2000
 
     resp = client.post(f"/api/v2/proxy-keys/{key_id}/revoke", headers=_admin(env))
     assert resp.json()["status"] == "revoked"
@@ -974,7 +972,6 @@ def test_client_setup_ide_kind(env):
     )
     created = _create_key(env).json()
     key_id = created["id"]
-    plaintext = created["plaintext_key"]
 
     resp = env["client"].get(
         f"/api/v2/proxy-keys/{key_id}/client-setup",
@@ -986,9 +983,10 @@ def test_client_setup_ide_kind(env):
     assert body["kind"] == "ide"
     assert body["proxy_url"] == "http://wan.example:8317"
     assert body["shell"] == "powershell"
+    ide_key = body["plaintext_key"]
+    assert ide_key.startswith("pkide_")
     assert body["command"] == (
-        '& ([scriptblock]::Create((irm "http://wan.example:8317/setup-cursor.ps1"))) '
-        f"-Key '{plaintext}'"
+        f"& ([scriptblock]::Create((irm \"http://wan.example:8317/setup-cursor.ps1\"))) -Key '{ide_key}'"
     )
     assert chr(10) not in body["command"]
 
@@ -1061,7 +1059,7 @@ def test_zero_and_negative_usd_rejected(env):
     for value in (0, -5):
         resp = env["client"].post(
             "/api/v2/proxy-keys",
-            json={"member_id": env["owner"].id, "window_5h_cost_usd": value},
+            json={"member_id": env["owner"].id, "coding_plan_vendor": "glm", "window_5h_cost_usd": value},
             headers=_admin(env),
         )
         assert resp.status_code == 422

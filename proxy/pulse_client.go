@@ -36,6 +36,7 @@ type AuthResult struct {
 	BlockedCredentialIDs []string `json:"blocked_credential_ids,omitempty"`
 	MaxConcurrentUsers   int      `json:"max_concurrent_users,omitempty"`
 	SeatAdvised          bool     `json:"seat_advised,omitempty"`
+	Scope                string   `json:"scope"`
 }
 
 type PoolCredential struct {
@@ -58,6 +59,7 @@ type UsageItem struct {
 	LoanID       string      `json:"loan_id,omitempty"`
 	CredentialID string      `json:"credential_id,omitempty"`
 	Model        string      `json:"model,omitempty"`
+	Client       string      `json:"client,omitempty"`
 	Tokens       TokenCounts `json:"tokens"`
 	TS           string      `json:"ts,omitempty"`
 	RequestID    string      `json:"request_id,omitempty"`
@@ -71,18 +73,18 @@ type EventItem struct {
 	Detail       string `json:"detail,omitempty"`
 }
 
-// LoanUsageCapResult is the internal loan usage cap check (HTTP 200; limited is in body).
-type LoanUsageCapResult struct {
-	Status          string `json:"status"`
-	Reason          string `json:"reason"`
-	Pool            string `json:"pool"`
-	Period          string `json:"period"`
-	UsedCents       int    `json:"used_cents"`
-	LimitCents      *int   `json:"limit_cents"`
-	ResetsAt        string `json:"resets_at"`
-	OtherPool       string `json:"other_pool"`
-	OtherPoolOpen   bool   `json:"other_pool_open"`
-	Message         string `json:"message"`
+// SpendCheckResult is the internal spend check (HTTP 200; limited is in body).
+type SpendCheckResult struct {
+	Status        string `json:"status"`
+	Reason        string `json:"reason"`
+	Pool          string `json:"pool"`
+	Period        string `json:"period"`
+	UsedCents     int    `json:"used_cents"`
+	LimitCents    *int   `json:"limit_cents"`
+	ResetsAt      string `json:"resets_at"`
+	OtherPool     string `json:"other_pool"`
+	OtherPoolOpen bool   `json:"other_pool_open"`
+	Message       string `json:"message"`
 }
 
 type PulseClient struct {
@@ -328,30 +330,31 @@ func (c *PulseClient) authorize(pulseKey string, seat seatReport) (AuthResult, e
 	return res, nil
 }
 
-func (c *PulseClient) CheckLoanUsageCap(loanID, model string) (LoanUsageCapResult, error) {
+func (c *PulseClient) CheckSpend(proxyKeyID, loanID, model string) (SpendCheckResult, error) {
 	payload := map[string]string{
-		"loan_id": loanID,
-		"model":   model,
+		"proxy_key_id": proxyKeyID,
+		"loan_id":      loanID,
+		"model":        model,
 	}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/loan-usage-cap", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/internal/v1/proxy/spend-check", bytes.NewReader(body))
 	if err != nil {
-		return LoanUsageCapResult{}, err
+		return SpendCheckResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return LoanUsageCapResult{}, err
+		return SpendCheckResult{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return LoanUsageCapResult{}, fmt.Errorf("loan usage cap HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		return SpendCheckResult{}, fmt.Errorf("spend check HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
-	var res LoanUsageCapResult
+	var res SpendCheckResult
 	if err := json.Unmarshal(raw, &res); err != nil {
-		return LoanUsageCapResult{}, err
+		return SpendCheckResult{}, err
 	}
 	return res, nil
 }

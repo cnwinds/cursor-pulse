@@ -9,6 +9,7 @@
       <el-select v-model="rule.pool" size="small" class="cap-pool">
         <el-option label="Auto" value="auto" />
         <el-option label="API" value="api" />
+        <el-option v-if="allowTotal" label="合计" value="total" />
       </el-select>
       <el-input-number
         v-model="rule.cost_usd"
@@ -39,13 +40,18 @@ import { Close, Plus } from '@element-plus/icons-vue'
 
 export interface UsageCapRule {
   period: '5h' | 'week' | 'month'
-  pool: 'auto' | 'api'
+  pool: 'auto' | 'api' | 'total'
   cost_usd: number | null
 }
 
-const props = defineProps<{
-  modelValue: UsageCapRule[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    modelValue: UsageCapRule[]
+    /** 会员套餐规则可含「合计」桶；借用场景默认不展示 */
+    allowTotal?: boolean
+  }>(),
+  { allowTotal: false },
+)
 
 const emit = defineEmits<{
   'update:modelValue': [UsageCapRule[]]
@@ -61,6 +67,13 @@ function add() {
     { period: 'week', pool: 'api', cost_usd: null },
     { period: 'month', pool: 'api', cost_usd: null },
   ]
+  if (props.allowTotal) {
+    presets.push(
+      { period: '5h', pool: 'total', cost_usd: null },
+      { period: 'week', pool: 'total', cost_usd: null },
+      { period: 'month', pool: 'total', cost_usd: null },
+    )
+  }
   const next = presets.find((rule) => !used.has(`${rule.period}:${rule.pool}`)) ?? presets[0]
   emit('update:modelValue', [...props.modelValue, { ...next }])
 }

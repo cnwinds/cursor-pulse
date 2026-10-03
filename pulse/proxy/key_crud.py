@@ -128,20 +128,35 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
     return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
 
+def build_ide_client_setup(addresses, plaintext_key: str, *, proxy_url: str | None = None) -> dict:
+    chosen_addr = addresses[0]
+    if proxy_url:
+        wanted = proxy_url.rstrip("/")
+        chosen_addr = next(
+            (a for a in addresses if str(a.url).rstrip("/") == wanted),
+            chosen_addr,
+        )
+    ide_url = str(getattr(chosen_addr, "url", "")).rstrip("/")
+    return {
+        "plaintext_key": plaintext_key,
+        "proxy_url": ide_url,
+        "shell": "powershell",
+        "kind": "ide",
+        "command": build_ide_setup_command(proxy_url=ide_url, plaintext_key=plaintext_key),
+    }
+
+
 def build_ide_setup_command(*, proxy_url: str, plaintext_key: str) -> str:
     """生成 Cursor IDE 一键接入命令（PowerShell）。
 
-    代理内置 /setup-cursor.ps1（装 CA、按 key 分配专属端口、改 http.proxy），
-    成员整条粘贴执行即可；与 CLI 共用同一把 pk_/pka_ key。
+    ``plaintext_key`` 为 IDE 作用域密钥（``pkide_``，或 ``cursor_direct`` 借用的 ``cr*``）。
+    脚本安装 CA、将带 userinfo 的主端口 URL 写入 ``http.proxy``，不再分配专属端口。
 
     Key 用单引号包裹，内部单引号按 PowerShell 规则加倍转义。
     """
     url = proxy_url.rstrip("/")
     safe_key = plaintext_key.replace("'", "''")
-    return (
-        f'& ([scriptblock]::Create((irm "{url}/setup-cursor.ps1"))) '
-        f"-Key '{safe_key}'"
-    )
+    return f"& ([scriptblock]::Create((irm \"{url}/setup-cursor.ps1\"))) -Key '{safe_key}'"
 
 
 def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:

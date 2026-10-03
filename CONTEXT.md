@@ -16,8 +16,12 @@ A login or IM addressing key (`channel` + `external_id`) bound to a Member.
 ### Credentials & loans
 
 **Proxy Key**:
-A Pulse-issued alias (`pk_` / `pka_`) that authorizes the MITM proxy to a pool or loan binding.
+A Pulse-issued alias (`pk_` / `pka_` / `pkide_`) that authorizes the MITM proxy to a pool or loan binding. `pkide_` is IDE-scoped only (see **IDE Key**); full-power keys remain `pk_` and `pka_`.
 _Avoid_: API key (ambiguous with Cursor keys)
+
+**IDE Key** (`pkide_`):
+A scoped derivative of a quota `ProxyKey` or `proxy_alias` Key Loan, stored on the parent row (`ide_key_hash` / `ide_encrypted_key`). One active `pkide_` per parent; authorization reuses the parent's row checks with `scope=ide`. Used only for Cursor IDE attribution via `http.proxy` userinfo on the shared main port — not for CLI exchange, OpenAI gateway, or Pulse admin APIs. Usage, model routing, and limits match the parent key.
+_Avoid_: Treating `pkide_` as interchangeable with `pk_`/`pka_`; putting full proxy keys in IDE `http.proxy` userinfo
 
 **Key Loan**:
 A temporary binding of an underlying Cursor credential to a borrower via a loan alias.
@@ -108,18 +112,50 @@ _Avoid_: Treating it as a Designated Loan, or as the self-service allowlist loan
 The ranking behind both loan modes: hard filters, then the deterministic score, then the optional Jev decision (`tool_center.auto_lender`). Used at issuance to pick the starting account and, for auto-assigned loans, to build the proxy's candidate allowlist.
 _Avoid_: Treating it as the thing that switches accounts at request time (the proxy does that)
 
-**Loan Usage Cap**:
-Optional per-loan spend ceilings for a proxy-mediated Key Loan (`loan_alias` or `loan_pool`). Each rule is one rolling window — 5 hours, 7 days, or 30 days — plus one pool (`auto` or `api`) and an integer-dollar limit. Rules are OR: any matching rule for the request's pool blocks that pool. No rules means unlimited. Spend is the proxy ledger estimate (`ProxyKeyUsage.cost_cents`) for that loan, bucketed by `loan_usage_cap_pool` (empty model counts as Auto; BYOK model names are skipped). Enforced on `AgentService/Run` before the upstream call, with a Chinese 429 that names the bucket, the reset time, and whether the other pool is still open. Direct `cr*` passthrough loans are outside this cap.
-_Avoid_: Reusing `quota_pool_for_model` (that maps BYOK onto Auto); treating the period as the lender's Cursor billing cycle; applying `pk_` 5h/7d windows to loans
+**Membership Plan**:
+A team-level template defining default **Spend Rules** (rolling 5h / 7d / 30d × `auto` / `api` / `total`) and **Credit Mode** (`unlimited` or `prepaid`), plus optional one-time `opening_credit_cents` on first assignment. Plans are `active` or `archived`; archived plans cannot be assigned to new members but existing memberships keep referencing them until changed.
+_Avoid_: Treating a plan edit as retroactive to past charges; deleting plans that still have active members
+
+**Membership**:
+At most one `active` row per Member binding them to a Membership Plan (or a custom rules/mode override). No billing cycle and no expiry — cancel sets `cancelled` but leaves the **Credit Account** balance intact. Effective spend policy = overrides when set, else plan fields; plan edits apply immediately to all members on that plan.
+_Avoid_: Confusing membership status with credit balance; expecting caps to reset when a plan changes
+
+**Credit Mode** (`unlimited` / `prepaid`):
+`unlimited` — window **Spend Rules** only; no `charge` rows. `prepaid` — each counted usage row debits the wallet at record time; `evaluate_spend` blocks both pools when balance ≤ 0. Mode comes from `credit_mode_override` or the plan.
+_Avoid_: Expecting unlimited members to see charge lines; using prepaid without admin grants
+
+**Credit Account**:
+Per-member wallet (`credit_accounts.balance_cents`), independent of membership lifecycle. Balance may go negative briefly because usage posts after the Run (no pre-auth). Top-ups and corrections go through append-only **Credit Transactions**.
+_Avoid_: Deriving balance from live `ProxyKeyUsage` sums; assuming balance resets on plan change
+
+**Credit Transaction** (`grant` / `charge` / `refund` / `adjust`):
+Append-only ledger lines with signed `amount_cents` and stored `balance_after_cents`. `charge` links `usage_id` (unique) and freezes cost at record time; `refund` points to one `charge` once; `adjust` requires a note. Grants include opening credit (`note=membership:opening_credit`, once per member lifetime).
+_Avoid_: Editing or deleting rows; expecting `reprice_proxy_usages` to rewrite charges
+
+**Credit Statement**:
+Paginated `credit_transactions` joined to usage for charge detail (model, pool, `client`, key/loan label, tokens). Summary `by_day` / `by_model` is aggregated from **transactions** in the selected interval so totals reconcile with the wallet, not from `usage_rollup` (repricing can change historical usage cost).
+_Avoid_: Using Proxy Usage Rollup cents as the member bill total
+
+**Spend Rule**:
+Member-scoped rolling cap: period (`5h` / `week` / `month`) + pool (`auto` / `api` / `total`) + `limit_cents`. Multiple rules are OR for the request's pool. Usage sums `ProxyKeyUsage` for the member (`pk_` + `pka_` + `pkide_` via `member_id`), bucketed by `usage_cap_pool`. Orphan `proxy_alias` loans without a borrower still use loan-scoped legacy rules. Enforced on `AgentService/Run` via **Spend Check**, not at authorize.
+_Avoid_: Per-key `window_5h` / `window_7d` on authorize; `quota_pool_for_model` for caps; counting `cr*` passthrough or `pkcp_`
+
+**Spend Check**:
+Internal `POST /api/internal/v1/proxy/spend-check` → `evaluate_spend` (BYOK → membership required → prepaid exhausted → rule exceeded). Go calls it before upstream `RoundTrip` on non-`loan_passthrough` bindings; 429 with Python `message`, 503 fail-closed on check failure.
+_Avoid_: Blocking exchange/login on cap; caching a failed check as a permanent deny
+
+**Loan Usage Cap** (superseded):
+Former per-loan rolling Auto/API ceilings (ADR-0004). **Superseded by Spend Rule on Membership** (ADR-0006) for members with a borrower; orphan proxy-alias loans may still carry loan-scoped rules until migrated. Management `usage_caps` / `PATCH .../usage-cap` and Cursor `pk_` window fields are deprecated inputs.
+_Avoid_: Configuring caps on loans or proxy keys instead of the member membership UI
 
 **Jev Decision**:
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.
 _Avoid_: Treating Jev as an LLM text model; putting it in the request path (it runs on pool refresh and loan issuance — the Auto-Assigned Loan candidate allowlist is ordered by the deterministic score alone)
 
-**Per-key IDE Port**:
-A dedicated proxy listen port allocated per Proxy Key (`GET /ide-port` on the main listener only, default base 9100, persisted in `ide_ports.json`) so Cursor IDE sessions attribute to that key without client-side key support — Cursor has nowhere to enter one. Bind host matches `PROXY_LISTEN`. Setup script allocates the port before writing IDE `http.proxy`. Moving `http.proxy` to another key's port rebinds the login JWT so usage follows the new key.
-_Avoid_: IDE port alone (ambiguous with the main listener); machine-binding schemes (the `x-cursor-checksum` header carries no usable machine identity).
+**Per-key IDE Port** (deprecated):
+Legacy dedicated proxy listen port per Proxy Key (`GET /ide-port`, default base 9100, `ide_ports.json`). **Superseded by IDE Key on the shared main port** (ADR 0005). Still works this release for clients that have not re-run setup; **removed next release**.
+_Avoid_: New deployments using `/ide-port` or per-key ports instead of `pkide_` userinfo on the main port
 
 **Login Identity Lock**:
-Optional pin of a Proxy Key to the first parseable IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); rejects `alg=none` / missing sub / control characters in sub; a different identity is rejected with 403 (`ide_sub_mismatch`). Shared across the main port and every Per-key IDE Port; not persisted across restarts. Does **not** verify WorkOS JWT signatures (reachable-port TOFU trust boundary).
+Optional pin of a Proxy Key to the first parseable IDE login JWT `sub` seen on it (`PROXY_IDE_LOCK_SUB`); rejects `alg=none` / missing sub / control characters in sub; a different identity is rejected with 403 (`ide_sub_mismatch`). Applies on the shared main port (and on legacy per-key IDE ports until removed); not persisted across restarts. Does **not** verify WorkOS JWT signatures (TOFU trust boundary).
 _Avoid_: treating unsigned claim parsing as cryptographic identity proof.

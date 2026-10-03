@@ -25,8 +25,8 @@ func main() {
 		upstreamProxy  = flag.String("upstream-proxy", "", "HTTP(S) proxy for Cursor upstream (env PROXY_UPSTREAM_URL)")
 		sessionTTL     = flag.Duration("session-ttl", 0, "session re-authorize interval (default 120s; env PROXY_SESSION_TTL)")
 		stickyMinDwell = flag.Duration("sticky-min-dwell", 0, stickyMinDwellUsage)
-		idePulseKey    = flag.String("ide-pulse-key", "", "proxy key (pk_/pka_) that IDE-originated sessions bind to (env PROXY_IDE_PULSE_KEY, config ide_pulse_key)")
-		idePortBase    = flag.Int("ide-port-base", 0, "first port for per-key IDE listeners (env PROXY_IDE_PORT_BASE, default 9100; Pulse mode only)")
+		idePulseKey    = flag.String("ide-pulse-key", "", "removed/ignored: IDE sessions use pkide_ in http.proxy userinfo (re-run setup-cursor.ps1)")
+		idePortBase    = flag.Int("ide-port-base", 0, "deprecated: first port for per-key IDE listeners (env PROXY_IDE_PORT_BASE, default 9100; Pulse mode only)")
 	)
 	flag.Parse()
 
@@ -150,13 +150,8 @@ Point agent at this proxy and trust the CA (PowerShell):
 		go pruneSessions(sessions, 10*time.Minute)
 	}
 	srv.caPEMPath = caPEMPath
-	srv.idePulseKey = firstNonEmpty(*idePulseKey, os.Getenv("PROXY_IDE_PULSE_KEY"), cfg.IdePulseKey)
-	if srv.idePulseKey != "" && !pulseMode {
-		log.Fatalf("ide-pulse-key requires Pulse mode (-pulse-url/-pulse-token or config)")
-	}
-	if srv.idePulseKey != "" {
-		log.Printf("IDE mode: unbound sessions bind to pulse key %s...%s",
-			srv.idePulseKey[:min(4, len(srv.idePulseKey))], srv.idePulseKey[max(0, len(srv.idePulseKey)-4):])
+	if removedIDEPulseKeySet(*idePulseKey, os.Getenv("PROXY_IDE_PULSE_KEY"), cfg.IdePulseKey) {
+		log.Printf("ERROR: -ide-pulse-key / PROXY_IDE_PULSE_KEY / config ide_pulse_key has been removed and is ignored; IDE clients must re-run setup-cursor.ps1 with an IDE key (pkide_) from the console")
 	}
 	srv.ideLockSubInit(resolveIdeLockSub())
 	if pulseMode {
@@ -237,6 +232,12 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// removedIDEPulseKeySet reports whether any deprecated IDE pulse key source is
+// still configured (-ide-pulse-key flag, PROXY_IDE_PULSE_KEY, or ide_pulse_key).
+func removedIDEPulseKeySet(flagVal, envVal, cfgVal string) bool {
+	return firstNonEmpty(flagVal, envVal, cfgVal) != ""
 }
 
 const defaultSessionTTL = 120 * time.Second

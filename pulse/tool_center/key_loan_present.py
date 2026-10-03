@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
 from pulse.proxy.loan_usage_cap import usage_cap_snapshots
+from pulse.proxy.membership import batch_borrower_membership_context
 from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
@@ -44,6 +45,10 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     loan_ids = [loan.id for loan in loans]
     proxy_totals = loan_proxy_totals_by_loan(session, loan_ids)
     cap_rows = usage_cap_snapshots(session, loans)
+    member_caps, member_summaries = batch_borrower_membership_context(
+        session,
+        borrower_ids,
+    )
     cred_ids = {
         loan.credential_id
         for loan in loans
@@ -85,6 +90,13 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
         else:
             cred = credentials.get(loan.credential_id)
             key_hint = cred.key_hint if cred else None
+        borrower_id = loan.borrower_member_id
+        if borrower_id and borrower_id in member_caps:
+            usage_caps = member_caps[borrower_id]
+            membership = member_summaries.get(borrower_id)
+        else:
+            usage_caps = cap_rows.get(loan.id, [])
+            membership = member_summaries.get(borrower_id) if borrower_id else None
         payloads.append(
             {
                 "id": loan.id,
@@ -115,7 +127,8 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),
-                "usage_caps": cap_rows.get(loan.id, []),
+                "usage_caps": usage_caps,
+                "membership": membership,
             }
         )
     return payloads

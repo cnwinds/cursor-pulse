@@ -52,27 +52,34 @@ $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
 .\cursor-pulse-proxy.exe -listen 0.0.0.0:8317
 ```
 
-**成员侧一条命令接入**（Windows；`-Key` 为 web-admin「共享池代理」分配的代理密钥（Proxy Key），与 agent CLI 用的是同一把 `pk_`）：
+**成员侧一条命令接入**（Windows；`-Key` 为 web-admin「复制命令 → Cursor IDE」下发的 **IDE 专用密钥** `pkide_`，或 `cursor_direct` 借用的 `cr*`；**不是** CLI 用的 `pk_` / `pka_`）：
 
 ```powershell
-& ([scriptblock]::Create((irm "http://<代理地址>:8317/setup-cursor.ps1"))) -Key "pk_..."
+& ([scriptblock]::Create((irm "http://<代理地址>:8317/setup-cursor.ps1"))) -Key "pkide_..."
 ```
 
-脚本做四件事：安装 CA 到当前用户受信任根 → 调 `GET /ide-port?key=...` 为这把 key 分配**专属代理端口**（首次 9100 起，持久化，重复执行返回同一端口）→ 备份并把 Cursor `settings.json` 的 `http.proxy` 指到该端口（`cursor.general.disableHttp2`、`http.systemCertificates` 一并写入）→ Cursor 未运行则自动拉起。之后登录 Cursor 即用；该端口上的所有会话 TOFU 绑定到这把 key，归因/窗口限额/吊销与 CLI 完全一致。
+脚本：安装 CA 到当前用户受信任根 → 把 `http.proxy` 写成带 userinfo 的**主端口** URL（`http://<pkide_>:x@host:port`）→ 写入 `cursor.general.disableHttp2`、`http.systemCertificates` → 把 `http.proxy` 加入 `settingsSync.ignoredSettings`（避免 Settings Sync 把 key 同步到其他设备）→ Cursor 未运行则自动拉起。传入 `pk_` / `pka_` 会直接报错，提示从控制台复制 IDE 命令。之后登录 Cursor 即用；`pkide_` 经隧道 userinfo 归因，限额/吊销与父 key 一致。
 
-也可以无 key 使用服务器级兜底：代理加 `-ide-pulse-key pk_...`（或 `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key`），主端口上的 IDE 未绑定会话统一归因到该 key；两者并存时专属端口优先。CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
+CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
 
 **卸载（同样一条命令）**：
 
 ```powershell
-irm http://<代理地址>:8317/uninstall-cursor.ps1 | iex        # 不带 -Key
-# 或带 -Key 同时释放该 key 的专属端口：
-& ([scriptblock]::Create((irm http://<代理地址>:8317/uninstall-cursor.ps1))) -Key "pk_..."
+irm http://<代理地址>:8317/uninstall-cursor.ps1 | iex
 ```
 
-脚本幂等，且在代理不可达时仍完成本地清理：移除 settings.json 的 `http.proxy` / `cursor.general.disableHttp2` / `http.systemCertificates` 三项（安装前备份 `settings.json.bak-cursor-pulse` 保留不动；若接入前你本来配有自己的 `http.proxy`，安装时已被覆盖，卸载只删除不恢复，请从备份手工找回）、删除当前用户受信任根中 Subject 含 `cursor-quota-proxy` 的全部证书（按 Subject 匹配、逐个按指纹删除——同名的其他代理 CA 也会一并移除）、带 `-Key` 时调 `DELETE /ide-port` 让代理关闭该 key 的专属监听并清持久化（对已吊销 key 也生效——卸载不应依赖 key 仍有效；与分配一样只在主端口受理）。卸载后完全退出并重启 Cursor 即恢复直连。
+脚本幂等，且在代理不可达时仍完成本地清理：移除 settings.json 的 `http.proxy` / `cursor.general.disableHttp2` / `http.systemCertificates` 三项，并移除 `settingsSync.ignoredSettings` 中的 `http.proxy`（安装前备份 `settings.json.bak-cursor-pulse` 保留不动；若接入前你本来配有自己的 `http.proxy`，安装时已被覆盖，卸载只删除不恢复，请从备份手工找回）、删除当前用户受信任根中 Subject 含 `cursor-quota-proxy` 的全部证书（按 Subject 匹配、逐个按指纹删除——同名的其他代理 CA 也会一并移除）。卸载后完全退出并重启 Cursor 即恢复直连。
 
-管理台「共享池代理 / 借用」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide` 或 `GET /api/v2/loans/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借（解析 JWT `sub`，拒绝 `alg=none`；**不校验签名**，与可达专属口上的 TOFU 信任边界一致；锁在代理内存中，重启后重新认领）。
+管理台「共享池代理 / 借用」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide` 或 `GET /api/v2/loans/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。`proxy_alias` 借用可在借用记录中 **重置 IDE 密钥**（`POST .../ide-key/rotate`），旧 `pkide_` 立即失效，各端须重跑新命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借（解析 JWT `sub`，拒绝 `alg=none`；**不校验签名**；锁在代理内存中，重启后重新认领）。
+
+**401 / 403 排障（IDE）**：
+
+| 现象 | 含义 | 处理 |
+| --- | --- | --- |
+| `IDE proxy key missing: re-run setup-cursor.ps1` | 计费请求走在无凭据隧道上（常见于未跑 setup、key 丢失，或 Cursor 把计费挪到 Chromium 栈） | 从控制台复制 IDE 命令并重跑 setup；查代理日志 `[ide] billing request on unauthenticated tunnel` |
+| `full proxy key not allowed in proxy URL; use IDE key` | `http.proxy` userinfo 里是 `pk_` / `pka_` | 复制 **Cursor IDE** 命令（`pkide_`），勿把 CLI 密钥写入 IDE |
+| `IDE key not allowed for exchange` | 用 `pkide_` 调了 CLI exchange | CLI（agent / `CURSOR_API_KEY`）请使用 `pk_`/`pka_`；`pkide_` 仅用于 IDE `http.proxy` |
+| 403 `ide_sub_mismatch` | 开启了 `PROXY_IDE_LOCK_SUB` 且登录身份与首次不同 | 用原账号登录，或管理员轮换 key / 重启代理后重新认领 |
 
 IDE 接入的行为与限制：
 
@@ -81,15 +88,15 @@ IDE 接入的行为与限制：
 - IDE 聊天走 `agent.v1.AgentService/RunSSE`：响应 Content-Type 标为 `text/event-stream` 但实体是标准 Connect 信封帧，代理按 Connect 流中继（逐帧 flush + TurnEnded usage tap），用量与 CLI 同管线入账。
 - **流式聊天（`RunSSE`）经上游翻墙代理可能 stall**（实测 clash 会挂起长流），IDE 场景优先直连，仅被墙域走 `PROXY_UPSTREAM_URL`。
 - 对话历史按服务账号在服务端存储：sticky 驻留期内连续，轮换后可能切换会话归属（Switch dwell 缓解）。
-- 每 key 专属端口与会话归因已生效；专属端口绑定地址与主端口 `PROXY_LISTEN` 同 host（主端口只听 `127.0.0.1` 时专属口不会暴露到全网）。登录身份锁（`PROXY_IDE_LOCK_SUB`）在主端口与专属端口一致生效，开启时要求可解析的 JWT `sub`（无 sub 拒绝绑定）；锁状态不持久化——代理重启后首个登录重新认领。
-- 吊销 / 挂起生效：`/ide-port` 与 TOFU 绑定走 `AuthorizeFresh`（即时）；已绑定会话与 CLI 一样，最多延迟到 `PROXY_SESSION_TTL`（默认 120s）后的重授权。`key` 会出现在 `/ide-port` URL 与本机 `ide_ports.json`（0600）——按「知晓 key 即可接入」信任边界运维。
-- 不要把同一登录会话在「专属口」与「配置了不同 `-ide-pulse-key` 的主端口」之间混用；专属口之间换 key 会重绑，主端口上的 CLI exchange 会话与 IDE 兜底 key 共用 SessionMap。
+- 共享主端口 + `http.proxy` userinfo 归因已生效。登录身份锁（`PROXY_IDE_LOCK_SUB`）在主端口生效，开启时要求可解析的 JWT `sub`（无 sub 拒绝绑定）；锁状态不持久化——代理重启后首个登录重新认领。
+- 吊销 / 挂起生效：TOFU 绑定走 `AuthorizeFresh`（即时）；已绑定会话与 CLI 一样，最多延迟到 `PROXY_SESSION_TTL`（默认 120s）后的重授权。`pkide_` 会出现在本机 `settings.json` 的 `http.proxy` userinfo 中——按「知晓 key 即可接入」信任边界运维。
+- 主端口上的 CLI exchange 会话不会被 IDE `http.proxy` userinfo 冲掉；勿在 IDE 与 CLI 之间混用 `pkide_` 与 `pk_`/`pka_`。
 
 调试开关（默认关闭）：`PROXY_DEBUG_HTTP=1`（请求/响应行）、`PROXY_DEBUG_HEADERS=1`（checksum/client-key 等头）、`PROXY_DEBUG_STREAM=1`（帧转储，含 RunSSE 请求体，用于重放分析）。
 
-**运维模型（部署前必读）**：每接入一名成员 = 代理多监听一个专属端口（默认 9100 起，上限 1000）。防火墙需放行该端口段；端口与 key 的映射持久化在代理状态目录 `ide_ports.json`（明文保存已分配 key，0600——重启后恢复监听所需，与本地 `-keys` 配置同级信任）。吊销 key 不会自动释放端口，成员跑卸载命令或管理员删除 `ide_ports.json` 对应条目即可。
+**遗留：每 key 专属端口（deprecated）**：尚未重跑新 setup 的客户端仍可使用 `GET /ide-port` 分配的专属端口 + `pk_`；访问 `/ide-port` 会打 deprecated 日志。卸载时若 `http.proxy` 仍指向非主端口，可传 `-Key "pk_..."` 尝试 `DELETE /ide-port` 释放映射（本版仍受理，**下版删除**端口子系统）。新部署只需放行主端口，不再规划 per-key 端口段。
 
-**平台范围**：安装/卸载一键命令面向 **Windows**（PowerShell 5.1）。macOS/Linux 的 Cursor IDE 按手工步骤接入：① 把 `http://<代理>:8317/ca.pem` 装入系统信任 store（macOS `security add-trusted-cert`；Linux 复制到 ca-certificates 后 `update-ca-certificates`）；② 编辑 `~/.config/Cursor/User/settings.json` 写入 `http.proxy`（专属端口）、`cursor.general.disableHttp2: true`、`http.systemCertificates: true`；③ 重启 Cursor。卸载即反向移除这三项并删除 CA。
+**平台范围**：安装/卸载一键命令面向 **Windows**（PowerShell 5.1）。macOS/Linux 的 Cursor IDE 按手工步骤接入：① 把 `http://<代理>:8317/ca.pem` 装入系统信任 store（macOS `security add-trusted-cert`；Linux 复制到 ca-certificates 后 `update-ca-certificates`）；② 编辑 `~/.config/Cursor/User/settings.json` 写入 `http.proxy`（带 userinfo 的主端口 URL，如 `http://<pkide_>:x@host:8317`）、`cursor.general.disableHttp2: true`、`http.systemCertificates: true`，并可选把 `http.proxy` 加入 `settingsSync.ignoredSettings`；③ 重启 Cursor。卸载即反向移除这三项（及 `settingsSync.ignoredSettings` 中的 `http.proxy`）并删除 CA。
 
 
 ### 出站上游代理（翻墙）
@@ -168,9 +175,9 @@ Key 会写入 `%USERPROFILE%\.cursor-quota-proxy\config.json`，之后启动无�
 | `-upstream-proxy` | Cursor 出站上游代理 | 环境变量 `PROXY_UPSTREAM_URL` |
 | `-session-ttl` | 会话重授权间隔 | 环境变量 `PROXY_SESSION_TTL`（默认 120s） |
 | `-sticky-min-dwell` | sticky 最小驻留（Switch dwell） | 环境变量 `PROXY_STICKY_MIN_DWELL`（默认 20m；`0`/`off` 关闭） |
-| `-ide-pulse-key` | IDE 会话绑定的代理密钥（`pk_`/`pka_`），主端口兜底 | 环境变量 `PROXY_IDE_PULSE_KEY`、配置 `ide_pulse_key`；仅 Pulse 模式 |
-| `-ide-port-base` | 每 key IDE 专属监听端口起始值 | 环境变量 `PROXY_IDE_PORT_BASE`（默认 9100；仅 Pulse 模式） |
-| — | IDE 登录身份锁（Login Identity Lock）：每把代理密钥锁定首次出现的登录 JWT `sub`，防止 key 外借后被他人 IDE 使用（不同身份 403 并上报 `ide_sub_mismatch` 事件；主端口与每 key 专属端口共享同一锁状态） | 环境变量 `PROXY_IDE_LOCK_SUB=1`（默认关闭；换号/多账号登录需重开代理或保持关闭） |
+| `-ide-pulse-key` | **已移除**（若仍设置则启动 ERROR 并忽略） | 曾用环境变量 `PROXY_IDE_PULSE_KEY`、配置 `ide_pulse_key`；请改用控制台 IDE 命令中的 `pkide_` |
+| `-ide-port-base` | **deprecated** 每 key 专属端口起始值（下版删除） | 环境变量 `PROXY_IDE_PORT_BASE`（默认 9100）；新客户端请用主端口 + `pkide_` userinfo |
+| — | IDE 登录身份锁：每把代理密钥锁定首次出现的登录 JWT `sub`（不同身份 403；主端口与遗留专属口共享锁状态） | 环境变量 `PROXY_IDE_LOCK_SUB=1`（默认关闭） |
 | `-keys` | 逗号分隔 Cursor API key（本地兜底） | 读配置文件 |
 | `-dir` | 状态目录（CA、配置） | `~/.cursor-quota-proxy` |
 | `-config` | 配置文件路径 | `<dir>/config.json` |

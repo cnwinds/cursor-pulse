@@ -45,6 +45,10 @@
             <el-icon><Share /></el-icon>
             <span>借用管理</span>
           </el-menu-item>
+          <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/membership">
+            <el-icon><Wallet /></el-icon>
+            <span>会员管理</span>
+          </el-menu-item>
           <el-menu-item
             v-if="auth.hasPermission('loans:self') && !auth.hasPermission('accounts:read')"
             index="/my-loans"

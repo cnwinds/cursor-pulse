@@ -28,8 +28,14 @@ EDITABLE_SECTIONS = frozenset(
         "bot",
         "proxy_addresses",
         "tool_center",
+        "membership",
     }
 )
+
+
+def _validate_membership(data: dict) -> None:
+    if "membership_required" in data and not isinstance(data["membership_required"], bool):
+        raise ValueError("membership_required 须为布尔值")
 
 
 def _validate_tool_center(data: dict) -> None:
@@ -145,6 +151,8 @@ def patch_team_setting(
     merged = patch if row is None else _deep_merge(row.data or {}, patch)
     if section == "tool_center":
         _validate_tool_center(merged)
+    if section == "membership":
+        _validate_membership(merged)
     now = datetime.now(UTC)
     if row is None:
         row = TeamSetting(team_id=team_id, section=section, data=merged, updated_at=now)

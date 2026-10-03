@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -40,12 +41,6 @@ type Server struct {
 	shouldMITM func(authority string) bool
 
 	connectAllowlist []string
-
-	// idePulseKey is the proxy key (pk_/pka_) that IDE-originated sessions on
-	// this listener bind to. Empty on the main port without -ide-pulse-key
-	// keeps the legacy behavior: business requests must present an
-	// exchange-issued session JWT (CLI-only proxy).
-	idePulseKey string
 
 	// ideSub is the shared login-identity lock state (PROXY_IDE_LOCK_SUB).
 	// Held by pointer so the main port and every per-key listener enforce one
@@ -166,7 +161,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "/", "/health":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /uninstall-cursor.ps1 - one-line Cursor IDE offboarding\nGET /ide-port?key=... - dedicated IDE port for a Proxy Key (DELETE releases)\n")
+			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /uninstall-cursor.ps1 - one-line Cursor IDE offboarding\nGET /ide-port?key=... - deprecated dedicated IDE port (DELETE releases)\n")
 			return
 		}
 	}
@@ -224,6 +219,16 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		NextProtos:   []string{"h2", "http/1.1"},
 		MinVersion:   tls.VersionTLS12,
 	}
+	tunnelKey, tunnelSrc := tunnelKeyFromCtx(r.Context())
+	if tunnelKey == "" {
+		if user, _, ok := parseProxyAuthBasic(r.Header.Get("Proxy-Authorization")); ok {
+			tunnelKey = strings.TrimSpace(user)
+			if tunnelKey != "" {
+				tunnelSrc = tunnelKeySourceUserinfo
+			}
+		}
+	}
+
 	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
 		client.Close()
 		return
@@ -233,9 +238,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Serve this single connection as an HTTP server (h2 via ALPN, or h1).
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			// Carry the per-key listener's proxy key across the CONNECT hop.
-			if k := ideKeyFromCtx(r.Context()); k != "" {
-				req = req.WithContext(withIDEKeyCtx(req.Context(), k))
+			if tunnelKey != "" {
+				req = req.WithContext(withTunnelKey(req.Context(), tunnelKey, tunnelSrc))
 			}
 			s.handleMITM(w, req, authority)
 		}),
@@ -258,6 +262,25 @@ func tunnel(dst, src net.Conn) {
 func writeHTTPError(c net.Conn, status int) {
 	text := http.StatusText(status)
 	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\n\r\n", status, text)
+}
+
+// parseProxyAuthBasic decodes Proxy-Authorization: Basic user:pass. Password is
+// ignored by callers; CONNECT never rejects on auth failure.
+func parseProxyAuthBasic(header string) (user, pass string, ok bool) {
+	header = strings.TrimSpace(header)
+	if len(header) < 6 || !strings.EqualFold(header[:6], "basic ") {
+		return "", "", false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[6:]))
+	if err != nil {
+		return "", "", false
+	}
+	s := string(raw)
+	i := strings.IndexByte(s, ':')
+	if i < 0 {
+		return s, "", true
+	}
+	return s[:i], s[i+1:], true
 }
 
 // oneConnListener adapts a single net.Conn to net.Listener for http.Server.

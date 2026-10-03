@@ -65,6 +65,7 @@ from pulse.tool_center.usage_summary_pick import attach_board_usage_summaries
 from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.audit import log_admin_action
 from pulse.web.deps import PortalUser
+from pulse.web.membership_present import usage_caps_migrated_message
 from pulse.web.permissions import has_permission
 
 logger = logging.getLogger(__name__)
@@ -126,14 +127,9 @@ def _parsed_usage_cap_items(body) -> list[dict]:
     return [item.model_dump() if hasattr(item, "model_dump") else item for item in raw]
 
 
-def _parsed_usage_cap_rules(body) -> list[dict]:
-    from pulse.proxy.loan_usage_cap import UsageCapConfigError, parse_usage_cap_rules
-
-    try:
-        rules = parse_usage_cap_rules(_parsed_usage_cap_items(body))
-    except UsageCapConfigError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return [rule.as_dict() for rule in rules]
+def _reject_non_empty_usage_caps(body) -> None:
+    if _parsed_usage_cap_items(body):
+        raise HTTPException(status_code=400, detail=usage_caps_migrated_message())
 
 
 def _encryption_key(config) -> str:
@@ -499,7 +495,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=400, detail="借用人不存在")
 
         enc_key = _encryption_key(config)
-        cap_rules = _parsed_usage_cap_rules(body)
+        _reject_non_empty_usage_caps(body)
+        cap_rules: list[dict] = []
         try:
             if is_auto:
                 # 管理员自动分配 = 账号池轮换，确认时不选号、不建 Cursor Key。
@@ -615,39 +612,38 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         if loan.status != "active":
             raise HTTPException(status_code=410, detail="借用已结束，无法获取代理命令")
 
+        delivery = getattr(loan, "delivery_mode", None) or "cursor_direct"
+        if kind == "ide":
+            from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+
+            addresses = configured_proxy_addresses(session, team.id)
+            if not addresses:
+                raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
+            if delivery == DELIVERY_PROXY_ALIAS:
+                from pulse.proxy.ide_keys import get_or_issue_ide_key
+
+                enc_key = _encryption_key(config)
+                ide_plaintext = get_or_issue_ide_key(session, loan, enc_key)
+                session.commit()
+                body = proxy_service.build_ide_client_setup(addresses, ide_plaintext, proxy_url=proxy_url)
+            else:
+                enc_key = _encryption_key(config)
+                try:
+                    cr_plaintext = reveal_loan_user_key(loan, enc_key, session)
+                except KeyLoanError as exc:
+                    raise HTTPException(status_code=410, detail=str(exc)) from exc
+                body = proxy_service.build_ide_client_setup(addresses, cr_plaintext, proxy_url=proxy_url)
+            body["delivery_mode"] = delivery
+            return body
+
         enc_key = _encryption_key(config)
         try:
             plaintext = reveal_loan_user_key(loan, enc_key, session)
         except KeyLoanError as exc:
             raise HTTPException(status_code=410, detail=str(exc)) from exc
-
         addresses = configured_proxy_addresses(session, team.id)
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
-
-        delivery = getattr(loan, "delivery_mode", None) or "cursor_direct"
-        if kind == "ide":
-            # 与 proxy-keys client-setup?kind=ide 对齐：管理台「复制命令 · Cursor IDE」
-            # 走 loans 端点时必须返回 setup-cursor.ps1，不能静默回落成 CLI 命令。
-            chosen_addr = addresses[0]
-            if proxy_url:
-                wanted = proxy_url.rstrip("/")
-                chosen_addr = next(
-                    (a for a in addresses if str(a.url).rstrip("/") == wanted),
-                    chosen_addr,
-                )
-            ide_url = str(getattr(chosen_addr, "url", "")).rstrip("/")
-            return {
-                "plaintext_key": plaintext,
-                "delivery_mode": delivery,
-                "proxy_url": ide_url,
-                "shell": "powershell",
-                "kind": "ide",
-                "command": proxy_service.build_ide_setup_command(
-                    proxy_url=ide_url, plaintext_key=plaintext
-                ),
-            }
-
         commands = proxy_service.build_client_setup_commands(plaintext_key=plaintext, addresses=addresses)
         chosen = proxy_service.pick_client_setup_command(commands, shell=shell, proxy_url=proxy_url)
         return {
@@ -659,6 +655,41 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             "command": chosen["command"],
             "commands": commands,
         }
+
+    @app.post("/api/v2/loans/{loan_id}/ide-key/rotate")
+    def rotate_loan_ide_key(
+        loan_id: str,
+        proxy_url: str | None = Query(default=None),
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("loans:self")),
+    ):
+        from pulse.proxy.ide_keys import rotate_ide_key
+        from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
+        from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
+
+        team, _ = team_repo_fn(session)
+        loan = loan_in_team(session, team.id, loan_id)
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+        is_admin = has_permission(user.member, "accounts:write")
+        is_borrower = loan.borrower_member_id == user.member.id
+        if not is_admin and not is_borrower:
+            raise HTTPException(status_code=403, detail="无权查看该借用的客户端命令")
+        if loan.status != "active":
+            raise HTTPException(status_code=410, detail="借用已结束，无法获取代理命令")
+        delivery = getattr(loan, "delivery_mode", None) or "cursor_direct"
+        if delivery != DELIVERY_PROXY_ALIAS:
+            raise HTTPException(status_code=400, detail="仅 proxy_alias 借用支持 IDE 密钥轮换")
+
+        addresses = configured_proxy_addresses(session, team.id)
+        if not addresses:
+            raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
+        enc_key = _encryption_key(config)
+        ide_plaintext = rotate_ide_key(session, loan, enc_key)
+        session.commit()
+        body = proxy_service.build_ide_client_setup(addresses, ide_plaintext, proxy_url=proxy_url)
+        body["delivery_mode"] = delivery
+        return body
 
     @app.get(
         "/api/v2/loans/{loan_id}/cursor-key",
@@ -712,7 +743,6 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("accounts:write")),
     ):
-        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
         from pulse.tool_center.key_loan_delivery import DELIVERY_CURSOR_DIRECT, DELIVERY_PROXY_ALIAS
 
         team, _ = team_repo_fn(session)
@@ -724,12 +754,13 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         delivery = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
         if delivery != DELIVERY_PROXY_ALIAS:
             raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+        if not body.clear and _parsed_usage_cap_items(body):
+            raise HTTPException(status_code=400, detail=usage_caps_migrated_message())
 
-        try:
-            rules = [] if body.clear else parse_usage_cap_rules(_parsed_usage_cap_items(body))
-        except UsageCapConfigError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        apply_usage_cap_rules(loan, rules)
+        from pulse.proxy.loan_usage_cap import clear_usage_cap_on_loan
+
+        if body.clear or not _parsed_usage_cap_items(body):
+            clear_usage_cap_on_loan(loan)
 
         log_admin_action(
             session,
@@ -795,16 +826,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=404, detail="借用记录不存在")
 
         enc_key = _encryption_key(config)
-        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
 
         if body.usage_caps is not None:
-            delivery = getattr(loan, "delivery_mode", None) or ""
-            if delivery != "proxy_alias":
-                raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
-            try:
-                apply_usage_cap_rules(loan, parse_usage_cap_rules(_parsed_usage_cap_items(body)))
-            except UsageCapConfigError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if _parsed_usage_cap_items(body):
+                raise HTTPException(status_code=400, detail=usage_caps_migrated_message())
 
         target_pool = body.lender_mode == LENDER_MODE_AUTO
         current_pool = getattr(loan, "routing_mode", None) == ROUTING_POOL

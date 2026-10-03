@@ -387,11 +387,19 @@ def _pricing_table_for_usage_row(
     return table
 
 
+def _normalize_usage_client(raw: str | None) -> str | None:
+    text = (raw or "").strip().lower()
+    return text if text in ("cli", "ide") else None
+
+
 def record_usages(session: Session, items: list[dict], *, now: datetime | None = None) -> dict:
     now = now or utcnow()
     recorded = 0
     touched: set[str] = set()
     pricing_by_team: dict[str, PricingTable] = {}
+    charge_candidates: list[tuple[str, ProxyKeyUsage]] = []
+    from pulse.proxy.spend_policy import usage_cap_pool_column
+
     for item in items:
         proxy_key_id = item.get("proxy_key_id") or None
         loan_id = item.get("loan_id") or None
@@ -426,22 +434,27 @@ def record_usages(session: Session, items: list[dict], *, now: datetime | None =
                 if table is None:
                     table = get_cursor_pricing_table(session=session, team_id=member.team_id)
                     pricing_by_team[member.team_id] = table
-            session.add(
-                ProxyKeyUsage(
-                    proxy_key_id=key.id,
-                    credential_id=item.get("credential_id"),
-                    request_id=request_id,
-                    model=item.get("model"),
-                    tokens_input=tokens["input"],
-                    tokens_output=tokens["output"],
-                    tokens_cache_read=tokens["cache_read"],
-                    tokens_cache_write=tokens["cache_write"],
-                    tokens_reasoning=tokens["reasoning"],
-                    total_tokens=total,
-                    cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
-                    ts=ts or now,
-                )
+            usage_row = ProxyKeyUsage(
+                proxy_key_id=key.id,
+                member_id=key.member_id,
+                credential_id=item.get("credential_id"),
+                request_id=request_id,
+                model=item.get("model"),
+                client=_normalize_usage_client(item.get("client")),
+                tokens_input=tokens["input"],
+                tokens_output=tokens["output"],
+                tokens_cache_read=tokens["cache_read"],
+                tokens_cache_write=tokens["cache_write"],
+                tokens_reasoning=tokens["reasoning"],
+                total_tokens=total,
+                cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
+                ts=ts or now,
+                usage_cap_pool=usage_cap_pool_column(item.get("model")),
             )
+            session.add(usage_row)
+            session.flush()
+            if key.member_id:
+                charge_candidates.append((key.member_id, usage_row))
             recorded += 1
             touched.add(key.id)
         else:
@@ -472,28 +485,48 @@ def record_usages(session: Session, items: list[dict], *, now: datetime | None =
                 if table is None:
                     table = get_cursor_pricing_table(session=session, team_id=team_id)
                     pricing_by_team[team_id] = table
-            from pulse.proxy.loan_usage_cap import usage_cap_pool_column
-
-            session.add(
-                ProxyKeyUsage(
-                    proxy_key_id=None,
-                    loan_id=loan.id,
-                    credential_id=item.get("credential_id"),
-                    request_id=request_id,
-                    model=item.get("model"),
-                    tokens_input=tokens["input"],
-                    tokens_output=tokens["output"],
-                    tokens_cache_read=tokens["cache_read"],
-                    tokens_cache_write=tokens["cache_write"],
-                    tokens_reasoning=tokens["reasoning"],
-                    total_tokens=total,
-                    cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
-                    ts=ts or now,
-                    usage_cap_pool=usage_cap_pool_column(item.get("model")),
-                )
+            usage_row = ProxyKeyUsage(
+                proxy_key_id=None,
+                loan_id=loan.id,
+                member_id=loan.borrower_member_id,
+                credential_id=item.get("credential_id"),
+                request_id=request_id,
+                model=item.get("model"),
+                client=_normalize_usage_client(item.get("client")),
+                tokens_input=tokens["input"],
+                tokens_output=tokens["output"],
+                tokens_cache_read=tokens["cache_read"],
+                tokens_cache_write=tokens["cache_write"],
+                tokens_reasoning=tokens["reasoning"],
+                total_tokens=total,
+                cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
+                ts=ts or now,
+                usage_cap_pool=usage_cap_pool_column(item.get("model")),
             )
+            session.add(usage_row)
+            session.flush()
+            if loan.borrower_member_id:
+                charge_candidates.append((loan.borrower_member_id, usage_row))
             recorded += 1
-    session.flush()
+
+    from pulse.proxy.credit import charge_usage
+    from pulse.proxy.membership import active_membership, effective_policy
+
+    prepaid_members: dict[str, bool] = {}
+
+    def _should_charge(member_id: str) -> bool:
+        cached = prepaid_members.get(member_id)
+        if cached is not None:
+            return cached
+        membership = active_membership(session, member_id)
+        prepaid = membership is not None and effective_policy(session, membership).credit_mode == "prepaid"
+        prepaid_members[member_id] = prepaid
+        return prepaid
+
+    for member_id, usage_row in charge_candidates:
+        if not _should_charge(member_id):
+            continue
+        charge_usage(session, member_id, usage_row)
     suspended: list[str] = []
     for key_id in sorted(touched):
         key = session.get(ProxyKey, key_id)

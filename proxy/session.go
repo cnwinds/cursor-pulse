@@ -9,6 +9,7 @@ import (
 type SessionBinding struct {
 	ProxyKeyID   string
 	PulseKey     string
+	Client       string // "cli" (exchange) or "ide" (tunnel bind)
 	Mode         string
 	LoanID       string
 	CredentialID string

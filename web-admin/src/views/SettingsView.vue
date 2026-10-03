@@ -149,6 +149,7 @@ const forms = reactive({
   admin: {} as Record<string, unknown>,
   proxy_addresses: { addresses: [] as Array<{ url: string; display_name: string }> },
   loan_selection: {} as Record<string, unknown>,
+  membership: {} as Record<string, unknown>,
 })
 
 const memberSelectOptions = computed(() =>
@@ -182,6 +183,7 @@ const dialog = reactive<DialogState>({
 
 const ITEM_PLANS: Record<string, SavePlan[]> = {
   collection_basics: [{ section: 'collection', keys: ['timezone'] }],
+  membership_required: [{ section: 'membership', keys: ['membership_required'] }],
   cursor_sync_tick: [{
     section: 'cursor_sync',
     keys: [
@@ -274,6 +276,10 @@ function collectionBasicsSummary(): string {
   return String(forms.collection.timezone || schedule.value?.timezone || '—')
 }
 
+function membershipSummary(): string {
+  return forms.membership.membership_required ? '已开启' : '已关闭'
+}
+
 const proxyAddressRows = computed(() => {
   const addresses = forms.proxy_addresses?.addresses || []
   return Array.isArray(addresses) ? addresses : []
@@ -295,6 +301,13 @@ const collectionRows = computed<SettingRow[]>(() => {
       name: 'Cursor账号同步',
       summary: syncRowSummary(),
       process: 'pulse channel',
+      editable: true,
+    },
+    {
+      id: 'membership_required',
+      name: '会员准入',
+      summary: membershipSummary(),
+      process: '团队设置',
       editable: true,
     },
   )
@@ -787,6 +800,12 @@ const FIELD_DEFS: Record<string, SettingsField> = {
     hint: '超过该时间即回落算法分；Jev 端到端通常 70-500ms',
     showWhen: (model) => model.enabled === true,
   },
+  membership_required: {
+    key: 'membership_required',
+    label: '必须开通会员才能使用',
+    type: 'switch',
+    hint: '开启后，未开通有效会员的成员将被拦截（429）；BYOK 模型不受影响。',
+  },
 }
 
 watch(
@@ -852,6 +871,7 @@ function applySettings(data: Record<string, any>) {
   forms.admin = { ...(data.admin || {}) }
   forms.proxy_addresses = { addresses: data.proxy_addresses?.addresses || [] }
   forms.loan_selection = { ...(data.tool_center?.loan_selection || {}) }
+  forms.membership = { ...(data.membership || {}) }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
     cursorSync.default_interval_minutes = Number(cursorSync.default_interval_hours) * 60
@@ -1077,6 +1097,8 @@ function openItem(row: SettingRow) {
     dialog.notice = {
       collection_basics:
         '仅影响调度与时间展示。用量/额度按各 Cursor 账号自身账单周期，不再使用团队「统计月」配置。',
+      membership_required:
+        '开启后，没有有效会员的成员在代理 Run 时会被拦截并提示联系管理员；BYOK 模型不受影响。',
       bot: '选择运行时消息渠道。改为钉钉/飞书后需配置对应集成，并重启 pulse channel 进程。',
       feishu:
         '飞书自建应用凭证；保存后 OAuth 登录立即生效，修改凭证或工作群后需重启 pulse channel。',

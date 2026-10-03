@@ -39,9 +39,39 @@ def _loan(**kwargs) -> KeyLoan:
     return KeyLoan(**defaults)
 
 
-def _usage(loan_id: str, *, model: str, cents: int, ts: datetime, pool: str | None = None) -> ProxyKeyUsage:
+def _sync_member_rules(session, loan: KeyLoan) -> None:
+    if not loan.borrower_member_id:
+        return
+    from pulse.proxy.loan_usage_cap import loan_cap_rules
+    from pulse.proxy.membership import active_membership, change_membership, open_membership
+
+    rules = [r.as_dict() for r in loan_cap_rules(loan)]
+    membership = active_membership(session, loan.borrower_member_id)
+    if membership is None:
+        open_membership(
+            session,
+            member_id=loan.borrower_member_id,
+            plan_id=None,
+            created_by_member_id=None,
+            rules_override=rules,
+            credit_mode_override="unlimited",
+        )
+    else:
+        change_membership(session, membership, rules_override=rules)
+
+
+def _usage(
+    loan_id: str,
+    *,
+    model: str,
+    cents: int,
+    ts: datetime,
+    pool: str | None = None,
+    member_id: str | None = None,
+) -> ProxyKeyUsage:
     return ProxyKeyUsage(
         loan_id=loan_id,
+        member_id=member_id,
         proxy_key_id=None,
         model=model,
         cost_cents=cents,
@@ -60,7 +90,8 @@ def cap_session():
     loan = _loan(borrower_member_id=owner.id, routing_mode="pool")
     s.add(loan)
     s.flush()
-    yield s, loan
+    _sync_member_rules(s, loan)
+    yield s, loan, owner
     s.close()
 
 
@@ -82,16 +113,17 @@ def test_usage_resets_at_multi_and_single():
 
 
 def test_window_boundary_and_release(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     lid = loan.id
+    mid = owner.id
     outside = NOW - timedelta(days=8)
     inside_old = NOW - timedelta(days=6)
     inside_new = NOW - timedelta(hours=1)
     s.add_all(
         [
-            _usage(lid, model="composer-1", cents=900, ts=outside, pool="auto"),
-            _usage(lid, model="composer-1", cents=500, ts=inside_old, pool="auto"),
-            _usage(lid, model="composer-1", cents=500, ts=inside_new, pool="auto"),
+            _usage(lid, model="composer-1", cents=900, ts=outside, pool="auto", member_id=mid),
+            _usage(lid, model="composer-1", cents=500, ts=inside_old, pool="auto", member_id=mid),
+            _usage(lid, model="composer-1", cents=500, ts=inside_new, pool="auto", member_id=mid),
         ]
     )
     s.flush()
@@ -101,9 +133,9 @@ def test_window_boundary_and_release(cap_session):
 
 
 def test_auto_only_cap_blocks_auto_not_api(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     lid = loan.id
-    s.add(_usage(lid, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto"))
+    s.add(_usage(lid, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto", member_id=owner.id))
     s.flush()
     assert check_loan_usage_cap(s, lid, "claude-opus-4", now=NOW)["status"] == "ok"
     assert check_loan_usage_cap(s, lid, "", now=NOW)["status"] == "limited"
@@ -111,21 +143,21 @@ def test_auto_only_cap_blocks_auto_not_api(cap_session):
 
 
 def test_byok_not_counted(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     lid = loan.id
-    s.add(_usage(lid, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto"))
+    s.add(_usage(lid, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto", member_id=owner.id))
     s.flush()
     assert check_loan_usage_cap(s, lid, "GLM-5.2", now=NOW)["status"] == "ok"
     assert check_loan_usage_cap(s, lid, "glm-5.2-high", now=NOW)["status"] == "ok"
 
 
 def test_loan_pool_aggregates_credentials(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     lid = loan.id
     s.add_all(
         [
-            _usage(lid, model="composer-1", cents=600, ts=NOW - timedelta(hours=2), pool="auto"),
-            _usage(lid, model="composer-1", cents=500, ts=NOW - timedelta(hours=1), pool="auto"),
+            _usage(lid, model="composer-1", cents=600, ts=NOW - timedelta(hours=2), pool="auto", member_id=owner.id),
+            _usage(lid, model="composer-1", cents=500, ts=NOW - timedelta(hours=1), pool="auto", member_id=owner.id),
         ]
     )
     s.flush()
@@ -133,16 +165,17 @@ def test_loan_pool_aggregates_credentials(cap_session):
 
 
 def test_no_cap_always_ok(cap_session):
-    s, loan = cap_session
+    s, loan, _owner = cap_session
     loan.usage_cap_rules = []
     s.flush()
+    _sync_member_rules(s, loan)
     s.add(_usage(loan.id, model="composer-1", cents=99999, ts=NOW, pool="auto"))
     s.flush()
     assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["reason"] == "cap_disabled"
 
 
 def test_record_usages_sets_usage_cap_pool(cap_session):
-    s, loan = cap_session
+    s, loan, _owner = cap_session
     proxy_service.record_usages(
         s,
         [
@@ -179,12 +212,14 @@ def test_parse_usage_cap_validation():
 
 
 def test_or_rules_either_window_blocks(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     loan.usage_cap_rules = [
         {"period": "5h", "pool": "auto", "limit_cents": 1000},
         {"period": "week", "pool": "auto", "limit_cents": 5000},
     ]
-    s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto"))
+    s.flush()
+    _sync_member_rules(s, loan)
+    s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(hours=1), pool="auto", member_id=owner.id))
     s.flush()
     assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["status"] == "limited"
     later = NOW + timedelta(hours=5)
@@ -222,8 +257,8 @@ def test_internal_loan_usage_cap_endpoint(api_client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "limited"
-    assert body["reason"] == "loan_usage_cap_exceeded"
-    assert "【小脉借用】" in body["message"]
+    assert body["reason"] == "spend_rule_exceeded"
+    assert "【小脉】" in body["message"]
 
 
 def test_patch_usage_cap_and_clear(api_client):
@@ -255,8 +290,9 @@ def test_patch_usage_cap_and_clear(api_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert bad.status_code == 400
+    assert bad.json()["detail"] == "用量限制已迁移到会员，请在「会员」中设置"
 
-    ok = client.patch(
+    rejected = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
         json={
             "clear": False,
@@ -267,10 +303,14 @@ def test_patch_usage_cap_and_clear(api_client):
         },
         headers={"Authorization": f"Bearer {token}"},
     )
+    assert rejected.status_code == 400
+
+    ok = client.patch(
+        f"/api/v2/loans/{loan.id}/usage-cap",
+        json={"clear": False, "usage_caps": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert ok.status_code == 200
-    data = ok.json()
-    assert len(data["usage_caps"]) == 2
-    assert data["usage_caps"][0]["cost_usd"] == 10
 
     cleared = client.patch(
         f"/api/v2/loans/{loan.id}/usage-cap",
@@ -279,6 +319,67 @@ def test_patch_usage_cap_and_clear(api_client):
     )
     assert cleared.status_code == 200
     assert cleared.json()["usage_caps"] == []
+
+
+def test_patch_usage_cap_clears_orphan_loan_legacy_rules(api_client):
+    from pulse.storage.models import AiAccount, AiPlan, AiVendor
+
+    client, sf, config = api_client
+    s = sf()
+    team, repo = make_team_repo(s, slug="t")
+    owner = bootstrap_portal_owner(repo, channel_user_id="orphan", display_name="O", password="pw")
+    vendor = AiVendor(slug="cursor", name="Cursor")
+    s.add(vendor)
+    s.flush()
+    plan = AiPlan(
+        vendor_id=vendor.id,
+        plan_name="Pro",
+        slug="pro",
+        billing_type="subscription",
+        price_amount=20,
+        price_currency="USD",
+    )
+    s.add(plan)
+    s.flush()
+    account = AiAccount(
+        vendor_id=vendor.id,
+        plan_id=plan.id,
+        team_id=team.id,
+        account_identifier="orphan@example.com",
+        status="shared",
+    )
+    s.add(account)
+    s.flush()
+    loan = KeyLoan(
+        delivery_mode=DELIVERY_PROXY_ALIAS,
+        status="active",
+        source_account_id=account.id,
+        borrower_member_id=None,
+        routing_mode="pinned",
+        usage_cap_period="week",
+        auto_cost_limit_cents=1000,
+        api_cost_limit_cents=2000,
+        usage_cap_rules=None,
+    )
+    s.add(loan)
+    s.commit()
+
+    token = create_access_token(config, owner)
+    resp = client.patch(
+        f"/api/v2/loans/{loan.id}/usage-cap",
+        json={"clear": True},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["usage_caps"] == []
+
+    s2 = sf()
+    row = s2.get(KeyLoan, loan.id)
+    assert row.usage_cap_rules == []
+    assert row.usage_cap_period is None
+    assert row.auto_cost_limit_cents is None
+    assert row.api_cost_limit_cents is None
+    s2.close()
 
 
 def test_reassign_same_pool_saves_usage_caps(api_client):
@@ -322,11 +423,8 @@ def test_reassign_same_pool_saves_usage_caps(api_client):
         },
         headers=headers,
     )
-    assert saved.status_code == 200
-    assert [(row["period"], row["pool"], row["cost_usd"]) for row in saved.json()["usage_caps"]] == [
-        ("5h", "auto", 10),
-        ("week", "auto", 50),
-    ]
+    assert saved.status_code == 400
+    assert saved.json()["detail"] == "用量限制已迁移到会员，请在「会员」中设置"
 
     cleared = client.post(
         f"/api/v2/loans/{loan.id}/reassign-source",
@@ -334,7 +432,6 @@ def test_reassign_same_pool_saves_usage_caps(api_client):
         headers=headers,
     )
     assert cleared.status_code == 200
-    assert cleared.json()["usage_caps"] == []
 
 
 def test_reassign_pins_auto_wander_and_saves_caps(api_client):
@@ -392,13 +489,8 @@ def test_reassign_pins_auto_wander_and_saves_caps(api_client):
         },
         headers=headers,
     )
-    assert saved.status_code == 200, saved.text
-    body = saved.json()
-    assert body["lender_mode"] == "manual"
-    assert body["routing_mode"] == "pinned"
-    assert [(row["period"], row["pool"], row["cost_usd"]) for row in body["usage_caps"]] == [
-        ("5h", "auto", 10),
-    ]
+    assert saved.status_code == 400
+    assert saved.json()["detail"] == "用量限制已迁移到会员，请在「会员」中设置"
 
 
 def test_cursor_direct_rejects_cap_patch(api_client):
@@ -425,7 +517,7 @@ def test_cursor_direct_rejects_cap_patch(api_client):
 
 
 def test_passthrough_loan_not_applicable(cap_session):
-    s, _ = cap_session
+    s, _, _ = cap_session
     loan = KeyLoan(
         delivery_mode="cursor_direct",
         status="active",
@@ -442,11 +534,15 @@ def test_usage_cap_enabled():
 
 
 def test_legacy_columns_still_apply(cap_session):
-    s, loan = cap_session
+    s, loan, owner = cap_session
     loan.usage_cap_rules = None
     loan.usage_cap_period = "5h"
     loan.auto_cost_limit_cents = 1000
     loan.api_cost_limit_cents = None
-    s.add(_usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(minutes=30), pool="auto"))
+    s.flush()
+    _sync_member_rules(s, loan)
+    s.add(
+        _usage(loan.id, model="composer-1", cents=1000, ts=NOW - timedelta(minutes=30), pool="auto", member_id=owner.id)
+    )
     s.flush()
     assert check_loan_usage_cap(s, loan.id, "composer-1", now=NOW)["status"] == "limited"

@@ -37,6 +37,8 @@ func TestUsageTapStreamingE2E(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "invalid", "proxy_key_id": "", "mode": "", "reason": nil,
 			})
+		case "/api/internal/v1/proxy/spend-check":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 		case "/api/internal/v1/proxy/usage":
 			b, _ := io.ReadAll(r.Body)
 			mu.Lock()

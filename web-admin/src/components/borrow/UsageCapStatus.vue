@@ -62,9 +62,10 @@ const PERIOD_LONG: Record<string, string> = {
 const POOL_LABEL: Record<string, string> = {
   auto: 'Auto',
   api: 'API',
+  total: '合计',
 }
 
-const POOL_ORDER = ['auto', 'api']
+const POOL_ORDER = ['auto', 'api', 'total']
 
 type Tone = 'ok' | 'warn' | 'danger'
 

@@ -102,33 +102,15 @@ def test_authorize_suspended(session):
     assert result["reason"] == "manual"
 
 
-def test_authorize_window_5h_cost_limited(session):
+def test_authorize_no_longer_window_limited(session):
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=1000)
     session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=600, ts=NOW - timedelta(hours=1)))
     session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=500, ts=NOW - timedelta(hours=2)))
     session.flush()
     result = service.authorize_status(session, plaintext, now=NOW)
-    assert result["status"] == "window_limited"
-    assert result["reason"] == "window_5h_exceeded"
+    assert result["status"] == "ok"
     assert result["proxy_key_id"] == key.id
-
-
-def test_authorize_window_7d_cost_limited(session):
-    plaintext, _, _ = generate_proxy_key()
-    key = _add_key(session, plaintext, mode="quota", window_7d_cost_limit_cents=2000)
-    session.add(
-        ProxyKeyUsage(
-            proxy_key_id=key.id,
-            total_tokens=1,
-            cost_cents=2000,
-            ts=NOW - timedelta(days=2),
-        )
-    )
-    session.flush()
-    result = service.authorize_status(session, plaintext, now=NOW)
-    assert result["status"] == "window_limited"
-    assert result["reason"] == "window_7d_exceeded"
 
 
 def test_window_cost_ignores_old_usage(session):
@@ -147,12 +129,32 @@ def test_window_cost_ignores_old_usage(session):
     assert service.authorize_status(session, plaintext, now=NOW)["status"] == "ok"
 
 
-def test_window_5h_cost_boundary_exact(session):
+def test_spend_check_enforces_member_total_window(session):
+    from pulse.proxy.membership import evaluate_spend, open_membership
+
     plaintext, _, _ = generate_proxy_key()
     key = _add_key(session, plaintext, mode="quota", window_5h_cost_limit_cents=100)
-    session.add(ProxyKeyUsage(proxy_key_id=key.id, total_tokens=1, cost_cents=100, ts=NOW - timedelta(hours=1)))
+    open_membership(
+        session,
+        member_id=key.member_id,
+        plan_id=None,
+        created_by_member_id=None,
+        rules_override=[{"period": "5h", "pool": "total", "limit_cents": 100}],
+    )
+    session.add(
+        ProxyKeyUsage(
+            proxy_key_id=key.id,
+            member_id=key.member_id,
+            total_tokens=1,
+            cost_cents=100,
+            ts=NOW - timedelta(hours=1),
+            usage_cap_pool="auto",
+        )
+    )
     session.flush()
-    assert service.authorize_status(session, plaintext, now=NOW)["status"] == "window_limited"
+    result = evaluate_spend(session, proxy_key_id=key.id, model="composer-1", now=NOW)
+    assert result["status"] == "limited"
+    assert result["reason"] == "spend_rule_exceeded"
 
 
 def test_window_includes_exact_5h_boundary(session):
@@ -331,7 +333,7 @@ def test_window_overage_does_not_suspend(session):
     assert result["suspended"] == []
     session.refresh(key)
     assert key.status == "active"
-    assert service.authorize_status(session, plaintext, now=NOW)["status"] == "window_limited"
+    assert service.authorize_status(session, plaintext, now=NOW)["status"] == "ok"
 
 
 def test_empty_windows_never_suspend(session):

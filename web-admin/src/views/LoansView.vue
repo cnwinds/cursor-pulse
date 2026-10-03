@@ -27,7 +27,23 @@
     </header>
 
     <el-table :data="loans" stripe class="loans-table">
-      <el-table-column label="借出人" prop="borrower_name" min-width="68" show-overflow-tooltip />
+      <el-table-column label="借出人" min-width="120" show-overflow-tooltip>
+        <template #default="{ row }">
+          <div class="borrower-cell">
+            <span>{{ row.borrower_name }}</span>
+            <el-tooltip
+              v-if="row.membership"
+              :content="membershipTooltip(row.membership)"
+              placement="top"
+            >
+              <el-tag size="small" :type="membershipTagType(row.membership)" class="membership-tag">
+                {{ membershipLabel(row.membership) }}
+              </el-tag>
+            </el-tooltip>
+            <el-tag v-else size="small" type="info" class="membership-tag">未开通</el-tag>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="借出账号" min-width="176" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.routing_mode === 'pool'" class="pool-line">
@@ -126,6 +142,21 @@
             />
             <el-tooltip
               v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+              content="重置 IDE 密钥"
+              placement="top"
+            >
+              <el-button
+                link
+                type="primary"
+                aria-label="重置 IDE 密钥"
+                :loading="ideKeyRotatingId === row.id"
+                @click="resetIdeKey(row)"
+              >
+                <el-icon><RefreshRight /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
               content="调整出借方式"
               placement="top"
             >
@@ -216,9 +247,6 @@
         <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
-        <el-form-item label="用量限制">
-          <UsageCapRulesEditor v-model="loanForm.usage_caps" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
@@ -269,9 +297,6 @@
         <p v-if="reassignForm.lender_mode === 'auto' && poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
           账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
         </p>
-        <el-form-item label="用量限制">
-          <UsageCapRulesEditor v-model="reassignForm.usage_caps" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reassignDialogVisible = false">取消</el-button>
@@ -469,8 +494,9 @@ import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
 import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
 import LoanTimeStack from '@/components/LoanTimeStack.vue'
-import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
 import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
+import { formatUsdCents } from '@/utils/money'
+import { rotateLoanIdeKey } from '@/utils/rotateLoanIdeKey'
 
 withDefaults(
   defineProps<{
@@ -567,6 +593,12 @@ function buildLoanSourceOptions(
   return options
 }
 
+interface LoanMembershipInfo {
+  plan_name: string | null
+  credit_mode: 'unlimited' | 'prepaid'
+  balance_cents: number
+}
+
 interface LoanRow {
   id: string
   borrower_name: string
@@ -587,6 +619,25 @@ interface LoanRow {
   routing_mode?: string | null
   source_bound_at?: string | null
   usage_caps?: UsageCapSnapshot[]
+  membership?: LoanMembershipInfo | null
+}
+
+function membershipLabel(m: LoanMembershipInfo): string {
+  if (m.plan_name) return m.plan_name
+  return '自定义'
+}
+
+function membershipTagType(m: LoanMembershipInfo): 'success' | 'warning' | 'info' {
+  if (m.plan_name) return 'success'
+  return 'warning'
+}
+
+function membershipTooltip(m: LoanMembershipInfo): string {
+  const mode = m.credit_mode === 'prepaid' ? '预付' : '不限额'
+  if (m.credit_mode === 'prepaid') {
+    return `${mode} · 余额 ${formatUsdCents(m.balance_cents)}`
+  }
+  return mode
 }
 
 const loading = ref(false)
@@ -608,7 +659,6 @@ const loanForm = ref({
   note: '',
   model: '',
   auto_revoke_on_reset: true,
-  usage_caps: [] as UsageCapRule[],
 })
 const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
   [],
@@ -631,10 +681,10 @@ const reassignForm = ref({
   lender_mode: 'manual' as 'manual' | 'auto',
   source_account_id: '',
   auto_revoke_on_reset: true,
-  usage_caps: [] as UsageCapRule[],
 })
 const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
+const ideKeyRotatingId = ref<string | null>(null)
 
 const keyRevealVisible = ref(false)
 const revealedKey = ref<{
@@ -779,38 +829,7 @@ function onPageSizeChange() {
   loadLoans()
 }
 
-function prepareUsageCaps(
-  rules: UsageCapRule[],
-): { error: string } | { caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] } {
-  const seen = new Set<string>()
-  const caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] = []
-  for (const rule of rules) {
-    if (rule.cost_usd == null) return { error: '请填写每条用量限制的整数美元' }
-    const key = `${rule.period}:${rule.pool}`
-    if (seen.has(key)) return { error: '同一周期和同一类型（Auto / API）只能有一条限制' }
-    seen.add(key)
-    caps.push({ period: rule.period, pool: rule.pool, cost_usd: rule.cost_usd })
-  }
-  return { caps }
-}
-
-function usageCapsFromRow(row: LoanRow): UsageCapRule[] {
-  return (row.usage_caps || []).map((rule) => ({
-    period: rule.period as UsageCapRule['period'],
-    pool: rule.pool as UsageCapRule['pool'],
-    cost_usd: rule.cost_usd ?? null,
-  }))
-}
-
-function usageCapsSignature(rules: { period: string; pool: string; cost_usd: number | null }[]) {
-  return [...rules]
-    .map((rule) => `${rule.period}:${rule.pool}:${rule.cost_usd ?? ''}`)
-    .sort()
-    .join('|')
-}
-
 async function openLoanDialog() {
-  loanForm.value.usage_caps = []
   await loadLoanDialogData()
   loanDialogVisible.value = true
 }
@@ -844,11 +863,6 @@ async function submitLoan() {
     ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
-  const prepared = prepareUsageCaps(loanForm.value.usage_caps)
-  if ('error' in prepared) {
-    ElMessage.warning(prepared.error)
-    return
-  }
   loanSubmitting.value = true
   try {
     const res = await client.post(
@@ -860,14 +874,12 @@ async function submitLoan() {
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
         model: isAuto ? loanForm.value.model.trim() || null : null,
-        usage_caps: prepared.caps,
       },
     )
     loanDialogVisible.value = false
     revealedKey.value = res.data
     keyRevealVisible.value = true
     loanForm.value.note = ''
-    loanForm.value.usage_caps = []
     await loadLoans()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '分配失败')
@@ -936,7 +948,6 @@ async function openReassignDialog(row: LoanRow) {
     lender_mode: row.routing_mode === 'pool' ? 'auto' : 'manual',
     source_account_id: row.source_account_id || '',
     auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
-    usage_caps: usageCapsFromRow(row),
   }
   reassignDialogVisible.value = true
   try {
@@ -969,11 +980,6 @@ async function submitReassign() {
     ElMessage.warning('请选择出借账号')
     return
   }
-  const prepared = prepareUsageCaps(form.usage_caps)
-  if ('error' in prepared) {
-    ElMessage.warning(prepared.error)
-    return
-  }
   const loan = reassignLoan.value
   const assignmentSame =
     form.lender_mode === 'auto'
@@ -982,10 +988,8 @@ async function submitReassign() {
         loan.lender_mode !== 'auto' &&
         form.source_account_id === loan.source_account_id &&
         form.auto_revoke_on_reset === (loan.auto_revoke_on_reset ?? true)
-  const capsSame =
-    usageCapsSignature(prepared.caps) === usageCapsSignature(usageCapsFromRow(loan))
-  if (assignmentSame && capsSame) {
-    ElMessage.warning('出借方式与用量限制都没有变化')
+  if (assignmentSame) {
+    ElMessage.warning('出借方式没有变化')
     return
   }
   reassignSubmitting.value = true
@@ -995,9 +999,8 @@ async function submitReassign() {
       source_account_id: form.lender_mode === 'manual' ? form.source_account_id : null,
       auto_revoke_on_reset:
         form.lender_mode === 'manual' ? form.auto_revoke_on_reset : undefined,
-      usage_caps: prepared.caps,
     })
-    ElMessage.success(assignmentSame ? '已保存用量限制（pka_ 不变）' : '已调整出借方式（pka_ 不变）')
+    ElMessage.success('已调整出借方式（pka_ 不变）')
     reassignDialogVisible.value = false
     await loadLoans()
   } catch (e: any) {
@@ -1117,6 +1120,12 @@ async function openUsages(row: LoanRow) {
   } finally {
     usagesLoading.value = false
   }
+}
+
+function resetIdeKey(row: LoanRow) {
+  void rotateLoanIdeKey(row.id, (busy) => {
+    ideKeyRotatingId.value = busy ? row.id : null
+  })
 }
 
 async function revokeLoan(row: LoanRow) {
@@ -1383,5 +1392,14 @@ onMounted(loadLoans)
   color: var(--el-text-color-secondary);
   font-size: var(--pulse-text-base);
   line-height: 1.5;
+}
+.borrower-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.membership-tag {
+  max-width: 100%;
 }
 </style>

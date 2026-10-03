@@ -562,10 +562,11 @@ def test_loan_client_setup_ide_kind(loan_client_env):
     assert body["kind"] == "ide"
     assert body["shell"] == "powershell"
     assert body["proxy_url"] == "http://wan.example:8317"
-    assert body["plaintext_key"] == api_key
+    ide_key = body["plaintext_key"]
+    assert ide_key.startswith("pkide_")
+    assert ide_key != api_key
     assert body["command"] == (
-        '& ([scriptblock]::Create((irm "http://wan.example:8317/setup-cursor.ps1"))) '
-        f"-Key '{api_key}'"
+        f"& ([scriptblock]::Create((irm \"http://wan.example:8317/setup-cursor.ps1\"))) -Key '{ide_key}'"
     )
     assert "HTTPS_PROXY" not in body["command"]
     assert "agent -k" not in body["command"]

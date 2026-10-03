@@ -7,12 +7,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.proxy import key_crud
-from pulse.proxy import usage as usage_mod
-from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
+from pulse.proxy.clock import utcnow
 from pulse.proxy.keys import hash_proxy_key
-from pulse.storage.models import AiAccountCredential, KeyLoan
+from pulse.storage.models import AiAccountCredential, KeyLoan, ProxyKey
 
 logger = logging.getLogger(__name__)
+
+_UNKNOWN_KEY = {
+    "status": "invalid",
+    "proxy_key_id": None,
+    "mode": None,
+    "loan_id": None,
+    "credential_id": None,
+    "reason": "unknown_key",
+}
 
 
 def authorize_status(
@@ -24,6 +32,14 @@ def authorize_status(
     loan_selection=None,
 ) -> dict:
     plaintext = (plaintext or "").strip()
+    if plaintext.startswith("pkide_"):
+        return _authorize_ide_key(
+            session,
+            plaintext,
+            now=now,
+            encryption_key=encryption_key,
+            loan_selection=loan_selection,
+        )
     if plaintext.startswith("pka_"):
         return _authorize_loan_alias(
             session,
@@ -36,30 +52,47 @@ def authorize_status(
 
     if plaintext.startswith("cr"):
         return _authorize_loan_passthrough(session, plaintext)
-    return {
-        "status": "invalid",
-        "proxy_key_id": None,
-        "mode": None,
-        "loan_id": None,
-        "credential_id": None,
-        "reason": "unknown_key",
-    }
+    return dict(_UNKNOWN_KEY)
+
+
+def _authorize_ide_key(
+    session: Session,
+    plaintext: str,
+    *,
+    now: datetime | None = None,
+    encryption_key: str = "",
+    loan_selection=None,
+) -> dict:
+    from pulse.proxy.ide_keys import find_ide_key_parent
+
+    parent = find_ide_key_parent(session, plaintext)
+    if parent is None:
+        return dict(_UNKNOWN_KEY)
+    if isinstance(parent, ProxyKey):
+        if parent.mode != "quota":
+            return dict(_UNKNOWN_KEY)
+        result = _authorize_proxy_key_row(session, parent, now=now)
+    else:
+        result = _authorize_loan_alias_row(
+            session,
+            parent,
+            encryption_key=encryption_key,
+            loan_selection=loan_selection,
+        )
+    return {**result, "scope": "ide"}
 
 
 def _authorize_proxy_key(session: Session, plaintext: str, *, now: datetime | None = None) -> dict:
+    key = key_crud.find_key_by_plaintext(session, plaintext)
+    if key is None:
+        return dict(_UNKNOWN_KEY)
+    return _authorize_proxy_key_row(session, key, now=now)
+
+
+def _authorize_proxy_key_row(session: Session, key: ProxyKey, *, now: datetime | None = None) -> dict:
     now = now or utcnow()
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    key = key_crud.find_key_by_plaintext(session, plaintext)
-    if key is None:
-        return {
-            "status": "invalid",
-            "proxy_key_id": None,
-            "mode": None,
-            "loan_id": None,
-            "credential_id": None,
-            "reason": "unknown_key",
-        }
     base = {
         "proxy_key_id": key.id,
         "mode": key.mode,
@@ -76,14 +109,6 @@ def _authorize_proxy_key(session: Session, plaintext: str, *, now: datetime | No
         return {"status": "invalid", **base, "reason": "expired"}
     if key.status == "suspended":
         return {"status": "suspended", **base, "reason": key.suspended_reason or "suspended"}
-    if key.window_5h_cost_limit_cents is not None:
-        used_5h = usage_mod.window_usage_cost(session, key.id, window=WINDOW_5H, now=now)
-        if used_5h >= key.window_5h_cost_limit_cents:
-            return {"status": "window_limited", **base, "reason": "window_5h_exceeded"}
-    if key.window_7d_cost_limit_cents is not None:
-        used_7d = usage_mod.window_usage_cost(session, key.id, window=WINDOW_7D, now=now)
-        if used_7d >= key.window_7d_cost_limit_cents:
-            return {"status": "window_limited", **base, "reason": "window_7d_exceeded"}
     return {"status": "ok", **base, "reason": None}
 
 
@@ -97,14 +122,7 @@ def _authorize_loan_passthrough(session: Session, plaintext: str) -> dict:
         )
     )
     if cred is None:
-        return {
-            "status": "invalid",
-            "proxy_key_id": None,
-            "mode": None,
-            "loan_id": None,
-            "credential_id": None,
-            "reason": "unknown_key",
-        }
+        return dict(_UNKNOWN_KEY)
     loan = session.scalar(
         select(KeyLoan).where(
             KeyLoan.credential_id == cred.id,
@@ -149,6 +167,25 @@ def _authorize_loan_alias(
     encryption_key: str = "",
     loan_selection=None,
 ) -> dict:
+    h = hash_proxy_key(plaintext)
+    loan = session.scalar(select(KeyLoan).where(KeyLoan.alias_key_hash == h))
+    if loan is None:
+        return dict(_UNKNOWN_KEY)
+    return _authorize_loan_alias_row(
+        session,
+        loan,
+        encryption_key=encryption_key,
+        loan_selection=loan_selection,
+    )
+
+
+def _authorize_loan_alias_row(
+    session: Session,
+    loan: KeyLoan,
+    *,
+    encryption_key: str = "",
+    loan_selection=None,
+) -> dict:
     """pka_ 别名 → 固定 Key、候选白名单，或账号池轮换。
 
     - ``routing_mode=pool``（管理员自动分配）：``mode=loan_pool``，没有 Cursor Key，
@@ -163,23 +200,8 @@ def _authorize_loan_alias(
         LENDER_MODE_AUTO,
     )
 
-    h = hash_proxy_key(plaintext)
-    loan = session.scalar(
-        select(KeyLoan).where(
-            KeyLoan.alias_key_hash == h,
-            KeyLoan.status == "active",
-            KeyLoan.delivery_mode == DELIVERY_PROXY_ALIAS,
-        )
-    )
-    if loan is None:
-        return {
-            "status": "invalid",
-            "proxy_key_id": None,
-            "mode": None,
-            "loan_id": None,
-            "credential_id": None,
-            "reason": "unknown_key",
-        }
+    if loan.status != "active" or (getattr(loan, "delivery_mode", None) or "") != DELIVERY_PROXY_ALIAS:
+        return dict(_UNKNOWN_KEY)
 
     if getattr(loan, "routing_mode", None) == "pool":
         # 管理员自动分配：与 pk_ 共用 Credential Pool，不绑定某一把 Cursor Key。

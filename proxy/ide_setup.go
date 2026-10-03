@@ -56,32 +56,49 @@ const cursorIDEUninstallScriptTemplate = `param(
 )
 # cursor-pulse IDE offboarding - reverses setup-cursor.ps1 (its counterpart;
 # the two scripts must stay in sync about which settings keys are managed):
-# removes the three settings.json keys, removes the proxy CA from the
-# current-user trusted roots, and (with -Key) releases the dedicated IDE port.
+# removes http.proxy and related settings, removes the proxy CA from the
+# current-user trusted roots, and (legacy) releases a dedicated IDE port when
+# the old http.proxy pointed at a non-main port.
 # Idempotent: safe to re-run. The pre-install backup is kept untouched.
 $ErrorActionPreference = 'Stop'
 $addr = $Proxy
+$scheme = 'http'
+if ($addr -like 'https://*') { $scheme = 'https' }
+$mainHost = ($addr -replace '^https?://', '')
 
-if ($Key -ne '') {
-    Write-Host '[1/4] Releasing dedicated IDE port...'
+Write-Host '[1/4] Checking for legacy dedicated IDE port...'
+$settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
+$legacyPortRelease = $false
+if (Test-Path $settingsPath) {
+    $rawCheck = Get-Content $settingsPath -Raw -Encoding UTF8
     try {
-        $scheme = 'http'
-        if ($addr -like 'https://*') { $scheme = 'https' }
-        $mainHost = ($addr -replace '^https?://', '')
+        $cfgCheck = $rawCheck | ConvertFrom-Json
+        if ($cfgCheck.PSObject.Properties['http.proxy']) {
+            $oldProxy = [string]$cfgCheck.'http.proxy'
+            if ($oldProxy -match ':(\d+)(?:/|$)') {
+                $oldPort = [int]$Matches[1]
+                $mainPort = 8317
+                if ($mainHost -match ':(\d+)$') { $mainPort = [int]$Matches[1] }
+                if ($oldPort -ne $mainPort) { $legacyPortRelease = $true }
+            }
+        }
+    } catch { }
+}
+if ($legacyPortRelease -and $Key -ne '') {
+    try {
         $rel = Invoke-WebRequest -UseBasicParsing -Method Delete -Uri ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
-        Write-Host ("  released (HTTP {0})." -f $rel.StatusCode)
+        Write-Host ("  legacy dedicated port released (HTTP {0})." -f $rel.StatusCode)
     } catch {
         $code = $null
         if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
-        if ($code -eq 404) { Write-Host '  no port was allocated for this key.' }
+        if ($code -eq 404) { Write-Host '  no legacy port was allocated for this key.' }
         else { Write-Host '  proxy unreachable - continuing with local cleanup.' }
     }
 } else {
-    Write-Host '[1/4] No -Key given - skipping port release.'
+    Write-Host '  no legacy dedicated port to release.'
 }
 
 Write-Host '[2/4] Removing Cursor IDE proxy settings...'
-$settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
 if (Test-Path $settingsPath) {
     $raw = Get-Content $settingsPath -Raw -Encoding UTF8
     try {
@@ -95,6 +112,18 @@ if (Test-Path $settingsPath) {
             $cfg.PSObject.Properties.Remove($name)
             $removed += $name
         }
+    }
+    if ($cfg.settingsSync -and $cfg.settingsSync.PSObject.Properties['ignoredSettings']) {
+        $ignored = @($cfg.settingsSync.ignoredSettings | Where-Object { $_ -ne 'http.proxy' })
+        if ($ignored.Count -eq 0) {
+            $cfg.settingsSync.PSObject.Properties.Remove('ignoredSettings')
+            if ($cfg.settingsSync.PSObject.Properties.Count -eq 0) {
+                $cfg.PSObject.Properties.Remove('settingsSync')
+            }
+        } else {
+            $cfg.settingsSync.ignoredSettings = $ignored
+        }
+        $removed += 'settingsSync.ignoredSettings[http.proxy]'
     }
     $json = $cfg | ConvertTo-Json -Depth 100
     [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
@@ -127,9 +156,8 @@ Write-Host '      it now talks to Cursor directly, outside the team proxy.'
 
 // cursorIDESetupScriptTemplate is emitted at GET /setup-cursor.ps1: installs
 // the proxy CA into the current-user trusted roots and points the local Cursor
-// IDE at this proxy. With -Key the script fetches a dedicated per-key port from
-// GET /ide-port so IDE usage attributes to that key. It must run
-// on Windows PowerShell 5.1 (no PS7-only features, no backticks so it survives
+// IDE at this proxy via http.proxy userinfo (pkide_ or cr*). It must run on
+// Windows PowerShell 5.1 (no PS7-only features, no backticks so it survives
 // being embedded in a Go raw string). Keep it idempotent and always back up
 // settings.json before touching it.
 const cursorIDESetupScriptTemplate = `param(
@@ -137,14 +165,16 @@ const cursorIDESetupScriptTemplate = `param(
     [string]$Proxy = '__PROXY_ADDR__'
 )
 # cursor-pulse IDE onboarding - served by cursor-pulse-proxy at __PROXY_ADDR__
-# Counterpart: uninstall-cursor.ps1 reverses this script (it removes exactly
-# the three settings keys written below - keep the two in sync).
-# With -Key (Proxy Key, pk_/pka_): IDE traffic gets a dedicated port and
-#   attributes to that key - the same key your agent CLI uses.
-# Without -Key: IDE traffic uses the proxy main port (server-wide IDE key).
+# Counterpart: uninstall-cursor.ps1 reverses this script (keep the two in sync).
+# With -Key (pkide_ or cr*): http.proxy uses userinfo on the shared main port.
+# Full proxy keys (pk_/pka_) are rejected - copy the IDE command from the console.
 # Idempotent: safe to re-run. Rollback notes are printed at the end.
 $ErrorActionPreference = 'Stop'
 $addr = $Proxy
+
+if (($Key -notlike 'pkide_*') -and ($Key -notlike 'cr*')) {
+    throw '-Key must be an IDE key (pkide_...) - copy the Cursor IDE command from the Pulse console; full proxy keys (pk_/pka_) are not accepted.'
+}
 
 Write-Host '[1/3] Installing proxy CA into current-user trusted roots...'
 $caFile = Join-Path $env:TEMP 'cursor-pulse-proxy-ca.pem'
@@ -157,36 +187,40 @@ if ($store -match 'cursor-quota-proxy') {
     Write-Host '  CA installed into user trusted roots.'
 }
 
-Write-Host '[2/3] Resolving proxy address for Cursor IDE...'
+Write-Host '[2/3] Writing Cursor IDE proxy settings...'
 $settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
 if (-not (Test-Path $settingsPath)) {
     throw "Cursor settings not found at $settingsPath - start Cursor once, then re-run."
 }
-# With -Key: allocate the dedicated port BEFORE writing settings.json so a
-# failed /ide-port call never leaves http.proxy pointing at the main port
-# (which has no per-member attribution without -ide-pulse-key).
-if ($Key -ne '') {
-    $scheme = 'http'
-    if ($addr -like 'https://*') { $scheme = 'https' }
-    $mainHost = ($addr -replace '^https?://', '')
-    $portResp = Invoke-RestMethod -UseBasicParsing ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
-    $addr = $scheme + '://' + $portResp.proxy_host + ':' + $portResp.port
-    Write-Host ("  per-key IDE port allocated: {0} (attributed to your key)" -f $addr)
-}
+$scheme = 'http'
+if ($addr -like 'https://*') { $scheme = 'https' }
+$mainHost = ($addr -replace '^https?://', '')
+$proxyURL = $scheme + '://' + [System.Uri]::EscapeDataString($Key) + ':x@' + $mainHost
 $backup = "$settingsPath.bak-cursor-pulse"
 if (-not (Test-Path $backup)) { Copy-Item $settingsPath $backup }
 $raw = Get-Content $settingsPath -Raw -Encoding UTF8
 try {
     $cfg = $raw | ConvertFrom-Json
 } catch {
-    throw ('settings.json is not strict JSON (comments or trailing commas). Edit manually: set http.proxy to your dedicated port and cursor.general.disableHttp2 to true')
+    throw ('settings.json is not strict JSON (comments or trailing commas). Edit manually: set http.proxy with your IDE key and cursor.general.disableHttp2 to true')
 }
-$cfg | Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $addr -Force
+$cfg | Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $proxyURL -Force
 $cfg | Add-Member -NotePropertyName 'cursor.general.disableHttp2' -NotePropertyValue $true -Force
 $cfg | Add-Member -NotePropertyName 'http.systemCertificates' -NotePropertyValue $true -Force
+if (-not $cfg.settingsSync) {
+    $cfg | Add-Member -NotePropertyName 'settingsSync' -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+if (-not $cfg.settingsSync.PSObject.Properties['ignoredSettings']) {
+    $cfg.settingsSync | Add-Member -NotePropertyName 'ignoredSettings' -NotePropertyValue @() -Force
+}
+$ignored = @($cfg.settingsSync.ignoredSettings)
+if ($ignored -notcontains 'http.proxy') {
+    $ignored += 'http.proxy'
+    $cfg.settingsSync.ignoredSettings = $ignored
+}
 $json = $cfg | ConvertTo-Json -Depth 100
 [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "  http.proxy=$addr, disableHttp2=true written (backup: $backup)."
+Write-Host "  http.proxy written with IDE key on main port (backup: $backup)."
 
 Write-Host '[3/3] Checking Cursor IDE...'
 $cursorRunning = Get-Process Cursor -ErrorAction SilentlyContinue

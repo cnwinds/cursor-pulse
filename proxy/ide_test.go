@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net"
@@ -60,7 +61,13 @@ func newFakePulseCounted(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+		switch r.URL.Path {
+		case "/api/internal/v1/proxy/spend-check":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			return
+		case "/api/internal/v1/proxy/authorize":
+			break
+		default:
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -69,21 +76,31 @@ func newFakePulseCounted(t *testing.T) (*httptest.Server, *atomic.Int32) {
 			PulseKey string `json:"pulse_key"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.PulseKey != "pk_ide" {
+		if body.PulseKey != "pk_ide" && !strings.HasPrefix(body.PulseKey, "pkide_") {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid", "proxy_key_id": ""})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		out := map[string]any{
 			"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "reason": nil,
-		})
+		}
+		if strings.HasPrefix(body.PulseKey, "pkide_") {
+			out["scope"] = "ide"
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &calls
 }
 
+const testIDEKey = "pkide_test"
+
+func ideTunnelClient(t *testing.T, proxyAddr string, caPEM []byte) *http.Client {
+	return connectClientAuth(t, proxyAddr, caPEM, testIDEKey, "x")
+}
+
 // newIDETestProxy wires a Pulse-mode proxy against the given upstream and fake
-// Pulse, mirroring newPulseTestProxy but with an IDE key and TLS test upstream.
-func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string, ideKey string) (addr string, caPEM []byte, sessions *SessionMap) {
+// Pulse, mirroring newPulseTestProxy but with TLS test upstream and IDE ports.
+func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string) (addr string, caPEM []byte, sessions *SessionMap) {
 	t.Helper()
 	pool := NewPool([]string{"keyA", "keyB"})
 	pool.exchangeBase = upstreamURL
@@ -97,7 +114,6 @@ func newIDETestProxy(t *testing.T, upstreamURL string, pulseURL string, ideKey s
 	pulse.usageBatchMax = 1 // flush on every EnqueueUsage (test determinism)
 	sessions = NewSessionMap()
 	s := NewServer(pool, ca, pulse, sessions)
-	s.idePulseKey = ideKey
 	s.caPEMPath = caPath
 	reg := newIDEPortRegistry(s, 9300, filepath.Join(t.TempDir(), "ide_ports.json"))
 	s.idePorts = reg
@@ -173,8 +189,8 @@ func TestBillingPathClassification(t *testing.T) {
 func TestIDEBindsUnboundSessionToIDEKey(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, authCalls := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
-	client := connectClient(t, proxyAddr, caPEM)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	host := ideUpstreamHost(t, fu.URL)
 
 	doUnary := func() (int, string) {
@@ -220,7 +236,7 @@ func TestIDEBindsUnboundSessionToIDEKey(t *testing.T) {
 func TestIDEIdentityRPCPassesThroughClientToken(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, authCalls := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	client := connectClient(t, proxyAddr, caPEM)
 	host := ideUpstreamHost(t, fu.URL)
 
@@ -265,7 +281,7 @@ func TestUnknownFamilyConnectStreamPassesThroughOutsidePool(t *testing.T) {
 	fu := httptest.NewTLSServer(mux)
 	t.Cleanup(fu.Close)
 	pulse, authCalls := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	client := connectClient(t, proxyAddr, caPEM)
 
 	req, err := http.NewRequest(http.MethodPost, "https://"+ideUpstreamHost(t, fu.URL)+"/agent2.v1.AgentService/Run",
@@ -294,8 +310,8 @@ func TestUnknownFamilyConnectStreamPassesThroughOutsidePool(t *testing.T) {
 func TestIDEIdentityRPCPassthroughAfterTOFUBind(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
-	client := connectClient(t, proxyAddr, caPEM)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	host := ideUpstreamHost(t, fu.URL)
 
 	bindReq, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
@@ -343,7 +359,7 @@ func TestIDEIdentityRPCPassthroughAfterTOFUBind(t *testing.T) {
 func TestIDEWithoutKeyStillRequiresExchange(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	client := connectClient(t, proxyAddr, caPEM)
 	host := ideUpstreamHost(t, fu.URL)
 
@@ -373,8 +389,8 @@ func TestIDESuspendedKeyRejected(t *testing.T) {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, srv.URL, "pk_ide")
-	client := connectClient(t, proxyAddr, caPEM)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, srv.URL)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	host := ideUpstreamHost(t, fu.URL)
 
 	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
@@ -397,7 +413,7 @@ func TestIDESuspendedKeyRejected(t *testing.T) {
 func TestIDEPerKeyPortAttribution(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	// Allocate a per-key IDE port via the bootstrap endpoint.
@@ -510,6 +526,8 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "reason": nil,
 			})
+		case "/api/internal/v1/proxy/spend-check":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 		case "/api/internal/v1/proxy/usage":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -524,7 +542,7 @@ func TestIDERunSSEUsageTappedThroughPerKeyPort(t *testing.T) {
 	}))
 	t.Cleanup(pulseSrv.Close)
 
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulseSrv.URL, "")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulseSrv.URL)
 	portResp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
 	if err != nil {
 		t.Fatal(err)
@@ -592,14 +610,14 @@ func testJWT(sub string) string {
 func TestIDELockSubRejectsForeignLogin(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	// Enable the lock on the test server (mirrors PROXY_IDE_LOCK_SUB).
 	s := serverByAddr(t, proxyAddr)
 	s.ideLockSubInit(true)
 
-	client := connectClient(t, proxyAddr, caPEM)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	doUnary := func(token string) int {
 		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 			bytes.NewReader([]byte("{}")))
@@ -632,9 +650,9 @@ func TestIDELockSubRejectsForeignLogin(t *testing.T) {
 func TestIDELockSubOffAllowsAnyLogin(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
-	client := connectClient(t, proxyAddr, caPEM)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 
 	for _, sub := range []string{"user-a", "user-b"} {
 		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
@@ -717,7 +735,7 @@ func serverByAddr(t *testing.T, addr string) *Server {
 func TestIDELockSubEnforcedOnPerKeyPort(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	// Enable the lock BEFORE the per-key listener is cloned so the clone
@@ -765,7 +783,7 @@ func TestIDELockSubEnforcedOnPerKeyPort(t *testing.T) {
 func TestIDEEmptyAuthorizationRejected(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 	client := connectClient(t, proxyAddr, caPEM)
 
@@ -809,7 +827,7 @@ func newFakePulseLoan(t *testing.T) *httptest.Server {
 func TestIDELoanAliasBindingFields(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse := newFakePulseLoan(t)
-	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pka_loan")
@@ -871,7 +889,7 @@ func newFakePulseLoanPool(t *testing.T) *httptest.Server {
 func TestIDELoanPoolBindingServesViaSticky(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse := newFakePulseLoanPool(t)
-	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	// loan_pool keys must pass the /ide-port mode gate (regression: they used
@@ -914,9 +932,9 @@ func TestIDELoanPoolBindingServesViaSticky(t *testing.T) {
 func TestIDETTLReauthorizeUsesSeatFlow(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, authCalls := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
-	client := connectClient(t, proxyAddr, caPEM)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 
 	doUnary := func() int {
 		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
@@ -954,7 +972,7 @@ func TestIDETTLReauthorizeUsesSeatFlow(t *testing.T) {
 func TestIDEPortReleaseLifecycle(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 
 	getPort := func(key string) (int, int) {
 		resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=" + key)
@@ -1020,7 +1038,7 @@ func TestIDEPortReleaseLifecycle(t *testing.T) {
 func TestUninstallScriptEndpoint(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 
 	resp, err := http.Get("http://" + proxyAddr + "/uninstall-cursor.ps1")
 	if err != nil {
@@ -1033,6 +1051,7 @@ func TestUninstallScriptEndpoint(t *testing.T) {
 		!strings.Contains(script, "http://"+proxyAddr) ||
 		!strings.Contains(script, "PSObject.Properties.Remove($name)") ||
 		!strings.Contains(script, "'http.proxy', 'cursor.general.disableHttp2', 'http.systemCertificates'") ||
+		!strings.Contains(script, "ignoredSettings") ||
 		!strings.Contains(script, "delstore Root") {
 		t.Fatalf("uninstall script malformed: status %d head %q", resp.StatusCode, script[:min(200, len(script))])
 	}
@@ -1041,7 +1060,7 @@ func TestUninstallScriptEndpoint(t *testing.T) {
 func TestSetupBootstrapEndpoints(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 
 	resp, err := http.Get("http://" + proxyAddr + "/ca.pem")
 	if err != nil {
@@ -1119,7 +1138,7 @@ func TestIDECrossPortSessionRebindsPulseKey(t *testing.T) {
 		"pk_a": "pkA",
 		"pk_b": "pkB",
 	})
-	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 
 	alloc := func(key string) string {
@@ -1178,7 +1197,7 @@ func TestIDECrossPortSessionRebindsPulseKey(t *testing.T) {
 func TestIDEDedicatedPortHidesIdePortEndpoint(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 
 	resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=pk_ide")
 	if err != nil {
@@ -1222,12 +1241,12 @@ func TestIDEDedicatedPortHidesIdePortEndpoint(t *testing.T) {
 func TestIDELockSubRejectsMissingSub(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL, "pk_ide")
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	host := ideUpstreamHost(t, fu.URL)
 	s := serverByAddr(t, proxyAddr)
 	s.ideLockSubInit(true)
 
-	client := connectClient(t, proxyAddr, caPEM)
+	client := ideTunnelClient(t, proxyAddr, caPEM)
 	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
 		bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -1284,10 +1303,10 @@ func TestIDEPortMapConflictReallocates(t *testing.T) {
 	}
 }
 
-func TestSetupScriptAllocatesPortBeforeWritingSettings(t *testing.T) {
+func TestSetupScriptWritesUserinfoURLAndRejectsFullKey(t *testing.T) {
 	fu := newFakeUpstreamIDE(t)
 	pulse, _ := newFakePulseCounted(t)
-	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL)
 	resp, err := http.Get("http://" + proxyAddr + "/setup-cursor.ps1")
 	if err != nil {
 		t.Fatal(err)
@@ -1295,10 +1314,569 @@ func TestSetupScriptAllocatesPortBeforeWritingSettings(t *testing.T) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	script := string(b)
-	idePortAt := strings.Index(script, "/ide-port?key=")
-	writeAt := strings.Index(script, "WriteAllText($settingsPath")
-	if idePortAt < 0 || writeAt < 0 || idePortAt > writeAt {
-		t.Fatalf("setup must call /ide-port before writing settings (idePort=%d write=%d)", idePortAt, writeAt)
+	if strings.Contains(script, "/ide-port") {
+		t.Fatal("setup script must not request /ide-port")
+	}
+	if !strings.Contains(script, "EscapeDataString($Key)") || !strings.Contains(script, ":x@") {
+		t.Fatal("setup must write http.proxy with userinfo on the main port")
+	}
+	if !strings.Contains(script, "settingsSync") || !strings.Contains(script, "ignoredSettings") {
+		t.Fatal("setup must add http.proxy to settingsSync.ignoredSettings")
+	}
+	const ideKeyValidation = "-Key must be an IDE key (pkide_...) - copy the Cursor IDE command from the Pulse console; full proxy keys (pk_/pka_) are not accepted."
+	if !strings.Contains(script, ideKeyValidation) {
+		t.Fatal("setup must throw the unified IDE key validation message")
+	}
+	if strings.Contains(script, "exit ") {
+		t.Fatal("setup script must not call exit (terminates the host PowerShell session)")
+	}
+
+	resp2, err := http.Get("http://" + proxyAddr + "/uninstall-cursor.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	uninstall, _ := io.ReadAll(resp2.Body)
+	us := string(uninstall)
+	if !strings.Contains(us, "ignoredSettings") || !strings.Contains(us, "http.proxy") {
+		t.Fatal("uninstall must clean settingsSync.ignoredSettings for http.proxy")
+	}
+	if !strings.Contains(us, "legacyPortRelease") || !strings.Contains(us, "/ide-port") {
+		t.Fatal("uninstall must conditionally call legacy DELETE /ide-port")
+	}
+	if strings.Contains(us, "exit ") {
+		t.Fatal("uninstall script must not call exit (terminates the host PowerShell session)")
+	}
+}
+
+func TestRemovedIDEPulseKeySet(t *testing.T) {
+	if !removedIDEPulseKeySet("pk_old", "", "") {
+		t.Fatal("flag value should be detected")
+	}
+	if !removedIDEPulseKeySet("", "pk_env", "") {
+		t.Fatal("env value should be detected")
+	}
+	if !removedIDEPulseKeySet("", "", "pk_cfg") {
+		t.Fatal("config value should be detected")
+	}
+	if removedIDEPulseKeySet("", "", "") {
+		t.Fatal("empty sources should not be detected")
+	}
+}
+
+func TestIDEUserinfoPkideRunSSEUsageAttributed(t *testing.T) {
+	fu := newFakeUpstreamSSE(t)
+	var mu sync.Mutex
+	var usageBodies []map[string]any
+	pulseSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/internal/v1/proxy/authorize":
+			var body struct {
+				PulseKey string `json:"pulse_key"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if !strings.HasPrefix(body.PulseKey, "pkide_") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "scope": "ide",
+			})
+		case "/api/internal/v1/proxy/spend-check":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/api/internal/v1/proxy/usage":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			usageBodies = append(usageBodies, body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"recorded":1,"suspended":[]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(pulseSrv.Close)
+
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulseSrv.URL)
+	client := connectClientAuth(t, proxyAddr, caPEM, testIDEKey, "x")
+	req, err := http.NewRequest(http.MethodPost, "https://"+ideUpstreamHost(t, fu.URL)+"/agent.v1.AgentService/RunSSE",
+		bytes.NewReader([]byte{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer ide-login-jwt")
+	req.Header.Set("Content-Type", "application/connect+proto")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("RunSSE status %d body %s", resp.StatusCode, b)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(usageBodies)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(usageBodies) == 0 {
+		t.Fatal("expected usage report for pkide_ userinfo session")
+	}
+	items, _ := usageBodies[0]["items"].([]any)
+	item, _ := items[0].(map[string]any)
+	if item["proxy_key_id"] != "pkIDE1" {
+		t.Fatalf("usage proxy_key_id=%v want pkIDE1", item["proxy_key_id"])
+	}
+}
+
+func TestIDEUnauthenticatedTunnelBilling401(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+	host := ideUpstreamHost(t, fu.URL)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer ide-login-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "IDE proxy key missing: re-run setup-cursor.ps1") {
+		t.Fatalf("unexpected body: %s", b)
+	}
+}
+
+func TestIDEUserinfoFullKeyRejected401(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := connectClientAuth(t, proxyAddr, caPEM, "pk_full_key", "x")
+	host := ideUpstreamHost(t, fu.URL)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer ide-login-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "full proxy key not allowed in proxy URL; use IDE key") {
+		t.Fatalf("unexpected body: %s", b)
+	}
+}
+
+func TestExchangeRejectsPkidePrefix403(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+	host := ideUpstreamHost(t, fu.URL)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+exchangePath, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer pkide_blocked")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(b), "IDE key not allowed for exchange") {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+}
+
+func TestExchangeRejectsScopeIde403(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "proxy_key_id": "pkIDE1", "mode": "quota", "scope": "ide",
+		})
+	}))
+	t.Cleanup(pulse.Close)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+	host := ideUpstreamHost(t, fu.URL)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+exchangePath, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer pk_ok_shape")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(b), "IDE key not allowed for exchange") {
+		t.Fatalf("status %d body %s", resp.StatusCode, b)
+	}
+}
+
+func TestCLIExchangeSessionNotReboundByTunnelUserinfo(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse := newFakePulseKeys(t, map[string]string{
+		"pk_cli":  "pkCLI",
+		"pkide_x": "pkIDE1",
+	})
+	proxyAddr, caPEM, sessions := newIDETestProxy(t, fu.URL, pulse.URL)
+	host := ideUpstreamHost(t, fu.URL)
+
+	cliClient := connectClient(t, proxyAddr, caPEM)
+	exReq, _ := http.NewRequest(http.MethodPost, "https://"+host+exchangePath, bytes.NewReader([]byte("{}")))
+	exReq.Header.Set("Authorization", "Bearer pk_cli")
+	exReq.Header.Set("Content-Type", "application/json")
+	exResp, err := cliClient.Do(exReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exOut struct {
+		AccessToken string `json:"accessToken"`
+	}
+	_ = json.NewDecoder(exResp.Body).Decode(&exOut)
+	exResp.Body.Close()
+	if exResp.StatusCode != http.StatusOK || exOut.AccessToken == "" {
+		t.Fatalf("exchange failed: %d", exResp.StatusCode)
+	}
+
+	ideClient := connectClientAuth(t, proxyAddr, caPEM, "pkide_x", "x")
+	req, _ := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.TestService/Unary",
+		bytes.NewReader([]byte("{}")))
+	req.Header.Set("Authorization", "Bearer "+exOut.AccessToken)
+	resp, err := ideClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("CLI session over different tunnel key: %d %s", resp.StatusCode, b)
+	}
+	b, ok := sessions.Lookup(exOut.AccessToken)
+	if !ok || b.PulseKey != "pk_cli" || b.ProxyKeyID != "pkCLI" {
+		t.Fatalf("session must stay on CLI key, got ok=%v %+v", ok, b)
+	}
+}
+
+func TestChromiumStylePassthroughWithoutTunnelKey(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, authCalls := newFakePulseCounted(t)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	client := connectClient(t, proxyAddr, caPEM)
+	host := ideUpstreamHost(t, fu.URL)
+
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/aiserver.v1.DashboardService/GetMe",
+		bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer chromium-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), "Bearer chromium-jwt") {
+		t.Fatalf("GetMe passthrough: %d %s", resp.StatusCode, b)
+	}
+	if authCalls.Load() != 0 {
+		t.Fatalf("passthrough must not authorize, got %d", authCalls.Load())
+	}
+}
+
+func TestIDEUserinfoWindowLimited429MatchesCLIExchange(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	const limitReason = "window_5h_exceeded"
+	pulse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/internal/v1/proxy/authorize" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body struct {
+			PulseKey string `json:"pulse_key"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch body.PulseKey {
+		case "pk_limited":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "window_limited", "proxy_key_id": "pkIDE1", "mode": "quota",
+				"reason": limitReason,
+			})
+		case testIDEKey:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "window_limited", "proxy_key_id": "pkIDE1", "mode": "quota",
+				"reason": limitReason, "scope": "ide",
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
+		}
+	}))
+	t.Cleanup(pulse.Close)
+	proxyAddr, caPEM, _ := newIDETestProxy(t, fu.URL, pulse.URL)
+	host := ideUpstreamHost(t, fu.URL)
+	billingPath := "/aiserver.v1.TestService/Unary"
+
+	cliClient := connectClient(t, proxyAddr, caPEM)
+	exReq, _ := http.NewRequest(http.MethodPost, "https://"+host+exchangePath, bytes.NewReader([]byte("{}")))
+	exReq.Header.Set("Authorization", "Bearer pk_limited")
+	exReq.Header.Set("Content-Type", "application/json")
+	exResp, err := cliClient.Do(exReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exOut struct {
+		AccessToken string `json:"accessToken"`
+	}
+	_ = json.NewDecoder(exResp.Body).Decode(&exOut)
+	exResp.Body.Close()
+	if exResp.StatusCode != http.StatusOK || exOut.AccessToken == "" {
+		t.Fatalf("exchange window_limited: %d", exResp.StatusCode)
+	}
+
+	cliBiz, _ := http.NewRequest(http.MethodPost, "https://"+host+billingPath, bytes.NewReader([]byte("{}")))
+	cliBiz.Header.Set("Authorization", "Bearer "+exOut.AccessToken)
+	cliResp, err := cliClient.Do(cliBiz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliBody, _ := io.ReadAll(cliResp.Body)
+	cliResp.Body.Close()
+
+	ideClient := ideTunnelClient(t, proxyAddr, caPEM)
+	ideReq, _ := http.NewRequest(http.MethodPost, "https://"+host+billingPath, bytes.NewReader([]byte("{}")))
+	ideReq.Header.Set("Authorization", "Bearer ide-login-jwt")
+	ideResp, err := ideClient.Do(ideReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ideBody, _ := io.ReadAll(ideResp.Body)
+	ideResp.Body.Close()
+
+	if cliResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("CLI window_limited: status %d body %s", cliResp.StatusCode, cliBody)
+	}
+	if ideResp.StatusCode != cliResp.StatusCode {
+		t.Fatalf("status mismatch: CLI %d IDE %d", cliResp.StatusCode, ideResp.StatusCode)
+	}
+	if !bytes.Equal(cliBody, ideBody) {
+		t.Fatalf("window_limited bodies differ:\nCLI: %s\nIDE: %s", cliBody, ideBody)
+	}
+}
+
+func TestIDEUserinfoModelSwitchUsesSeparateStickySlots(t *testing.T) {
+	var lastAuth string
+	mux := http.NewServeMux()
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		lastAuth = key
+		switch key {
+		case "keyA":
+			_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": "tokA", "refreshToken": "r"})
+		case "keyB":
+			_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": "tokB", "refreshToken": "r"})
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	})
+	mux.HandleFunc("/agent.v1.AgentService/Run", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	fu := httptest.NewTLSServer(mux)
+	t.Cleanup(fu.Close)
+
+	pool := NewPoolFromCredentials(nil)
+	pool.exchangeBase = fu.URL
+	pool.client = fu.Client()
+	pool.ReplaceFromPulseSnapshot(PulsePoolSnapshot{
+		Default: []PoolCredential{{CredentialID: "local-0", APIKey: "keyA"}, {CredentialID: "local-1", APIKey: "keyB"}},
+		Auto:    []PoolCredential{{CredentialID: "local-0", APIKey: "keyA"}},
+		API:     []PoolCredential{{CredentialID: "local-1", APIKey: "keyB"}},
+	})
+
+	ca, caPath, _, err := loadOrCreateCA(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pulse, _ := newFakePulseCounted(t)
+	sessions := NewSessionMap()
+	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), sessions)
+	s.caPEMPath = caPath
+	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
+	s.transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go http.Serve(ln, s)
+	t.Cleanup(func() { ln.Close() })
+	caPEM, _ := os.ReadFile(caPath)
+
+	client := connectClientAuth(t, ln.Addr().String(), caPEM, testIDEKey, "x")
+	host := ideUpstreamHost(t, fu.URL)
+	tok := testJWT("sticky-user")
+
+	doRun := func(model string) {
+		modelProto := msgField(1, []byte(model))
+		runBody := make([]byte, 5+len(modelProto))
+		runBody[0] = 0
+		binary.BigEndian.PutUint32(runBody[1:5], uint32(len(modelProto)))
+		copy(runBody[5:], modelProto)
+		req, _ := http.NewRequest(http.MethodPost, "https://"+host+"/agent.v1.AgentService/Run", bytes.NewReader(runBody))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/connect+proto")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Run %s: %d", model, resp.StatusCode)
+		}
+	}
+
+	doRun("composer-1")
+	if lastAuth != "keyA" {
+		t.Fatalf("auto model should use keyA, got %q", lastAuth)
+	}
+	doRun("claude-4-sonnet")
+	if lastAuth != "keyB" {
+		t.Fatalf("api model should use keyB, got %q", lastAuth)
+	}
+	b, ok := sessions.Lookup(tok)
+	if !ok || b.AutoSticky.CredentialID != "local-0" || b.APISticky.CredentialID != "local-1" {
+		t.Fatalf("sticky slots: ok=%v binding=%+v", ok, b)
+	}
+}
+
+func TestIDEUserinfoLoanAliasUsageCap429(t *testing.T) {
+	const ideAliasKey = "pkide_loan_alias"
+	const cursorKey = "crsr_loan_via_ide"
+	const limitedMsg = "【小脉借用】IDE loan cap"
+	var capHits atomic.Int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(exchangePath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+cursorKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"accessToken": "jwt-loan", "refreshToken": "r"})
+	})
+	mux.HandleFunc("/agent.v1.AgentService/Run", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	fuSrv := httptest.NewTLSServer(mux)
+	t.Cleanup(fuSrv.Close)
+
+	pulse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/internal/v1/proxy/authorize":
+			var body struct {
+				PulseKey string `json:"pulse_key"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.PulseKey != ideAliasKey {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "invalid"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok", "mode": "loan_alias", "loan_id": "loan-ide-1",
+				"credential_id": "cred-1", "cursor_api_key": cursorKey, "scope": "ide",
+			})
+		case "/api/internal/v1/proxy/spend-check":
+			capHits.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "limited", "message": limitedMsg,
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(pulse.Close)
+
+	pool := NewPool(nil)
+	pool.exchangeBase = fuSrv.URL
+	pool.client = fuSrv.Client()
+	ca, caPath, _, err := loadOrCreateCA(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(pool, ca, NewPulseClient(pulse.URL, "tok", time.Minute), NewSessionMap())
+	s.shouldMITM = func(string) bool { return true }
+	permitTestConnect(s)
+	s.transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go http.Serve(ln, s)
+	t.Cleanup(func() { ln.Close() })
+	caPEM, _ := os.ReadFile(caPath)
+
+	client := connectClientAuth(t, ln.Addr().String(), caPEM, ideAliasKey, "x")
+	upstreamAddr := strings.TrimPrefix(fuSrv.URL, "https://")
+
+	modelProto := msgField(1, []byte("composer-1"))
+	runBody := make([]byte, 5+len(modelProto))
+	runBody[0] = 0
+	binary.BigEndian.PutUint32(runBody[1:5], uint32(len(modelProto)))
+	copy(runBody[5:], modelProto)
+	runReq, _ := http.NewRequest(http.MethodPost, "https://"+upstreamAddr+"/agent.v1.AgentService/Run", bytes.NewReader(runBody))
+	runReq.Header.Set("Authorization", "Bearer "+testJWT("user-a"))
+	runReq.Header.Set("Content-Type", "application/connect+proto")
+	runResp, err := client.Do(runReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runResp.Body.Close()
+	body, _ := io.ReadAll(runResp.Body)
+	if runResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d body %s", runResp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), limitedMsg) {
+		t.Fatalf("body %s", body)
+	}
+	if capHits.Load() != 1 {
+		t.Fatalf("cap checks %d", capHits.Load())
 	}
 }
 

@@ -56,6 +56,12 @@ def settings_for_api(base: AppConfig, session: Session, team_id: str) -> dict[st
         if feishu.get(key):
             feishu = {**feishu, key: "***"}
     data["feishu"] = feishu
+    overrides = load_team_settings_map(session, team_id)
+    membership_raw = overrides.get("membership")
+    if isinstance(membership_raw, dict):
+        data["membership"] = {"membership_required": bool(membership_raw.get("membership_required"))}
+    else:
+        data["membership"] = {"membership_required": False}
     return data
 
 

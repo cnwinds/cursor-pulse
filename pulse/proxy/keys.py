@@ -22,6 +22,12 @@ def generate_coding_plan_proxy_key() -> tuple[str, str, str]:
     return plaintext, hash_proxy_key(plaintext), plaintext[:13]
 
 
+def generate_ide_key() -> tuple[str, str, str]:
+    """IDE 作用域 Key：pkide_…，绑定父 pk_ 或 pka_，仅用于 IDE 归因。"""
+    plaintext = "pkide_" + secrets.token_urlsafe(32)
+    return plaintext, hash_proxy_key(plaintext), plaintext[:14]
+
+
 def hash_proxy_key(plaintext: str) -> str:
     """鉴权查询时将入参明文转为 DB 查询用的哈希值。"""
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()

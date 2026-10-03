@@ -22,6 +22,7 @@
           v-for="item in menuItems"
           :key="item.key"
           :command="item"
+          :title="item.title"
         >
           {{ item.label }}
         </el-dropdown-item>
@@ -49,6 +50,7 @@ export interface ProxyCommandMenuItem {
   shell: ShellKind
   kind?: 'cli' | 'ide'
   label: string
+  title?: string
 }
 
 const props = defineProps<{
@@ -70,7 +72,9 @@ const menuItems = computed<ProxyCommandMenuItem[]>(() =>
         proxy_name: name,
         shell: 'powershell',
         kind: 'ide',
-        label: `${name} · Cursor IDE`,
+        label: `${name} · Cursor IDE（IDE 专用密钥）`,
+        title:
+          '签发 IDE 专用密钥（pkide_），不可用于 CLI；可在新电脑重复运行同一命令',
       },
       {
         key: `${addr.url}|powershell`,
@@ -140,7 +144,7 @@ async function copyItem(item: ProxyCommandMenuItem) {
     }
     await copyText(command)
     if (item.kind === 'ide') {
-      ElMessage.success(`已复制 ${item.proxy_name} · Cursor IDE 接入命令`)
+      ElMessage.success(`已复制 ${item.proxy_name} · Cursor IDE 接入命令（IDE 专用密钥，不可用于 CLI）`)
     } else {
       ElMessage.success(
         item.shell === 'powershell'

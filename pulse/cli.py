@@ -39,6 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     p_reprice_proxy.add_argument("--loan-id", default=None)
     p_reprice_proxy.add_argument("--proxy-key-id", default=None)
 
+    p_credit = sub.add_parser("credit", help="Member credit wallet utilities")
+    credit_sub = p_credit.add_subparsers(dest="credit_cmd", required=True)
+    credit_sub.add_parser("reconcile", help="Report balance vs transaction sum mismatches")
+
     p_init = sub.add_parser(
         "init-db",
         help="Initialize database schema and seed AI tool catalog (vendors/plans)",
@@ -287,6 +291,17 @@ def main(argv: list[str] | None = None) -> int:
         session.commit()
         print(dumps_json(result))
         session.close()
+        return 0
+
+    if args.command == "credit":
+        if args.credit_cmd == "reconcile":
+            from pulse.proxy.credit import reconcile
+
+            session = session_factory()
+            mismatches = reconcile(session)
+            session.close()
+            print(dumps_json({"mismatches": mismatches, "count": len(mismatches)}))
+            return 1 if mismatches else 0
         return 0
 
     if args.command in ("channel", "serve"):

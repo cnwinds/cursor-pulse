@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
+from pulse.proxy.keys import generate_ide_key, generate_proxy_key, hash_proxy_key
 
 
 def test_generate_proxy_key_format():
@@ -17,6 +17,14 @@ def test_generate_proxy_key_unique():
     a, b = generate_proxy_key(), generate_proxy_key()
     assert a[0] != b[0]
     assert a[1] != b[1]
+
+
+def test_generate_ide_key_format():
+    plaintext, key_hash, hint = generate_ide_key()
+    assert plaintext.startswith("pkide_")
+    assert key_hash == hash_proxy_key(plaintext)
+    assert hint.startswith("pkide_")
+    assert len(hint) == 14
 
 
 def test_hash_is_sha256():

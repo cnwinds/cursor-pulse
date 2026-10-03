@@ -31,6 +31,15 @@ def _member_id_for_plaintext(session: Session, plaintext: str) -> str | None:
     from pulse.tool_center.key_loan_delivery import DELIVERY_PROXY_ALIAS
 
     plaintext = (plaintext or "").strip()
+    if plaintext.startswith("pkide_"):
+        from pulse.proxy.ide_keys import find_ide_key_parent
+
+        parent = find_ide_key_parent(session, plaintext)
+        if isinstance(parent, ProxyKey):
+            return parent.member_id
+        if isinstance(parent, KeyLoan):
+            return parent.borrower_member_id
+        return None
     if plaintext.startswith("pka_"):
         loan = session.scalar(
             select(KeyLoan).where(

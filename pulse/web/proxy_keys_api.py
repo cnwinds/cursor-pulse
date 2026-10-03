@@ -23,6 +23,7 @@ from pulse.storage.models import (
 from pulse.tool_center.auto_lender import try_force_jev_refresh
 from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.web.deps import PortalUser
+from pulse.web.membership_present import usage_caps_migrated_message
 from pulse.web.permissions import has_permission
 
 
@@ -134,6 +135,11 @@ def _can_reveal_key(user: PortalUser, key: ProxyKey) -> bool:
     return has_permission(user.member, "proxy:read") and key.member_id == user.member.id
 
 
+def _reject_quota_window_limits(*, window_5h, window_7d) -> None:
+    if window_5h is not None or window_7d is not None:
+        raise HTTPException(status_code=400, detail=usage_caps_migrated_message())
+
+
 def register_proxy_keys_routes(app, get_db, require_capability, config, require_user=None) -> None:
     @app.get(
         "/api/v2/proxy-keys",
@@ -180,12 +186,16 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
 
             openai_base = coding_plan_gateway_public_base(proxy_public_url=config.proxy.public_url)
         else:
+            _reject_quota_window_limits(
+                window_5h=body.window_5h_cost_usd,
+                window_7d=body.window_7d_cost_usd,
+            )
             key, plaintext = proxy_service.create_key(
                 session,
                 name=name,
                 member_id=member.id,
-                window_5h_cost_limit_cents=proxy_service.usd_to_cents(body.window_5h_cost_usd),
-                window_7d_cost_limit_cents=proxy_service.usd_to_cents(body.window_7d_cost_usd),
+                window_5h_cost_limit_cents=None,
+                window_7d_cost_limit_cents=None,
                 expires_at=body.expires_at,
                 encryption_key=enc,
             )
@@ -228,6 +238,25 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         key = _get_key(session, key_id)
         if not _can_reveal_key(user, key):
             raise HTTPException(status_code=403, detail="无权查看该 Key")
+
+        team, _ = team_repository(session, config)
+
+        if kind == "ide":
+            addresses = configured_proxy_addresses(session, team.id)
+            if not addresses:
+                raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
+            if key.mode == "coding_plan":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Coding Plan 密钥 (pkcp_) 不支持 Cursor IDE 接入，请使用 pk_/pka_ 或借用密钥",
+                )
+            from pulse.proxy.ide_keys import get_or_issue_ide_key
+
+            enc = (config.credentials.encryption_key or "").strip()
+            ide_plaintext = get_or_issue_ide_key(session, key, enc)
+            session.commit()
+            return proxy_service.build_ide_client_setup(addresses, ide_plaintext, proxy_url=proxy_url)
+
         enc = (config.credentials.encryption_key or "").strip()
         plaintext = proxy_service.reveal_plaintext(key, enc)
         if plaintext is None:
@@ -235,39 +264,9 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
                 status_code=410,
                 detail="该 Key 不可还原（历史 Key 未加密保存），请新建",
             )
-
-        # ProxyKey has no team_id; resolve the tenant team instead of key.team_id.
-        team, _ = team_repository(session, config)
         addresses = configured_proxy_addresses(session, team.id)
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
-
-        if kind == "ide":
-            # Cursor IDE 一键接入：仅 PowerShell，无需 shell 选择。
-            # Coding Plan 网关密钥 (pkcp_) 不走 IDE TOFU /ide-port 路径。
-            if plaintext.startswith("pkcp_"):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Coding Plan 密钥 (pkcp_) 不支持 Cursor IDE 接入，请使用 pk_/pka_ 或借用密钥",
-                )
-            chosen_addr = addresses[0]
-            if proxy_url:
-                wanted = proxy_url.rstrip("/")
-                chosen_addr = next(
-                    (a for a in addresses if str(a.url).rstrip("/") == wanted),
-                    chosen_addr,
-                )
-            ide_url = str(getattr(chosen_addr, "url", "")).rstrip("/")
-            return {
-                "plaintext_key": plaintext,
-                "proxy_url": ide_url,
-                "shell": "powershell",
-                "kind": "ide",
-                "command": proxy_service.build_ide_setup_command(
-                    proxy_url=ide_url, plaintext_key=plaintext
-                ),
-            }
-
         commands = proxy_service.build_client_setup_commands(plaintext_key=plaintext, addresses=addresses)
         chosen = proxy_service.pick_client_setup_command(commands, shell=shell, proxy_url=proxy_url)
         return {
@@ -278,6 +277,34 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
             "command": chosen["command"],
             "commands": commands,
         }
+
+    @app.post("/api/v2/proxy-keys/{key_id}/ide-key/rotate")
+    def rotate_proxy_key_ide(
+        key_id: str,
+        proxy_url: str | None = Query(default=None),
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("proxy:read")),
+    ):
+        from pulse.proxy.ide_keys import rotate_ide_key
+        from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
+        from pulse.tenant.context import team_repository
+
+        key = _get_key(session, key_id)
+        if not _can_reveal_key(user, key):
+            raise HTTPException(status_code=403, detail="无权查看该 Key")
+        if key.mode == "coding_plan":
+            raise HTTPException(
+                status_code=400,
+                detail="Coding Plan 密钥 (pkcp_) 不支持 Cursor IDE 接入，请使用 pk_/pka_ 或借用密钥",
+            )
+        team, _ = team_repository(session, config)
+        addresses = configured_proxy_addresses(session, team.id)
+        if not addresses:
+            raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
+        enc = (config.credentials.encryption_key or "").strip()
+        ide_plaintext = rotate_ide_key(session, key, enc)
+        session.commit()
+        return proxy_service.build_ide_client_setup(addresses, ide_plaintext, proxy_url=proxy_url)
 
     @app.patch(
         "/api/v2/proxy-keys/{key_id}",
@@ -291,10 +318,17 @@ def register_proxy_keys_routes(app, get_db, require_capability, config, require_
         if "name" in data:
             if data["name"] is not None:
                 key.name = data["name"]
-        if "window_5h_cost_usd" in data:
-            key.window_5h_cost_limit_cents = proxy_service.usd_to_cents(data["window_5h_cost_usd"])
-        if "window_7d_cost_usd" in data:
-            key.window_7d_cost_limit_cents = proxy_service.usd_to_cents(data["window_7d_cost_usd"])
+        if key.mode != "coding_plan":
+            if data.get("window_5h_cost_usd") is not None or data.get("window_7d_cost_usd") is not None:
+                _reject_quota_window_limits(
+                    window_5h=data.get("window_5h_cost_usd"),
+                    window_7d=data.get("window_7d_cost_usd"),
+                )
+        else:
+            if "window_5h_cost_usd" in data:
+                key.window_5h_cost_limit_cents = proxy_service.usd_to_cents(data["window_5h_cost_usd"])
+            if "window_7d_cost_usd" in data:
+                key.window_7d_cost_limit_cents = proxy_service.usd_to_cents(data["window_7d_cost_usd"])
         if "expires_at" in data:
             key.expires_at = data["expires_at"]
         key.updated_at = proxy_service.utcnow()

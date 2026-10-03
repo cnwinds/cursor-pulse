@@ -14,26 +14,50 @@ import (
 	"sync"
 )
 
-// Per-key IDE listeners: each Proxy Key gets its own dedicated proxy port, so
-// every IDE session on that listener is attributed to that key without any
-// client cooperation (Cursor cannot carry a proxy key). The main port keeps
-// serving the CLI exchange flow and the server-wide -ide-pulse-key fallback.
+// Per-key IDE listeners (deprecated): each Proxy Key gets its own dedicated
+// proxy port. New clients use the shared main port with Proxy-Authorization
+// userinfo (pkide_). Dedicated listeners remain for transition compatibility.
 
 const defaultIDEPortBase = 9100
 
-// ideKeyCtx carries a per-key listener's proxy key through the CONNECT hop
-// into the MITM'd requests (see Server.handleConnect).
-type ideKeyCtx struct{}
+type tunnelKeySource string
+
+const (
+	tunnelKeySourceListener tunnelKeySource = "listener"
+	tunnelKeySourceUserinfo tunnelKeySource = "userinfo"
+)
+
+type tunnelKeyCtx struct {
+	key    string
+	source tunnelKeySource
+}
+
+type tunnelKeyCtxKey struct{}
+
+func withTunnelKey(ctx context.Context, key string, source tunnelKeySource) context.Context {
+	return context.WithValue(ctx, tunnelKeyCtxKey{}, tunnelKeyCtx{key: key, source: source})
+}
+
+func tunnelKeyFromCtx(ctx context.Context) (string, tunnelKeySource) {
+	v, ok := ctx.Value(tunnelKeyCtxKey{}).(tunnelKeyCtx)
+	if !ok {
+		return "", ""
+	}
+	return v.key, v.source
+}
 
 func withIDEKeyCtx(ctx context.Context, key string) context.Context {
-	return context.WithValue(ctx, ideKeyCtx{}, key)
+	return withTunnelKey(ctx, key, tunnelKeySourceListener)
 }
 
 // ideKeyFromCtx returns the per-key listener's proxy key; empty on the main
-// listener.
+// listener or when the key came from Proxy-Authorization userinfo.
 func ideKeyFromCtx(ctx context.Context) string {
-	k, _ := ctx.Value(ideKeyCtx{}).(string)
-	return k
+	k, src := tunnelKeyFromCtx(ctx)
+	if src == tunnelKeySourceListener {
+		return k
+	}
+	return ""
 }
 
 // withIDEKeyHandler scopes a proxy key to every request served by a per-key
@@ -302,6 +326,7 @@ func (r *idePortRegistry) Close() {
 // Both are main-listener bootstrap concerns: a dedicated port must not mint or
 // drop listeners for other keys.
 func (s *Server) serveIDEPort(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[ide] deprecated: /ide-port is deprecated; re-run setup-cursor.ps1 to use the shared port with an IDE key (pkide_)")
 	if ideKeyFromCtx(r.Context()) != "" {
 		http.Error(w, "ide-port only on main listener", http.StatusNotFound)
 		return
