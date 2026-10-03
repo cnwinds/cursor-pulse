@@ -4,9 +4,8 @@ import logging
 import uuid
 from typing import Any
 
-import httpx
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+
 from pulse.capabilities.invoke import invoke_capability
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client
@@ -23,11 +22,7 @@ def _looks_like_usage_accounts(accounts: list) -> bool:
         return False
     if "account_identifier" in sample:
         return False
-    return bool(
-        sample.get("kind") in ("owned", "loan")
-        or "identifier" in sample
-        or sample.get("is_loan") is True
-    )
+    return bool(sample.get("kind") in ("owned", "loan") or "identifier" in sample or sample.get("is_loan") is True)
 
 
 def format_capability_reply(result: CapabilityInvokeResult) -> str:
@@ -40,8 +35,8 @@ def format_capability_reply(result: CapabilityInvokeResult) -> str:
         if val is not None and str(val).strip():
             return str(val)
     empty_reason = data.get("empty_reason")
-    if empty_reason == "no_cursor_account":
-        return "尚未绑定 Cursor 账号"
+    if empty_reason in ("no_account", "no_cursor_account"):
+        return "尚未绑定 AI 账号（Cursor / GLM / MiniMax / Kimi）"
     if empty_reason == "no_cursor_or_loan":
         return "尚未绑定 Cursor 账号，且当前无进行中的 Key 借用。"
     accounts = data.get("accounts")

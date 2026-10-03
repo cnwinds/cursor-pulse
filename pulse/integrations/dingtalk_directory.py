@@ -1,10 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -391,9 +392,7 @@ def sync_dingtalk_directory(
         userid_to_member[userid] = member
 
     for member, manager_userid in pending_managers:
-        manager = userid_to_member.get(manager_userid) or repo.get_member_by_channel_user_id(
-            manager_userid
-        )
+        manager = userid_to_member.get(manager_userid) or repo.get_member_by_channel_user_id(manager_userid)
         if manager:
             member.manager_member_id = manager.id
             stats["managers_linked"] += 1

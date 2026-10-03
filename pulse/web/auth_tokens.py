@@ -4,7 +4,7 @@ import hashlib
 import logging
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
@@ -42,20 +42,16 @@ def assert_jwt_secret_configured(config) -> None:
     jwt_secret = (config.web.jwt_secret or "").strip()
     if _is_production() and not jwt_secret:
         raise ValueError(
-            "JWT_SECRET is required when PULSE_ENV=production "
-            "(admin_token cannot substitute for JWT signing)."
+            "JWT_SECRET is required when PULSE_ENV=production (admin_token cannot substitute for JWT signing)."
         )
     if _is_production() and jwt_secret and len(jwt_secret.encode("utf-8")) < 32:
         raise ValueError(
-            "JWT_SECRET must be at least 32 bytes when PULSE_ENV=production "
-            "(RFC 7518 §3.2 recommendation for HS256)."
+            "JWT_SECRET must be at least 32 bytes when PULSE_ENV=production (RFC 7518 §3.2 recommendation for HS256)."
         )
     if not jwt_secret and (config.web.admin_token or "").strip():
         _warn_admin_token_fallback()
     elif jwt_secret and len(jwt_secret.encode("utf-8")) < 32:
-        logger.warning(
-            "JWT_SECRET is shorter than 32 bytes; use a longer secret in production."
-        )
+        logger.warning("JWT_SECRET is shorter than 32 bytes; use a longer secret in production.")
 
 
 def _secret(config) -> str:
@@ -64,8 +60,7 @@ def _secret(config) -> str:
         return jwt_secret
     if _is_production():
         raise RuntimeError(
-            "JWT_SECRET is required when PULSE_ENV=production "
-            "(admin_token cannot substitute for JWT signing)."
+            "JWT_SECRET is required when PULSE_ENV=production (admin_token cannot substitute for JWT signing)."
         )
     admin_token = (config.web.admin_token or "").strip()
     if admin_token:
@@ -99,7 +94,7 @@ def create_access_token(
     if minutes is None and hours is not None:
         minutes = int(hours) * 60
     ttl = _access_token_minutes(config, minutes)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": member.id,
         "channel": getattr(member, "channel", None) or "web",
@@ -131,7 +126,7 @@ def hash_refresh_token(raw: str) -> str:
 
 def _ensure_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -139,7 +134,7 @@ def issue_token_pair(session: Session, config, member: Member) -> dict[str, Any]
     """Create access + refresh tokens; persist refresh hash on ``session`` (caller commits)."""
     access_minutes = _access_token_minutes(config, None)
     refresh_days = _refresh_token_days(config)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     raw_refresh = create_refresh_token()
     row = PortalRefreshToken(
         member_id=member.id,
@@ -167,12 +162,10 @@ def rotate_refresh_token(session: Session, config, raw: str) -> dict[str, Any]:
     raw = (raw or "").strip()
     if not raw:
         raise RefreshTokenError("missing refresh token")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token_hash = hash_refresh_token(raw)
     row = session.scalar(
-        select(PortalRefreshToken)
-        .where(PortalRefreshToken.token_hash == token_hash)
-        .with_for_update()
+        select(PortalRefreshToken).where(PortalRefreshToken.token_hash == token_hash).with_for_update()
     )
     if row is None:
         raise RefreshTokenError("invalid refresh token")
@@ -205,9 +198,7 @@ def rotate_refresh_token(session: Session, config, raw: str) -> dict[str, Any]:
     if result.rowcount != 1:
         # Lost the CAS race — drop the orphan pair we just created.
         session.execute(
-            update(PortalRefreshToken)
-            .where(PortalRefreshToken.id == pair["refresh_row_id"])
-            .values(revoked_at=now)
+            update(PortalRefreshToken).where(PortalRefreshToken.id == pair["refresh_row_id"]).values(revoked_at=now)
         )
         session.flush()
         raise RefreshTokenError("refresh token race")
@@ -225,12 +216,8 @@ def revoke_refresh_token(session: Session, raw: str) -> bool:
     raw = (raw or "").strip()
     if not raw:
         return False
-    now = datetime.now(timezone.utc)
-    row = session.scalar(
-        select(PortalRefreshToken).where(
-            PortalRefreshToken.token_hash == hash_refresh_token(raw)
-        )
-    )
+    now = datetime.now(UTC)
+    row = session.scalar(select(PortalRefreshToken).where(PortalRefreshToken.token_hash == hash_refresh_token(raw)))
     if row is None:
         return False
     if row.revoked_at is None:

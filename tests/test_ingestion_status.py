@@ -93,11 +93,7 @@ def test_ingestion_status_cursor_accounts_show_no_credential(status_env):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert res.status_code == 200
-    cursor_rows = [
-        r
-        for r in res.json()["accounts"]
-        if r.get("vendor_slug") == "cursor" and r.get("primary_member_id")
-    ]
+    cursor_rows = [r for r in res.json()["accounts"] if r.get("vendor_slug") == "cursor" and r.get("primary_member_id")]
     assert len(cursor_rows) == 2
     assert all(r["ingestion_state"] == "no_credential" for r in cursor_rows)
 

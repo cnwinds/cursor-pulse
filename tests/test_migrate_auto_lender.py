@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
-
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base
+from sqlalchemy import create_engine, inspect, text
 
 
 def _drop_auto_lender_columns(engine) -> None:
@@ -80,9 +79,7 @@ def test_migrate_adds_auto_lender_columns_and_backfills_bound_at():
     assert "proxy_reserve_pct" in account_cols
 
     with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT lender_mode, source_bound_at FROM key_loans WHERE id = 'loan-1'")
-        ).one()
+        row = conn.execute(text("SELECT lender_mode, source_bound_at FROM key_loans WHERE id = 'loan-1'")).one()
     # 存量借用视为人工固定关系，绑定时刻回填为创建时刻
     assert row[0] == "manual"
     assert row[1] is not None

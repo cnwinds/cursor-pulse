@@ -31,10 +31,27 @@ pulse init-db                          # 建表 + seed 厂家/套餐
 
 完整本地栈（channel + assistant + 可选 proxy）见根目录 `README.md` 与 `docs/RUNBOOK.md`。
 
+## 静态检查（PR 门禁）
+
+Python（Ruff，配置见 `pyproject.toml`）：
+
+```bash
+ruff format pulse assistant_platform tests
+ruff check pulse assistant_platform tests
+```
+
+管理后台类型检查：
+
+```bash
+cd web-admin && npm ci && npm run typecheck
+```
+
+HTTP 错误文案约定（门户中文 / 内部 API 英文）：[docs/API_ERRORS.md](docs/API_ERRORS.md)。
+
 ## 测试（PR 门禁）
 
 ```bash
-pytest --tb=short -q
+pytest -n auto --tb=short -q
 ```
 
 若改动了 Go 代码：

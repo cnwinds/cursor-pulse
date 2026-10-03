@@ -110,9 +110,7 @@ def dispatch_text_command(
                     channel=identity_channel,
                 )
             if reply is None:
-                is_admin = channel_admin(
-                    user_id, config, repo, channel=identity_channel
-                )
+                is_admin = channel_admin(user_id, config, repo, channel=identity_channel)
                 reply = handle_key_loan_commands(
                     text,
                     user_id,

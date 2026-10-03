@@ -5,8 +5,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import select
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.handlers.cursor_key_bind import handle_cursor_key_bind
 from pulse.capabilities.invoke import HANDLERS, invoke_capability
@@ -16,6 +14,7 @@ from pulse.storage.db import init_db
 from pulse.storage.models import AiAccountCredential
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo, mock_cursor_key_exchange
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
@@ -39,9 +38,7 @@ def bind_env(session):
     session.flush()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_accounts = [
-        a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"
-    ]
+    cursor_accounts = [a for a in tool_repo.list_accounts() if a.vendor.slug == "cursor"]
     actor_account = cursor_accounts[0]
     other_account = cursor_accounts[1]
     tool_repo.update_account(actor_account.id, primary_member_id=actor.id)
@@ -93,9 +90,7 @@ def test_confirmation_required_without_confirmed_by(session, bind_env):
         actor_member_id=bind_env["actor"].id,
         confirmed_by=None,
     )
-    result = handle_cursor_key_bind(
-        session, request=request, config=bind_env["config"], op={}
-    )
+    result = handle_cursor_key_bind(session, request=request, config=bind_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "confirmation_required"
@@ -107,18 +102,14 @@ def test_missing_api_key_invalid_arguments(session, bind_env):
         actor_member_id=bind_env["actor"].id,
         arguments={},
     )
-    result = handle_cursor_key_bind(
-        session, request=request, config=bind_env["config"], op={}
-    )
+    result = handle_cursor_key_bind(session, request=request, config=bind_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "invalid_arguments"
 
 
 @patch("pulse.capabilities.handlers.cursor_key_bind.resolve_bind_cursor_account")
-def test_forbidden_other_member_account_when_not_admin(
-    mock_resolve, session, bind_env
-):
+def test_forbidden_other_member_account_when_not_admin(mock_resolve, session, bind_env):
     mock_resolve.return_value = (bind_env["other_account"], None)
     request = _request(
         team_id=bind_env["team"].id,
@@ -128,9 +119,7 @@ def test_forbidden_other_member_account_when_not_admin(
             "email": bind_env["other_account"].account_identifier,
         },
     )
-    result = handle_cursor_key_bind(
-        session, request=request, config=bind_env["config"], op={}
-    )
+    result = handle_cursor_key_bind(session, request=request, config=bind_env["config"], op={})
 
     assert result.status == "failed"
     assert result.error_code == "forbidden"
@@ -138,13 +127,9 @@ def test_forbidden_other_member_account_when_not_admin(
 
 @patch("pulse.capabilities.handlers.cursor_key_bind.CursorSyncService")
 @patch("pulse.ingestion.credentials.CursorApiClient")
-def test_bind_success_encrypts_credential_and_masks_key_in_message(
-    mock_client_cls, mock_sync_cls, session, bind_env
-):
+def test_bind_success_encrypts_credential_and_masks_key_in_message(mock_client_cls, mock_sync_cls, session, bind_env):
     mock_client = MagicMock()
-    mock_cursor_key_exchange(
-        mock_client, email=bind_env["actor_account"].account_identifier
-    )
+    mock_cursor_key_exchange(mock_client, email=bind_env["actor_account"].account_identifier)
     mock_client_cls.return_value = mock_client
     mock_sync_cls.return_value.sync_account.return_value = MagicMock(event_count=2)
 
@@ -152,9 +137,7 @@ def test_bind_success_encrypts_credential_and_masks_key_in_message(
         team_id=bind_env["team"].id,
         actor_member_id=bind_env["actor"].id,
     )
-    result = handle_cursor_key_bind(
-        session, request=request, config=bind_env["config"], op={}
-    )
+    result = handle_cursor_key_bind(session, request=request, config=bind_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -163,9 +146,7 @@ def test_bind_success_encrypts_credential_and_masks_key_in_message(
     assert FULL_API_KEY not in str(result.result)
 
     cred = session.scalar(
-        select(AiAccountCredential).where(
-            AiAccountCredential.account_id == bind_env["actor_account"].id
-        )
+        select(AiAccountCredential).where(AiAccountCredential.account_id == bind_env["actor_account"].id)
     )
     assert cred is not None
     assert decrypt_secret(cred.encrypted_value, TEST_KEY) == FULL_API_KEY
@@ -173,13 +154,9 @@ def test_bind_success_encrypts_credential_and_masks_key_in_message(
 
 @patch("pulse.capabilities.handlers.cursor_key_bind.CursorSyncService")
 @patch("pulse.ingestion.credentials.CursorApiClient")
-def test_bind_success_sync_fail_still_succeeded(
-    mock_client_cls, mock_sync_cls, session, bind_env
-):
+def test_bind_success_sync_fail_still_succeeded(mock_client_cls, mock_sync_cls, session, bind_env):
     mock_client = MagicMock()
-    mock_cursor_key_exchange(
-        mock_client, email=bind_env["actor_account"].account_identifier
-    )
+    mock_cursor_key_exchange(mock_client, email=bind_env["actor_account"].account_identifier)
     mock_client_cls.return_value = mock_client
     mock_sync_cls.return_value.sync_account.side_effect = RuntimeError("sync down")
 
@@ -187,9 +164,7 @@ def test_bind_success_sync_fail_still_succeeded(
         team_id=bind_env["team"].id,
         actor_member_id=bind_env["actor"].id,
     )
-    result = handle_cursor_key_bind(
-        session, request=request, config=bind_env["config"], op={}
-    )
+    result = handle_cursor_key_bind(session, request=request, config=bind_env["config"], op={})
 
     assert result.status == "succeeded"
     assert result.user_message == ""
@@ -200,26 +175,18 @@ def test_bind_success_sync_fail_still_succeeded(
 def test_invoke_capability_cursor_key_bind(session, bind_env):
     with (
         patch("pulse.ingestion.credentials.CursorApiClient") as mock_client_cls,
-        patch(
-            "pulse.capabilities.handlers.cursor_key_bind.CursorSyncService"
-        ) as mock_sync_cls,
+        patch("pulse.capabilities.handlers.cursor_key_bind.CursorSyncService") as mock_sync_cls,
     ):
         mock_client = MagicMock()
-        mock_cursor_key_exchange(
-            mock_client, email=bind_env["actor_account"].account_identifier
-        )
+        mock_cursor_key_exchange(mock_client, email=bind_env["actor_account"].account_identifier)
         mock_client_cls.return_value = mock_client
-        mock_sync_cls.return_value.sync_account.return_value = MagicMock(
-            event_count=1
-        )
+        mock_sync_cls.return_value.sync_account.return_value = MagicMock(event_count=1)
 
         request = _request(
             team_id=bind_env["team"].id,
             actor_member_id=bind_env["actor"].id,
         )
-        result = invoke_capability(
-            session, request=request, config=bind_env["config"]
-        )
+        result = invoke_capability(session, request=request, config=bind_env["config"])
 
     assert result.status == "succeeded"
     assert result.result["account_id"] == bind_env["actor_account"].id

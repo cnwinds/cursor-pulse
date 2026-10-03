@@ -22,14 +22,18 @@ _Avoid_: API key (ambiguous with Cursor keys)
 **Key Loan**:
 A temporary binding of an underlying Cursor credential to a borrower via a loan alias.
 
+**Coding Plan Account** (GLM / MiniMax / Kimi):
+An `AiAccount` whose vendor uses **quota-only** sync (Coding Plan monitor APIs — no usage-event history). Portal ledger and quota board use **separate tabs and card layouts** from Cursor. **Not** eligible for Credential Pool, Key Loan, or the Cursor MITM proxy (`proxy_enabled` stays off). Optional **OpenAI-compatible gateway** via `cp_proxy_enabled` + `pkcp_` on Go proxy `/openai/v1` (ADR 0003) — separate HTTP path from Cursor CONNECT MITM.
+_Avoid_: Treating CP percent windows as Cursor Quota Pools (auto/api); ingesting fake usage events
+
 ### Proxy data plane
 
 **Quota Pool**:
-The billing bucket a Cursor request consumes — `auto` or `api`. Request-time routing uses model heuristics (Auto vs API are both `INCLUDED`; BYOK PascalCase → unknown). Usage-event stats use Cursor `kind` (`INCLUDED_*` vs `USER_API_KEY`) then model heuristics for Auto vs API. Daily aggregates store `kind_family` so analytics can split Cursor GLM from BYOK. Analytics dimension `external` is BYOK token volume, not a Quota Pool.
+The billing bucket a Cursor request consumes — `auto` or `api`. Request-time routing uses model heuristics (Auto vs API are both `INCLUDED`); BYOK third-party models and requests without a model count as `auto`. There is no third pool at request time. Usage-event stats use Cursor `kind` (`INCLUDED_*` vs `USER_API_KEY`) then model heuristics for Auto vs API. Daily aggregates store `kind_family` so analytics can split Cursor GLM from BYOK. Analytics dimension `external` is BYOK token volume, not a Quota Pool.
 _Avoid_: Pool (alone; ambiguous with the credential list), billing pool (implementation phrase); treating BYOK `USER_API_KEY` rows as included API spend; calling BYOK a Quota Pool
 
 **Sticky Credential**:
-The pool credential bound to a CLI session JWT for a Quota Pool until that pool is exhausted on that credential, then rotated within pool order.
+The pool credential bound to a CLI session JWT for one Quota Pool. Each session has two independent slots (auto, api); each is filled and rotated only from its own pool's order — an api request never reuses the auto slot's credential just because it has api headroom.
 _Avoid_: Session key, sticky session (overload with HTTP sessions)
 
 **Credential Pool**:
@@ -53,7 +57,7 @@ Newest AccountQuotaSnapshot per account, bulk-loaded for board / lender / Creden
 _Avoid_: Per-account N+1 snapshot queries
 
 **Snapshot Headroom rules**:
-Pure OR/AND checks on auto_pct/api_pct used by Credential Pool Intake and mirrored in the Go proxy (`pctQuotaOK` / `snapshotIntakeOK`).
+Pure OR/AND checks on auto_pct/api_pct used by Credential Pool Intake and mirrored in the Go proxy (`pctQuotaOK`).
 _Avoid_: Embedding these rules only inside burn scoring
 
 **Loan Lifecycle**:
@@ -73,7 +77,7 @@ Optional per-account delta (`proxy_score_adjust`) added to the computed ranking 
 _Avoid_: pin, sticky priority, treating this as a replacement for the computed score
 
 **Pool-scoped Headroom**:
-Snapshot Headroom read for one Quota Pool (`auto` vs `api`) instead of the included total, used when a target model is known. Resolved by `quota_pool.quota_pool_for_model` on the web side, mirroring Go `quotaPoolForModel`; `unknown` falls back to total and requires both buckets.
+Snapshot Headroom read for one Quota Pool (`auto` vs `api`) instead of the included total, used when a target model is known. Resolved by `quota_pool.quota_pool_for_model` on the web side, mirroring Go `quotaPoolForModel` for non-empty models. `unknown` (loan issuance without a target model only) falls back to total and requires both buckets.
 _Avoid_: Per-pool cents as an exact figure (Cursor exposes per-bucket percents only; cents are a monotone share of `limit_cents`)
 
 **Owner Reserve**:
@@ -81,20 +85,32 @@ Per-account percentage (`proxy_reserve_pct`, default from `loan_selection.owner_
 _Avoid_: Confusing with Snapshot Headroom (headroom is live state; reserve is a policy floor)
 
 **Switch Dwell**:
-Minimum time (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) a credential stays bound before quota pressure may rotate it. `SessionBinding.StickySince` is the clock; within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
+Minimum idle gap (`loan_selection.min_switch_minutes`, Go `PROXY_STICKY_MIN_DWELL`) between two proxy requests before quota pressure may rotate the sticky credential. While requests arrive within that window (dense chat), the proxy keeps the same account so upstream prompt cache stays warm. Go uses `SessionBinding.StickyLastActive`; Coding Plan OpenAI stickiness uses `CpOpenAiStickyBinding.updated_at`. `StickySince` / `sticky_since` record when the credential was bound, not the dwell clock. Within the window the account is only demoted by `recency_penalty` on the scoring side and held by the proxy, not hard-excluded, so a pool never becomes unusable.
 _Avoid_: Treating it as a hard lock (exhaustion and auth failure still rotate)
+
+**Concurrent Seat**:
+Live occupancy of one account by distinct proxy users. The Go proxy reports its current credential when it authorizes (exchange, session reauth) and when sticky rotation leaves that credential. Web counts one seat per member per account (else per loan or proxy key); two sessions of the same member on one account are one seat, and the same member on two accounts holds both. A seat expires after `loan_selection.concurrent_ttl_seconds` (default 180). A new pool joiner is refused once `loan_selection.max_concurrent_users` (default 3, 0 = unlimited) other holders are already on that account. A holder already seated is not evicted. A designated loan keeps its credential and still occupies a seat. An empty candidate list is not a cap rejection. The count is proxy-mediated only and process-local.
+_Avoid_: Confusing it with `max_active_loans_per_account` (open loans, not live users) or with the primary owner using Cursor outside the proxy
 
 **Designated Loan** (`lender_mode=manual`):
 A Key Loan pinned to one lending account: issuance creates a dedicated Cursor key (`key_role=loan`) there, and the proxy serves that loan through it. `reassign_loan_source` re-pins it. Authorization returns no candidate list.
 _Avoid_: Confusing the loan key with the account's primary key
 
 **Auto-Assigned Loan** (`lender_mode=auto`):
-A Key Loan whose key roams across candidate accounts during use. Authorization returns a ranked allowlist of candidate **primary** credentials (`pool_board.loan_candidate_credentials`); Go selects within it exactly like the Credential Pool — per-session sticky, Switch Dwell, per-Quota-Pool availability. Switching needs no new Cursor key.
+Self-service Key Loan whose key roams across candidate accounts during use. Authorization returns a ranked allowlist of candidate **primary** credentials (`pool_board.loan_candidate_credentials`); Go selects within it exactly like the Credential Pool — per-session sticky, Switch Dwell, per-Quota-Pool availability. Switching needs no new Cursor key.
 _Avoid_: Reassigning at the DB level to change accounts (that was retired — it needed a new remote key per switch and could only move on a timer)
+
+**Pool-Routed Loan** (`routing_mode=pool`):
+Admin auto-assign. The pka_ has no source account and no Cursor key. Authorization returns `mode=loan_pool`; the proxy selects from the Credential Pool (accounts toggled into the pool, ordered by the ranking board) the same way a legacy `pk_` key does. Usage is attributed to `loan_id`. New members should get this instead of a `pk_`.
+_Avoid_: Treating it as a Designated Loan, or as the self-service allowlist loan
 
 **Auto Lender Selection**:
 The ranking behind both loan modes: hard filters, then the deterministic score, then the optional Jev decision (`tool_center.auto_lender`). Used at issuance to pick the starting account and, for auto-assigned loans, to build the proxy's candidate allowlist.
 _Avoid_: Treating it as the thing that switches accounts at request time (the proxy does that)
+
+**Loan Usage Cap**:
+Optional per-loan spend ceilings for a proxy-mediated Key Loan (`loan_alias` or `loan_pool`). Each rule is one rolling window — 5 hours, 7 days, or 30 days — plus one pool (`auto` or `api`) and an integer-dollar limit. Rules are OR: any matching rule for the request's pool blocks that pool. No rules means unlimited. Spend is the proxy ledger estimate (`ProxyKeyUsage.cost_cents`) for that loan, bucketed by `loan_usage_cap_pool` (empty model counts as Auto; BYOK model names are skipped). Enforced on `AgentService/Run` before the upstream call, with a Chinese 429 that names the bucket, the reset time, and whether the other pool is still open. Direct `cr*` passthrough loans are outside this cap.
+_Avoid_: Reusing `quota_pool_for_model` (that maps BYOK onto Auto); treating the period as the lender's Cursor billing cycle; applying `pk_` 5h/7d windows to loans
 
 **Jev Decision**:
 The TypeSafe System One decision model reached through OpenRouter's Decisions endpoint (`/api/alpha/decisions`), not chat completions. Re-ranks the surviving Top-N lenders and answers a per-candidate "safe for the owner" question. Advisory only: hard filters are authoritative and the deterministic score is the fallback.

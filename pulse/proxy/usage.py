@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from pulse.pricing.cursor_tables import get_cursor_pricing_table
 from pulse.pricing.types import PricingTable, estimate_token_cost
 from pulse.proxy.clock import WINDOW_5H, utcnow
-from pulse.proxy.usage_queries import loan_proxy_totals
+from pulse.proxy.usage_queries import loan_proxy_totals  # noqa: F401 — re-exported via pulse.proxy.service
 from pulse.storage.models import AiAccount, KeyLoan, Member, ProxyKey, ProxyKeyUsage
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def window_usage_cost(
 ) -> int:
     now = now or utcnow()
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     since = now - window
     value = session.execute(
         select(func.coalesce(func.sum(ProxyKeyUsage.cost_cents), 0)).where(
@@ -41,7 +41,7 @@ def window_usage_tokens(session: Session, proxy_key_id: str, *, now: datetime | 
     """Legacy helper: 5h token sum (kept for callers; limits no longer use tokens)."""
     now = now or utcnow()
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     since = now - WINDOW_5H
     # ProxyKeyUsage.ts 统一按 UTC 写入；SQLite 绑参时 tzinfo 被静默丢弃，比较基于 UTC 墙钟
     value = session.execute(
@@ -57,9 +57,68 @@ def total_usage(session: Session, proxy_key_id: str) -> tuple[int, int]:
     return usage_totals_by_proxy_key(session, [proxy_key_id]).get(proxy_key_id, (0, 0))
 
 
-def usage_totals_by_proxy_key(
-    session: Session, proxy_key_ids: list[str]
-) -> dict[str, tuple[int, int]]:
+def usage_request_counts_by_proxy_key(session: Session, proxy_key_ids: list[str]) -> dict[str, int]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(
+            ProxyKeyUsage.proxy_key_id,
+            func.count(),
+        )
+        .where(ProxyKeyUsage.proxy_key_id.in_(ids))
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: int(count) for key_id, count in rows}
+
+
+def window_tokens_by_proxy_key(
+    session: Session,
+    proxy_key_ids: list[str],
+    *,
+    since,
+) -> dict[str, int]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(
+            ProxyKeyUsage.proxy_key_id,
+            func.coalesce(func.sum(ProxyKeyUsage.total_tokens), 0),
+        )
+        .where(
+            ProxyKeyUsage.proxy_key_id.in_(ids),
+            ProxyKeyUsage.ts >= since,
+        )
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: int(tokens) for key_id, tokens in rows}
+
+
+def window_request_counts_by_proxy_key(
+    session: Session,
+    proxy_key_ids: list[str],
+    *,
+    since,
+) -> dict[str, int]:
+    ids = [key_id for key_id in proxy_key_ids if key_id]
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(
+            ProxyKeyUsage.proxy_key_id,
+            func.count(),
+        )
+        .where(
+            ProxyKeyUsage.proxy_key_id.in_(ids),
+            ProxyKeyUsage.ts >= since,
+        )
+        .group_by(ProxyKeyUsage.proxy_key_id)
+    )
+    return {key_id: int(count) for key_id, count in rows}
+
+
+def usage_totals_by_proxy_key(session: Session, proxy_key_ids: list[str]) -> dict[str, tuple[int, int]]:
     ids = [key_id for key_id in proxy_key_ids if key_id]
     if not ids:
         return {}
@@ -117,11 +176,7 @@ def loan_proxy_usage_summary(
         clauses.append(ProxyKeyUsage.ts < end)
 
     rows = list(
-        session.execute(
-            select(ProxyKeyUsage).where(*clauses).order_by(ProxyKeyUsage.ts.desc())
-        )
-        .scalars()
-        .all()
+        session.execute(select(ProxyKeyUsage).where(*clauses).order_by(ProxyKeyUsage.ts.desc())).scalars().all()
     )
     by_model: dict[str, dict] = {}
     total_tokens = 0
@@ -155,7 +210,6 @@ def loan_proxy_usage_summary(
         "models": models,
         "data_updated_at": data_updated_at,
     }
-
 
 
 _TOKEN_FIELDS = ("input", "output", "cache_read", "cache_write", "reasoning")
@@ -195,13 +249,7 @@ def canonical_turn_ended_tokens(tokens: dict) -> dict:
 def total_tokens_from_canonical(tokens: dict) -> int:
     """canonical 后的总量：与官方 tokens_total 对齐，另含 reasoning。"""
     t = _normalize_tokens(tokens)
-    return (
-        t["input"]
-        + t["output"]
-        + t["cache_read"]
-        + t["cache_write"]
-        + t["reasoning"]
-    )
+    return t["input"] + t["output"] + t["cache_read"] + t["cache_write"] + t["reasoning"]
 
 
 def estimate_cost_cents(
@@ -322,9 +370,14 @@ def _pricing_table_for_usage_row(
     elif row.loan_id:
         loan = session.get(KeyLoan, row.loan_id)
         if loan:
-            account = session.get(AiAccount, loan.source_account_id)
-            if account:
-                team_id = account.team_id
+            if loan.source_account_id:
+                account = session.get(AiAccount, loan.source_account_id)
+                if account:
+                    team_id = account.team_id
+            if team_id is None and loan.borrower_member_id:
+                borrower = session.get(Member, loan.borrower_member_id)
+                if borrower:
+                    team_id = borrower.team_id
     if not team_id:
         return None
     table = pricing_by_team.get(team_id)
@@ -334,9 +387,7 @@ def _pricing_table_for_usage_row(
     return table
 
 
-def record_usages(
-    session: Session, items: list[dict], *, now: datetime | None = None
-) -> dict:
+def record_usages(session: Session, items: list[dict], *, now: datetime | None = None) -> dict:
     now = now or utcnow()
     recorded = 0
     touched: set[str] = set()
@@ -407,12 +458,22 @@ def record_usages(
                 if dup is not None:
                     continue
             table = None
-            account = session.get(AiAccount, loan.source_account_id)
-            if account and account.team_id:
-                table = pricing_by_team.get(account.team_id)
+            team_id = None
+            if loan.source_account_id:
+                account = session.get(AiAccount, loan.source_account_id)
+                if account and account.team_id:
+                    team_id = account.team_id
+            if team_id is None and loan.borrower_member_id:
+                borrower = session.get(Member, loan.borrower_member_id)
+                if borrower and borrower.team_id:
+                    team_id = borrower.team_id
+            if team_id:
+                table = pricing_by_team.get(team_id)
                 if table is None:
-                    table = get_cursor_pricing_table(session=session, team_id=account.team_id)
-                    pricing_by_team[account.team_id] = table
+                    table = get_cursor_pricing_table(session=session, team_id=team_id)
+                    pricing_by_team[team_id] = table
+            from pulse.proxy.loan_usage_cap import usage_cap_pool_column
+
             session.add(
                 ProxyKeyUsage(
                     proxy_key_id=None,
@@ -428,6 +489,7 @@ def record_usages(
                     total_tokens=total,
                     cost_cents=estimate_cost_cents(item.get("model"), tokens, table=table),
                     ts=ts or now,
+                    usage_cap_pool=usage_cap_pool_column(item.get("model")),
                 )
             )
             recorded += 1
@@ -441,5 +503,3 @@ def record_usages(
             if evaluate_key(session, key):
                 suspended.append(key_id)
     return {"recorded": recorded, "suspended": suspended}
-
-

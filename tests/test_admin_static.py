@@ -9,7 +9,6 @@ from sqlalchemy.pool import StaticPool
 
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
-
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import Base
 from pulse.web.app import create_app, resolve_admin_static_dir
@@ -22,9 +21,7 @@ def _session_factory():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 def test_resolve_admin_static_dir_override(tmp_path, monkeypatch):
@@ -83,3 +80,27 @@ def test_admin_routes_serve_packaged_spa(monkeypatch, tmp_path):
     asset = client.get("/admin/assets/app.js")
     assert asset.status_code == 200
     assert "console.log" in asset.text
+
+
+def test_admin_spa_rejects_paths_outside_static_dir(monkeypatch, tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html>admin-shell</html>", encoding="utf-8")
+    (static / "favicon.ico").write_text("icon", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top-secret", encoding="utf-8")
+    monkeypatch.setenv("PULSE_ADMIN_STATIC_DIR", str(static))
+
+    config = AppConfig(
+        web=WebConfig(jwt_secret="jwt-test-secret"),
+        tenant=TenantConfig(slug="test", name="Test"),
+    )
+    client = TestClient(create_app(config, _session_factory(), require_admin_spa=True))
+
+    assert client.get("/admin/favicon.ico").text == "icon"
+    encoded = str(secret).replace("/", "%2F")
+    for path in (f"/admin/{secret}", f"/admin/{encoded}", "/admin/..%2Fsecret.txt"):
+        res = client.get(path)
+        assert res.status_code == 200
+        assert "top-secret" not in res.text
+        assert "admin-shell" in res.text

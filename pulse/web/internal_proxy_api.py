@@ -10,10 +10,20 @@ from sqlalchemy.orm import Session
 
 from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
+from pulse.proxy.occupancy import get_occupancy
 
 
 class AuthorizeBody(BaseModel):
     pulse_key: str
+    # Go 当前粘住的凭证。空表示这次还没有连接上的账号（首次换票）。
+    current_credential_id: str | None = None
+    # 当前凭证已不可用（额度耗尽、要换号）。不要把这个凭证再分回去。
+    release_current: bool = False
+    # 这次选座用哪个 Quota Pool 的顺序（auto / api）。没有模型的请求一律算 auto；
+    # 其他值（如旧版代理发来的 unknown）也按 auto，不能因此拒绝授权。
+    quota_pool: str | None = "auto"
+    # 同一会话另一个桶正在用的凭证：续座，且换号时不因释放 current 丢掉它的座位。
+    held_credential_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
 class UsageItem(BaseModel):
@@ -28,6 +38,11 @@ class UsageItem(BaseModel):
 
 class UsageBody(BaseModel):
     items: list[UsageItem] = Field(default_factory=list, max_length=1000)
+
+
+class LoanUsageCapBody(BaseModel):
+    loan_id: str
+    model: str | None = None
 
 
 class EventItem(BaseModel):
@@ -45,9 +60,8 @@ class EventsBody(BaseModel):
 def register_internal_proxy_routes(app, get_db, config) -> None:
     def require_internal_service(
         authorization: Annotated[str | None, Header()] = None,
-        x_pulse_internal_token: Annotated[
-            str | None, Header(alias="X-Pulse-Internal-Token")
-        ] = None,
+        x_pulse_internal_token: Annotated[str | None, Header(alias="X-Pulse-Internal-Token")] = None,
+        x_proxy_boot: Annotated[str | None, Header(alias="X-Proxy-Boot")] = None,
     ) -> None:
         expected = (config.internal.service_token or "").strip()
         if not expected:
@@ -59,18 +73,32 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
             provided = x_pulse_internal_token.strip()
         if not provided or not hmac.compare_digest(provided, expected):
             raise HTTPException(status_code=401, detail="Unauthorized")
+        # Pool polls double as the data-plane liveness heartbeat for in-flight gateway seats.
+        get_occupancy().note_boot((x_proxy_boot or "").strip()[:64])
 
     @app.post(
         "/api/internal/v1/proxy/authorize",
         dependencies=[Depends(require_internal_service)],
     )
     def proxy_authorize(body: AuthorizeBody, session: Session = Depends(get_db)):
+        from pulse.proxy.seat_assignment import apply_seat, selection_for_pulse_key
+
         enc_key = (config.credentials.encryption_key or "").strip()
-        return proxy_service.authorize_status(
+        selection = selection_for_pulse_key(session, config, body.pulse_key)
+        result = proxy_service.authorize_status(
             session,
             body.pulse_key,
             encryption_key=enc_key,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=selection,
+        )
+        return apply_seat(
+            session,
+            result,
+            current_credential_id=body.current_credential_id,
+            release_current=body.release_current,
+            config=config,
+            quota_pool=body.quota_pool,
+            held_credential_ids=body.held_credential_ids,
         )
 
     @app.get(
@@ -81,22 +109,40 @@ def register_internal_proxy_routes(app, get_db, config) -> None:
         enc_key = (config.credentials.encryption_key or "").strip()
         if not enc_key:
             raise HTTPException(status_code=503, detail="Credential encryption key not configured")
-        credentials = proxy_service.list_pool_credentials(
+        from pulse.settings.team_store import effective_config_for_saved_tenant
+
+        runtime = effective_config_for_saved_tenant(session, config)
+        from pulse.proxy.pool_board import list_pool_credentials_grouped
+
+        grouped = list_pool_credentials_grouped(
             session,
             encryption_key=enc_key,
-            loan_selection=config.tool_center.loan_selection,
-            jev=build_jev_client(config),
+            loan_selection=runtime.tool_center.loan_selection,
+            jev=build_jev_client(runtime),
         )
-        return {"credentials": credentials}
+        return {
+            "credentials": grouped["all"],
+            "credentials_by_pool": {
+                "auto": grouped["auto"],
+                "api": grouped["api"],
+            },
+        }
+
+    @app.post(
+        "/api/internal/v1/proxy/loan-usage-cap",
+        dependencies=[Depends(require_internal_service)],
+    )
+    def proxy_loan_usage_cap(body: LoanUsageCapBody, session: Session = Depends(get_db)):
+        from pulse.proxy.loan_usage_cap import check_loan_usage_cap
+
+        return check_loan_usage_cap(session, body.loan_id, body.model)
 
     @app.post(
         "/api/internal/v1/proxy/usage",
         dependencies=[Depends(require_internal_service)],
     )
     def proxy_usage(body: UsageBody, session: Session = Depends(get_db)):
-        result = proxy_service.record_usages(
-            session, [item.model_dump() for item in body.items]
-        )
+        result = proxy_service.record_usages(session, [item.model_dump() for item in body.items])
         session.commit()
         return result
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
-from typing import Annotated, Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import Depends, HTTPException, Query
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -14,7 +15,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from assistant_platform.api.actor import ActorContext, build_actor_dependency
 from assistant_platform.api.sessions import _has_permission
 from assistant_platform.config import AssistantConfig, resolve_effective_chat_memory
-from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.memory.archive_models import ArchiveChunkRow, MemoryScope, SessionArchiveRow
 from assistant_platform.memory.archive_search import (
     SearchScope,
@@ -23,7 +23,8 @@ from assistant_platform.memory.archive_search import (
     hybrid_search,
     resolve_search_scope,
 )
-from assistant_platform.memory.contracts import ChunkAnchor, MemoryScope as MemoryScopeEnum, RecallCursor
+from assistant_platform.memory.contracts import ChunkAnchor, RecallCursor
+from assistant_platform.memory.contracts import MemoryScope as MemoryScopeEnum
 from assistant_platform.memory.deletion import (
     purge_all_personal_memory,
     purge_memory_atom,
@@ -34,12 +35,12 @@ from assistant_platform.memory.opt_out import (
     get_memory_opt_out,
     set_memory_opt_out,
 )
+from assistant_platform.memory.semantic.domain import team_id_to_namespace
+from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
 from assistant_platform.memory.session_summary import SessionSummaryRow, load_session_summary
 from assistant_platform.profiles.compiler import compile_profile_guidance
 from assistant_platform.profiles.models import ProfileEffectiveRow
 from assistant_platform.storage.repository import AssistantRepository
-from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
-from assistant_platform.memory.semantic.domain import team_id_to_namespace
 
 
 class MemoryExpandBody(BaseModel):
@@ -309,9 +310,7 @@ def register_memory_routes(
             user_id=user_id,
             conversation_type=conversation_type,
         )
-        archive = session.scalar(
-            select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-        )
+        archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
         if archive is None:
             raise HTTPException(status_code=404, detail="归档不存在")
         if archive.team_id != scope.team_id or archive.subject_id != scope.subject_id:
@@ -365,7 +364,7 @@ def register_memory_routes(
             else None
         )
         return {
-            "exported_at": serialize_datetime(datetime.now(timezone.utc)),
+            "exported_at": serialize_datetime(datetime.now(UTC)),
             "team_id": team_id,
             "user_id": user_id,
             "archives": [_archive_summary_json(row) for row in archives],
@@ -510,9 +509,7 @@ def register_memory_routes(
     ):
         _require_memory_delete(actor)
         _ensure_self_scope(actor, user_id)
-        archive = session.scalar(
-            select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-        )
+        archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
         if archive is None:
             raise HTTPException(status_code=404, detail="会话归档不存在")
         if archive.team_id != team_id:

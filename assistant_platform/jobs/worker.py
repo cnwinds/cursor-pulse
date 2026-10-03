@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from assistant_platform.config import AssistantConfig
 from assistant_platform.conversation.orchestrator import (
@@ -16,19 +16,21 @@ from assistant_platform.conversation.turn_recovery import (
     recover_stale_processing_jobs,
     recover_stale_turns,
 )
+from assistant_platform.integrations.channel_reply import send_channel_reply
 from assistant_platform.jobs.claim import (
     BACKGROUND_JOB_TYPES,
     INTERACTIVE_JOB_TYPES,
     claim_next_job,
 )
 from assistant_platform.jobs.db_errors import is_retryable_db_lock_error
-from assistant_platform.integrations.channel_reply import send_channel_reply
+from assistant_platform.storage.models import BackgroundJobRow
 
 logger = logging.getLogger(__name__)
 
 _RETENTION_INTERVAL_SECONDS = 6 * 60 * 60
 _SESSION_TRACKED_JOB_TYPES = frozenset({"session.process", "session.close"})
 _DEFAULT_JOB_MAX_ATTEMPTS = 5
+_JOB_HEARTBEAT_SECONDS = 30.0
 
 
 def finalize_job_after_failure(
@@ -46,11 +48,9 @@ def finalize_job_after_failure(
     by a single transient failure.
     """
     job.attempts = (job.attempts or 0) + 1
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     resumable = job.job_type in ("session.process", "session.close", "reply.send")
-    if job.attempts < max_attempts and (
-        is_retryable_db_lock_error(exc) or resumable
-    ):
+    if job.attempts < max_attempts and (is_retryable_db_lock_error(exc) or resumable):
         job.status = "pending"
         logger.warning(
             "requeue job after failure job_id=%s job_type=%s attempts=%s err=%s",
@@ -71,8 +71,47 @@ def finalize_job_after_failure(
     session.add(job)
 
 
+def _touch_job_heartbeat(session_factory, job_id: str) -> None:
+    """Bump ``updated_at`` on a processing job so stale recovery does not requeue it."""
+    session = session_factory()
+    try:
+        job = session.get(BackgroundJobRow, job_id)
+        if job is None or job.status != "processing":
+            return
+        job.updated_at = datetime.now(UTC)
+        session.add(job)
+        session.commit()
+    except Exception:
+        logger.debug("job heartbeat failed job_id=%s", job_id, exc_info=True)
+        try:
+            session.rollback()
+        except Exception:
+            pass
+    finally:
+        session.close()
+
+
+def _start_job_heartbeat(session_factory, job_id: str) -> tuple[threading.Event, threading.Thread]:
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.wait(_JOB_HEARTBEAT_SECONDS):
+            _touch_job_heartbeat(session_factory, job_id)
+
+    thread = threading.Thread(target=_loop, name=f"job-hb-{job_id[:8]}", daemon=True)
+    thread.start()
+    return stop, thread
+
+
 def _handle_reply_send(payload: dict, config: AssistantConfig) -> None:
-    send_channel_reply(payload, config)
+    result = send_channel_reply(payload, config)
+    status = result.get("status") if isinstance(result, dict) else None
+    # ``sent`` = delivered; ``skipped`` = no internal token configured (dev).
+    # Anything else (``failed``, ``queued``, ``noop``, …) must raise so the
+    # worker requeues instead of silently marking the job done.
+    if status in ("sent", "skipped"):
+        return
+    raise RuntimeError(f"reply.send delivery failed: status={status}")
 
 
 def _run_job(session, job, config: AssistantConfig) -> None:
@@ -158,9 +197,7 @@ class JobWorkerPool:
             try:
                 if run_maintenance:
                     self._maybe_run_retention(session)
-                    stale_turns = recover_stale_turns(
-                        session, timeout_seconds=llm_cfg.turn_timeout_seconds
-                    )
+                    stale_turns = recover_stale_turns(session, timeout_seconds=llm_cfg.turn_timeout_seconds)
                     stale_jobs = recover_stale_processing_jobs(
                         session, timeout_seconds=llm_cfg.job_processing_timeout_seconds
                     )
@@ -187,21 +224,20 @@ class JobWorkerPool:
                             self._active_sessions.add(session_id)
 
                 logger.info(
-                    "reply.timing stage=job_claimed worker=%s job_type=%s job_id=%s "
-                    "session_id=%s created_at=%s at=%s",
+                    "reply.timing stage=job_claimed worker=%s job_type=%s job_id=%s session_id=%s created_at=%s at=%s",
                     worker_name,
                     job.job_type,
                     job.id,
                     job.payload_json.get("session_id", ""),
                     job.created_at.isoformat() if job.created_at else "",
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
                 )
                 job_t0 = time.monotonic()
+                hb_stop, hb_thread = _start_job_heartbeat(self._session_factory, job.id)
                 try:
                     _run_job(session, job, self._config)
                     logger.info(
-                        "reply.timing stage=job_done worker=%s job_type=%s job_id=%s "
-                        "elapsed_ms=%d",
+                        "reply.timing stage=job_done worker=%s job_type=%s job_id=%s elapsed_ms=%d",
                         worker_name,
                         job.job_type,
                         job.id,
@@ -224,10 +260,11 @@ class JobWorkerPool:
                         finalize_job_after_failure(session, job, exc)
                         session.commit()
                     except Exception:
-                        logger.exception(
-                            "failed to finalize job after error job_id=%s", job.id
-                        )
+                        logger.exception("failed to finalize job after error job_id=%s", job.id)
                         session.rollback()
+                finally:
+                    hb_stop.set()
+                    hb_thread.join(timeout=1.0)
             except Exception:
                 # Claim / maintenance failures: keep the worker loop alive.
                 logger.exception("assistant job worker failed worker=%s", worker_name)

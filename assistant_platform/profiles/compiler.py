@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,11 +25,11 @@ def _rank_signal(
         explicitness = signal.explicitness or "inferred"
     created = signal.created_at
     if created is not None and created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
+        created = created.replace(tzinfo=UTC)
     return (
         _EXPLICITNESS_RANK.get(explicitness, 0),
         float(signal.confidence or 0.0),
-        created or datetime.min.replace(tzinfo=timezone.utc),
+        created or datetime.min.replace(tzinfo=UTC),
     )
 
 
@@ -39,7 +39,7 @@ def compile_profile_guidance(
     user_id: str,
     team_id: str,
 ) -> ProfileGuidance:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     signals = session.scalars(
         select(ProfileSignalRow).where(
             ProfileSignalRow.user_id == user_id,
@@ -91,10 +91,7 @@ def compile_profile_guidance(
             )
             winner_rank[dimension] = rank
 
-    items = tuple(
-        winners[key]
-        for key in sorted(winners.keys(), key=lambda d: winners[d].dimension.value)
-    )
+    items = tuple(winners[key] for key in sorted(winners.keys(), key=lambda d: winners[d].dimension.value))
     return ProfileGuidance(
         subject_id=user_id,
         team_id=team_id,
@@ -113,7 +110,7 @@ def persist_effective_profile(
             ProfileEffectiveRow.team_id == guidance.team_id,
         )
     )
-    now = guidance.compiled_at or datetime.now(timezone.utc)
+    now = guidance.compiled_at or datetime.now(UTC)
     snapshot = guidance.model_dump(mode="json")
     if row is None:
         row = ProfileEffectiveRow(

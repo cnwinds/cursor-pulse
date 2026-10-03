@@ -2,7 +2,6 @@
   <div class="sessions-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>会话账本</h2>
         <p class="desc">按用户聚合查看与小脉的对话记录，点击用户可浏览跨会话的连续消息流。</p>
       </div>
       <el-button @click="loadSessions">刷新</el-button>
@@ -729,7 +728,7 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 .desc {
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   margin: 4px 0 0;
   max-width: 720px;
   line-height: 1.5;
@@ -742,8 +741,8 @@ onMounted(async () => {
 }
 .user-id-muted,
 .muted {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
 }
 .chat-panel {
   display: flex;
@@ -755,20 +754,20 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
-  color: #64748b;
+  font-size: var(--pulse-text-base);
+  color: var(--pulse-text-secondary);
   margin-bottom: 12px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--pulse-border);
 }
 .chat-summary-text {
   flex: 1;
   line-height: 1.6;
 }
 .session-toc-title {
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
-  color: #334155;
+  color: var(--pulse-text-primary);
   margin-bottom: 8px;
 }
 .session-toc {
@@ -780,7 +779,7 @@ onMounted(async () => {
   width: 100%;
   margin: 0 0 8px;
   padding: 10px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--pulse-border);
   border-radius: 8px;
   background: #fff;
   text-align: left;
@@ -791,7 +790,7 @@ onMounted(async () => {
   margin-bottom: 0;
 }
 .session-toc-item:hover {
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
   border-color: #cbd5e1;
 }
 .session-toc-item-head {
@@ -799,15 +798,15 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 500;
   color: #0f172a;
 }
 .session-toc-preview {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
   line-height: 1.45;
-  color: #334155;
+  color: var(--pulse-text-primary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -816,20 +815,20 @@ onMounted(async () => {
 }
 .session-toc-time {
   margin-top: 4px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-secondary);
 }
 .chat-stream-prepend {
   text-align: center;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-secondary);
   padding: 8px 0 12px;
 }
 .chat-stream {
   flex: 1;
   overflow-y: auto;
   padding: 8px 4px 24px;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  background: linear-gradient(180deg, var(--pulse-bg-muted) 0%, var(--pulse-bg-code) 100%);
   border-radius: 12px;
 }
 .session-divider {
@@ -857,14 +856,14 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   font-weight: 600;
-  color: #334155;
+  color: var(--pulse-text-primary);
 }
 .divider-meta {
   margin-top: 4px;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-secondary);
 }
 .divider-actions {
   margin-top: 8px;
@@ -904,8 +903,8 @@ onMounted(async () => {
 .bubble.is-context {
   max-width: 92%;
   padding: 2px 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--pulse-bg-muted);
+  border: 1px solid var(--pulse-border);
   border-bottom-left-radius: 4px;
   box-shadow: none;
 }
@@ -914,7 +913,7 @@ onMounted(async () => {
   padding: 8px 10px;
 }
 .bubble.is-thinking {
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
   border: 1px dashed #cbd5e1;
   border-bottom-left-radius: 4px;
   opacity: 0.95;
@@ -934,8 +933,8 @@ onMounted(async () => {
   line-height: 24px;
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-secondary);
   list-style: none;
   white-space: nowrap;
   overflow: hidden;
@@ -958,19 +957,19 @@ onMounted(async () => {
   white-space: normal;
 }
 .tool-summary-main {
-  color: #475569;
+  color: var(--pulse-text-body);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .tool-summary-hint {
   flex-shrink: 0;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 .tool-summary-time {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-xs);
+  color: var(--pulse-text-muted);
   line-height: 24px;
 }
 .tool-meta {
@@ -982,9 +981,9 @@ onMounted(async () => {
   min-width: 0;
 }
 .tool-label {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
-  color: #64748b;
+  color: var(--pulse-text-secondary);
   margin-bottom: 4px;
 }
 .tool-json {
@@ -992,8 +991,8 @@ onMounted(async () => {
   padding: 8px;
   border-radius: 8px;
   background: #0f172a;
-  color: #e2e8f0;
-  font-size: 12px;
+  color: var(--pulse-border);
+  font-size: var(--pulse-text-sm);
   line-height: 1.45;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -1002,13 +1001,13 @@ onMounted(async () => {
   overflow-y: auto;
 }
 .bubble-role {
-  font-size: 11px;
-  color: #64748b;
+  font-size: var(--pulse-text-xs);
+  color: var(--pulse-text-secondary);
   margin-bottom: 4px;
 }
 .bubble-text {
   word-break: break-word;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   line-height: 1.5;
   color: #0f172a;
 }
@@ -1021,7 +1020,7 @@ onMounted(async () => {
 .bubble-markdown :deep(h3),
 .bubble-markdown :deep(h4) {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--pulse-text-md);
   line-height: 1.4;
 }
 .bubble-markdown :deep(strong) {
@@ -1031,7 +1030,7 @@ onMounted(async () => {
   width: 100%;
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .bubble-markdown :deep(th),
 .bubble-markdown :deep(td) {
@@ -1040,11 +1039,11 @@ onMounted(async () => {
   text-align: left;
 }
 .bubble-markdown :deep(th) {
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
 }
 .bubble-markdown :deep(hr) {
   border: none;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--pulse-border);
   margin: 12px 0;
 }
 .bubble-markdown :deep(ul),
@@ -1053,9 +1052,9 @@ onMounted(async () => {
   padding-left: 20px;
 }
 .bubble-markdown :deep(code) {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  background: #f1f5f9;
+  font-family: var(--pulse-font-mono);
+  font-size: var(--pulse-text-sm);
+  background: var(--pulse-bg-code);
   padding: 1px 4px;
   border-radius: 4px;
 }
@@ -1063,7 +1062,7 @@ onMounted(async () => {
   margin: 8px 0;
   padding: 10px;
   overflow-x: auto;
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
   border-radius: 8px;
 }
 .bubble-markdown :deep(pre code) {
@@ -1072,8 +1071,8 @@ onMounted(async () => {
 }
 .bubble-time {
   margin-top: 6px;
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-xs);
+  color: var(--pulse-text-muted);
   text-align: right;
 }
 </style>

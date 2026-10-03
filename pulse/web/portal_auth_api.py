@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, Response
@@ -35,7 +35,7 @@ def _oauth_pending_or_auth(*, config: AppConfig, session: Session, member):
     if not can_access_portal(member):
         if member.portal_status != "pending":
             member.portal_status = "pending"
-        member.last_portal_login_at = datetime.now(timezone.utc)
+        member.last_portal_login_at = datetime.now(UTC)
         session.commit()
         return JSONResponse(
             status_code=202,
@@ -51,7 +51,7 @@ def _oauth_pending_or_auth(*, config: AppConfig, session: Session, member):
             },
         )
 
-    member.last_portal_login_at = datetime.now(timezone.utc)
+    member.last_portal_login_at = datetime.now(UTC)
     response = auth_response(config, member, session)
     session.commit()
     return response
@@ -160,9 +160,7 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
 
         runtime = effective_config_for_tenant(session, config)
         try:
-            userid, name = exchange_code_for_userid(
-                runtime, body.code, redirect_uri=body.redirect_uri
-            )
+            userid, name = exchange_code_for_userid(runtime, body.code, redirect_uri=body.redirect_uri)
         except FeishuOAuthError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -203,9 +201,7 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
         record_login_attempt(ip=client_ip, username=username)
 
         team, repo = team_repo_fn(session)
-        member = resolve_member(
-            session, team.id, channel="web", external_id=username
-        )
+        member = resolve_member(session, team.id, channel="web", external_id=username)
 
         # Member password_hash takes precedence when present.
         if member is not None and member.password_hash:
@@ -215,7 +211,7 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
                 return _oauth_pending_or_auth(config=config, session=session, member=member)
             if not can_access_portal(member):
                 raise HTTPException(status_code=403, detail="账号未开通或已禁用")
-            member.last_portal_login_at = datetime.now(timezone.utc)
+            member.last_portal_login_at = datetime.now(UTC)
             response = auth_response(config, member, session)
             session.commit()
             return response
@@ -240,7 +236,7 @@ def register_portal_auth_routes(app, config: AppConfig, get_db, team_repo_fn):
             member.password_hash = stored
         elif not member.password_hash:
             member.password_hash = hash_password(body.password)
-        member.last_portal_login_at = datetime.now(timezone.utc)
+        member.last_portal_login_at = datetime.now(UTC)
         response = auth_response(config, member, session)
         session.commit()
         return response

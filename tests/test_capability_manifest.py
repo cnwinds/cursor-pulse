@@ -1,5 +1,4 @@
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
-
 from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.manifest import get_manifest, list_operations
 

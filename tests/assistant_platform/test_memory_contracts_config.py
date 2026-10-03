@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from assistant_platform.config import (
     AssistantChatMemoryConfig,
@@ -12,7 +12,6 @@ from assistant_platform.config import (
     resolve_effective_chat_memory,
     resolve_effective_memory_enabled,
 )
-from assistant_platform.memory.archive_pipeline import should_run_archive_pipeline
 from assistant_platform.memory import (
     ArchiveHit,
     ChunkAnchor,
@@ -22,6 +21,7 @@ from assistant_platform.memory import (
     RecallCursor,
     SearchPageMeta,
 )
+from assistant_platform.memory.archive_pipeline import should_run_archive_pipeline
 
 
 def test_chat_memory_config_defaults():
@@ -133,7 +133,7 @@ def test_should_run_archive_pipeline_requires_explicit_flags(monkeypatch):
 
 
 def test_archive_hit_is_frozen():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     anchor = ChunkAnchor(session_id="s1", chunk_index=0, start_seq=1, end_seq=2)
     hit = ArchiveHit(
         memory_id="m1",

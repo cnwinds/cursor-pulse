@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-
 from pulse.tool_center.billing_cycle import (
     billing_cycle_containing,
     billing_cycle_for_period,

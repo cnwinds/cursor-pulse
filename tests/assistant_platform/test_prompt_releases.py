@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -9,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from assistant_platform.conversation.session_store import attach_user_message
 from assistant_platform.domain.events import IncomingMessageEvent
-from assistant_platform.prompts.models import PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.fragments import AGENT_TOOLS_RELEASE_NAME, PERSONA_ONLY_RELEASE_NAME
+from assistant_platform.prompts.models import PromptFragmentRow, PromptReleaseRow
 from assistant_platform.prompts.seed import (
     ensure_production_prompt_release,
     get_production_release,
@@ -39,7 +39,7 @@ def _event(*, msg_id: str = "m-prompt") -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id="u1",
         text_redacted="hello",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -109,12 +109,7 @@ def test_auto_upgrade_legacy_v1_production_to_agent_tools():
 
     legacy_precepts = PromptFragmentRow(
         key="precepts.md",
-        content=(
-            "戒律：\n"
-            "1. 不泄露密钥与隐私。\n"
-            "2. 不确定时先澄清。\n"
-            "3. 优先给出可执行步骤（如具体命令格式）。\n"
-        ),
+        content=("戒律：\n1. 不泄露密钥与隐私。\n2. 不确定时先澄清。\n3. 优先给出可执行步骤（如具体命令格式）。\n"),
         version="1",
         status="active",
     )
@@ -196,9 +191,7 @@ def test_auto_upgrade_v2_production_to_persona_only():
     assert upgraded.name == PERSONA_ONLY_RELEASE_NAME
     assert upgraded.status == "production"
 
-    retired_v2 = session.scalar(
-        select(PromptReleaseRow).where(PromptReleaseRow.name == AGENT_TOOLS_RELEASE_NAME)
-    )
+    retired_v2 = session.scalar(select(PromptReleaseRow).where(PromptReleaseRow.name == AGENT_TOOLS_RELEASE_NAME))
     assert retired_v2 is not None
     assert retired_v2.status == "retired"
     session.close()

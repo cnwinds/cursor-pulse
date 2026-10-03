@@ -20,9 +20,7 @@ _DEFAULT_RUBRIC = {
 
 
 def seed_review_rubrics(session: Session) -> None:
-    existing = session.scalar(
-        select(ReviewRubricRow).where(ReviewRubricRow.name == _DEFAULT_RUBRIC["name"])
-    )
+    existing = session.scalar(select(ReviewRubricRow).where(ReviewRubricRow.name == _DEFAULT_RUBRIC["name"]))
     if existing is not None:
         return
     session.add(ReviewRubricRow(**_DEFAULT_RUBRIC))

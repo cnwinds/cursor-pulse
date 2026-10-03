@@ -1,6 +1,4 @@
 import pytest
-from sqlalchemy import select
-
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import Member
 from pulse.web.auth_tokens import create_access_token
@@ -14,6 +12,7 @@ from pulse.web.portal import (
     reconcile_oauth_member,
     reject_portal_user,
 )
+from sqlalchemy import select
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 fastapi = pytest.importorskip("fastapi")
@@ -381,9 +380,7 @@ def test_reconcile_oauth_member_migrates_openid_and_cleans_duplicate(portal_env)
 
     assert member is not None
     assert member.id == enterprise.id
-    remaining = session.scalars(
-        select(Member).where(Member.team_id == team_id, Member.display_name == "熊波")
-    ).all()
+    remaining = session.scalars(select(Member).where(Member.team_id == team_id, Member.display_name == "熊波")).all()
     assert len(remaining) == 1
     assert remaining[0].channel_user_id == "1584929783723323"
     session.close()

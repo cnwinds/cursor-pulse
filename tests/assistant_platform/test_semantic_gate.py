@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -31,7 +31,7 @@ def _atom(
     sensitivity: Sensitivity = Sensitivity.CONFIDENTIAL,
     confidence: float = 1.0,
 ) -> SemanticAtom:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SemanticAtom(
         id=atom_id,
         namespace="team-1",
@@ -84,7 +84,7 @@ def test_private_other_blocks_confidential():
 
 def test_commitment_blocks_in_public_context():
     atoms = [_atom("a1", "u_wang", "小王 Opus 用量很高", sensitivity=Sensitivity.PUBLIC)]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     commitments = [
         Commitment(
             id="c1",

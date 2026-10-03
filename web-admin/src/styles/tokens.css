@@ -1,0 +1,96 @@
+/**
+ * 小脉 · Cursor Pulse — design tokens
+ * Brand: logo 渐变 #38bdf8 → #6366f1；界面主色与之对齐（靛蓝，非 teal）。
+ */
+:root {
+  --pulse-font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, sans-serif;
+  --pulse-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+
+  /* Type scale (rem @ 16px root) */
+  --pulse-text-xs: 0.6875rem; /* 11px — 侧栏脚注、极弱提示 */
+  --pulse-text-sm: 0.75rem; /* 12px — 表格头、标签、次要 */
+  --pulse-text-base: 0.8125rem; /* 13px — 正文默认 */
+  --pulse-text-md: 0.875rem; /* 14px — 表单、聊天、小节标题 */
+  --pulse-text-body-lg: 1rem; /* 16px — 列表主标题等 */
+  --pulse-text-lg: 1.125rem; /* 18px — 页标题 */
+  --pulse-text-xl: 1.25rem; /* 20px — KPI 数字 */
+  --pulse-text-stat: 1.65rem; /* 概览 Stat 大卡 */
+
+  --pulse-leading-tight: 1.35;
+  --pulse-leading-normal: 1.55;
+  --pulse-leading-relaxed: 1.7;
+
+  --pulse-font-regular: 400;
+  --pulse-font-medium: 500;
+  --pulse-font-semibold: 600;
+  --pulse-font-bold: 700;
+
+  /* Brand indigo / sky (matches public/logo.svg) */
+  --pulse-color-accent: #6366f1;
+  --pulse-color-accent-hover: #4f46e5;
+  --pulse-color-accent-soft: #818cf8;
+  --pulse-color-accent-sky: #38bdf8;
+  --pulse-color-accent-muted: rgba(99, 102, 241, 0.14);
+
+  --pulse-sidebar-bg: #0c1222;
+  --pulse-sidebar-bg-gradient: linear-gradient(180deg, #0f172a 0%, #0c1222 55%, #080d18 100%);
+  --pulse-sidebar-text: #94a3b8;
+  --pulse-sidebar-text-hover: #cbd5e1;
+  --pulse-sidebar-text-active: #eef2ff;
+  --pulse-sidebar-active-bg: rgba(99, 102, 241, 0.22);
+  --pulse-sidebar-active-border: var(--pulse-color-accent-sky);
+
+  --pulse-header-bg: rgba(255, 255, 255, 0.92);
+  --pulse-header-border: #e2e8f0;
+
+  --pulse-bg-page: #eef1f6;
+  --pulse-bg-page-pattern: radial-gradient(circle at 1px 1px, rgba(15, 23, 42, 0.045) 1px, transparent 0);
+  --pulse-bg-surface: #ffffff;
+  --pulse-bg-muted: #f8fafc;
+  --pulse-bg-code: #f1f5f9;
+  --pulse-bg-inset: #eef2f6;
+
+  --pulse-text-primary: #1e293b;
+  --pulse-text-secondary: #64748b;
+  --pulse-text-muted: #94a3b8;
+  --pulse-text-strong: #0f172a;
+  --pulse-text-body: #475569;
+
+  --pulse-border: #e2e8f0;
+  --pulse-border-soft: #f1f5f9;
+
+  --pulse-radius-sm: 8px;
+  --pulse-radius-md: 12px;
+  --pulse-radius-lg: 16px;
+  --pulse-radius-xl: 20px;
+
+  --pulse-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.05);
+  --pulse-shadow-elevated: 0 16px 48px rgba(15, 23, 42, 0.12);
+  --pulse-shadow-fab: 0 8px 24px rgba(99, 102, 241, 0.38);
+
+  --pulse-space-page: 20px;
+  --pulse-space-section: 16px;
+
+  --pulse-transition: 0.18s ease;
+
+  /* Element Plus theme alignment */
+  --el-color-primary: #6366f1;
+  --el-color-primary-light-3: #9099f5;
+  --el-color-primary-light-5: #a5aaf7;
+  --el-color-primary-light-7: #c7cafd;
+  --el-color-primary-light-8: #dadcfe;
+  --el-color-primary-light-9: #ededfe;
+  --el-color-primary-dark-2: #4f46e5;
+
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-font-family: var(--pulse-font-sans);
+  --el-bg-color-page: var(--pulse-bg-page);
+  --el-text-color-primary: var(--pulse-text-primary);
+  --el-text-color-regular: var(--pulse-text-body);
+  --el-text-color-secondary: var(--pulse-text-secondary);
+  --el-text-color-placeholder: var(--pulse-text-muted);
+  --el-border-color: var(--pulse-border);
+  --el-border-color-lighter: var(--pulse-border-soft);
+  --el-fill-color-light: var(--pulse-bg-muted);
+}

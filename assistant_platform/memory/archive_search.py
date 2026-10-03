@@ -8,13 +8,12 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from assistant_platform.config import AssistantChatMemoryConfig, MemoryRecallBudgetConfig
-from assistant_platform.memory.embedder import build_archive_embedder
 from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.memory.archive_models import (
     ArchiveChunkRow,
@@ -32,11 +31,12 @@ from assistant_platform.memory.contracts import (
     RecallCursor,
     SearchPageMeta,
 )
-from assistant_platform.memory.vector_index import LocalVectorIndex, VectorHit
+from assistant_platform.memory.embedder import build_archive_embedder
+from assistant_platform.memory.embedding import Embedder
 from assistant_platform.memory.semantic.domain import AtomKind, VisibilityContext, team_id_to_namespace
 from assistant_platform.memory.semantic.recall import recall_memories
 from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
-from assistant_platform.memory.embedding import Embedder
+from assistant_platform.memory.vector_index import LocalVectorIndex, VectorHit
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ def compute_query_fingerprint(query: str, scope: SearchScope) -> str:
 
 def _ensure_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -155,9 +155,7 @@ def _eligible_session_ids(session: Session, scope: SearchScope) -> set[str]:
 
 
 def _session_is_in_scope(session: Session, session_id: str, scope: SearchScope) -> bool:
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
     if archive is None:
         return False
     if archive.status in _DELETED_STATUSES or archive.index_status != "ready":
@@ -277,9 +275,7 @@ def _fuse_chunk_scores(
     total_weight = max(fts_weight + vector_weight, 1e-9)
     scored: list[_ScoredChunk] = []
     for chunk_id in chunk_ids:
-        fused = (
-            fts_weight * fts_norm.get(chunk_id, 0.0) + vector_weight * vec_norm.get(chunk_id, 0.0)
-        ) / total_weight
+        fused = (fts_weight * fts_norm.get(chunk_id, 0.0) + vector_weight * vec_norm.get(chunk_id, 0.0)) / total_weight
         scored.append(
             _ScoredChunk(
                 chunk_id=chunk_id,
@@ -373,9 +369,7 @@ def _archive_hit_from_chunk(
 def _chunk_totals(session: Session, session_ids: set[str]) -> dict[str, int]:
     if not session_ids:
         return {}
-    rows = session.scalars(
-        select(ArchiveChunkRow).where(ArchiveChunkRow.session_id.in_(session_ids))
-    ).all()
+    rows = session.scalars(select(ArchiveChunkRow).where(ArchiveChunkRow.session_id.in_(session_ids))).all()
     totals: dict[str, int] = {}
     for row in rows:
         totals[row.session_id] = totals.get(row.session_id, 0) + 1
@@ -391,9 +385,7 @@ def _build_hits(
     session_ids = {chunk.session_id for chunk in chunk_map.values()}
     archives = {
         row.session_id: row
-        for row in session.scalars(
-            select(SessionArchiveRow).where(SessionArchiveRow.session_id.in_(session_ids))
-        ).all()
+        for row in session.scalars(select(SessionArchiveRow).where(SessionArchiveRow.session_id.in_(session_ids))).all()
     }
     totals = _chunk_totals(session, session_ids)
     hits: list[ArchiveHit] = []
@@ -574,10 +566,7 @@ def hybrid_search(
     total_hits = len(ranked)
     offset = cursor.offset if cursor is not None else 0
     page_slice = ranked[offset : offset + recall.fragment_top_k]
-    page_hits = tuple(
-        hit.model_copy(update={"rank": offset + idx})
-        for idx, hit in enumerate(page_slice, start=1)
-    )
+    page_hits = tuple(hit.model_copy(update={"rank": offset + idx}) for idx, hit in enumerate(page_slice, start=1))
 
     returned = len(page_hits)
     next_offset = offset + returned
@@ -610,9 +599,7 @@ def expand_neighbors(
     if not _session_is_in_scope(session, anchor.session_id, scope):
         return NeighborWindow(anchor=anchor, prev_hits=(), next_hits=(), expand_count=0)
 
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == anchor.session_id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == anchor.session_id))
     chunks = list(
         session.scalars(
             select(ArchiveChunkRow)
@@ -670,9 +657,7 @@ def read_message_range(
 ) -> list[ArchiveHit]:
     if start_seq > end_seq or not _session_is_in_scope(session, session_id, scope):
         return []
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
     if archive is None:
         return []
     messages = list(

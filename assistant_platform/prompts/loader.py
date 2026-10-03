@@ -25,9 +25,11 @@ def load_manifest() -> list[dict[str, Any]]:
 
 def load_prompt_fragments_from_files(*, root: Path | None = None) -> dict[str, str]:
     base = root or _PROMPTS_ROOT
-    items = load_manifest() if root is None else (
-        yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8")) or {}
-    ).get("fragments") or []
+    items = (
+        load_manifest()
+        if root is None
+        else (yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8")) or {}).get("fragments") or []
+    )
     out: dict[str, str] = {}
     for item in items:
         key = str(item["key"]).strip()

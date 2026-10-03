@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason="system pending removed; confirmation is model-side"
-)
+pytestmark = pytest.mark.skip(reason="system pending removed; confirmation is model-side")
 
 from unittest.mock import MagicMock, patch
 

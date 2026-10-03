@@ -2,8 +2,8 @@
   <div v-loading="loading" class="pricing-settings">
     <el-alert type="info" :closable="false" show-icon class="notice">
       <template #title>
-        仅用于 Cursor 返回 Included / 无官方金额时的本地估算；有 chargedCents 时仍用 Cursor 返回值。
-        保存后下次同步生效，已落库明细不会自动重算。
+        本表用于本地估算：Cursor 同步在 Included 或无 chargedCents 时、借用代理与 OpenAI 网关（pkcp_）账本按模型规则计价；
+        Cursor 明细若已有 chargedCents 仍用官方值。保存后对新同步与新请求生效，已落库记录不会自动重算。
       </template>
     </el-alert>
 
@@ -415,16 +415,16 @@ onMounted(load)
 }
 .section-title {
   margin: 16px 0 8px;
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
 }
 .hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--pulse-text-sm);
 }
 .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .pricing-table {
   width: 100%;

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from assistant_platform.config import AssistantConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         session_id,
         message_id,
         kind,
-        serialize_datetime(datetime.now(timezone.utc)),
+        serialize_datetime(datetime.now(UTC)),
     )
     http_t0 = time.monotonic()
     try:
@@ -42,8 +42,7 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         body = response.json()
         status = body.get("status") if isinstance(body, dict) else "unknown"
         logger.info(
-            "reply.timing stage=reply_send_http_done session_id=%s message_id=%s kind=%s "
-            "elapsed_ms=%d status=%s",
+            "reply.timing stage=reply_send_http_done session_id=%s message_id=%s kind=%s elapsed_ms=%d status=%s",
             session_id,
             message_id,
             kind,
@@ -60,4 +59,27 @@ def send_channel_reply(payload: dict[str, Any], config: AssistantConfig) -> dict
         return body if isinstance(body, dict) else {"status": status}
     except Exception:
         logger.exception("reply.send HTTP call failed")
+        return {"status": "failed"}
+
+
+def send_channel_stream(payload: dict[str, Any], config: AssistantConfig) -> dict[str, Any]:
+    """POST a live reply draft (best-effort; the committed reply is authoritative)."""
+    if not config.pulse_internal_token:
+        return {"status": "skipped", "reason": "no_internal_token"}
+
+    import httpx
+
+    url = f"{config.pulse_base_url.rstrip('/')}/api/internal/v1/channel/stream"
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {config.pulse_internal_token}"},
+            timeout=3.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return body if isinstance(body, dict) else {"status": "unknown"}
+    except Exception:
+        logger.warning("reply stream HTTP call failed stream_id=%s", payload.get("stream_id"), exc_info=True)
         return {"status": "failed"}

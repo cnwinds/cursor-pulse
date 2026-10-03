@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from assistant_platform.config import (
@@ -30,12 +30,8 @@ def _cfg() -> AssistantConfig:
         memory_enabled=False,
         # Disable embedding so the skill vector index uses the local
         # HashingEmbedder (no network) during tests.
-        chat_memory=AssistantChatMemoryConfig(
-            embedding=MemoryEmbeddingConfig(enabled=False)
-        ),
-        llm=AssistantLlmConfig(
-            enabled=True, api_key="k", model="m", base_url="https://example.test/v1"
-        ),
+        chat_memory=AssistantChatMemoryConfig(embedding=MemoryEmbeddingConfig(enabled=False)),
+        llm=AssistantLlmConfig(enabled=True, api_key="k", model="m", base_url="https://example.test/v1"),
     )
 
 
@@ -54,7 +50,7 @@ def test_generate_reply_uses_agent_not_intent_matcher():
         conversation_id="u1",
         reply_endpoint={"member_id": "m1", "role": "member"},
         text_redacted="查下我的额度",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     incoming = IncomingEventRow(
         event_id=event.event_id,
@@ -104,7 +100,7 @@ def test_generate_reply_uses_agent_not_intent_matcher():
 def test_agent_history_does_not_leak_other_users():
     Session = init_assistant_db("sqlite://", team_id=TEAM)
     db = Session()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     s_a = ChatSessionRow(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -241,7 +237,7 @@ def _prepare_session(db, text: str):
         conversation_id="u1",
         reply_endpoint={"member_id": "m1", "role": "member"},
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     incoming = IncomingEventRow(
         event_id=event.event_id,
@@ -288,15 +284,19 @@ def test_orchestrator_injects_routed_skill_card():
         audience=frozenset({"member"}),
     )
 
-    with patch(
-        "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
-        return_value=fake_llm,
-    ), patch(
-        "assistant_platform.conversation.orchestrator.resolve_capabilities",
-        return_value=[],
-    ), patch(
-        "assistant_platform.skills.vector_index.SkillVectorIndex.route_cards",
-        return_value=[card],
+    with (
+        patch(
+            "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
+            return_value=fake_llm,
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.resolve_capabilities",
+            return_value=[],
+        ),
+        patch(
+            "assistant_platform.skills.vector_index.SkillVectorIndex.route_cards",
+            return_value=[card],
+        ),
     ):
         generate_reply_text(
             db,
@@ -323,15 +323,19 @@ def test_orchestrator_survives_broken_skill_registry():
 
     fake_llm = _fake_llm()
 
-    with patch(
-        "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
-        return_value=fake_llm,
-    ), patch(
-        "assistant_platform.conversation.orchestrator.resolve_capabilities",
-        return_value=[],
-    ), patch(
-        "assistant_platform.conversation.orchestrator.SkillRegistry",
-        side_effect=ValueError("bad skill frontmatter"),
+    with (
+        patch(
+            "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
+            return_value=fake_llm,
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.resolve_capabilities",
+            return_value=[],
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.SkillRegistry",
+            side_effect=ValueError("bad skill frontmatter"),
+        ),
     ):
         reply = generate_reply_text(
             db,
@@ -352,15 +356,19 @@ def test_orchestrator_empty_route_uses_empty_card_messaging():
 
     fake_llm = _fake_llm()
 
-    with patch(
-        "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
-        return_value=fake_llm,
-    ), patch(
-        "assistant_platform.conversation.orchestrator.resolve_capabilities",
-        return_value=[],
-    ), patch(
-        "assistant_platform.skills.vector_index.SkillVectorIndex.route_cards",
-        return_value=[],
+    with (
+        patch(
+            "assistant_platform.conversation.orchestrator.build_assistant_llm_client",
+            return_value=fake_llm,
+        ),
+        patch(
+            "assistant_platform.conversation.orchestrator.resolve_capabilities",
+            return_value=[],
+        ),
+        patch(
+            "assistant_platform.skills.vector_index.SkillVectorIndex.route_cards",
+            return_value=[],
+        ),
     ):
         generate_reply_text(
             db,

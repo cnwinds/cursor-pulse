@@ -35,7 +35,9 @@ class AssistantRepository:
         self.session.flush()
         return row
 
-    def add_audit(self, *, assistant_id: str, team_id: str, action: str, detail: str = "", meta: dict | None = None) -> None:
+    def add_audit(
+        self, *, assistant_id: str, team_id: str, action: str, detail: str = "", meta: dict | None = None
+    ) -> None:
         self.session.add(
             AuditEventRow(
                 assistant_id=assistant_id,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from pulse.tool_center.quota_pool import quota_pool_for_model
 
 
@@ -17,9 +16,10 @@ from pulse.tool_center.quota_pool import quota_pool_for_model
         ("gpt-5.6-sol-medium", "api"),
         ("glm-4", "api"),
         ("glm-5.2-high", "api"),
-        # BYOK / 自建第三方不占 included 桶
-        ("GLM-5.2", "unknown"),
-        ("MiniMax-M2.7", "unknown"),
+        # BYOK / 自建第三方按 auto
+        ("GLM-5.2", "auto"),
+        ("MiniMax-M2.7", "auto"),
+        # 仅借用发放无目标模型时走到这里；Go 无模型按 auto
         ("", "unknown"),
         (None, "unknown"),
     ],

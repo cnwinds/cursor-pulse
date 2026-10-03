@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import inspect, select
 
@@ -44,7 +44,7 @@ def test_archive_tables_created_by_init_db():
 def test_session_archive_row_roundtrip():
     Session = init_assistant_db("sqlite://")
     session = Session()
-    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 17, tzinfo=UTC)
     row = SessionArchiveRow(
         session_id="s1",
         team_id="team-1",

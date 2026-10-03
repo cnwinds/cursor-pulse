@@ -9,10 +9,15 @@ from sqlalchemy.orm import Session
 
 from pulse.channels.base import normalize_platform, outbound_messenger_or_none
 from pulse.channels.outbound_ledger import send_oto_and_ledger
+from pulse.config import ProxyAddress
 from pulse.ingestion.on_demand import resolve_admin_dingtalk_ids
-from pulse.proxy.key_crud import build_client_command
+from pulse.proxy.key_crud import build_client_command, build_client_setup_commands
 from pulse.storage.models import KeyLoan, Member
 from pulse.tenant.context import team_repository
+from pulse.tool_center.key_loan_delivery import (
+    DELIVERY_PROXY_ALIAS,
+    assignment_mode_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,28 +30,55 @@ _RECLAIM_REASON_LABEL = {
 }
 
 
-def proxy_public_url(config: Any) -> str:
-    """返回第一个代理地址用于通知消息（向后兼容）。
+def resolve_proxy_addresses(session: Session | None, config: Any) -> list[ProxyAddress]:
+    """团队系统设置中的全部有效代理地址；无则回退 config / 默认 public_url。"""
+    if session is not None:
+        try:
+            from pulse.settings import configured_proxy_addresses
 
-    优先使用系统设置中的第一个代理地址，否则使用 config.proxy.public_url 默认值。
-    """
-    proxy_addresses = getattr(getattr(config, "proxy_addresses", None), "addresses", None)
-    if proxy_addresses and len(proxy_addresses) > 0:
-        return proxy_addresses[0].url.rstrip("/")
-    return (getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317").rstrip(
-        "/"
-    )
+            team, _ = team_repository(session, config)
+            team_addrs = configured_proxy_addresses(session, team.id)
+            if team_addrs:
+                return team_addrs
+        except Exception:
+            logger.debug("resolve_proxy_addresses: team settings unavailable", exc_info=True)
+
+    cfg_addrs = getattr(getattr(config, "proxy_addresses", None), "addresses", None) or []
+    if cfg_addrs:
+        return list(cfg_addrs)
+
+    fallback = (getattr(getattr(config, "proxy", None), "public_url", None) or "http://127.0.0.1:8317").rstrip("/")
+    return [ProxyAddress(url=fallback, display_name=fallback)]
+
+
+def proxy_public_url(config: Any, session: Session | None = None) -> str:
+    """返回第一个代理地址（向后兼容）。"""
+    addrs = resolve_proxy_addresses(session, config)
+    return addrs[0].url.rstrip("/")
 
 
 def build_setup_commands(*, api_key: str, proxy_url: str) -> dict[str, str]:
     return {
-        "powershell": build_client_command(
-            shell="powershell", proxy_url=proxy_url, plaintext_key=api_key
-        ),
-        "bash": build_client_command(
-            shell="bash", proxy_url=proxy_url, plaintext_key=api_key
-        ),
+        "powershell": build_client_command(shell="powershell", proxy_url=proxy_url, plaintext_key=api_key),
+        "bash": build_client_command(shell="bash", proxy_url=proxy_url, plaintext_key=api_key),
     }
+
+
+def _menu_style_command_block(*, api_key: str, addresses: list[ProxyAddress]) -> str:
+    """与 web-admin「复制命令」下拉菜单相同顺序：每代理先 PowerShell 再 Linux/macOS，均为一行命令。"""
+    items = build_client_setup_commands(plaintext_key=api_key, addresses=addresses)
+    parts: list[str] = []
+    for item in items:
+        name = str(item.get("proxy_name") or item.get("proxy_url") or "").strip()
+        shell = item.get("shell")
+        if shell == "powershell":
+            label = f"{name} · Windows PowerShell"
+        else:
+            label = f"{name} · Linux / macOS"
+        parts.extend([label, str(item.get("command") or ""), ""])
+    while parts and parts[-1] == "":
+        parts.pop()
+    return "\n".join(parts)
 
 
 def format_borrower_issued(
@@ -55,10 +87,21 @@ def format_borrower_issued(
     loan_id: str,
     loan_expires_on: str | None,
     warning: str | None = None,
-    proxy_url: str,
+    proxy_url: str | None = None,
+    addresses: list[ProxyAddress] | None = None,
     delivery_mode: str | None = None,
+    lender_mode: str | None = None,
+    routing_mode: str | None = None,
+    assignment_label: str | None = None,
 ) -> str:
-    commands = build_setup_commands(api_key=api_key, proxy_url=proxy_url)
+    if addresses:
+        resolved = addresses
+    elif proxy_url:
+        resolved = [ProxyAddress(url=proxy_url.rstrip("/"), display_name=proxy_url.rstrip("/"))]
+    else:
+        resolved = [ProxyAddress(url="http://127.0.0.1:8317", display_name="http://127.0.0.1:8317")]
+
+    cmd_block = _menu_style_command_block(api_key=api_key, addresses=resolved)
     lines = [
         "✅ 临时 Key 已生效",
         "",
@@ -66,18 +109,22 @@ def format_borrower_issued(
         f"借用编号：{(loan_id or '')[:8] or '—'}",
         f"自动回收日：{loan_expires_on or '—'}",
     ]
-    if (delivery_mode or "").strip() == "proxy_alias":
-        lines.append("交付：代理别名 Key（须配置 HTTPS_PROXY）")
+    mode = (delivery_mode or "").strip()
+    if mode == DELIVERY_PROXY_ALIAS:
+        label = (assignment_label or "").strip() or assignment_mode_label(
+            delivery_mode=mode,
+            lender_mode=lender_mode,
+            routing_mode=routing_mode,
+        )
+        lines.append(f"分配方式：{label}（须配置 HTTPS_PROXY）")
+    elif mode and mode != DELIVERY_PROXY_ALIAS:
+        lines.append("分配方式：Cursor Key")
     if warning:
         lines.extend(["", warning.strip()])
     lines.extend(
         [
             "",
-            "【Windows PowerShell】",
-            commands["powershell"],
-            "",
-            "【Linux / macOS】",
-            commands["bash"],
+            cmd_block,
             "",
             "归还请发送：归还 Key",
         ]
@@ -207,17 +254,32 @@ def notify_loan_issued(
     expires = result.get("loan_expires_on")
     expires_s = str(expires) if expires else None
     delivery_mode = result.get("delivery_mode")
+    lender_mode = result.get("lender_mode")
+    routing_mode = result.get("routing_mode")
+    assignment_label = result.get("assignment_label")
     warning = result.get("warning")
     borrower_name = result.get("borrower_name")
-    proxy_url = proxy_public_url(config)
+    addresses = resolve_proxy_addresses(session, config)
 
     if not skip_borrower and api_key:
         borrower_id = result.get("borrower_member_id")
         borrower = session.get(Member, borrower_id) if borrower_id else None
-        if borrower is None and loan_id:
-            loan = session.get(KeyLoan, loan_id)
-            if loan and loan.borrower_member_id:
-                borrower = session.get(Member, loan.borrower_member_id)
+        loan_row = None
+        if loan_id:
+            loan_row = session.get(KeyLoan, loan_id)
+        if borrower is None and loan_row and loan_row.borrower_member_id:
+            borrower = session.get(Member, loan_row.borrower_member_id)
+        if loan_row is not None:
+            if lender_mode is None:
+                lender_mode = getattr(loan_row, "lender_mode", None)
+            if routing_mode is None:
+                routing_mode = getattr(loan_row, "routing_mode", None)
+            if not assignment_label:
+                assignment_label = assignment_mode_label(
+                    delivery_mode=str(delivery_mode or getattr(loan_row, "delivery_mode", None)),
+                    lender_mode=lender_mode,
+                    routing_mode=routing_mode,
+                )
         if borrower is not None:
             uid = resolve_member_im_user_id(session, config, borrower)
             if uid:
@@ -226,8 +288,11 @@ def notify_loan_issued(
                     loan_id=loan_id,
                     loan_expires_on=expires_s,
                     warning=str(warning) if warning else None,
-                    proxy_url=proxy_url,
+                    addresses=addresses,
                     delivery_mode=str(delivery_mode) if delivery_mode else None,
+                    lender_mode=str(lender_mode) if lender_mode else None,
+                    routing_mode=str(routing_mode) if routing_mode else None,
+                    assignment_label=str(assignment_label) if assignment_label else None,
                 )
                 _send_oto(
                     session,
@@ -275,7 +340,7 @@ def format_admin_reassigned(
             f"借用编号：{(loan_id or '')[:8] or '—'}",
             f"别名提示：{alias_key_hint or '—'}",
             f"原账号：{old_source_identifier or '—'}",
-            f"新账号：{new_source_identifier or '—'}",
+            f"新账号：{new_source_identifier or '账号池（使用中轮换）'}",
             f"自动回收日：{loan_expires_on or '—'}",
             "借用人 pka_ 不变，可透明继续使用。",
         ]
@@ -349,9 +414,7 @@ def notify_loan_reclaimed(
                 context="reclaimed-borrower",
             )
         else:
-            logger.info(
-                "key loan reclaimed: borrower has no IM identity loan=%s", loan.id[:8]
-            )
+            logger.info("key loan reclaimed: borrower has no IM identity loan=%s", loan.id[:8])
 
     admin_text = format_admin_reclaimed(
         borrower_name=borrower_name,

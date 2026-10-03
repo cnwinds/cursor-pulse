@@ -52,9 +52,7 @@ _PHASE1_PACKS: list[dict] = [
 
 
 def _get_or_create_definition(session: Session, spec: dict) -> CapabilityDefinitionRow:
-    row = session.scalar(
-        select(CapabilityDefinitionRow).where(CapabilityDefinitionRow.key == spec["key"])
-    )
+    row = session.scalar(select(CapabilityDefinitionRow).where(CapabilityDefinitionRow.key == spec["key"]))
     if row is not None:
         if row.display_name != spec["display_name"] or row.description != spec["description"]:
             row.display_name = spec["display_name"]
@@ -73,9 +71,7 @@ def _get_or_create_definition(session: Session, spec: dict) -> CapabilityDefinit
     return row
 
 
-def _get_or_create_version(
-    session: Session, definition: CapabilityDefinitionRow, spec: dict
-) -> CapabilityVersionRow:
+def _get_or_create_version(session: Session, definition: CapabilityDefinitionRow, spec: dict) -> CapabilityVersionRow:
     row = session.scalar(
         select(CapabilityVersionRow).where(
             CapabilityVersionRow.definition_id == definition.id,
@@ -149,17 +145,13 @@ def _get_or_create_pack_item(
 def _pack_dedupe_score(session: Session, pack: CapabilityPackRow) -> tuple[int, int, float]:
     item_count = (
         session.scalar(
-            select(func.count())
-            .select_from(CapabilityPackItemRow)
-            .where(CapabilityPackItemRow.pack_id == pack.id)
+            select(func.count()).select_from(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack.id)
         )
         or 0
     )
     assignment_refs = (
         session.scalar(
-            select(func.count())
-            .select_from(CapabilityAssignmentRow)
-            .where(CapabilityAssignmentRow.pack_id == pack.id)
+            select(func.count()).select_from(CapabilityAssignmentRow).where(CapabilityAssignmentRow.pack_id == pack.id)
         )
         or 0
     )
@@ -185,9 +177,7 @@ def _dedupe_packs_for_team(session: Session, team_id: str, pack_keys: list[str])
             if pack.id == canonical.id:
                 continue
             for assignment in session.scalars(
-                select(CapabilityAssignmentRow).where(
-                    CapabilityAssignmentRow.pack_id == pack.id
-                )
+                select(CapabilityAssignmentRow).where(CapabilityAssignmentRow.pack_id == pack.id)
             ).all():
                 existing = session.scalar(
                     select(CapabilityAssignmentRow).where(

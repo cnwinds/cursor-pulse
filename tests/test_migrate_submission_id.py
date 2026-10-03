@@ -7,9 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import inspect, text
-from sqlalchemy.orm import sessionmaker
-
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import map_usage_event
@@ -17,6 +14,8 @@ from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base, Member, UsageRecord
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import sessionmaker
 from tests.conftest import make_team_repo
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -79,9 +78,7 @@ def test_api_sync_inserts_after_legacy_migration(legacy_engine):
     session.commit()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_account = next(
-        a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor"
-    )
+    cursor_account = next(a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor")
     member = Member(
         team_id=team.id,
         display_name="Sync Tester",
@@ -98,12 +95,8 @@ def test_api_sync_inserts_after_legacy_migration(legacy_engine):
 
     mock_cursor_key_exchange(mock_client, email=cursor_account.account_identifier.lower())
     mock_client.exchange_api_key.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw_event)
     mock_client.iter_filtered_usage_events.return_value = iter([dto])
 

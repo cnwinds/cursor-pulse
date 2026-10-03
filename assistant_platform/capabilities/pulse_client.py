@@ -4,9 +4,9 @@ from dataclasses import asdict
 from typing import Any
 
 import httpx
+from pulse.http_clients import internal_client
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
-from pulse.http_clients import internal_client
 
 
 class PulseCapabilityClient:

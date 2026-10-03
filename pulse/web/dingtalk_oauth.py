@@ -1,9 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import secrets
 from urllib.parse import quote
-
-import httpx
 
 from pulse.config import AppConfig
 from pulse.http_clients import outbound_client
@@ -14,9 +12,7 @@ class DingTalkOAuthError(RuntimeError):
 
 
 _OAUTH_SCOPE = "openid"
-_CONTACT_READ_HINT = (
-    "请在钉钉开放平台为应用申请「通讯录个人信息读」(Contact.User.Read) 权限并重新发布应用后重试。"
-)
+_CONTACT_READ_HINT = "请在钉钉开放平台为应用申请「通讯录个人信息读」(Contact.User.Read) 权限并重新发布应用后重试。"
 _CALLBACK_SUFFIXES = ("/login/callback", "/admin/login/callback")
 
 
@@ -42,9 +38,7 @@ def allowed_oauth_redirect_uris(config: AppConfig) -> list[str]:
     return allowed
 
 
-def resolve_oauth_redirect_uri(
-    config: AppConfig, requested: str | None = None
-) -> str:
+def resolve_oauth_redirect_uri(config: AppConfig, requested: str | None = None) -> str:
     """Pick redirect_uri: requested (if allowlisted) else configured default."""
     allowed = allowed_oauth_redirect_uris(config)
     configured = (config.web.dingtalk_oauth_redirect_uri or "").strip()
@@ -123,10 +117,7 @@ def resolve_enterprise_userid(config: AppConfig, me: dict) -> str:
 
     open_id = _pick_field(me, "openId", "openid")
     if open_id:
-        raise DingTalkOAuthError(
-            "钉钉 OAuth 仅返回 openId，无法与通讯录 userid 对齐。"
-            f"{_CONTACT_READ_HINT}"
-        )
+        raise DingTalkOAuthError(f"钉钉 OAuth 仅返回 openId，无法与通讯录 userid 对齐。{_CONTACT_READ_HINT}")
 
     raise DingTalkOAuthError(f"无法解析钉钉企业 userid: {me}")
 

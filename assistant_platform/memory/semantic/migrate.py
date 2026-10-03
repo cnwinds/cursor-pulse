@@ -67,7 +67,7 @@ def _normalize_legacy_row(row: dict, columns: tuple[str, ...]) -> dict:
         val = payload.get(col)
         if val is None:
             payload[col] = _JSON_COLUMN_DEFAULTS[col]
-        elif isinstance(val, (dict, list)):
+        elif isinstance(val, dict | list):
             payload[col] = json.dumps(val, ensure_ascii=False)
     return payload
 
@@ -82,9 +82,7 @@ def _copy_table(engine: Engine, *, source: str, target: str, columns: tuple[str,
     placeholders = ", ".join(f":{c}" for c in columns)
     copied = 0
     with engine.begin() as conn:
-        existing_ids = {
-            row[0] for row in conn.execute(text(f"SELECT id FROM {target}")).fetchall()
-        }
+        existing_ids = {row[0] for row in conn.execute(text(f"SELECT id FROM {target}")).fetchall()}
         rows = conn.execute(text(f"SELECT {col_list} FROM {source}")).mappings().all()
         for row in rows:
             if row["id"] in existing_ids:

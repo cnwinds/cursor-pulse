@@ -7,17 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.ingestion.credentials import AccountEmailMismatchError, CredentialService
-from pulse.ingestion.plan_infer import (
-    cycle_end_from_period_usage,
-    default_cursor_plan,
-    infer_plan_from_period_usage,
-)
-from pulse.ingestion.sync import CursorSyncService
-from pulse.integrations.cursor_api import CursorApiClient
+from pulse.ingestion.credentials import AccountEmailMismatchError
 from pulse.storage.models import AiAccountCredential, AiVendor, UsageDailyAggregate
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.util.datetime_fmt import serialize_datetime
+from pulse.web.account_create_handlers import create_coding_plan_account, create_cursor_account
 from pulse.web.audit import log_admin_action
 from pulse.web.credentials_api import (
     can_manage_credential,
@@ -39,6 +33,9 @@ class AccountCreateBody(BaseModel):
     ownership: str = "company"
     usage_resets_on: str | None = None
     api_key: str | None = None
+    api_region: str | None = None
+    glm_organization_id: str | None = None
+    glm_project_id: str | None = None
 
 
 class AccountPatchBody(BaseModel):
@@ -90,6 +87,10 @@ def _account_payload(account) -> dict:
         "id": account.id,
         "vendor_id": account.vendor_id,
         "vendor_name": account.vendor.name if account.vendor else None,
+        "vendor_slug": account.vendor.slug if account.vendor else None,
+        "api_region": account.api_region,
+        "glm_organization_id": account.glm_organization_id,
+        "glm_project_id": account.glm_project_id,
         "plan_id": account.plan_id,
         "plan_name": account.plan.plan_name if account.plan else None,
         "account_identifier": account.account_identifier,
@@ -97,9 +98,7 @@ def _account_payload(account) -> dict:
         "status": account.status,
         "primary_member_id": account.primary_member_id,
         "shared_note": account.shared_note,
-        "monthly_budget_cap": float(account.monthly_budget_cap)
-        if account.monthly_budget_cap is not None
-        else None,
+        "monthly_budget_cap": float(account.monthly_budget_cap) if account.monthly_budget_cap is not None else None,
         "budget_currency": account.budget_currency,
         "started_on": account.started_on.isoformat() if account.started_on else None,
         "renews_on": account.renews_on.isoformat() if account.renews_on else None,
@@ -148,9 +147,7 @@ def register_accounts_v2_routes(
                 "price_amount": float(p.price_amount),
                 "price_currency": p.price_currency,
                 "quota_ratio_enabled": p.quota_ratio_enabled,
-                "quota_denominator": float(p.quota_denominator)
-                if p.quota_denominator is not None
-                else None,
+                "quota_denominator": float(p.quota_denominator) if p.quota_denominator is not None else None,
                 "upgrade_threshold_pct": p.upgrade_threshold_pct,
                 "usage_submit_methods": p.usage_submit_methods or [],
             }
@@ -160,40 +157,34 @@ def register_accounts_v2_routes(
     @app.get("/api/v2/accounts")
     def list_accounts(
         status: str | None = None,
+        vendor_slug: str | None = Query(default=None),
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("accounts:read")),
     ):
         """List accounts with credential summary embedded (avoids N+1 /credentials)."""
         team, _ = team_repo_fn(session)
         repo = ToolCenterRepository(session, team.id)
-        accounts = list(repo.list_accounts(status=status))
-        cursor_ids = [
-            a.id for a in accounts if a.vendor is not None and a.vendor.slug == "cursor"
-        ]
+        accounts = list(repo.list_accounts(status=status, vendor_slug=vendor_slug))
+        key_vendor_slugs = frozenset({"cursor", "glm", "minimax", "kimi"})
+        keyed_ids = [a.id for a in accounts if a.vendor is not None and a.vendor.slug in key_vendor_slugs]
         cred_by_account: dict[str, AiAccountCredential] = {}
-        if cursor_ids:
+        if keyed_ids:
             rows = session.scalars(
-                select(AiAccountCredential).where(
-                    AiAccountCredential.account_id.in_(cursor_ids)
-                )
+                select(AiAccountCredential).where(AiAccountCredential.account_id.in_(keyed_ids))
             ).all()
             # Prefer active over revoked if duplicates exist historically.
             for row in rows:
                 existing = cred_by_account.get(row.account_id)
-                if existing is None or (
-                    existing.status != "active" and row.status == "active"
-                ):
+                if existing is None or (existing.status != "active" and row.status == "active"):
                     cred_by_account[row.account_id] = row
 
         payloads = []
         for account in accounts:
             payload = _account_payload(account)
-            if account.vendor is None or account.vendor.slug != "cursor":
+            if account.vendor is None or account.vendor.slug not in key_vendor_slugs:
                 payload["credential"] = None
             elif can_manage_credential(user, account):
-                payload["credential"] = credential_status_summary(
-                    cred_by_account.get(account.id)
-                )
+                payload["credential"] = credential_status_summary(cred_by_account.get(account.id))
             else:
                 # Same shape as unbound so UI badges stay stable without leaking
                 # peer credential hints to viewers who cannot manage the row.
@@ -213,10 +204,8 @@ def register_accounts_v2_routes(
         if not api_key:
             raise HTTPException(
                 status_code=400,
-                detail="新增账号须填写 API Key（套餐、账号标识与用量重置将自动获取）",
+                detail="新增账号须填写 API Key",
             )
-        if not api_key.startswith("crsr_"):
-            raise HTTPException(status_code=400, detail="API Key 须以 crsr_ 开头")
         if config is None:
             raise HTTPException(status_code=503, detail="服务未配置凭证加密")
         enc_key = (config.credentials.encryption_key or "").strip()
@@ -230,78 +219,39 @@ def register_accounts_v2_routes(
             vendor = session.get(AiVendor, body.vendor_id)
         else:
             vendor = repo.get_vendor_by_slug("cursor")
-        if vendor is None or vendor.slug != "cursor":
-            raise HTTPException(status_code=400, detail="仅支持新增 Cursor 账号")
-
-        plans = repo.list_plans(vendor.id)
-        if not plans:
-            raise HTTPException(status_code=400, detail="未配置 Cursor 套餐，请先初始化目录")
-        status = _validate_account_status(body.status)
+        if vendor is None:
+            raise HTTPException(status_code=400, detail="厂家不存在")
+        if vendor.slug not in ("cursor", "glm", "minimax", "kimi"):
+            raise HTTPException(status_code=400, detail="不支持的账号厂家")
+        if vendor.slug == "cursor" and not api_key.startswith("crsr_"):
+            raise HTTPException(status_code=400, detail="API Key 须以 crsr_ 开头")
 
         try:
-            cursor_client = CursorApiClient()
-            token = cursor_client.get_access_token(api_key)
-            key_email = cursor_client.resolve_api_key_account_email(api_key)
-            period_usage = cursor_client.get_current_period_usage(token, api_key=api_key)
-
-            if body.plan_id:
-                plan = next((p for p in plans if p.id == body.plan_id), None)
-                if plan is None:
-                    raise HTTPException(status_code=400, detail="套餐不存在或不属于 Cursor")
-            else:
-                plan = infer_plan_from_period_usage(plans, period_usage) or default_cursor_plan(
-                    plans
+            if vendor.slug == "cursor":
+                account = create_cursor_account(
+                    session=session,
+                    repo=repo,
+                    team_id=team.id,
+                    enc_key=enc_key,
+                    user=user,
+                    vendor=vendor,
+                    body=body,
+                    validate_status=_validate_account_status,
+                    parse_optional_date=_parse_optional_date,
+                    log_action=log_action,
                 )
-            if plan is None:
-                raise HTTPException(status_code=400, detail="无法确定 Cursor 套餐")
-
-            identifier = (body.account_identifier or "").strip() or (key_email or "")
-            manual_resets = _parse_optional_date(body.usage_resets_on)
-            usage_resets_on = manual_resets or cycle_end_from_period_usage(period_usage)
-
-            account = repo.create_account(
-                vendor_id=vendor.id,
-                plan_id=plan.id,
-                account_identifier=identifier,
-                status=status,
-                primary_member_id=body.primary_member_id,
-                shared_note=body.shared_note,
-                ownership=body.ownership,
-                usage_resets_on=usage_resets_on,
-            )
-            if manual_resets:
-                account.resets_on_source = "manual-locked"
-            elif usage_resets_on:
-                account.resets_on_source = "api"
-
-            cred_service = CredentialService(session, enc_key, cursor_client=cursor_client)
-            cred = cred_service.bind_cursor_api_key(
-                account_id=account.id,
-                api_key=api_key,
-                member_id=user.member.id,
-            )
-            CursorSyncService(session, enc_key, cursor_client=cursor_client).sync_account(
-                account.id,
-                channel="web",
-                member_id=user.member.id,
-            )
-            log_action(
-                session,
-                team_id=team.id,
-                member_id=user.member.id,
-                action="credential.bind",
-                capability="accounts:write",
-                detail=f"{account.id}:{cred.key_hint}",
-            )
-            log_action(
-                session,
-                team_id=team.id,
-                member_id=user.member.id,
-                action="account.create",
-                capability="accounts:write",
-                detail=account.account_identifier or account.id,
-            )
-            session.commit()
+            else:
+                account = create_coding_plan_account(
+                    session=session,
+                    repo=repo,
+                    team_id=team.id,
+                    enc_key=enc_key,
+                    user=user,
+                    vendor=vendor,
+                    body=body,
+                    validate_status=_validate_account_status,
+                    log_action=log_action,
+                )
         except HTTPException:
             session.rollback()
             raise
@@ -451,9 +401,7 @@ def register_accounts_v2_routes(
             "period": period,
             "quota_usage_ratio": row.quota_usage_ratio,
             "cycle_quota_usage_ratio": row.cycle_quota_usage_ratio,
-            "cycle_metric_value": float(row.cycle_metric_value)
-            if row.cycle_metric_value is not None
-            else None,
+            "cycle_metric_value": float(row.cycle_metric_value) if row.cycle_metric_value is not None else None,
         }
 
     @app.get(
@@ -478,26 +426,18 @@ def register_accounts_v2_routes(
                 "period": r.period,
                 "primary_metric_value": float(r.primary_metric_value),
                 "primary_metric_unit": r.primary_metric_unit,
-                "reported_spend_usd": float(r.reported_spend_usd)
-                if r.reported_spend_usd is not None
-                else None,
+                "reported_spend_usd": float(r.reported_spend_usd) if r.reported_spend_usd is not None else None,
                 "estimated_included_spend_usd": float(r.estimated_included_spend_usd)
                 if r.estimated_included_spend_usd is not None
                 else None,
                 "quota_usage_ratio": r.quota_usage_ratio,
-                "billing_cycle_start": r.billing_cycle_start.isoformat()
-                if r.billing_cycle_start
-                else None,
-                "billing_cycle_end": r.billing_cycle_end.isoformat()
-                if r.billing_cycle_end
-                else None,
+                "billing_cycle_start": r.billing_cycle_start.isoformat() if r.billing_cycle_start else None,
+                "billing_cycle_end": r.billing_cycle_end.isoformat() if r.billing_cycle_end else None,
                 "plan_id_used": r.plan_id_used,
                 "quota_denominator_snapshot": float(r.quota_denominator_snapshot)
                 if r.quota_denominator_snapshot is not None
                 else None,
-                "cycle_metric_value": float(r.cycle_metric_value)
-                if r.cycle_metric_value is not None
-                else None,
+                "cycle_metric_value": float(r.cycle_metric_value) if r.cycle_metric_value is not None else None,
                 "cycle_quota_usage_ratio": r.cycle_quota_usage_ratio,
                 "estimation_coverage_pct": r.estimation_coverage_pct,
                 "unmatched_models": r.unmatched_models or [],

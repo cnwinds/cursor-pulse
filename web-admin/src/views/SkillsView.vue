@@ -1,9 +1,8 @@
 <template>
   <div class="skills-page" v-loading="loading">
-    <header class="page-header">
+    <header class="pulse-page-header">
       <div>
-        <h2>技能一览</h2>
-        <p class="desc">每个说明文件（`docs/**/*.md`）即一个技能；右侧直接展示选中文件的元数据与正文。</p>
+        <p class="pulse-desc">每个说明文件（`docs/**/*.md`）即一个技能；右侧直接展示选中文件的元数据与正文。</p>
       </div>
       <el-button @click="loadSkills">刷新</el-button>
     </header>
@@ -43,7 +42,7 @@
       <el-col :xs="24" :md="15" :lg="16">
         <el-card shadow="never" class="skill-detail-card">
           <template #header>
-            <div class="card-header">
+            <div class="pulse-card-header">
               <span>{{ selectedSkill?.name || '技能说明' }}</span>
               <el-tag v-if="selectedSkill" type="info">{{ selectedSkill.skill_id }}</el-tag>
             </div>
@@ -55,13 +54,13 @@
                 <code>{{ selectedSkill.rel_path }}</code>
               </div>
 
-              <div v-if="parsedDoc.meta.audience?.length || parsedDoc.meta.when_to_use?.length" class="file-meta">
+              <div v-if="parsedDoc.meta.audience?.length || parsedDoc.meta.when_to_use?.length" class="pulse-meta-box">
                 <div v-if="parsedDoc.meta.audience?.length" class="meta-row">
-                  <span class="meta-label">audience</span>
+                  <span class="pulse-meta-label">audience</span>
                   <span>{{ parsedDoc.meta.audience.join('、') }}</span>
                 </div>
                 <div v-if="parsedDoc.meta.when_to_use?.length" class="meta-row">
-                  <span class="meta-label">适用场景</span>
+                  <span class="pulse-meta-label">适用场景</span>
                   <ul class="scenario-list">
                     <li v-for="(item, idx) in parsedDoc.meta.when_to_use" :key="idx">{{ item }}</li>
                   </ul>
@@ -70,7 +69,7 @@
 
               <div
                 v-if="parsedDoc.body.trim()"
-                class="markdown-body"
+                class="pulse-markdown"
                 v-html="renderMarkdown(parsedDoc.body)"
               />
               <el-empty v-else description="该文件正文为空" />
@@ -215,31 +214,17 @@ onMounted(loadSkills)
 </script>
 
 <style scoped>
-.page-header,
-.card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.page-header {
-  margin-bottom: 16px;
-}
-.desc {
-  margin: 4px 0 0;
-  color: #64748b;
-  line-height: 1.5;
-}
 .source-alert {
-  margin-bottom: 16px;
+  margin-bottom: var(--pulse-space-section);
 }
 .skill-list-card,
 .skill-detail-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--pulse-space-section);
 }
 .skill-id {
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  font-family: var(--pulse-font-mono);
+  color: var(--pulse-text-secondary);
 }
 .file-content {
   min-width: 0;
@@ -248,26 +233,12 @@ onMounted(loadSkills)
   margin-bottom: 12px;
 }
 .file-content-header code {
-  color: #64748b;
-  font-size: 12px;
-}
-.file-meta {
-  margin-bottom: 16px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f8fafc;
-  font-size: 13px;
-  color: #475569;
+  font-family: var(--pulse-font-mono);
+  color: var(--pulse-text-secondary);
+  font-size: var(--pulse-text-sm);
 }
 .meta-row + .meta-row {
   margin-top: 8px;
-}
-.meta-label {
-  display: block;
-  margin-bottom: 4px;
-  color: #334155;
-  font-weight: 600;
 }
 .scenario-list {
   margin: 0;
@@ -275,20 +246,5 @@ onMounted(loadSkills)
 }
 .scenario-list li {
   margin: 2px 0;
-}
-.markdown-body {
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-:deep(.markdown-body pre) {
-  overflow-x: auto;
-  padding: 12px;
-  border-radius: 6px;
-  background: #f1f5f9;
-}
-:deep(.markdown-body code) {
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: #f1f5f9;
 }
 </style>

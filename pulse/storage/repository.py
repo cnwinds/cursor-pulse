@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
@@ -33,9 +33,7 @@ class Repository:
         self.session = session
         self.team_id = team_id
 
-    def get_member_by_channel_user_id(
-        self, channel_user_id: str, *, channel: str | None = None
-    ) -> Member | None:
+    def get_member_by_channel_user_id(self, channel_user_id: str, *, channel: str | None = None) -> Member | None:
         from pulse.identity.service import resolve_member
 
         if channel is not None:
@@ -72,14 +70,9 @@ class Repository:
 
         member = self.get_member_by_channel_user_id(channel_user_id, channel=channel)
         if member:
-            ensure_identity(
-                self.session, member, channel=channel, external_id=channel_user_id
-            )
+            ensure_identity(self.session, member, channel=channel, external_id=channel_user_id)
             if display_name and member.display_name != display_name:
-                if (
-                    display_name == channel_user_id
-                    and member.display_name != channel_user_id
-                ):
+                if display_name == channel_user_id and member.display_name != channel_user_id:
                     return member
                 member.display_name = display_name
             return member
@@ -92,17 +85,13 @@ class Repository:
         )
         self.session.add(member)
         self.session.flush()
-        ensure_identity(
-            self.session, member, channel=channel, external_id=channel_user_id
-        )
+        ensure_identity(self.session, member, channel=channel, external_id=channel_user_id)
         refresh_member_primary_cache(self.session, member)
         return member
 
     def list_active_members(self) -> list[Member]:
         return list(
-            self.session.scalars(
-                select(Member).where(Member.team_id == self.team_id, Member.status == "active")
-            )
+            self.session.scalars(select(Member).where(Member.team_id == self.team_id, Member.status == "active"))
         )
 
     def add_member(self, channel_user_id: str, display_name: str) -> Member:
@@ -147,9 +136,7 @@ class Repository:
             select(UsageIngestion)
             .outerjoin(Member, UsageIngestion.member_id == Member.id)
             .outerjoin(AiAccount, UsageIngestion.account_id == AiAccount.id)
-            .where(
-                or_(Member.team_id == self.team_id, AiAccount.team_id == self.team_id)
-            )
+            .where(or_(Member.team_id == self.team_id, AiAccount.team_id == self.team_id))
         )
 
     def list_ingestions(
@@ -170,9 +157,7 @@ class Repository:
         *,
         manual_only: bool = False,
     ) -> list[UsageIngestion]:
-        query = self._ingestions_team_query().where(
-            UsageIngestion.status == "pending_review"
-        )
+        query = self._ingestions_team_query().where(UsageIngestion.status == "pending_review")
         if manual_only:
             query = query.where(UsageIngestion.source_type != "api_sync")
         if period:
@@ -217,9 +202,7 @@ class Repository:
                 )
             ).all()
             for old in old_ingestions:
-                self.session.execute(
-                    delete(UsageRecord).where(UsageRecord.ingestion_id == old.id)
-                )
+                self.session.execute(delete(UsageRecord).where(UsageRecord.ingestion_id == old.id))
                 self.session.delete(old)
             self.session.execute(
                 delete(UsageSummary).where(
@@ -231,21 +214,15 @@ class Repository:
             self._delete_confirmed_period_records(ing.member_id, ing.billing_period)
 
         ing.status = "confirmed"
-        ing.confirmed_at = datetime.now(timezone.utc)
+        ing.confirmed_at = datetime.now(UTC)
         self.session.flush()
 
         if ing.account_id:
             account = tool_repo.get_account(ing.account_id)
             if account:
-                records = list(
-                    self.session.scalars(
-                        select(UsageRecord).where(UsageRecord.ingestion_id == ing.id)
-                    )
-                )
+                records = list(self.session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id == ing.id)))
                 if records:
-                    summary = tool_repo.build_summary_for_account(
-                        account, records, ing.billing_period
-                    )
+                    summary = tool_repo.build_summary_for_account(account, records, ing.billing_period)
                     tool_repo.upsert_usage_summary(
                         account_id=ing.account_id,
                         period=ing.billing_period,

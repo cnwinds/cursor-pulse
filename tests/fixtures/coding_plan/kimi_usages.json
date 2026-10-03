@@ -1,0 +1,16 @@
+{
+  "limits": [
+    {
+      "detail": {
+        "limit": 100,
+        "remaining": 80,
+        "resetTime": 1760000000000
+      }
+    }
+  ],
+  "usage": {
+    "limit": 1000,
+    "remaining": 700,
+    "resetTime": "2026-09-28T00:00:00Z"
+  }
+}

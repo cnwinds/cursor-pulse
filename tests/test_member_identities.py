@@ -40,11 +40,7 @@ def identity_client(_identity_app):
 def test_migrate_backfills_identities(identity_client):
     _client, _config, owner, _team_id, sf = identity_client
     session = sf()
-    rows = list(
-        session.scalars(
-            select(MemberIdentity).where(MemberIdentity.member_id == owner.id)
-        ).all()
-    )
+    rows = list(session.scalars(select(MemberIdentity).where(MemberIdentity.member_id == owner.id)).all())
     session.close()
     assert any(r.channel == "web" and r.external_id == "admin" for r in rows)
 
@@ -96,7 +92,7 @@ def test_link_dingtalk_keeps_same_member(identity_client):
     )
     assert link.status_code == 200
     identities = link.json()["identities"]
-    assert { (i["channel"], i["external_id"]) for i in identities } >= {
+    assert {(i["channel"], i["external_id"]) for i in identities} >= {
         ("web", "bob"),
         ("dingtalk", "dt-bob-1"),
     }
@@ -127,12 +123,7 @@ def test_delete_local_user_removes_identities(identity_client):
     assert res.status_code == 200
     session = sf()
     assert session.get(Member, member_id) is None
-    assert (
-        session.scalars(
-            select(MemberIdentity).where(MemberIdentity.member_id == member_id)
-        ).first()
-        is None
-    )
+    assert session.scalars(select(MemberIdentity).where(MemberIdentity.member_id == member_id)).first() is None
     session.close()
 
 
@@ -473,12 +464,7 @@ def test_cleanup_legacy_oauth_deletes_identities(identity_client):
     _cleanup_legacy_oauth_duplicates(repo, display_name="SameName", keep_id=keep.id)
     session.commit()
     assert session.get(Member, legacy_id) is None
-    assert (
-        session.scalars(
-            select(MemberIdentity).where(MemberIdentity.member_id == legacy_id)
-        ).first()
-        is None
-    )
+    assert session.scalars(select(MemberIdentity).where(MemberIdentity.member_id == legacy_id)).first() is None
     session.close()
 
 

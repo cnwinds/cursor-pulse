@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from pulse.config import AppConfig, CollectionConfig, CursorSyncConfig
 from pulse.ingestion.sync_schedule import (
-    account_jitter_sec,
     accelerate_sync_schedules,
+    account_jitter_sec,
     apply_sync_success,
     backoff_seconds,
     init_schedule_on_bind,
@@ -31,7 +31,7 @@ def test_init_schedule_on_bind_sets_next_sync():
         key_hint="crsr",
         bound_by_member_id="m1",
     )
-    now = datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
     init_schedule_on_bind(cred, now=now)
     assert cred.next_sync_at is not None
     assert cred.next_sync_at > now
@@ -50,7 +50,7 @@ def test_apply_sync_success_uses_interval_minutes():
         bound_by_member_id="m1",
         sync_jitter_sec=0,
     )
-    now = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 20, 0, 0, tzinfo=UTC)
     config = AppConfig(cursor_sync=CursorSyncConfig(default_interval_minutes=60))
     apply_sync_success(cred, config, now=now)
     assert cred.next_sync_at == now + timedelta(minutes=60)
@@ -72,13 +72,12 @@ def test_report_period_previous_month():
 
 
 def test_accelerate_sync_schedules_pulls_forward_long_next_sync():
+    from pulse.storage.models import AiAccountCredential, Base
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
 
-    from pulse.storage.models import AiAccountCredential, Base
-
-    now = datetime(2026, 7, 15, 10, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

@@ -148,6 +148,7 @@ const forms = reactive({
   bot: {} as Record<string, unknown>,
   admin: {} as Record<string, unknown>,
   proxy_addresses: { addresses: [] as Array<{ url: string; display_name: string }> },
+  loan_selection: {} as Record<string, unknown>,
 })
 
 const memberSelectOptions = computed(() =>
@@ -408,18 +409,6 @@ const integrationRows = computed<SettingRow[]>(() => [
     id: 'web_search',
     name: '联网搜索（Tavily）',
     summary: webSearchSummary(),
-    process: '团队设置',
-    editable: true,
-  },
-  {
-    id: 'jev',
-    name: 'Jev 决策模型',
-    summary:
-      forms.jev.enabled && (forms.jev.api_key === '***' || forms.jev.api_key)
-        ? `${forms.jev.model || '—'} · Auto Lender 主判`
-        : forms.jev.enabled
-          ? '已启用但未配置 Key'
-          : '未启用（选号走算法分）',
     process: '团队设置',
     editable: true,
   },
@@ -803,7 +792,17 @@ const FIELD_DEFS: Record<string, SettingsField> = {
 watch(
   () => route.query.tab,
   (value) => {
-    if (typeof value === 'string' && value) tab.value = value
+    if (typeof value === 'string' && value) {
+      if (value === 'loan_selection') {
+        router.replace({ path: '/borrow-management', query: { tab: 'rules' } })
+        return
+      }
+      if (value === 'jev') {
+        router.replace({ path: '/borrow-management', query: { tab: 'rules' } })
+        return
+      }
+      tab.value = value
+    }
   },
   { immediate: true },
 )
@@ -852,6 +851,7 @@ function applySettings(data: Record<string, any>) {
   forms.bot = { name: data.bot?.name || 'none', ...(data.bot || {}) }
   forms.admin = { ...(data.admin || {}) }
   forms.proxy_addresses = { addresses: data.proxy_addresses?.addresses || [] }
+  forms.loan_selection = { ...(data.tool_center?.loan_selection || {}) }
   const cursorSync = { ...(data.cursor_sync || {}) }
   if (cursorSync.default_interval_minutes == null && cursorSync.default_interval_hours != null) {
     cursorSync.default_interval_minutes = Number(cursorSync.default_interval_hours) * 60
@@ -1299,9 +1299,9 @@ async function deleteProxyAddress(index: number) {
   cursor: pointer;
 }
 .settings-table :deep(.el-table__row:hover) {
-  background: #f1f5f9;
+  background: var(--pulse-bg-code);
 }
 .edit-icon {
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 </style>

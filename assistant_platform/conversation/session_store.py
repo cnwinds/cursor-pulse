@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,12 +15,12 @@ GROUP_IDLE = timedelta(minutes=10)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _ensure_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -68,9 +68,7 @@ def get_open_session(
     if conversation_type == "private":
         stmt = stmt.where(ChatSessionRow.user_id == user_id)
         # 私聊按 user_id 续聊；conversation_id 历史上可能不一致，取最近活跃会话
-        return db_session.scalar(
-            stmt.order_by(ChatSessionRow.last_activity_at.desc()).limit(1)
-        )
+        return db_session.scalar(stmt.order_by(ChatSessionRow.last_activity_at.desc()).limit(1))
     return db_session.scalar(stmt)
 
 

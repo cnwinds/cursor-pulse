@@ -11,7 +11,7 @@ import base64
 import hashlib
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import blake2b
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -22,7 +22,7 @@ from assistant_platform.storage.models import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SecretRow(Base):

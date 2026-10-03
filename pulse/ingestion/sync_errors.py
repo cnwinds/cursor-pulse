@@ -25,7 +25,7 @@ def classify_sync_error(exc: BaseException) -> SyncError:
         if status == 429 or status >= 500:
             return RetryableSyncError(str(exc))
         return FatalSyncError(str(exc))
-    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError)):
+    if isinstance(exc, httpx.TimeoutException | httpx.NetworkError | httpx.TransportError):
         return RetryableSyncError(str(exc))
     if isinstance(exc, ValueError):
         return FatalSyncError(str(exc))

@@ -101,16 +101,12 @@ def test_refresh_and_logout_flow(client):
     assert me2.status_code == 200
 
     # Rotated refresh works once more.
-    ok = test_client.post(
-        "/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]}
-    )
+    ok = test_client.post("/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]})
     assert ok.status_code == 200
     latest = ok.json()["refresh_token"]
 
     # Reuse of a prior refresh is rejected without killing the latest session.
-    reuse = test_client.post(
-        "/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]}
-    )
+    reuse = test_client.post("/api/auth/refresh", json={"refresh_token": new_body["refresh_token"]})
     assert reuse.status_code == 401
     still = test_client.post("/api/auth/refresh", json={"refresh_token": latest})
     assert still.status_code == 200
@@ -125,9 +121,7 @@ def test_refresh_and_logout_flow(client):
 
 def test_refresh_rejects_unknown_token(client):
     test_client, _, _, _ = client
-    res = test_client.post(
-        "/api/auth/refresh", json={"refresh_token": "not-a-real-refresh-token"}
-    )
+    res = test_client.post("/api/auth/refresh", json={"refresh_token": "not-a-real-refresh-token"})
     assert res.status_code == 401
 
 

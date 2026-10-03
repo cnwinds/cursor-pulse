@@ -18,6 +18,15 @@ source .venv/bin/activate   # macOS/Linux
 
 若 `.venv` 不存在，按根目录 [README.md](README.md) 的「本地开发启动」创建并安装依赖。
 
+## 静态检查
+
+Python 使用 Ruff（见 `pyproject.toml`）：
+
+```bash
+ruff format pulse assistant_platform tests
+ruff check pulse assistant_platform tests
+```
+
 ## 测试
 
 跑测试时默认使用并行，以缩短全量耗时：
@@ -34,7 +43,12 @@ pytest --tb=short -q
 
 ## Subagent
 
-当模型需要启动 subagent 时，在确保完成质量的情况下优先使用 **`composer-2.5`**高性价比模型，否则根据工作复杂度选用高级模型。
+启动子代理（subagent）时须遵守以下模型限制，**任何情况下**均适用（本地 Agent、Cloud Agent 等）：
+
+- **禁止**使用 API 类模型（例如 Claude、GPT、Gemini、Muse 等通过 API 路由的模型 slug）作为子代理的工作模型。
+- **仅允许**使用 **Grok**（`cursor-grok-*`）与 **Composer**（`composer-*`）系列模型。
+
+在 Grok 与 Composer 之间选型时，在确保完成质量的前提下优先 **`composer-2.5`**（或同系列的 fast 变体）；需要更强推理或探索能力时再选用合适的 `cursor-grok-*` 档位。
 
 ## Agent skills
 

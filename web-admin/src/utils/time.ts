@@ -79,6 +79,34 @@ export function formatChinaTime(iso: string | null | undefined): string {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
+/** 中国时区日期与时间分行展示（表格窄列） */
+export function formatChinaDateTimeParts(
+  iso: string | null | undefined,
+): { date: string; time: string } | null {
+  if (!iso) return null
+  const date = parseApiDateTime(iso)
+  if (!date) return null
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? ''
+
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}:${get('second')}`,
+  }
+}
+
 /** 毫秒差值格式化为中文时长，如「2天3小时15分」 */
 export function formatDurationMs(ms: number): string {
   const safeMs = Math.max(ms, 0)
@@ -129,6 +157,28 @@ export function formatResetCountdown(
   if (totalDays >= 1) return `${totalDays}天后重置`
   if (totalHours >= 1) return `${totalHours}小时后重置`
   return `${Math.max(totalMinutes, 1)}分钟后重置`
+}
+
+/** 距额度作废的小时数 → 自适应「N天 / N小时 / N分钟」（不含「距作废」前缀）。 */
+export function formatHoursUntilDeadline(hours: number | null | undefined): string {
+  if (hours == null || !Number.isFinite(hours)) return '—'
+  const totalMinutes = Math.round(Math.max(0, hours) * 60)
+  if (totalMinutes <= 0) return '0分钟'
+
+  const days = Math.floor(totalMinutes / (24 * 60))
+  let rem = totalMinutes - days * 24 * 60
+  const hrs = Math.floor(rem / 60)
+  const mins = rem % 60
+
+  if (days >= 1) {
+    if (hrs > 0) return `${days}天${hrs}小时`
+    return `${days}天`
+  }
+  if (hrs >= 1) {
+    if (mins > 0) return `${hrs}小时${mins}分钟`
+    return `${hrs}小时`
+  }
+  return `${mins}分钟`
 }
 
 /** 借用时长：未归还时计至当前时刻 */

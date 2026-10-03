@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from pulse.ingestion.credentials import CredentialService
+from pulse.proxy.loan_usage_cap import usage_cap_snapshots
 from pulse.proxy.usage_queries import loan_proxy_totals_by_loan
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, Member
 from pulse.tool_center.key_loan_delivery import (
@@ -11,6 +12,7 @@ from pulse.tool_center.key_loan_delivery import (
     DELIVERY_PROXY_ALIAS,
     LENDER_MODE_MANUAL,
     KeyLoanError,
+    assignment_mode_label,
 )
 from pulse.tool_center.key_loan_lender import loan_display_expires_on
 from pulse.tool_center.key_loan_store import resolve_borrowed_cents
@@ -22,40 +24,36 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     if not loans:
         return []
     borrower_ids = {loan.borrower_member_id for loan in loans if loan.borrower_member_id}
-    account_ids = {loan.source_account_id for loan in loans}
+    account_ids = {loan.source_account_id for loan in loans if loan.source_account_id}
     accounts = {
         account.id: account
-        for account in session.scalars(select(AiAccount).where(AiAccount.id.in_(account_ids)))
+        for account in session.scalars(
+            select(AiAccount).where(
+                AiAccount.id.in_(account_ids),
+                AiAccount.deleted_at.is_(None),
+            )
+        )
     }
-    primary_ids = {
-        account.primary_member_id
-        for account in accounts.values()
-        if account.primary_member_id
-    }
+    primary_ids = {account.primary_member_id for account in accounts.values() if account.primary_member_id}
     member_ids = borrower_ids | primary_ids
     members = {
         member.id: member
-        for member in (
-            session.scalars(select(Member).where(Member.id.in_(member_ids))).all()
-            if member_ids
-            else []
-        )
+        for member in (session.scalars(select(Member).where(Member.id.in_(member_ids))).all() if member_ids else [])
     }
     snapshots = latest_snapshots_for_accounts(session, account_ids)
-    proxy_totals = loan_proxy_totals_by_loan(session, [loan.id for loan in loans])
+    loan_ids = [loan.id for loan in loans]
+    proxy_totals = loan_proxy_totals_by_loan(session, loan_ids)
+    cap_rows = usage_cap_snapshots(session, loans)
     cred_ids = {
         loan.credential_id
         for loan in loans
-        if (getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT)
-        != DELIVERY_PROXY_ALIAS
+        if (getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT) != DELIVERY_PROXY_ALIAS
         and loan.credential_id
     }
     credentials = {
         cred.id: cred
         for cred in (
-            session.scalars(
-                select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))
-            ).all()
+            session.scalars(select(AiAccountCredential).where(AiAccountCredential.id.in_(cred_ids))).all()
             if cred_ids
             else []
         )
@@ -64,20 +62,23 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
     for loan in loans:
         account = accounts.get(loan.source_account_id)
         borrower = members.get(loan.borrower_member_id) if loan.borrower_member_id else None
-        primary = (
-            members.get(account.primary_member_id)
-            if account and account.primary_member_id
-            else None
+        primary = members.get(account.primary_member_id) if account and account.primary_member_id else None
+        used_cents = (
+            snapshots[loan.source_account_id].used_cents
+            if loan.source_account_id and loan.source_account_id in snapshots
+            else 0
         )
-        used_cents = snapshots[loan.source_account_id].used_cents if loan.source_account_id in snapshots else 0
         deadline = loan_display_expires_on(loan, account)
-        _, proxy_cost_cents = proxy_totals.get(loan.id, (0, 0))
+        _tokens, proxy_cost_cents, proxy_cost_today_cents = proxy_totals.get(loan.id, (0, 0, 0))
         delivery_mode = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
         lender_mode = getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL
-        # 自动分配借用在候选账号间游走：单账号快照差值不再代表本笔消耗，
-        # 以代理账本按 loan_id 汇总为准（与近似消耗分开呈现）
+        routing_mode = getattr(loan, "routing_mode", None) or "pinned"
+        # 游走 / 账号池轮换没有单一账号差值；以代理账本按 loan_id 汇总为准。
         borrowed_cents, borrowed_basis = resolve_borrowed_cents(
-            lender_mode, max(used_cents - loan.baseline_used_cents, 0), proxy_cost_cents
+            lender_mode,
+            max(used_cents - loan.baseline_used_cents, 0),
+            proxy_cost_cents,
+            routing_mode=routing_mode,
         )
         if delivery_mode == DELIVERY_PROXY_ALIAS:
             key_hint = loan.alias_key_hint
@@ -97,16 +98,24 @@ def loan_payloads(loans: list[KeyLoan], session: Session) -> list[dict]:
                 "borrowed_cents": borrowed_cents,
                 "borrowed_basis": borrowed_basis,
                 "proxy_cost_cents": proxy_cost_cents,
+                "proxy_cost_today_cents": proxy_cost_today_cents,
                 "status": loan.status,
                 "auto_revoke_on_reset": loan.auto_revoke_on_reset,
                 "loan_expires_on": deadline.isoformat() if deadline else None,
                 "note": loan.note,
                 "delivery_mode": delivery_mode,
+                "assignment_label": assignment_mode_label(
+                    delivery_mode=delivery_mode,
+                    lender_mode=lender_mode,
+                    routing_mode=routing_mode,
+                ),
                 "key_hint": key_hint,
                 "lender_mode": lender_mode,
+                "routing_mode": routing_mode,
                 "source_bound_at": tool_datetime(loan.source_bound_at),
                 "created_at": tool_datetime(loan.created_at),
                 "revoked_at": tool_datetime(loan.revoked_at),
+                "usage_caps": cap_rows.get(loan.id, []),
             }
         )
     return payloads

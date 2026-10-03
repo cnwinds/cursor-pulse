@@ -76,7 +76,7 @@
             :disabled="field.readonly"
             class="secret-input"
           >
-            <template v-if="!field.readonly" #suffix>
+            <template v-if="!field.readonly && canWrite" #suffix>
               <el-icon
                 class="secret-eye"
                 :class="{ 'is-loading': secretLoading[field.key] }"
@@ -231,8 +231,8 @@ function onSave() {
 }
 .field-hint {
   margin-top: 4px;
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
   line-height: 1.4;
 }
 .secret-input {
@@ -240,10 +240,10 @@ function onSave() {
 }
 .secret-eye {
   cursor: pointer;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 .secret-eye:hover {
-  color: #64748b;
+  color: var(--pulse-text-secondary);
 }
 .secret-eye.is-loading {
   pointer-events: none;

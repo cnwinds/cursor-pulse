@@ -1,0 +1,213 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"strings"
+)
+
+func (s *Server) handleOpenAICompat(w http.ResponseWriter, r *http.Request) {
+	if s.pulse == nil {
+		http.Error(w, `{"error":{"message":"Pulse mode required","type":"server_error"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	path := r.URL.Path
+	if path == "/openai/v1/models" && r.Method == http.MethodGet {
+		writeOpenAIModels(w)
+		return
+	}
+	if path != "/openai/v1/chat/completions" || r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	pulseKey := extractBearer(r)
+	if pulseKey == "" || !strings.HasPrefix(pulseKey, "pkcp_") {
+		writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key provided")
+		return
+	}
+	limited := http.MaxBytesReader(w, r.Body, maxNonStreamBodyLimit())
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "Request body too large")
+			return
+		}
+		writeOpenAIError(w, http.StatusBadRequest, "Invalid body")
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "Invalid JSON body")
+		return
+	}
+	stream, _ := payload["stream"].(bool)
+	model, _ := payload["model"].(string)
+	if stream {
+		body = ensureOpenAIStreamUsageInRequest(body)
+	}
+
+	excluded := []string{}
+	releaseCurrent := false
+	var currentCred string
+	s.cpStickyMu.Lock()
+	currentCred = s.cpStickyCred[pulseKey]
+	s.cpStickyMu.Unlock()
+
+	var seated OpenAIResolveResult
+	defer func() {
+		if seated.ProxyKeyID != "" && seated.CredentialID != "" {
+			go s.pulse.EndOpenAI(seated.ProxyKeyID, seated.CredentialID)
+		}
+	}()
+
+	const maxAttempts = 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		res, err := s.pulse.ResolveOpenAI(pulseKey, excluded, currentCred, releaseCurrent)
+		releaseCurrent = false
+		if err != nil {
+			log.Printf("[openai] resolve error: %v", err)
+			writeOpenAIError(w, http.StatusBadGateway, "Control plane unavailable")
+			return
+		}
+		if res.Status != "ok" {
+			if res.Status == "no_pool" {
+				writeOpenAIError(w, http.StatusServiceUnavailable, "No available Coding Plan account in pool")
+				return
+			}
+			if res.Status == "window_limited" {
+				writeOpenAIError(w, http.StatusTooManyRequests, "Pulse proxy key window limit exceeded")
+				return
+			}
+			writeOpenAIError(w, http.StatusUnauthorized, "Invalid API key provided")
+			return
+		}
+		seated = res
+		upResp, upErr := s.forwardOpenAIChat(res, body)
+		if upErr != nil {
+			log.Printf("[openai] upstream error: %v", upErr)
+			excluded = append(excluded, res.CredentialID)
+			currentCred = res.CredentialID
+			releaseCurrent = true
+			continue
+		}
+		if upResp.StatusCode == 429 || upResp.StatusCode == 502 || upResp.StatusCode == 503 || upResp.StatusCode == 529 {
+			upResp.Body.Close()
+			excluded = append(excluded, res.CredentialID)
+			currentCred = res.CredentialID
+			releaseCurrent = true
+			continue
+		}
+		s.rememberCpSticky(pulseKey, res.CredentialID)
+		if stream {
+			tap := copyOpenAIUpstreamStream(w, upResp)
+			if upResp.StatusCode == http.StatusOK && res.ProxyKeyID != "" {
+				s.recordOpenAIUsageMap(res, model, tap.model, tap.usage)
+			}
+			return
+		}
+		respBody, readErr := io.ReadAll(upResp.Body)
+		upResp.Body.Close()
+		if readErr != nil {
+			writeOpenAIError(w, http.StatusBadGateway, "Upstream read failed")
+			return
+		}
+		if upResp.StatusCode == http.StatusOK && res.ProxyKeyID != "" {
+			respModel, usage := usageMapFromJSONBody(respBody)
+			s.recordOpenAIUsageMap(res, model, respModel, usage)
+		}
+		copyOpenAIUpstreamBody(w, upResp.StatusCode, upResp.Header, respBody)
+		return
+	}
+	writeOpenAIError(w, http.StatusTooManyRequests, "All pool accounts rejected or unavailable")
+}
+
+func (s *Server) forwardOpenAIChat(res OpenAIResolveResult, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, res.UpstreamChatURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+res.APIKey)
+	if res.CodingPlanVendor == "glm" {
+		req.Header.Set("Accept-Language", "en-US,en")
+	}
+	return s.transport.RoundTrip(req)
+}
+
+func copyOpenAIUpstreamBody(w http.ResponseWriter, status int, hdr http.Header, body []byte) {
+	for k, vals := range hdr {
+		if len(vals) > 0 && strings.EqualFold(k, "Content-Type") {
+			w.Header().Set(k, vals[0])
+		}
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) recordOpenAIUsageMap(
+	res OpenAIResolveResult,
+	requestModel string,
+	responseModel string,
+	usage map[string]any,
+) {
+	m := requestModel
+	if responseModel != "" {
+		m = responseModel
+	}
+	if err := s.pulse.RecordOpenAIUsage(res.ProxyKeyID, res.CredentialID, m, usage); err != nil {
+		log.Printf("[openai] usage record: %v", err)
+	}
+}
+
+func extractBearer(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
+		return strings.TrimSpace(auth[7:])
+	}
+	return ""
+}
+
+func writeOpenAIError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(`{"error":{"message":"` + escapeJSON(msg) + `","type":"invalid_request_error"}}`))
+}
+
+func escapeJSON(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
+}
+
+func writeOpenAIModels(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"object":"list","data":[` +
+		`{"id":"glm-5.2","object":"model","owned_by":"glm"},` +
+		`{"id":"MiniMax-M2.5","object":"model","owned_by":"minimax"},` +
+		`{"id":"kimi-k2.5","object":"model","owned_by":"kimi"}]}`))
+}
+
+func (s *Server) rememberCpSticky(pulseKey, credentialID string) {
+	if pulseKey == "" || credentialID == "" {
+		return
+	}
+	s.cpStickyMu.Lock()
+	if s.cpStickyCred == nil {
+		s.cpStickyCred = map[string]string{}
+	}
+	s.cpStickyCred[pulseKey] = credentialID
+	s.cpStickyMu.Unlock()
+}
+
+func isOpenAICompatPath(r *http.Request) bool {
+	if r.Method == http.MethodConnect {
+		return false
+	}
+	p := r.URL.Path
+	return strings.HasPrefix(p, "/openai/v1/")
+}

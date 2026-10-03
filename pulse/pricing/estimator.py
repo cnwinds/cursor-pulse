@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
 
 from pulse.domain import CostRaw, UsageEventRecord
 from pulse.pricing.billing_scope import classify_billing_scope, normalize_cursor_model_name
@@ -195,9 +194,7 @@ def aggregate_cursor_billing(records: list[UsageRecord]) -> dict:
         "api": _empty_pool_bucket(),
         "third_party": _empty_pool_bucket(),  # legacy key; classify no longer fills it
     }
-    external_models: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"total_tokens": 0, "event_count": 0}
-    )
+    external_models: dict[str, dict[str, int]] = defaultdict(lambda: {"total_tokens": 0, "event_count": 0})
     excluded_event_count = 0
     included_total = 0
     estimated_rows = 0
@@ -218,11 +215,9 @@ def aggregate_cursor_billing(records: list[UsageRecord]) -> dict:
         bucket = pools[scope]
         cost = effective_pool_cost(rec)
         bucket["spend_usd"] += cost
-        bucket["breakdown_by_model"][model_name] = (
-            bucket["breakdown_by_model"].get(model_name, 0.0) + cost
-        )
-        bucket["tokens_by_model"][model_name] = (
-            bucket["tokens_by_model"].get(model_name, 0) + int(rec.tokens_total or 0)
+        bucket["breakdown_by_model"][model_name] = bucket["breakdown_by_model"].get(model_name, 0.0) + cost
+        bucket["tokens_by_model"][model_name] = bucket["tokens_by_model"].get(model_name, 0) + int(
+            rec.tokens_total or 0
         )
 
         reported = float(rec.cost_usd or 0)
@@ -245,9 +240,7 @@ def aggregate_cursor_billing(records: list[UsageRecord]) -> dict:
     }
     billable_keys = ("auto_composer", "api")
     reported_spend = sum(cursor_pools[key]["reported_spend_usd"] for key in billable_keys)
-    estimated_included_spend = sum(
-        cursor_pools[key]["estimated_spend_usd"] for key in billable_keys
-    )
+    estimated_included_spend = sum(cursor_pools[key]["estimated_spend_usd"] for key in billable_keys)
     pool_spend = sum(cursor_pools[key]["spend_usd"] for key in billable_keys)
 
     coverage = None

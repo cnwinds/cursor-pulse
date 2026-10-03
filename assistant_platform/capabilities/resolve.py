@@ -41,15 +41,11 @@ def _is_active_capability(
 
 
 def _pack_items(session: Session, pack_id: str) -> list[tuple[str, str]]:
-    rows = session.scalars(
-        select(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack_id)
-    ).all()
+    rows = session.scalars(select(CapabilityPackItemRow).where(CapabilityPackItemRow.pack_id == pack_id)).all()
     return [(row.capability_key, row.capability_version) for row in rows]
 
 
-def _assignment_capabilities(
-    session: Session, assignment: CapabilityAssignmentRow
-) -> list[tuple[str, str]]:
+def _assignment_capabilities(session: Session, assignment: CapabilityAssignmentRow) -> list[tuple[str, str]]:
     if assignment.pack_id:
         return _pack_items(session, assignment.pack_id)
     if assignment.capability_key:
@@ -82,18 +78,13 @@ def resolve_capabilities(
 ) -> list[ResolvedCapability]:
     del channel  # reserved for supported_channels filtering when schema adds it
 
-    definitions = {
-        row.key: row
-        for row in session.scalars(select(CapabilityDefinitionRow)).all()
-    }
+    definitions = {row.key: row for row in session.scalars(select(CapabilityDefinitionRow)).all()}
     versions: dict[tuple[str, str], CapabilityVersionRow] = {}
     for version_row in session.scalars(select(CapabilityVersionRow)).all():
         versions[(version_row.definition_id, version_row.version)] = version_row
 
     assignments = session.scalars(
-        select(CapabilityAssignmentRow).where(
-            CapabilityAssignmentRow.team_id == team_id
-        )
+        select(CapabilityAssignmentRow).where(CapabilityAssignmentRow.team_id == team_id)
     ).all()
 
     granted: dict[str, str] = {}
@@ -102,26 +93,14 @@ def resolve_capabilities(
     _apply_assignments(session, team_default, granted, add=True)
 
     if role:
-        role_packs = [
-            a
-            for a in assignments
-            if a.scope_type == "role_pack" and a.scope_id == role
-        ]
+        role_packs = [a for a in assignments if a.scope_type == "role_pack" and a.scope_id == role]
         _apply_assignments(session, role_packs, granted, add=True)
 
     if member_id:
-        user_denies = [
-            a
-            for a in assignments
-            if a.scope_type == "user_deny" and a.scope_id == member_id
-        ]
+        user_denies = [a for a in assignments if a.scope_type == "user_deny" and a.scope_id == member_id]
         _apply_assignments(session, user_denies, granted, add=False)
 
-        user_allows = [
-            a
-            for a in assignments
-            if a.scope_type == "user_allow" and a.scope_id == member_id
-        ]
+        user_allows = [a for a in assignments if a.scope_type == "user_allow" and a.scope_id == member_id]
         for assignment in user_allows:
             for key, version in _assignment_capabilities(session, assignment):
                 if _is_active_capability(definitions, versions, key, version):

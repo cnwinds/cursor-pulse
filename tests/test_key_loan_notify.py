@@ -5,9 +5,65 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from pulse.config import AdminConfig, AppConfig, BotPlatformConfig, ProxyConfig, TenantConfig
+from pulse.config import (
+    AdminConfig,
+    AppConfig,
+    BotPlatformConfig,
+    ProxyAddress,
+    ProxyConfig,
+    TenantConfig,
+)
 from pulse.tool_center import key_loan_notify as notify
 from pulse.tool_center.key_loan_ops import request_loan
+
+
+def test_format_borrower_issued_includes_every_configured_proxy_address():
+    addresses = [
+        ProxyAddress(url="http://127.0.0.1:8317", display_name="本机代理"),
+        ProxyAddress(url="http://192.168.11.39:8317", display_name="内网代理"),
+    ]
+    text = notify.format_borrower_issued(
+        api_key="pka_testkey",
+        loan_id="ae727a27-xxxx",
+        loan_expires_on=None,
+        delivery_mode="proxy_alias",
+        addresses=addresses,
+    )
+    assert "本机代理 · Windows PowerShell" in text
+    assert "本机代理 · Linux / macOS" in text
+    assert "内网代理 · Windows PowerShell" in text
+    assert "内网代理 · Linux / macOS" in text
+    ps_idx = text.index("本机代理 · Windows PowerShell")
+    bash_idx = text.index("本机代理 · Linux / macOS")
+    inner_ps = text.index("内网代理 · Windows PowerShell")
+    assert ps_idx < bash_idx < inner_ps
+    assert "set HTTPS_PROXY=http://127.0.0.1:8317&&" in text
+    assert "set HTTPS_PROXY=http://192.168.11.39:8317&&" in text
+    assert 'HTTPS_PROXY="http://127.0.0.1:8317"' in text
+    assert 'HTTPS_PROXY="http://192.168.11.39:8317"' in text
+    assert "【Windows PowerShell】" not in text
+
+
+def test_resolve_proxy_addresses_uses_team_settings_when_present(monkeypatch):
+    team_addrs = [
+        ProxyAddress(url="http://team-proxy:8317", display_name="团队代理"),
+    ]
+    monkeypatch.setattr(
+        "pulse.settings.configured_proxy_addresses",
+        lambda _session, _team_id: team_addrs,
+    )
+    monkeypatch.setattr(
+        notify,
+        "team_repository",
+        lambda _session, _config: (SimpleNamespace(id="team-1"), None),
+    )
+    config = AppConfig(
+        tenant=TenantConfig(slug="t", name="T"),
+        proxy=ProxyConfig(public_url="http://fallback:8317"),
+    )
+    addrs = notify.resolve_proxy_addresses(MagicMock(), config)
+    assert len(addrs) == 1
+    assert addrs[0].url == "http://team-proxy:8317"
 
 
 def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
@@ -18,17 +74,18 @@ def test_format_borrower_issued_hides_lender_and_includes_shell_commands():
         warning="须配置 HTTPS_PROXY",
         proxy_url="http://proxy.example:8317",
         delivery_mode="proxy_alias",
+        lender_mode="manual",
+        routing_mode="pinned",
     )
+    assert "分配方式：指定账号" in text
+    assert "交付：代理别名" not in text
     assert "借出人" not in text
     assert "Alice" not in text
     assert "pka_testkey" in text
     assert "abcdef12" in text
-    assert "Windows PowerShell" in text
-    assert "Linux / macOS" in text
-    assert (
-        'cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& '
-        'set CURSOR_API_KEY=pka_testkey&& agent -k"'
-    ) in text
+    assert "http://proxy.example:8317 · Windows PowerShell" in text
+    assert "http://proxy.example:8317 · Linux / macOS" in text
+    assert ('cmd /c "set HTTPS_PROXY=http://proxy.example:8317&& set CURSOR_API_KEY=pka_testkey&& agent -k"') in text
     assert 'HTTPS_PROXY="http://proxy.example:8317" CURSOR_API_KEY="pka_testkey" agent -k' in text
     assert "export " not in text
     assert "$env:" not in text
@@ -82,9 +139,7 @@ def test_notify_loan_issued_sends_borrower_and_admin(monkeypatch):
 
     with patch(
         "pulse.identity.service.external_id_for",
-        side_effect=lambda _s, member, channel: (
-            "dt-borrower" if channel == "dingtalk" and member is borrower else None
-        ),
+        side_effect=lambda _s, member, channel: "dt-borrower" if channel == "dingtalk" and member is borrower else None,
     ):
         notify.notify_loan_issued(
             session,
@@ -104,12 +159,8 @@ def test_notify_loan_issued_sends_borrower_and_admin(monkeypatch):
     assert messenger.send_oto_text.call_count == 2
     recipients = {c.args[0] for c in messenger.send_oto_text.call_args_list}
     assert recipients == {"dt-borrower", "dt-admin"}
-    borrower_msg = next(
-        c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-borrower"
-    )
-    admin_msg = next(
-        c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-admin"
-    )
+    borrower_msg = next(c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-borrower")
+    admin_msg = next(c.args[1] for c in messenger.send_oto_text.call_args_list if c.args[0] == "dt-admin")
     assert "pka_abc" in borrower_msg
     assert "PowerShell" in borrower_msg
     assert "借出人" not in borrower_msg

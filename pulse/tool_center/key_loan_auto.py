@@ -15,25 +15,20 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from sqlalchemy.orm import Session
 
 from pulse.config import LoanSelectionConfig
-from pulse.storage.models import AiAccount
 from pulse.tool_center.auto_lender import PICKED_BY_JEV, rank_lenders
-from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO
 from pulse.tool_center.key_loan_lender import build_lender_candidates
 from pulse.tool_center.quota_pool import quota_pool_for_model
 
 logger = logging.getLogger(__name__)
 
 
-
-def own_cursor_account_ids(
-    session: Session, team_id: str, borrower_member_id: str | None
-) -> set[str]:
+def own_cursor_account_ids(session: Session, team_id: str, borrower_member_id: str | None) -> set[str]:
     """借用人自己名下的 Cursor 账号：借用不借自己的号。"""
     if not borrower_member_id:
         return set()
@@ -58,6 +53,7 @@ def resolve_auto_lender(
     exclude_account_ids: set[str] | None = None,
     own_account_ids: set[str] | None = None,
     now: datetime | None = None,
+    jev_bypass_cache: bool = False,
 ) -> dict:
     """按 Auto Lender 规则选出借账号。
 
@@ -73,9 +69,7 @@ def resolve_auto_lender(
         exclude |= own_account_ids
     else:
         exclude |= own_cursor_account_ids(session, team_id, borrower_member_id)
-    candidates = build_lender_candidates(
-        session, team_id, exclude_account_ids=exclude
-    )
+    candidates = build_lender_candidates(session, team_id, exclude_account_ids=exclude)
     board = rank_lenders(
         candidates,
         loan_selection=loan_selection,
@@ -86,6 +80,7 @@ def resolve_auto_lender(
         jev=jev,
         jev_config=jev_config,
         on_decision=on_decision,
+        jev_bypass_cache=jev_bypass_cache,
     )
     ranked = board["ranked"]
     return {
@@ -100,19 +95,19 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
     """把一次 Auto Lender 决策写入 proxy_events（审计）。
 
     只记「确有决策价值」的情况：Jev 选中了账号，或出现了回落原因。纯算法分
-    且无回落（如 auto 未开启）不写，避免池轮询/预览把事件表刷爆。调用方负责
-    commit。
+    且无回落、以及 Jev 未启用（``jev_unavailable`` / 旧 ``auto_mode_off``）不写，
+    避免池轮询和预览把事件表刷爆。调用方负责 commit。
     """
     decision = (result or {}).get("decision") or {}
     picked_by = decision.get("picked_by")
     reason = decision.get("fallback_reason")
     if picked_by != PICKED_BY_JEV and not reason:
         return
-    if reason == "auto_mode_off":
+    if reason in ("auto_mode_off", "jev_unavailable"):
         return
-    picked = next(
-        (row for row in (result.get("ranked") or []) if row.get("picked")), None
-    )
+    picked = next((row for row in (result.get("ranked") or []) if row.get("picked")), None)
+    trace = decision.get("jev_trace") or {}
+    trace_meta = trace.get("meta") if isinstance(trace, dict) else {}
     detail = {
         "picked_by": picked_by,
         "fallback_reason": reason,
@@ -123,6 +118,10 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         "account_identifier": (picked or {}).get("account_identifier"),
         "probabilities": decision.get("probabilities") or {},
         "owner_safe": decision.get("owner_safe") or {},
+        "jev_status": trace_meta.get("status") if isinstance(trace_meta, dict) else None,
+        "jev_skip_reason": trace_meta.get("skip_reason") if isinstance(trace_meta, dict) else None,
+        "jev_called_at": trace_meta.get("called_at") if isinstance(trace_meta, dict) else None,
+        "jev_duration_ms": trace_meta.get("duration_ms") if isinstance(trace_meta, dict) else None,
     }
     try:
         from pulse.proxy.key_crud import record_event
@@ -134,5 +133,3 @@ def record_auto_lender_decision(session: Session, result: dict) -> None:
         )
     except Exception:
         logger.warning("auto lender: audit event failed", exc_info=True)
-
-

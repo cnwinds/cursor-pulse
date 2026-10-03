@@ -48,21 +48,32 @@ func TestMarkExhaustedAdvancesOnce(t *testing.T) {
 	}
 }
 
-func TestNextAvailableAfter(t *testing.T) {
+func TestNextAvailableSkipsBlocked(t *testing.T) {
 	p := NewPoolFromCredentials([]PoolCredential{
 		{CredentialID: "c1", APIKey: "k1"},
 		{CredentialID: "c2", APIKey: "k2"},
 		{CredentialID: "c3", APIKey: "k3"},
 	})
-	p.keys[0].setFullyQuotaExhausted()
-	next := p.nextAvailableAfter("c1")
-	if next == nil || next.credentialID != "c2" {
-		t.Fatalf("next after c1: got %v", next)
-	}
-	p.keys[1].setFullyQuotaExhausted()
-	next = p.nextAvailableAfter("c1")
+	next := p.nextAvailableForQuotaWithin("c1", quotaPoolAuto, nil, map[string]bool{"c2": true})
 	if next == nil || next.credentialID != "c3" {
-		t.Fatalf("next after c1 with c2 exhausted: got %v", next)
+		t.Fatalf("want c3, got %#v", next)
+	}
+}
+
+func TestNextAvailableWalksPoolOrderFromTop(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "k1"},
+		{CredentialID: "c2", APIKey: "k2"},
+		{CredentialID: "c3", APIKey: "k3"},
+	})
+	next := p.nextAvailableForQuotaWithin("c3", quotaPoolAuto, nil, nil)
+	if next == nil || next.credentialID != "c1" {
+		t.Fatalf("leaving c3 should restart at the top (c1), got %v", next)
+	}
+	p.keys[0].setFullyQuotaExhausted()
+	next = p.nextAvailableForQuotaWithin("c3", quotaPoolAuto, nil, nil)
+	if next == nil || next.credentialID != "c2" {
+		t.Fatalf("c1 exhausted, want c2, got %v", next)
 	}
 }
 
@@ -76,16 +87,16 @@ func TestStickySelectAssignAndReuse(t *testing.T) {
 	sticky := NewStickySelect(p, sessions)
 
 	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok"}
-	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || tok == "" || entry == nil {
 		t.Fatalf("assign: %v", err)
 	}
-	if binding.StickyCredentialID != entry.credentialID {
-		t.Fatalf("sticky=%q cred=%q", binding.StickyCredentialID, entry.credentialID)
+	if binding.AutoSticky.CredentialID != entry.credentialID || binding.APISticky.CredentialID != "" {
+		t.Fatalf("auto=%q api=%q cred=%q", binding.AutoSticky.CredentialID, binding.APISticky.CredentialID, entry.credentialID)
 	}
 	sessions.Bind("jwt1", binding)
 
-	entry2, tok2, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry2, tok2, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || tok2 == "" {
 		t.Fatalf("reuse sticky: %v", err)
 	}
@@ -130,20 +141,20 @@ func TestStickySelectTransientExchangeKeepsSticky(t *testing.T) {
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
 
-	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	binding := SessionBinding{ProxyKeyID: "pk1", AutoSticky: stickySlot{CredentialID: "c1"}}
 	sessions.Bind("jwt1", binding)
 
-	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err == nil {
 		t.Fatal("expected transient exchange error")
 	}
 	b, ok := sessions.Lookup("jwt1")
-	if !ok || b.StickyCredentialID != "c1" {
-		t.Fatalf("sticky should remain c1, got %q", b.StickyCredentialID)
+	if !ok || b.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("sticky should remain c1, got %q", b.AutoSticky.CredentialID)
 	}
 
 	failExchange.Store(false)
-	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || tok == "" || entry.credentialID != "c1" {
 		t.Fatalf("retry after transient: err=%v cred=%s", err, entry.credentialID)
 	}
@@ -161,16 +172,16 @@ func TestStickySelectExhaustedRotates(t *testing.T) {
 
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
-	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	binding := SessionBinding{ProxyKeyID: "pk1", AutoSticky: stickySlot{CredentialID: "c1"}}
 	sessions.Bind("jwt1", binding)
 
-	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || tok == "" || entry.credentialID != "c2" {
 		t.Fatalf("want c2: err=%v entry=%v", err, entry)
 	}
 	b, ok := sessions.Lookup("jwt1")
-	if !ok || b.StickyCredentialID != "c2" {
-		t.Fatalf("sticky=%q want c2", b.StickyCredentialID)
+	if !ok || b.AutoSticky.CredentialID != "c2" {
+		t.Fatalf("sticky=%q want c2", b.AutoSticky.CredentialID)
 	}
 }
 
@@ -187,7 +198,11 @@ func TestStickySelectApiSnapshotRotates(t *testing.T) {
 
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
-	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	binding := SessionBinding{
+		ProxyKeyID: "pk1",
+		AutoSticky: stickySlot{CredentialID: "c1"},
+		APISticky:  stickySlot{CredentialID: "c1"},
+	}
 	sessions.Bind("jwt1", binding)
 
 	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
@@ -195,15 +210,51 @@ func TestStickySelectApiSnapshotRotates(t *testing.T) {
 		t.Fatalf("api pool want c2: err=%v entry=%v", err, entry)
 	}
 	b, ok := sessions.Lookup("jwt1")
-	if !ok || b.StickyCredentialID != "c2" {
-		t.Fatalf("sticky=%q want c2", b.StickyCredentialID)
+	if !ok || b.APISticky.CredentialID != "c2" {
+		t.Fatalf("api sticky=%q want c2", b.APISticky.CredentialID)
+	}
+	if b.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("api rotation must not touch the auto slot, got %q", b.AutoSticky.CredentialID)
 	}
 
-	// Auto pool still prefers c2 sticky (was rotated) if c2 has auto quota.
 	binding = b
 	entry2, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
-	if err != nil || entry2.credentialID != "c2" {
-		t.Fatalf("auto pool should keep sticky c2: err=%v cred=%s", err, entry2.credentialID)
+	if err != nil || entry2.credentialID != "c1" {
+		t.Fatalf("auto slot should keep c1: err=%v cred=%s", err, entry2.credentialID)
+	}
+}
+
+func TestStickyAPIRequestFillsFromAPIOrderNotAutoSlot(t *testing.T) {
+	// auto 槽的账号 api 桶也有余量，但 api 请求必须按 api 表从头选，不能顺用
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials(nil)
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	c1 := PoolCredential{CredentialID: "c1", APIKey: "keyA", AutoPct: ptrFloat(10), ApiPct: ptrFloat(10)}
+	c2 := PoolCredential{CredentialID: "c2", APIKey: "keyB", AutoPct: ptrFloat(30), ApiPct: ptrFloat(20)}
+	p.ReplaceFromPulseSnapshot(PulsePoolSnapshot{
+		Default: []PoolCredential{c1, c2},
+		Auto:    []PoolCredential{c2, c1},
+		API:     []PoolCredential{c1, c2},
+	})
+	sessions := NewSessionMap()
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{ProxyKeyID: "pk1"}
+
+	autoEntry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || autoEntry.credentialID != "c2" {
+		t.Fatalf("auto should take the auto order head c2: err=%v entry=%v", err, autoEntry)
+	}
+	apiEntry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || apiEntry.credentialID != "c1" {
+		t.Fatalf("api must take the api order head c1, not reuse c2: err=%v entry=%v", err, apiEntry)
+	}
+	if binding.AutoSticky.CredentialID != "c2" || binding.APISticky.CredentialID != "c1" {
+		t.Fatalf("slots: auto=%q api=%q", binding.AutoSticky.CredentialID, binding.APISticky.CredentialID)
+	}
+	again, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || again.credentialID != "c2" {
+		t.Fatalf("switching back to auto keeps the auto slot: err=%v entry=%v", err, again)
 	}
 }
 
@@ -218,17 +269,39 @@ func TestStickySelectRotateOnExhaustion(t *testing.T) {
 
 	sessions := NewSessionMap()
 	sticky := NewStickySelect(p, sessions)
-	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	binding := SessionBinding{
+		ProxyKeyID: "pk1",
+		AutoSticky: stickySlot{CredentialID: "c1"},
+		APISticky:  stickySlot{CredentialID: "c1"},
+	}
 	sessions.Bind("jwt1", binding)
 
 	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
 	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
-	if binding.StickyCredentialID != "c2" {
-		t.Fatalf("sticky=%q want c2", binding.StickyCredentialID)
+	if binding.APISticky.CredentialID != "c2" {
+		t.Fatalf("api sticky=%q want c2", binding.APISticky.CredentialID)
 	}
 	b, ok := sessions.Lookup("jwt1")
-	if !ok || b.StickyCredentialID != "c2" {
-		t.Fatalf("persisted sticky=%q want c2", b.StickyCredentialID)
+	if !ok || b.APISticky.CredentialID != "c2" || b.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("persisted auto=%q api=%q", b.AutoSticky.CredentialID, b.APISticky.CredentialID)
+	}
+}
+
+func TestRotateOnExhaustionIgnoresOtherSlot(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	sticky := NewStickySelect(p, NewSessionMap())
+	binding := SessionBinding{AutoSticky: stickySlot{CredentialID: "c1"}, APISticky: stickySlot{CredentialID: "c2"}}
+
+	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
+	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
+	if binding.APISticky.CredentialID != "c2" || binding.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("api exhaustion on the auto slot's account must not move anything: %+v", binding)
 	}
 }
 
@@ -256,9 +329,8 @@ func TestStickyDwellHoldsOnBucketExhaustion(t *testing.T) {
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
 	binding := SessionBinding{
-		ProxyKeyID:         "pk1",
-		StickyCredentialID: "c1",
-		StickySince:        time.Now(),
+		ProxyKeyID: "pk1",
+		APISticky:  stickySlot{CredentialID: "c1", Since: time.Now()},
 	}
 
 	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
@@ -268,34 +340,34 @@ func TestStickyDwellHoldsOnBucketExhaustion(t *testing.T) {
 	if entry.credentialID != "c1" {
 		t.Fatalf("dwell should hold c1, got %s", entry.credentialID)
 	}
-	if binding.StickyCredentialID != "c1" {
-		t.Fatalf("sticky should stay c1, got %q", binding.StickyCredentialID)
+	if binding.APISticky.CredentialID != "c1" {
+		t.Fatalf("sticky should stay c1, got %q", binding.APISticky.CredentialID)
 	}
 }
 
 func TestStickyDwellExpiredRotates(t *testing.T) {
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	idle := time.Now().Add(-31 * time.Minute)
 	binding := SessionBinding{
-		ProxyKeyID:         "pk1",
-		StickyCredentialID: "c1",
-		StickySince:        time.Now().Add(-31 * time.Minute),
+		ProxyKeyID: "pk1",
+		APISticky:  stickySlot{CredentialID: "c1", Since: idle, LastActive: idle},
 	}
 
 	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
 	if err != nil || entry.credentialID != "c2" {
 		t.Fatalf("dwell expired should rotate to c2: err=%v entry=%v", err, entry)
 	}
-	if binding.StickySince.IsZero() || time.Since(binding.StickySince) > time.Minute {
-		t.Fatalf("rotation should reset StickySince, got %v", binding.StickySince)
+	if binding.APISticky.Since.IsZero() || time.Since(binding.APISticky.Since) > time.Minute {
+		t.Fatalf("rotation should reset Since, got %v", binding.APISticky.Since)
 	}
 }
 
 func TestStickyDwellZeroSinceRotates(t *testing.T) {
-	// 存量绑定没有 StickySince：不能因此永久卡在无额度账号上
+	// 存量绑定没有 Since：不能因此永久卡在无额度账号上
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
-	binding := SessionBinding{ProxyKeyID: "pk1", StickyCredentialID: "c1"}
+	binding := SessionBinding{ProxyKeyID: "pk1", APISticky: stickySlot{CredentialID: "c1"}}
 
 	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
 	if err != nil || entry.credentialID != "c2" {
@@ -307,9 +379,8 @@ func TestStickyDwellDoesNotBlockAuthCooldownRotation(t *testing.T) {
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
 	binding := SessionBinding{
-		ProxyKeyID:         "pk1",
-		StickyCredentialID: "c1",
-		StickySince:        time.Now(),
+		ProxyKeyID: "pk1",
+		APISticky:  stickySlot{CredentialID: "c1", Since: time.Now()},
 	}
 	p.markBad(p.keys[0])
 
@@ -320,14 +391,14 @@ func TestStickyDwellDoesNotBlockAuthCooldownRotation(t *testing.T) {
 }
 
 func TestStickyDwellNotRefreshedOnReuse(t *testing.T) {
-	// 驻留窗口从「上次切换」起算；同一账号续用不能刷新它
+	// Since 只在换号时刷新；续用只刷新 LastActive
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
 	since := time.Now().Add(-10 * time.Minute)
+	lastActive := time.Now().Add(-2 * time.Minute)
 	binding := SessionBinding{
-		ProxyKeyID:         "pk1",
-		StickyCredentialID: "c1",
-		StickySince:        since,
+		ProxyKeyID: "pk1",
+		AutoSticky: stickySlot{CredentialID: "c1", Since: since, LastActive: lastActive},
 	}
 	sessions.Bind("jwt1", binding)
 
@@ -335,8 +406,51 @@ func TestStickyDwellNotRefreshedOnReuse(t *testing.T) {
 	if err != nil || tok == "" || entry.credentialID != "c1" {
 		t.Fatalf("auto pool should reuse c1: err=%v entry=%v", err, entry)
 	}
-	if !binding.StickySince.Equal(since) {
-		t.Fatalf("reuse must not refresh StickySince: %v -> %v", since, binding.StickySince)
+	if !binding.AutoSticky.Since.Equal(since) {
+		t.Fatalf("reuse must not refresh Since: %v -> %v", since, binding.AutoSticky.Since)
+	}
+	if !binding.AutoSticky.LastActive.After(lastActive) {
+		t.Fatalf("reuse should refresh LastActive")
+	}
+}
+
+func TestStickyDwellHoldsWhenBoundLongButRecentlyActive(t *testing.T) {
+	// 绑定很久但仍在密集聊天：距上次请求间隔短，不应因桶耗尽换号
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID: "pk1",
+		APISticky: stickySlot{
+			CredentialID: "c1",
+			Since:        time.Now().Add(-2 * time.Hour),
+			LastActive:   time.Now().Add(-1 * time.Minute),
+		},
+	}
+	sessions.Bind("jwt1", binding)
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c1" {
+		t.Fatalf("recent activity should hold c1 within dwell: err=%v entry=%v", err, entry)
+	}
+}
+
+func TestStickyFirstAPIRequestFillsEmptySlotIgnoringAutoDwell(t *testing.T) {
+	// auto 槽正在驻留期内用 c1；首次 api 请求时 api 槽为空，按 api 表选有余量的 c2
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID: "pk1",
+		AutoSticky: stickySlot{CredentialID: "c1", Since: time.Now(), LastActive: time.Now()},
+	}
+	sessions.Bind("jwt1", binding)
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("api slot should fill with c2: err=%v entry=%v", err, entry)
+	}
+	stored, _ := sessions.Lookup("jwt1")
+	if stored.APISticky.CredentialID != "c2" || stored.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("slots not persisted: auto=%q api=%q", stored.AutoSticky.CredentialID, stored.APISticky.CredentialID)
 	}
 }
 
@@ -344,9 +458,8 @@ func TestStickyDwellDisabledWhenZero(t *testing.T) {
 	p, sessions := dwellTestPool(t)
 	sticky := NewStickySelectWithDwell(p, sessions, 0)
 	binding := SessionBinding{
-		ProxyKeyID:         "pk1",
-		StickyCredentialID: "c1",
-		StickySince:        time.Now(),
+		ProxyKeyID: "pk1",
+		APISticky:  stickySlot{CredentialID: "c1", Since: time.Now()},
 	}
 
 	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
@@ -426,15 +539,15 @@ func TestStickySelectStartsInsideAllowlist(t *testing.T) {
 		AllowedCredentialIDs: []string{"c2"},
 	}
 
-	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || tok == "" {
 		t.Fatalf("select: %v", err)
 	}
 	if entry.credentialID != "c2" {
 		t.Fatalf("must start inside the allowlist, got %s", entry.credentialID)
 	}
-	if binding.StickyCredentialID != "c2" {
-		t.Fatalf("sticky=%q", binding.StickyCredentialID)
+	if binding.AutoSticky.CredentialID != "c2" {
+		t.Fatalf("sticky=%q", binding.AutoSticky.CredentialID)
 	}
 }
 
@@ -445,11 +558,11 @@ func TestStickySelectRotatesWithinAllowlist(t *testing.T) {
 	p.keys[0].setFullyQuotaExhausted()
 	binding := SessionBinding{
 		Mode:                 "loan_alias",
-		StickyCredentialID:   "c1",
+		AutoSticky:           stickySlot{CredentialID: "c1"},
 		AllowedCredentialIDs: []string{"c1", "c2"},
 	}
 
-	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || entry.credentialID != "c2" {
 		t.Fatalf("must rotate to c2 (not c3): err=%v entry=%v", err, entry)
 	}
@@ -461,11 +574,11 @@ func TestStickySelectDropsCredentialLeavingAllowlist(t *testing.T) {
 	// c1 still has quota but is no longer a candidate → must not keep serving.
 	binding := SessionBinding{
 		Mode:                 "loan_alias",
-		StickyCredentialID:   "c1",
+		AutoSticky:           stickySlot{CredentialID: "c1"},
 		AllowedCredentialIDs: []string{"c2"},
 	}
 
-	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if err != nil || entry.credentialID != "c2" {
 		t.Fatalf("stale sticky outside allowlist must rotate: err=%v entry=%v", err, entry)
 	}
@@ -478,11 +591,11 @@ func TestStickySelectAllowlistExhaustedDoesNotEscape(t *testing.T) {
 	// Only c1 is a candidate and it is exhausted; c2/c3 must not be used.
 	binding := SessionBinding{
 		Mode:                 "loan_alias",
-		StickyCredentialID:   "c1",
+		AutoSticky:           stickySlot{CredentialID: "c1"},
 		AllowedCredentialIDs: []string{"c1"},
 	}
 
-	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolUnknown)
+	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
 	if !errors.Is(err, errAllExhausted) {
 		t.Fatalf("want errAllExhausted, got %v", err)
 	}
@@ -493,15 +606,15 @@ func TestRotateOnExhaustionStaysInsideAllowlist(t *testing.T) {
 	sticky := NewStickySelect(p, sessions)
 	binding := SessionBinding{
 		Mode:                 "loan_alias",
-		StickyCredentialID:   "c1",
+		APISticky:            stickySlot{CredentialID: "c1"},
 		AllowedCredentialIDs: []string{"c1", "c3"},
 	}
 	sessions.Bind("jwt1", binding)
 	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
 
 	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
-	if binding.StickyCredentialID != "c3" {
-		t.Fatalf("must advance to c3, got %q", binding.StickyCredentialID)
+	if binding.APISticky.CredentialID != "c3" {
+		t.Fatalf("must advance to c3, got %q", binding.APISticky.CredentialID)
 	}
 }
 
@@ -510,15 +623,105 @@ func TestRotateOnExhaustionNoCandidateLeft(t *testing.T) {
 	sticky := NewStickySelect(p, sessions)
 	binding := SessionBinding{
 		Mode:                 "loan_alias",
-		StickyCredentialID:   "c1",
+		APISticky:            stickySlot{CredentialID: "c1"},
 		AllowedCredentialIDs: []string{"c1"},
 	}
 	sessions.Bind("jwt1", binding)
 	p.markQuotaExhausted(p.keys[0], quotaPoolAPI)
 
 	sticky.RotateOnExhaustion("jwt1", &binding, "c1", quotaPoolAPI)
-	if binding.StickyCredentialID != "c1" {
-		t.Fatalf("must not escape the allowlist, got %q", binding.StickyCredentialID)
+	if binding.APISticky.CredentialID != "c1" {
+		t.Fatalf("must not escape the allowlist, got %q", binding.APISticky.CredentialID)
+	}
+}
+
+func TestStickyAdvisorAssignsOnRotation(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	var current string
+	var release bool
+	askedPool := quotaPoolAuto
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		current = cur
+		release = rel
+		askedPool = pool
+		return "c2", []string{"c1"}, true, nil
+	})
+	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok", APISticky: stickySlot{CredentialID: "c1", LastActive: time.Now()}}
+	sessions.Bind("jwt1", binding)
+	entry, tok, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || tok == "" || entry.credentialID != "c2" {
+		t.Fatalf("want c2: err=%v entry=%v", err, entry)
+	}
+	if current != "c1" || !release {
+		t.Fatalf("advisor current=%q release=%v", current, release)
+	}
+	if binding.APISticky.CredentialID != "c2" {
+		t.Fatalf("api slot=%q", binding.APISticky.CredentialID)
+	}
+	if askedPool != quotaPoolAPI {
+		t.Fatalf("advisor should receive the request pool, got %v", askedPool)
+	}
+	if len(binding.BlockedCredentialIDs) != 1 || binding.BlockedCredentialIDs[0] != "c1" {
+		t.Fatalf("blocked=%v", binding.BlockedCredentialIDs)
+	}
+}
+
+func TestStickyAdvisorFailClosedDoesNotPickLocal(t *testing.T) {
+	fu := newFakeUpstreamSession(t)
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.exchangeBase = fu.URL
+	p.client = fu.Client()
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		return "", []string{"c2"}, true, nil
+	})
+	binding := SessionBinding{ProxyKeyID: "pk1", PulseKey: "pk_ok", AutoSticky: stickySlot{CredentialID: "c1"}}
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if !errors.Is(err, errAllExhausted) || entry != nil {
+		t.Fatalf("want exhausted, err=%v entry=%v", err, entry)
+	}
+	if binding.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("sticky moved to %q", binding.AutoSticky.CredentialID)
+	}
+}
+
+func TestStickyAdvisorFailOpenSkipsBlocked(t *testing.T) {
+	p := NewPoolFromCredentials([]PoolCredential{
+		{CredentialID: "c1", APIKey: "keyA"},
+		{CredentialID: "c2", APIKey: "keyB"},
+	})
+	p.keys[0].setFullyQuotaExhausted()
+	sessions := NewSessionMap()
+	sticky := NewStickySelect(p, sessions)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		return "", nil, false, errors.New("web down")
+	})
+	binding := SessionBinding{
+		ProxyKeyID:           "pk1",
+		PulseKey:             "pk_ok",
+		AutoSticky:           stickySlot{CredentialID: "c1"},
+		BlockedCredentialIDs: []string{"c2"},
+	}
+	_, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if !errors.Is(err, errAllExhausted) {
+		t.Fatalf("blocked account must stay skipped, err=%v", err)
+	}
+	if binding.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("sticky=%q", binding.AutoSticky.CredentialID)
 	}
 }
 
@@ -526,8 +729,217 @@ func TestUnscopedBindingStillWalksWholePool(t *testing.T) {
 	p, sessions := allowlistPool(t)
 	sticky := NewStickySelect(p, sessions)
 	// No allowlist → shared-pool behaviour, may pick any credential.
-	entry, _, err := sticky.Select(context.Background(), "jwt1", &SessionBinding{}, quotaPoolUnknown)
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &SessionBinding{}, quotaPoolAuto)
 	if err != nil || entry == nil {
 		t.Fatalf("unscoped select: %v", err)
+	}
+}
+
+func TestStickyStaleCopyDoesNotClobberOtherSlot(t *testing.T) {
+	// 同一会话并发：auto 请求拿着旧副本（api 槽为空），写回时不能抹掉刚填好的 api 槽
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	sessions.Bind("jwt1", SessionBinding{ProxyKeyID: "pk1", AutoSticky: stickySlot{CredentialID: "c1"}})
+	stale, _ := sessions.Lookup("jwt1")
+	fresh, _ := sessions.Lookup("jwt1")
+
+	if _, _, err := sticky.Select(context.Background(), "jwt1", &fresh, quotaPoolAPI); err != nil {
+		t.Fatalf("api select: %v", err)
+	}
+	if _, _, err := sticky.Select(context.Background(), "jwt1", &stale, quotaPoolAuto); err != nil {
+		t.Fatalf("auto select: %v", err)
+	}
+	stored, _ := sessions.Lookup("jwt1")
+	if stored.APISticky.CredentialID != "c2" || stored.AutoSticky.CredentialID != "c1" {
+		t.Fatalf("slots: auto=%q api=%q", stored.AutoSticky.CredentialID, stored.APISticky.CredentialID)
+	}
+	if stale.APISticky.CredentialID != "c2" {
+		t.Fatalf("select should refresh the copy's other slot, got %q", stale.APISticky.CredentialID)
+	}
+}
+
+// --- Slot activity (in-flight requests, idle seats) --------------------------
+
+func TestSlotActiveCountsInFlightAndRecentUse(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-slotIdleAfter - time.Second)
+	b := SessionBinding{
+		AutoSticky: stickySlot{CredentialID: "a", LastActive: now},
+		APISticky:  stickySlot{CredentialID: "b", LastActive: old},
+	}
+	if !b.slotActive(quotaPoolAuto, now) {
+		t.Fatal("recently used slot is active")
+	}
+	if b.slotActive(quotaPoolAPI, now) {
+		t.Fatal("slot idle past slotIdleAfter with nothing in flight is not active")
+	}
+	if got := b.heldOutside(quotaPoolAuto); got != nil {
+		t.Fatalf("idle api slot must not be held: %v", got)
+	}
+	b.inFlight[quotaPoolAPI] = 1
+	if !b.slotActive(quotaPoolAPI, now) {
+		t.Fatal("a long stream in flight keeps the slot active")
+	}
+	if got := b.heldOutside(quotaPoolAuto); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("in-flight api slot must be held: %v", got)
+	}
+	if (&SessionBinding{}).slotActive(quotaPoolAuto, now) {
+		t.Fatal("empty slot is never active")
+	}
+}
+
+func TestTrackKeepsSlotActiveAndRefreshesLastActiveAtEnd(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	started := time.Now().Add(-10 * time.Minute)
+	sessions.Bind("jwt1", SessionBinding{APISticky: stickySlot{CredentialID: "c2", Since: started, LastActive: started}})
+
+	done := sticky.Track("jwt1", quotaPoolAPI)
+	mid, _ := sessions.Lookup("jwt1")
+	if mid.inFlight[quotaPoolAPI] != 1 || !mid.slotActive(quotaPoolAPI, time.Now()) {
+		t.Fatalf("stream in flight should keep api slot active: inFlight=%v", mid.inFlight)
+	}
+	done()
+	end, _ := sessions.Lookup("jwt1")
+	if end.inFlight[quotaPoolAPI] != 0 {
+		t.Fatalf("inFlight not released: %v", end.inFlight)
+	}
+	if !end.APISticky.LastActive.After(started) || time.Since(end.APISticky.LastActive) > time.Minute {
+		t.Fatalf("LastActive should move to stream end, got %v", end.APISticky.LastActive)
+	}
+	if !end.APISticky.Since.Equal(started) {
+		t.Fatalf("stream end must not reset Since")
+	}
+}
+
+func TestSelectDoesNotClobberInFlight(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	sessions.Bind("jwt1", SessionBinding{
+		AutoSticky: stickySlot{CredentialID: "c1", LastActive: time.Now()},
+		APISticky:  stickySlot{CredentialID: "c2", LastActive: time.Now()},
+	})
+	done := sticky.Track("jwt1", quotaPoolAPI)
+	stale, _ := sessions.Lookup("jwt1")
+	stale.inFlight = [2]int{}
+	if _, _, err := sticky.Select(context.Background(), "jwt1", &stale, quotaPoolAuto); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	stored, _ := sessions.Lookup("jwt1")
+	if stored.inFlight[quotaPoolAPI] != 1 {
+		t.Fatalf("select must not overwrite the in-flight count: %v", stored.inFlight)
+	}
+	done()
+}
+
+func TestIdleSlotReseatsBeforeServing(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	var calls []string
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		calls = append(calls, cur)
+		if rel || pool != quotaPoolAuto {
+			t.Fatalf("reseat must keep current (release=false) on the slot's pool: rel=%v pool=%v", rel, pool)
+		}
+		return "c2", []string{"c1"}, true, nil
+	})
+	idle := time.Now().Add(-slotIdleAfter - time.Minute)
+	binding := SessionBinding{
+		ProxyKeyID: "pk1",
+		PulseKey:   "pk_ok",
+		AutoSticky: stickySlot{CredentialID: "c1", Since: idle, LastActive: idle},
+	}
+	sessions.Bind("jwt1", binding)
+
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("idle slot whose account filled up should move to c2: err=%v entry=%v", err, entry)
+	}
+	if len(calls) != 1 || calls[0] != "c1" {
+		t.Fatalf("advisor calls=%v", calls)
+	}
+
+	// Active again: the next request must not ask Pulse.
+	if _, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto); err != nil || len(calls) != 1 {
+		t.Fatalf("active slot should not reseat: err=%v calls=%v", err, calls)
+	}
+}
+
+func TestIdleSlotReseatKeepsAccountWithRoom(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		return cur, nil, true, nil
+	})
+	idle := time.Now().Add(-slotIdleAfter - time.Minute)
+	binding := SessionBinding{PulseKey: "pk_ok", AutoSticky: stickySlot{CredentialID: "c1", Since: idle, LastActive: idle}}
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || entry.credentialID != "c1" {
+		t.Fatalf("room left on c1, keep it: err=%v entry=%v", err, entry)
+	}
+	if !binding.AutoSticky.Since.Equal(idle) {
+		t.Fatal("keeping the same account must not reset Since")
+	}
+}
+
+func TestIdleSlotReseatNoSeatFailsClosed(t *testing.T) {
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 30*time.Minute)
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		return "", []string{"c1", "c2"}, true, nil
+	})
+	idle := time.Now().Add(-slotIdleAfter - time.Minute)
+	binding := SessionBinding{PulseKey: "pk_ok", AutoSticky: stickySlot{CredentialID: "c1", Since: idle, LastActive: idle}}
+	if _, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto); !errors.Is(err, errAllExhausted) {
+		t.Fatalf("no seat anywhere: want errAllExhausted, got %v", err)
+	}
+}
+
+func TestDwellHoldsWhileStreamInFlight(t *testing.T) {
+	// 长流开始于 25 分钟前仍在跑：并发的新 api 请求不能因驻留过期把槽换走
+	p, sessions := dwellTestPool(t)
+	sticky := NewStickySelectWithDwell(p, sessions, 20*time.Minute)
+	started := time.Now().Add(-25 * time.Minute)
+	sessions.Bind("jwt1", SessionBinding{ProxyKeyID: "pk1", APISticky: stickySlot{CredentialID: "c1", Since: started, LastActive: started}})
+	done := sticky.Track("jwt1", quotaPoolAPI)
+	defer done()
+
+	binding, _ := sessions.Lookup("jwt1")
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAPI)
+	if err != nil || entry.credentialID != "c1" {
+		t.Fatalf("in-flight stream keeps dwell: want c1, err=%v entry=%v", err, entry)
+	}
+}
+
+func TestIdleReseatReleasesUnusableAssignment(t *testing.T) {
+	p, sessions := allowlistPool(t)
+	sticky := NewStickySelect(p, sessions)
+	var calls []struct {
+		cur string
+		rel bool
+	}
+	sticky.SetAdvisor(func(binding *SessionBinding, cur string, rel bool, pool quotaPoolKind) (string, []string, bool, error) {
+		calls = append(calls, struct {
+			cur string
+			rel bool
+		}{cur, rel})
+		if len(calls) == 1 {
+			return "c3", nil, true, nil
+		}
+		return "c2", nil, true, nil
+	})
+	idle := time.Now().Add(-slotIdleAfter - time.Minute)
+	binding := SessionBinding{
+		Mode:                 "loan_alias",
+		PulseKey:             "pka_x",
+		AutoSticky:           stickySlot{CredentialID: "c1", Since: idle, LastActive: idle},
+		AllowedCredentialIDs: []string{"c1", "c2"},
+	}
+	entry, _, err := sticky.Select(context.Background(), "jwt1", &binding, quotaPoolAuto)
+	if err != nil || entry.credentialID != "c2" {
+		t.Fatalf("want c2 after releasing out-of-allowlist c3: err=%v entry=%v", err, entry)
+	}
+	if len(calls) != 2 || calls[1].cur != "c3" || !calls[1].rel {
+		t.Fatalf("the unusable seat must be released: %+v", calls)
 	}
 }

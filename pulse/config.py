@@ -65,6 +65,7 @@ class ObjectStorageConfig(BaseModel):
 
 class BotPlatformConfig(BaseModel):
     """群平台：none（默认，Web-only）| dingtalk | feishu | wecom。"""
+
     name: str = "none"
 
 
@@ -79,6 +80,7 @@ class FeishuConfig(BaseModel):
 
 class CursorTeamsConfig(BaseModel):
     """Cursor Teams/Enterprise Admin API（可选）。"""
+
     enabled: bool = False
     api_base_url: str = "https://api.cursor.com"
     admin_api_key: str = ""
@@ -193,33 +195,34 @@ class LoanSelectionConfig(BaseModel):
     weight_surplus: float = Field(default=0.25, ge=0)
     weight_load: float = Field(default=0.15, ge=0)
     weight_freshness: float = Field(default=0.10, ge=0)
-    # 代理池：快到期优先消化 + 剩余额度优先 + 保留主使用人 headroom
+    # 代理池：快到期优先消化（主目标）+ 余量/空闲额度作次要因素
+    # urgency 权重须明显高于 headroom/surplus，否则长周期空闲号会压过即将重置的号
     proxy_deadline_power: float = Field(default=1.75, ge=1.0)
-    proxy_weight_urgency: float = Field(default=0.52, ge=0)
-    proxy_weight_headroom: float = Field(default=0.28, ge=0)
-    proxy_weight_surplus: float = Field(default=0.17, ge=0)
+    proxy_weight_urgency: float = Field(default=0.70, ge=0)
+    proxy_weight_headroom: float = Field(default=0.15, ge=0)
+    proxy_weight_surplus: float = Field(default=0.12, ge=0)
     proxy_weight_freshness: float = Field(default=0.03, ge=0)
     # 驻留：账号刚绑定/刚切走时降权，避免借用人在账号间抖动
-    min_switch_minutes: float = Field(default=30.0, ge=0)
+    min_switch_minutes: float = Field(default=20.0, ge=0)
     recency_penalty: float = Field(default=0.25, ge=0)
     # 主负责人保留量（账号级 proxy_reserve_pct 优先）；0 = 不保留
     owner_reserve_pct: float = Field(default=0.0, ge=0, le=100)
-    # Auto Lender：Jev 只对存活候选重排，护栏不通过则回落算法分
+    # 已废弃：是否调用 Jev 由 ``jev.enabled`` 决定；保留字段仅兼容旧配置
     auto_mode: bool = False
     auto_top_n: int = Field(default=8, ge=1, le=50)
     auto_min_confidence: float = Field(default=0.5, ge=0, le=1)
     auto_min_margin: float = Field(default=0.05, ge=0, le=1)
     auto_cache_seconds: float = Field(default=600.0, ge=0)
     auto_switch_margin: float = Field(default=0.1, ge=0)
+    # 同一账号经本代理同时在线的不同使用人上限。0 = 不限制。
+    # 只计代理连接，不计主负责人在 Cursor 客户端的直接使用。
+    max_concurrent_users: int = Field(default=3, ge=0, le=100)
+    # 座位心跳超时。应长于 Go 会话续期间隔（默认 120s）。
+    concurrent_ttl_seconds: int = Field(default=180, ge=30, le=3600)
 
     @model_validator(mode="after")
-    def _validate_weight_sums(self) -> "LoanSelectionConfig":
-        loan_total = (
-            self.weight_urgency
-            + self.weight_surplus
-            + self.weight_load
-            + self.weight_freshness
-        )
+    def _validate_weight_sums(self) -> LoanSelectionConfig:
+        loan_total = self.weight_urgency + self.weight_surplus + self.weight_load + self.weight_freshness
         if loan_total <= 0:
             raise ValueError("loan selection weights must sum to a positive value")
         proxy_total = (
@@ -407,6 +410,7 @@ _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 def _expand_env(value: Any) -> Any:
     if isinstance(value, str):
+
         def repl(match: re.Match[str]) -> str:
             return os.environ.get(match.group(1), "")
 
@@ -432,9 +436,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if isinstance(admin_data, dict):
         if "channel_user_ids" not in admin_data and "dingtalk_user_ids" in admin_data:
             admin_data["channel_user_ids"] = admin_data.pop("dingtalk_user_ids")
-            logger.warning(
-                "config admin.dingtalk_user_ids is deprecated; use admin.channel_user_ids"
-            )
+            logger.warning("config admin.dingtalk_user_ids is deprecated; use admin.channel_user_ids")
     cfg = AppConfig.model_validate(data)
 
     env = EnvSettings()
@@ -449,16 +451,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if env.dingtalk_chat_id:
         cfg.dingtalk.chat_id = env.dingtalk_chat_id
     if env.admin_channel_user_ids:
-        cfg.admin.channel_user_ids = [
-            uid.strip() for uid in env.admin_channel_user_ids.split(",") if uid.strip()
-        ]
+        cfg.admin.channel_user_ids = [uid.strip() for uid in env.admin_channel_user_ids.split(",") if uid.strip()]
     elif env.dingtalk_admin_user_ids:
-        logger.warning(
-            "DINGTALK_ADMIN_USER_IDS is deprecated; use ADMIN_CHANNEL_USER_IDS instead"
-        )
-        cfg.admin.channel_user_ids = [
-            uid.strip() for uid in env.dingtalk_admin_user_ids.split(",") if uid.strip()
-        ]
+        logger.warning("DINGTALK_ADMIN_USER_IDS is deprecated; use ADMIN_CHANNEL_USER_IDS instead")
+        cfg.admin.channel_user_ids = [uid.strip() for uid in env.dingtalk_admin_user_ids.split(",") if uid.strip()]
     if env.feishu_app_id:
         cfg.feishu.app_id = env.feishu_app_id
     if env.feishu_app_secret:
@@ -508,9 +504,7 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     if env.dingtalk_oauth_redirect_uri:
         cfg.web.dingtalk_oauth_redirect_uri = env.dingtalk_oauth_redirect_uri
     if env.web_cors_origins:
-        cfg.web.cors_origins = [
-            o.strip() for o in env.web_cors_origins.split(",") if o.strip()
-        ]
+        cfg.web.cors_origins = [o.strip() for o in env.web_cors_origins.split(",") if o.strip()]
     if env.pulse_team_slug:
         cfg.tenant.slug = env.pulse_team_slug
     if env.database_url:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pulse.util.datetime_fmt import serialize_datetime
-
-from typing import Annotated, Callable
+from collections.abc import Callable
 
 from fastapi import Depends, HTTPException
+from pulse.util.datetime_fmt import serialize_datetime
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 

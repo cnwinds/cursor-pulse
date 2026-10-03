@@ -4,8 +4,8 @@ from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from pulse.config import AppConfig
 from pulse.http_clients import internal_client

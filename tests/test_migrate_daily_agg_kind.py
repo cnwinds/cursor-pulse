@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import create_engine, inspect, select, text
-from sqlalchemy.orm import sessionmaker
-
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import Base, UsageDailyAggregate
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.orm import sessionmaker
 
 
 def _legacy_daily_agg_sql() -> str:
@@ -53,8 +52,7 @@ def test_migrate_widens_daily_agg_unique_to_kind_family():
     columns = {col["name"] for col in inspector.get_columns("usage_daily_aggregates")}
     assert "kind_family" in columns
     unique_cols = [
-        list(c.get("column_names") or [])
-        for c in inspector.get_unique_constraints("usage_daily_aggregates")
+        list(c.get("column_names") or []) for c in inspector.get_unique_constraints("usage_daily_aggregates")
     ]
     unique_cols.extend(
         list(idx.get("column_names") or [])
@@ -79,11 +77,7 @@ def test_migrate_widens_daily_agg_unique_to_kind_family():
         )
     )
     session.commit()
-    rows = list(
-        session.scalars(
-            select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == "acct-1")
-        )
-    )
+    rows = list(session.scalars(select(UsageDailyAggregate).where(UsageDailyAggregate.account_id == "acct-1")))
     families = {row.kind_family for row in rows}
     assert "unknown" in families
     assert "user_api_key" in families

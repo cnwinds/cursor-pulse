@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
-from pulse.util.datetime_fmt import serialize_datetime
-from datetime import datetime, timezone
-from typing import Annotated
-
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,40 +16,73 @@ from sqlalchemy.orm import Session, sessionmaker
 from pulse.config import AppConfig
 from pulse.storage.models import QueryLog
 from pulse.tenant.context import team_repository
+from pulse.util.datetime_fmt import serialize_datetime
+from pulse.util.timezone_ctx import (
+    configure_display_timezone_resolver,
+    set_default_display_timezone,
+)
+from pulse.web.accounts_api import register_accounts_v2_routes
+from pulse.web.assistant_capabilities_api import register_assistant_capabilities_routes
+from pulse.web.assistant_prompts_api import register_assistant_prompts_routes
+from pulse.web.assistant_sessions_api import register_assistant_sessions_routes
+from pulse.web.assistant_skills_api import register_assistant_skills_routes
 from pulse.web.audit import list_admin_audit_logs
-from pulse.web.deps import PortalUser, require_portal_user
-from pulse.web.permissions import has_permission
-from pulse.web.schemas import ChatBody
+from pulse.web.credentials_api import register_credentials_routes
 from pulse.web.dashboard_api import (
     build_dashboard_overview,
     build_integrations_status,
     build_schedule_plan,
 )
-from pulse.web.accounts_api import register_accounts_v2_routes
-from pulse.web.credentials_api import register_credentials_routes
+from pulse.web.deps import PortalUser, require_portal_user
 from pulse.web.ingestion_status_api import register_ingestion_status_routes
-from pulse.web.knowledge_api import register_knowledge_routes
-from pulse.web.assistant_capabilities_api import register_assistant_capabilities_routes
-from pulse.web.assistant_prompts_api import register_assistant_prompts_routes
-from pulse.web.assistant_sessions_api import register_assistant_sessions_routes
-from pulse.web.assistant_skills_api import register_assistant_skills_routes
 from pulse.web.internal_capabilities_api import register_internal_capabilities_routes
 from pulse.web.internal_channel_api import register_internal_channel_routes
+from pulse.web.internal_openai_proxy_api import register_internal_openai_proxy_routes
 from pulse.web.internal_proxy_api import register_internal_proxy_routes
+from pulse.web.knowledge_api import register_knowledge_routes
+from pulse.web.openai_proxy_api import register_openai_proxy_admin_routes
+from pulse.web.permissions import has_permission
 from pulse.web.portal_auth_api import register_portal_auth_routes
 from pulse.web.portal_users_api import register_portal_users_routes
 from pulse.web.pricing_api import register_pricing_routes
 from pulse.web.proxy_keys_api import register_proxy_keys_routes
 from pulse.web.quota_api import register_quota_routes
+from pulse.web.schemas import ChatBody
 from pulse.web.settings_api import register_settings_routes
-from pulse.web.usage_analytics_api import register_usage_analytics_routes
 from pulse.web.timezone_middleware import DisplayTimezoneMiddleware
-from pulse.util.timezone_ctx import (
-    configure_display_timezone_resolver,
-    set_default_display_timezone,
-)
+from pulse.web.usage_analytics_api import register_usage_analytics_routes
 
 logger = logging.getLogger(__name__)
+
+
+def _run_startup_db_tasks(config: AppConfig, session_factory: sessionmaker[Session]) -> None:
+    session = session_factory()
+    try:
+        enc = (config.credentials.encryption_key or "").strip()
+        if enc:
+            from pulse.ingestion.credentials import backfill_credential_key_hashes
+
+            n = backfill_credential_key_hashes(session, enc)
+            if n:
+                logger.info("Backfilled key_hash on %d credential(s)", n)
+
+        team, _ = team_repository(session, config)
+        from pulse.tool_center.seed import seed_v2_catalog
+
+        counts = seed_v2_catalog(session, team)
+        if counts["vendors"] or counts["plans"] or counts["accounts"]:
+            logger.info(
+                "Ensured v2 catalog (vendors=%s plans=%s accounts=%s)",
+                counts["vendors"],
+                counts["plans"],
+                counts["accounts"],
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Startup DB maintenance failed")
+    finally:
+        session.close()
 
 
 def create_app(
@@ -69,7 +101,13 @@ def create_app(
     assert_jwt_secret_configured(config)
     set_default_display_timezone(config.collection.timezone)
     configure_display_timezone_resolver(config, session_factory)
-    app = FastAPI(title="Cursor Pulse Admin", version="0.2.0")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        _run_startup_db_tasks(config, session_factory)
+        yield
+
+    app = FastAPI(title="Cursor Pulse Admin", version="0.2.0", lifespan=lifespan)
 
     app.add_middleware(
         DisplayTimezoneMiddleware,
@@ -116,7 +154,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "time": serialize_datetime(datetime.now(timezone.utc))}
+        return {"status": "ok", "time": serialize_datetime(datetime.now(UTC))}
 
     admin_spa_dir = resolve_admin_static_dir()
     if require_admin_spa and admin_spa_dir is None:
@@ -134,9 +172,7 @@ def create_app(
 
     @app.get("/api/query-logs", dependencies=[Depends(require_capability("audit:read"))])
     def query_logs(session: Session = Depends(get_db), limit: int = Query(50, le=200)):
-        rows = session.scalars(
-            select(QueryLog).order_by(QueryLog.created_at.desc()).limit(limit)
-        ).all()
+        rows = session.scalars(select(QueryLog).order_by(QueryLog.created_at.desc()).limit(limit)).all()
         return [
             {
                 "id": row.id,
@@ -164,6 +200,18 @@ def create_app(
                 status_code=503,
                 detail="Assistant 未启用，请配置 ASSISTANT_MIRROR_ENABLED=true",
             )
+        from pulse.web.portal_chat import store_portal_chat_delivery
+
+        # Committed before the mirror call so no DB write lock is held during HTTP.
+        user_row = store_portal_chat_delivery(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            text=message,
+            kind="user",
+        )
+        session.commit()
+        poll_after = user_row.id
         try:
             from pulse.channels.dingtalk.mirror import mirror_web_message
 
@@ -178,11 +226,13 @@ def create_app(
             )
         except Exception:
             logger.exception("Assistant web mirror failed")
+            session.delete(user_row)
+            session.commit()
             raise HTTPException(status_code=502, detail="转发 Assistant 失败")
         return {
             "status": "accepted",
             "session_id": mirror_result.get("session_id"),
-            "poll_after": 0,
+            "poll_after": poll_after,
             "reply": "已记录，小脉处理中，请稍候。",
             "actions": [],
         }
@@ -194,7 +244,12 @@ def create_app(
         user: PortalUser = Depends(_require_user),
     ):
         team, _repo = _team_repo(session)
-        from pulse.web.portal_chat import delivery_to_json, list_portal_chat_deliveries
+        from pulse.web.portal_chat import (
+            delivery_to_json,
+            list_active_portal_chat_streams,
+            list_portal_chat_deliveries,
+            stream_to_json,
+        )
 
         rows = list_portal_chat_deliveries(
             session,
@@ -202,7 +257,33 @@ def create_app(
             member_id=user.member.id,
             after_id=after,
         )
-        return {"items": [delivery_to_json(row) for row in rows]}
+        streams = list_active_portal_chat_streams(session, team_id=team.id, member_id=user.member.id)
+        return {
+            "items": [delivery_to_json(row) for row in rows],
+            "streams": [stream_to_json(row) for row in streams],
+        }
+
+    @app.get("/api/chat/history")
+    def chat_history(
+        limit: int = Query(50, ge=1, le=200),
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(_require_user),
+    ):
+        team, _repo = _team_repo(session)
+        from pulse.web.portal_chat import (
+            delivery_to_json,
+            list_active_portal_chat_streams,
+            list_recent_portal_chat_deliveries,
+            stream_to_json,
+        )
+
+        rows = list_recent_portal_chat_deliveries(session, team_id=team.id, member_id=user.member.id, limit=limit)
+        streams = list_active_portal_chat_streams(session, team_id=team.id, member_id=user.member.id)
+        return {
+            "items": [delivery_to_json(row) for row in rows],
+            "streams": [stream_to_json(row) for row in streams],
+            "last_id": rows[-1].id if rows else 0,
+        }
 
     @app.get("/api/audit-logs", dependencies=[Depends(require_capability("audit:read"))])
     def audit_logs(session: Session = Depends(get_db), limit: int = Query(100, le=500)):
@@ -216,9 +297,7 @@ def create_app(
         user: PortalUser = Depends(_require_user),
     ):
         team, repo = _team_repo(session)
-        return build_dashboard_overview(
-            config, session, team.id, repo=repo, actor=user.member
-        )
+        return build_dashboard_overview(config, session, team.id, repo=repo, actor=user.member)
 
     @app.get("/api/system/schedule", dependencies=[Depends(require_capability("settings:read"))])
     def system_schedule(session: Session = Depends(get_db)):
@@ -235,9 +314,7 @@ def create_app(
     register_pricing_routes(app, get_db, require_capability, _team_repo)
     register_portal_users_routes(app, config, get_db, require_capability, _team_repo)
     register_accounts_v2_routes(app, get_db, require_capability, _team_repo, config=config)
-    register_credentials_routes(
-        app, get_db, require_capability, _team_repo, config, require_user=_require_user
-    )
+    register_credentials_routes(app, get_db, require_capability, _team_repo, config, require_user=_require_user)
     register_ingestion_status_routes(app, get_db, require_capability, _team_repo)
     register_knowledge_routes(app, get_db, require_capability, _team_repo, config)
     register_quota_routes(app, get_db, require_capability, _team_repo, config)
@@ -245,38 +322,16 @@ def create_app(
     register_internal_capabilities_routes(app, get_db, config)
     register_internal_channel_routes(app, config, get_db, _team_repo)
     register_internal_proxy_routes(app, get_db, config)
-    register_proxy_keys_routes(
-        app, get_db, require_capability, config, require_user=_require_user
-    )
-    register_assistant_capabilities_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_sessions_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_skills_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
-    register_assistant_prompts_routes(
-        app, get_db, require_capability, _team_repo, config
-    )
+    register_proxy_keys_routes(app, get_db, require_capability, config, require_user=_require_user)
+    register_assistant_capabilities_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_sessions_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_skills_routes(app, get_db, require_capability, _team_repo, config)
+    register_assistant_prompts_routes(app, get_db, require_capability, _team_repo, config)
+    register_internal_openai_proxy_routes(app, get_db, config)
+    register_openai_proxy_admin_routes(app, get_db, require_capability, config)
 
     if admin_spa_dir is not None:
         _mount_admin_static(app, admin_spa_dir)
-
-    enc = (config.credentials.encryption_key or "").strip()
-    if enc:
-        from pulse.ingestion.credentials import backfill_credential_key_hashes
-
-        session = session_factory()
-        try:
-            n = backfill_credential_key_hashes(session, enc)
-            if n:
-                logger.info("Backfilled key_hash on %d credential(s)", n)
-        except Exception:
-            logger.exception("Failed to backfill credential key_hash")
-        finally:
-            session.close()
 
     return app
 
@@ -309,6 +364,7 @@ def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
     if resolved is None:
         logger.warning("Vue admin SPA not found; /admin will be unavailable")
         return
+    resolved = resolved.resolve()
 
     assets_dir = resolved / "assets"
     if assets_dir.is_dir():
@@ -325,9 +381,9 @@ def _mount_admin_static(app: FastAPI, static_dir: Path | None = None) -> None:
     @app.get("/admin/{full_path:path}")
     async def admin_spa(full_path: str = "") -> FileResponse:
         # Prefer real files (favicon, etc.); otherwise SPA shell.
-        if full_path and ".." not in full_path.split("/"):
-            candidate = resolved / full_path
-            if candidate.is_file():
+        if full_path:
+            candidate = (resolved / full_path).resolve()
+            if candidate.is_relative_to(resolved) and candidate.is_file():
                 return FileResponse(candidate)
         return FileResponse(index_file)
 

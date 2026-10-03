@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select, text
 
@@ -9,7 +9,6 @@ from assistant_platform.config import AssistantChatMemoryConfig, MemoryRecallBud
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
 from assistant_platform.memory.archive_indexer import archive_and_index_session
 from assistant_platform.memory.archive_models import ArchiveChunkRow, resolve_archive_scope
-from assistant_platform.memory.contracts import ChunkAnchor, MemoryScope
 from assistant_platform.memory.archive_search import (
     SearchScope,
     _fts_query_text,
@@ -19,11 +18,12 @@ from assistant_platform.memory.archive_search import (
     read_message_range,
     resolve_search_scope,
 )
+from assistant_platform.memory.contracts import ChunkAnchor, MemoryScope
 from assistant_platform.storage.db import init_assistant_db
 
 
 def _session_row(**overrides) -> ChatSessionRow:
-    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, tzinfo=UTC)
     data = dict(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -41,15 +41,15 @@ def _session_row(**overrides) -> ChatSessionRow:
     return ChatSessionRow(**data)
 
 
-def _msg(session_id: str, role: str, text: str, *, kind: str | None = None, offset: int = 0) -> ChatMessageRow:
+def _msg(session_id: str, role: str, body: str, *, kind: str | None = None, offset: int = 0) -> ChatMessageRow:
     from datetime import timedelta
 
-    base = datetime(2026, 7, 1, tzinfo=timezone.utc) + timedelta(seconds=offset)
+    base = datetime(2026, 7, 1, tzinfo=UTC) + timedelta(seconds=offset)
     return ChatMessageRow(
         id=str(uuid.uuid4()),
         session_id=session_id,
         role=role,
-        text_redacted=text,
+        text_redacted=body,
         meta_json={"kind": kind} if kind is not None else {},
         created_at=base,
     )

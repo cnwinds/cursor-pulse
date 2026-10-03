@@ -40,13 +40,13 @@ def register_settings_routes(app, config: AppConfig, get_db, require_capability,
 
     @app.get(
         "/api/settings/{section}/reveal/{key}",
-        dependencies=[Depends(require_capability("settings:read"))],
+        dependencies=[Depends(require_capability("settings:write"))],
     )
     def reveal_settings_secret(
         section: str,
         key: str,
         session: Session = Depends(get_db),
-        user: PortalUser = Depends(require_capability("settings:read")),
+        user: PortalUser = Depends(require_capability("settings:write")),
     ):
         team, _repo = team_repo_fn(session)
         try:
@@ -64,7 +64,7 @@ def register_settings_routes(app, config: AppConfig, get_db, require_capability,
             team_id=team.id,
             member_id=user.member.id,
             action="settings.secret_reveal",
-            capability="settings:read",
+            capability="settings:write",
             detail=f"{section}.{key}",
         )
         session.commit()

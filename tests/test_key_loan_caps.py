@@ -2,22 +2,19 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
-
-from sqlalchemy.exc import OperationalError
-
 from pulse.config import LoanSelectionConfig
 from pulse.ingestion.credentials import CredentialService
 from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot
 from pulse.tool_center.key_loan_issue import _lock_account_for_loan_issue, issue_loan_key, request_self_service_loan
 from pulse.tool_center.key_loans import KeyLoanError, KeyLoanService, recommend_lender_for_borrower
-
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy.exc import OperationalError
 from tests.conftest import (
     ensure_synced_primary_credential,
     make_team_repo,
@@ -47,7 +44,7 @@ def cap_env():
     session.add(
         AccountQuotaSnapshot(
             account_id=lender.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=cycle_start,
             cycle_end=cycle_end,
             limit_cents=7000,
@@ -71,9 +68,7 @@ def _mock_client(env) -> MagicMock:
     mock_client.get_access_token.return_value = "session-token"
     mock_client.create_user_api_key.return_value = {"apiKey": "crsr_cap_test_loan_key"}
     mock_client.list_user_api_keys.return_value = [{"id": 42, "name": "pulse-loan"}]
-    mock_cursor_key_exchange(
-        mock_client, email=env["lender"].account_identifier.lower()
-    )
+    mock_cursor_key_exchange(mock_client, email=env["lender"].account_identifier.lower())
     return mock_client
 
 
@@ -84,9 +79,7 @@ def _bind_lender_primary(env, mock_client) -> None:
         api_key="crsr_primary_key_for_cap_test_abcdefghij",
         member_id=env["admin"].id,
     )
-    ensure_synced_primary_credential(
-        env["session"], env["lender"], member_id=env["admin"].id
-    )
+    ensure_synced_primary_credential(env["session"], env["lender"], member_id=env["admin"].id)
     env["session"].flush()
 
 
@@ -182,8 +175,6 @@ def test_issue_allows_over_cap_when_not_enforced(cap_env):
 def test_lock_timeout_translated_to_business_error():
     session = MagicMock()
     session.get_bind.return_value.dialect.name = "sqlite"
-    session.execute.side_effect = OperationalError(
-        "UPDATE ai_accounts", {}, Exception("database is locked")
-    )
+    session.execute.side_effect = OperationalError("UPDATE ai_accounts", {}, Exception("database is locked"))
     with pytest.raises(KeyLoanError, match="系统繁忙"):
         _lock_account_for_loan_issue(session, "acc-1")

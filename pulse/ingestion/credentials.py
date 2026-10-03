@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from pulse.ingestion.crypto import decrypt_secret, encrypt_secret, mask_api_key
-from pulse.proxy.keys import hash_proxy_key
 from pulse.ingestion.sync_schedule import init_schedule_on_bind
 from pulse.integrations.cursor_api import CursorApiClient
+from pulse.proxy.keys import hash_proxy_key
 from pulse.storage.models import AiAccount, AiAccountCredential, KeyLoan, ProxyKey
 
 
@@ -16,9 +16,7 @@ class AccountEmailMismatchError(ValueError):
     def __init__(self, *, ledger_email: str, key_email: str):
         self.ledger_email = ledger_email
         self.key_email = key_email
-        super().__init__(
-            f"API Key 对应账号 {key_email} 与台账账号 {ledger_email} 不一致"
-        )
+        super().__init__(f"API Key 对应账号 {key_email} 与台账账号 {ledger_email} 不一致")
 
 
 def _ledger_identifier(account: AiAccount) -> str | None:
@@ -26,9 +24,7 @@ def _ledger_identifier(account: AiAccount) -> str | None:
     return text.lower() if text else None
 
 
-def _apply_key_account_identifier(
-    account: AiAccount, key_email: str | None
-) -> None:
+def _apply_key_account_identifier(account: AiAccount, key_email: str | None) -> None:
     ledger_id = _ledger_identifier(account)
     if not ledger_id:
         if not key_email:
@@ -85,12 +81,10 @@ class CredentialService:
             raise ValueError("account not found")
 
         exchange = self.cursor_client.exchange_user_api_key_response(api_key)
-        key_email = self.cursor_client.resolve_api_key_account_email(
-            api_key, exchange=exchange
-        )
+        key_email = self.cursor_client.resolve_api_key_account_email(api_key, exchange=exchange)
         _apply_key_account_identifier(account, key_email)
         encrypted = encrypt_secret(api_key, self.encryption_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         cred = self.get_primary_credential(account_id)
         key_hash = hash_proxy_key(api_key)
@@ -121,6 +115,81 @@ class CredentialService:
         self.session.commit()
         return cred
 
+    def bind_coding_plan_api_key(
+        self,
+        *,
+        account_id: str,
+        api_key: str,
+        member_id: str,
+    ) -> AiAccountCredential:
+        account = self.session.scalar(
+            select(AiAccount).options(joinedload(AiAccount.vendor)).where(AiAccount.id == account_id)
+        )
+        if not account:
+            raise ValueError("account not found")
+        if not account.vendor or account.vendor.slug not in ("glm", "minimax", "kimi"):
+            raise ValueError("not a coding plan account")
+
+        region = (account.api_region or "").strip()
+        if account.vendor.slug == "kimi":
+            from pulse.integrations.coding_plan import fetch_kimi_quota
+
+            fetch_kimi_quota(api_key)
+        elif account.vendor.slug == "glm":
+            if region not in ("zai", "bigmodel"):
+                raise ValueError("GLM 账号须配置 api_region（zai 或 bigmodel）")
+            from pulse.integrations.coding_plan import fetch_glm_quota
+
+            fetch_glm_quota(
+                api_key,
+                region=region,
+                organization_id=account.glm_organization_id,
+                project_id=account.glm_project_id,
+            )
+        else:
+            if region not in ("cn", "global"):
+                raise ValueError("MiniMax 账号须配置 api_region（cn 或 global）")
+            from pulse.integrations.coding_plan.minimax import fetch_minimax_quota
+
+            fetch_minimax_quota(api_key, region=region)
+
+        encrypted = encrypt_secret(api_key, self.encryption_key)
+        now = datetime.now(UTC)
+        cred = self.get_primary_credential(account_id)
+        key_hash = hash_proxy_key(api_key)
+        cred_type = {
+            "glm": "glm_api_key",
+            "minimax": "minimax_api_key",
+            "kimi": "kimi_api_key",
+        }[account.vendor.slug]
+        if cred:
+            cred.key_role = "primary"
+            cred.encrypted_value = encrypted
+            cred.key_hint = mask_api_key(api_key)
+            cred.key_hash = key_hash
+            cred.credential_type = cred_type
+            cred.status = "active"
+            cred.bound_by_member_id = member_id
+            cred.bound_at = now
+            cred.last_validated_at = now
+            cred.sync_enabled = True
+        else:
+            cred = AiAccountCredential(
+                account_id=account_id,
+                vendor_id=account.vendor_id,
+                credential_type=cred_type,
+                encrypted_value=encrypted,
+                key_hint=mask_api_key(api_key),
+                key_hash=key_hash,
+                key_role="primary",
+                bound_by_member_id=member_id,
+                last_validated_at=now,
+            )
+            self.session.add(cred)
+        init_schedule_on_bind(cred)
+        self.session.commit()
+        return cred
+
     def create_loan_credential(
         self,
         *,
@@ -136,7 +205,7 @@ class CredentialService:
             raise ValueError("account not found")
 
         encrypted = encrypt_secret(api_key, self.encryption_key)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cred = AiAccountCredential(
             account_id=account_id,
             vendor_id=account.vendor_id,
@@ -189,9 +258,7 @@ def rotate_credential_encryption(
 
     stats = {"credentials": 0, "loan_aliases": 0, "proxy_keys": 0, "skipped": 0}
 
-    for cred in session.scalars(
-        select(AiAccountCredential).where(AiAccountCredential.encrypted_value != "")
-    ).all():
+    for cred in session.scalars(select(AiAccountCredential).where(AiAccountCredential.encrypted_value != "")).all():
         try:
             plain = decrypt_secret(cred.encrypted_value, old)
         except Exception:
@@ -231,9 +298,7 @@ def rotate_credential_encryption(
             pk.encrypted_key = encrypt_secret(plain, new)
         stats["proxy_keys"] += 1
 
-    if not dry_run and (
-        stats["credentials"] or stats["loan_aliases"] or stats["proxy_keys"]
-    ):
+    if not dry_run and (stats["credentials"] or stats["loan_aliases"] or stats["proxy_keys"]):
         session.commit()
     return stats
 

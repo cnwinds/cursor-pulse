@@ -1,8 +1,4 @@
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from pulse.storage.models import Base, Member, UsageIngestion
 from pulse.web.portal import (
     PortalAdminError,
@@ -10,6 +6,9 @@ from pulse.web.portal import (
     delete_member_without_ingestions,
     revoke_portal_access,
 )
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from tests.conftest import make_team_repo
 
 
@@ -30,9 +29,7 @@ def session():
 def test_revoke_portal_access(session):
     s, team_id = session
     _team, repo = make_team_repo(s)
-    member = bootstrap_portal_owner(
-        repo, channel_user_id="u1", display_name="Alice", password="secret1234"
-    )
+    bootstrap_portal_owner(repo, channel_user_id="u1", display_name="Alice", password="secret1234")
     repo.commit()
 
     revoked = revoke_portal_access(s, team_id, "u1")

@@ -57,18 +57,18 @@ class JevAnswer:
         raw = self.raw
         if isinstance(raw, bool):
             return 1.0 if raw else 0.0
-        if isinstance(raw, (int, float)):
+        if isinstance(raw, int | float):
             return float(raw)
         if isinstance(raw, dict):
-            for key in ("probability", "p"):
+            for key in ("probability", "p", "noul"):
                 value = raw.get(key)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if isinstance(value, int | float) and not isinstance(value, bool):
                     return float(value)
             probs = raw.get("probabilities")
             if isinstance(probs, dict):
                 for key in ("true", "True", "yes"):
                     value = probs.get(key)
-                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if isinstance(value, int | float) and not isinstance(value, bool):
                         return float(value)
         return None
 
@@ -76,7 +76,7 @@ class JevAnswer:
     def confidence(self) -> float | None:
         if isinstance(self.raw, dict):
             value = self.raw.get("confidence")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if isinstance(value, int | float) and not isinstance(value, bool):
                 return float(value)
         return None
 
@@ -87,9 +87,7 @@ class JevAnswer:
             probs = self.raw.get("probabilities")
             if isinstance(probs, dict):
                 return {
-                    str(k): float(v)
-                    for k, v in probs.items()
-                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    str(k): float(v) for k, v in probs.items() if isinstance(v, int | float) and not isinstance(v, bool)
                 }
         return {}
 
@@ -191,9 +189,7 @@ class JevClient:
             raise JevError(f"jev request failed: {exc}") from exc
 
         if response.status_code != 200:
-            raise JevError(
-                f"jev HTTP {response.status_code}: {_error_message(response)}"
-            )
+            raise JevError(f"jev HTTP {response.status_code}: {_error_message(response)}")
         try:
             data = response.json()
         except Exception as exc:
@@ -207,10 +203,7 @@ class JevClient:
             raise JevError(f"jev response has no answers: {data!r}")
 
         return JevDecision(
-            answers={
-                name: JevAnswer(name=name, raw=raw)
-                for name, raw in answers_raw.items()
-            },
+            answers={name: JevAnswer(name=name, raw=raw) for name, raw in answers_raw.items()},
             model=data.get("model"),
             provider=data.get("provider"),
             usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},

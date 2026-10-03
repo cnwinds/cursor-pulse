@@ -1,11 +1,11 @@
 <template>
-  <div class="pending-page">
-    <el-card shadow="never" class="card">
+  <div class="pulse-auth-shell">
+    <el-card shadow="never" class="pulse-auth-card">
       <el-result icon="info" title="等待管理员审批">
         <template #sub-title>
           <p>你好，<strong>{{ userName }}</strong></p>
-          <p class="hint">账号正在等待超级管理员审批开通后台权限。</p>
-          <p class="hint">审批通过后请使用原登录方式重新登录。</p>
+          <p class="pulse-hint">账号正在等待超级管理员审批开通后台权限。</p>
+          <p class="pulse-hint">审批通过后请使用原登录方式重新登录。</p>
         </template>
         <template #extra>
           <el-button type="primary" @click="recheck">重新检查</el-button>
@@ -48,21 +48,3 @@ function recheck() {
   backLogin()
 }
 </script>
-
-<style scoped>
-.pending-page {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #f8fafc;
-  padding: 24px;
-}
-.card {
-  width: min(520px, 100%);
-}
-.hint {
-  color: #64748b;
-  font-size: 14px;
-  margin: 8px 0 0;
-}
-</style>

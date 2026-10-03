@@ -72,12 +72,8 @@ def _mock_cursor_client(*, email: str):
     mock_cursor_key_exchange(mock_client, email=email)
     mock_client.exchange_api_key.return_value = "session-token"
     mock_client.get_access_token.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     from pulse.integrations.cursor_api import map_usage_event
 
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
@@ -112,7 +108,7 @@ def test_create_account_rejects_non_cursor_vendor(create_env):
         },
     )
     assert res.status_code == 400
-    assert "Cursor" in res.json()["detail"]
+    assert "不支持" in res.json()["detail"]
 
 
 def test_create_account_rejects_available_status(create_env):
@@ -131,7 +127,7 @@ def test_create_account_rejects_available_status(create_env):
     assert "类型无效" in res.json()["detail"]
 
 
-@patch("pulse.web.accounts_api.CursorApiClient")
+@patch("pulse.web.account_create_handlers.CursorApiClient")
 def test_create_account_autofills_from_key(mock_client_cls, create_env):
     client = create_env["client"]
     token = create_access_token(create_env["config"], create_env["owner"])

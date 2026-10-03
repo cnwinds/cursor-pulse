@@ -1,9 +1,9 @@
 <template>
   <el-container class="layout">
-    <el-aside width="220px" class="aside">
+    <el-aside width="228px" class="aside">
       <div class="brand">
         <img class="logo" src="/logo.svg" alt="Cursor Pulse" />
-        <div>
+        <div class="brand-text">
           <div class="title">小脉</div>
           <div class="subtitle">Cursor Pulse</div>
         </div>
@@ -12,6 +12,7 @@
         :default-active="active"
         :default-openeds="['grp-pulse', 'grp-assistant', 'grp-system']"
         router
+        class="nav-menu"
       >
         <el-sub-menu index="grp-pulse">
           <template #title>
@@ -33,9 +34,16 @@
             <el-icon><DataAnalysis /></el-icon>
             <span>用量分析</span>
           </el-menu-item>
-          <el-menu-item v-if="auth.hasPermission('accounts:read')" index="/loans">
+          <el-menu-item
+            v-if="
+              auth.hasPermission('accounts:read') ||
+              auth.hasPermission('proxy:read') ||
+              auth.hasPermission('settings:read')
+            "
+            index="/borrow-management"
+          >
             <el-icon><Share /></el-icon>
-            <span>借用记录</span>
+            <span>借用管理</span>
           </el-menu-item>
           <el-menu-item
             v-if="auth.hasPermission('loans:self') && !auth.hasPermission('accounts:read')"
@@ -43,10 +51,6 @@
           >
             <el-icon><Share /></el-icon>
             <span>我的借用</span>
-          </el-menu-item>
-          <el-menu-item v-if="auth.hasPermission('proxy:read')" index="/proxy-keys">
-            <el-icon><Key /></el-icon>
-            <span>共享池代理</span>
           </el-menu-item>
           <el-menu-item v-if="auth.hasPermission('knowledge:read')" index="/tool-tips">
             <el-icon><Reading /></el-icon>
@@ -100,17 +104,21 @@
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
+      <div class="aside-footer">
+        <span class="pulse-dot" aria-hidden="true" />
+        <span>团队用量协调</span>
+      </div>
     </el-aside>
-    <el-container>
+    <el-container class="content-shell">
       <el-header class="header">
-        <div>{{ pageTitle }}</div>
+        <div class="page-title">{{ pageTitle }}</div>
         <div class="user-bar">
-          <span>{{ auth.user?.display_name }}</span>
-          <el-tag size="small" type="info">{{ auth.user?.portal_role }}</el-tag>
+          <span class="user-name">{{ auth.user?.display_name }}</span>
+          <el-tag size="small" effect="plain" type="info">{{ auth.user?.portal_role }}</el-tag>
           <el-button link type="danger" @click="onLogout">退出</el-button>
         </div>
       </el-header>
-      <el-main class="main">
+      <el-main class="main pulse-main-fade">
         <router-view />
       </el-main>
     </el-container>
@@ -141,57 +149,166 @@ async function onLogout() {
 .layout {
   min-height: 100vh;
 }
+
 .aside {
-  background: #0f172a;
-  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  background: var(--pulse-sidebar-bg-gradient);
+  color: var(--pulse-sidebar-text);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
 }
+
 .brand {
   display: flex;
   gap: 12px;
   align-items: center;
-  padding: 20px 16px;
+  padding: 22px 18px 18px;
 }
+
 .logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--pulse-radius-md);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
 }
+
+.brand-text {
+  min-width: 0;
+}
+
 .title {
-  font-weight: 600;
+  font-weight: var(--pulse-font-bold);
+  font-size: var(--pulse-text-md);
+  letter-spacing: 0.02em;
+  color: #f8fafc;
 }
+
 .subtitle {
-  font-size: 12px;
-  opacity: 0.7;
+  font-size: var(--pulse-text-xs);
+  font-weight: var(--pulse-font-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pulse-sidebar-text);
+  margin-top: 2px;
 }
+
+.nav-menu {
+  flex: 1;
+  padding: 0 10px 12px;
+  overflow-y: auto;
+}
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
+  height: 56px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--pulse-header-border);
+  background: var(--pulse-header-bg);
+  backdrop-filter: blur(10px);
 }
+
+.page-title {
+  color: var(--pulse-text-strong);
+}
+
 .user-bar {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.main {
-  background: #f8fafc;
+
+.user-name {
+  font-size: var(--pulse-text-md);
+  font-weight: 500;
+  color: var(--pulse-text-primary);
 }
+
+.main {
+  background-color: var(--pulse-bg-page);
+  background-image: var(--pulse-bg-page-pattern);
+  background-size: 20px 20px;
+  padding: var(--pulse-space-page) !important;
+}
+
+.aside-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px 18px;
+  font-size: var(--pulse-text-xs);
+  color: rgba(148, 163, 184, 0.85);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pulse-color-accent-soft);
+  box-shadow: 0 0 10px var(--pulse-color-accent-soft);
+  animation: pulse-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
 :deep(.el-menu) {
   border-right: none;
   background: transparent;
 }
+
 :deep(.el-menu-item) {
-  color: #cbd5e1;
+  color: var(--pulse-sidebar-text);
+  border-radius: var(--pulse-radius-sm);
+  margin: 2px 0;
+  height: 42px;
+  transition:
+    background var(--pulse-transition),
+    color var(--pulse-transition);
 }
+
+:deep(.el-menu-item:hover) {
+  color: var(--pulse-sidebar-text-hover);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 :deep(.el-menu-item.is-active) {
-  background: rgba(99, 102, 241, 0.2);
-  color: #fff;
+  background: var(--pulse-sidebar-active-bg);
+  color: var(--pulse-sidebar-text-active);
+  position: relative;
 }
+
+:deep(.el-menu-item.is-active)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--pulse-sidebar-active-border);
+}
+
 :deep(.el-sub-menu__title) {
-  color: #cbd5e1;
+  color: var(--pulse-sidebar-text-hover);
+  font-weight: 600;
+  font-size: var(--pulse-text-sm);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
+
 :deep(.el-sub-menu .el-menu) {
   background: transparent;
 }

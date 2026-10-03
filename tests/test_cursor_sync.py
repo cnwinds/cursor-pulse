@@ -7,8 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import func, select
-
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync import CursorSyncService
 from pulse.integrations.cursor_api import map_usage_event
@@ -16,6 +14,7 @@ from pulse.storage.db import init_db
 from pulse.storage.models import AiAccountCredential, Member, UsageIngestion, UsageRecord, UsageSummary
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import func, select
 from tests.conftest import make_team_repo
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -36,9 +35,7 @@ def test_successful_sync_writes_records(session):
     session.commit()
 
     tool_repo = ToolCenterRepository(session, team.id)
-    cursor_account = next(
-        a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor"
-    )
+    cursor_account = next(a for a in tool_repo.list_active_accounts() if a.vendor.slug == "cursor")
     cursor_account.primary_member_id = None
     session.flush()
 
@@ -58,12 +55,8 @@ def test_successful_sync_writes_records(session):
 
     mock_cursor_key_exchange(mock_client, email=cursor_account.account_identifier.lower())
     mock_client.exchange_api_key.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw_event)
     mock_client.iter_filtered_usage_events.return_value = iter([dto])
 
@@ -100,11 +93,7 @@ def test_successful_sync_writes_records(session):
     assert summary is not None
     assert summary.sync_source == "api"
 
-    cred = session.scalar(
-        select(AiAccountCredential).where(
-            AiAccountCredential.account_id == cursor_account.id
-        )
-    )
+    cred = session.scalar(select(AiAccountCredential).where(AiAccountCredential.account_id == cursor_account.id))
     assert cred.last_sync_status == "success"
     assert cred.last_sync_at is not None
     assert cred.last_sync_error is None

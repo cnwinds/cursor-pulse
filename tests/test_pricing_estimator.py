@@ -1,12 +1,11 @@
-﻿from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 
 import pytest
-
 from pulse.domain import CostRaw, UsageEventRecord
+from pulse.pricing.cursor_tables import CURSOR_PRICING_V2026_06
 from pulse.pricing.estimator import aggregate_cursor_billing, estimate_event_record, resolve_cost_fields
 from pulse.pricing.types import estimate_token_cost
-from pulse.pricing.cursor_tables import CURSOR_PRICING_V2026_06
 from pulse.storage.db import init_db
 from pulse.storage.models import UsageRecord
 from pulse.tool_center.seed import seed_v2_catalog
@@ -16,7 +15,7 @@ from tests.conftest import make_team_repo
 
 def _included_record(**kwargs) -> UsageEventRecord:
     defaults = dict(
-        event_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        event_at=datetime(2026, 6, 1, tzinfo=UTC),
         event_date=datetime(2026, 6, 1).date(),
         kind="Included",
         model="auto",
@@ -155,9 +154,7 @@ def test_build_usage_summary_uses_pool_spend_for_pro_plus(session):
     assert summary["cursor_pools"] is not None
     assert summary["cursor_pools"]["api"]["spend_usd"] > 0
     assert summary["quota_usage_ratio"] is not None
-    assert summary["quota_usage_ratio"] == pytest.approx(
-        summary["primary_metric_value"] / 70 * 100, rel=0.01
-    )
+    assert summary["quota_usage_ratio"] == pytest.approx(summary["primary_metric_value"] / 70 * 100, rel=0.01)
     assert "GLM-5.1" in summary["cursor_pools"]["api"]["breakdown_by_model"]
 
 
@@ -187,9 +184,7 @@ def test_build_usage_summary_excludes_byok_from_api_spend(session):
     records = [_usage_record_from_event(rec) for rec in events]
     summary = build_usage_summary(plan=plan, records=records)
 
-    assert summary["primary_metric_value"] == pytest.approx(
-        summary["cursor_pools"]["api"]["spend_usd"]
-    )
+    assert summary["primary_metric_value"] == pytest.approx(summary["cursor_pools"]["api"]["spend_usd"])
     assert "GLM-5.2" not in (summary["cursor_pools"]["api"]["breakdown_by_model"] or {})
     assert "GLM-5.2" not in (summary.get("breakdown_by_model") or {})
     assert summary["external_models"]["GLM-5.2"]["total_tokens"] == 550_000

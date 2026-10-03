@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 )
+
+var errPoolSessionCollision = errors.New("pool session collision")
 
 var hopHeaders = map[string]bool{
 	"Connection":          true,
@@ -94,6 +97,16 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// sessions == nil skips the check (local -keys / baseline tests).
 	var binding SessionBinding
 	var cliTok string
+	rewriteAuth := !skipAuth
+	if s.sessions != nil && skipAuth && s.sessionTokens != nil {
+		// A minted client token is useless upstream, so /auth/* calls carrying
+		// one get the bound account's JWT. Unbound tokens pass through as-is.
+		tok := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+		tok = strings.TrimPrefix(tok, "bearer ")
+		if b, ok := s.sessions.Lookup(tok); ok {
+			cliTok, binding, rewriteAuth = tok, b, true
+		}
+	}
 	if s.sessions != nil && !skipAuth {
 		cliTok = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		cliTok = strings.TrimPrefix(cliTok, "bearer ")
@@ -111,38 +124,77 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			b = ideB
 		}
 		if s.pulse != nil && s.sessionTTL > 0 && time.Since(b.BoundAt) > s.sessionTTL {
-			res, err := s.pulse.Authorize(b.PulseKey)
+			// Report one slot as current and the other as held while it is
+			// active: both seats stay alive, and the assignment answers for the
+			// reported slot. Prefer the auto slot unless only the api slot is
+			// in use (e.g. a long api stream after the auto slot went idle).
+			now := time.Now()
+			reauthPool := quotaPoolAuto
+			if b.APISticky.CredentialID != "" && (b.AutoSticky.CredentialID == "" ||
+				(!b.slotActive(quotaPoolAuto, now) && b.slotActive(quotaPoolAPI, now))) {
+				reauthPool = quotaPoolAPI
+			}
+			current := b.sticky(reauthPool).CredentialID
+			if current == "" {
+				current = b.CredentialID
+			}
+			res, err := s.pulse.AuthorizeSeat(b.PulseKey, current, false, reauthPool, b.heldOutside(reauthPool))
 			if err != nil {
 				log.Printf("[mitm] session re-authorize fail-closed: %v", err)
 				http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 				return
 			}
+			// Apply to the local copy and to the stored binding: other requests
+			// on this session may have filled a slot during the Pulse call.
+			store := func(apply func(*SessionBinding)) {
+				apply(&b)
+				if !s.sessions.Update(cliTok, apply) {
+					s.sessions.Bind(cliTok, b)
+				}
+			}
 			switch res.Status {
 			case "ok":
-				b.WindowLimitReason = ""
-				b.BoundAt = time.Now()
-				if res.CredentialID != "" {
-					b.CredentialID = res.CredentialID
+				moved := ""
+				if res.SeatAdvised && seatFollowsAssignment(b, res) {
+					moved = strings.TrimSpace(res.AssignedCredentialID)
+					if moved == "" {
+						http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
+						return
+					}
 				}
-				if res.LoanID != "" {
-					b.LoanID = res.LoanID
-				}
-				if res.Mode != "" {
-					b.Mode = res.Mode
-				}
-				if strings.TrimSpace(res.CursorAPIKey) != "" {
-					b.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
-				}
-				// Replace (not merge): a candidate dropped from the ranked
-				// allowlist must stop serving on the next request. Empty clears
-				// the scope, which returns the binding to the pinned path.
-				b.AllowedCredentialIDs = res.CredentialIDs
-				s.sessions.Bind(cliTok, b)
+				store(func(x *SessionBinding) {
+					x.WindowLimitReason = ""
+					x.BoundAt = now
+					if res.CredentialID != "" {
+						x.CredentialID = res.CredentialID
+					}
+					if res.LoanID != "" {
+						x.LoanID = res.LoanID
+					}
+					if res.Mode != "" {
+						x.Mode = res.Mode
+					}
+					if strings.TrimSpace(res.CursorAPIKey) != "" {
+						x.CursorAPIKey = strings.TrimSpace(res.CursorAPIKey)
+					}
+					// Replace (not merge): a candidate dropped from the ranked
+					// allowlist must stop serving on the next request. Empty clears
+					// the scope, which returns the binding to the pinned path.
+					x.AllowedCredentialIDs = res.CredentialIDs
+					if res.SeatAdvised {
+						x.BlockedCredentialIDs = res.BlockedCredentialIDs
+					}
+					if moved != "" && moved != current {
+						*x.sticky(reauthPool) = stickySlot{CredentialID: moved, Since: now}
+					}
+				})
 			case "window_limited":
-				b.WindowLimitReason = authWindowReason(res)
-				b.BoundAt = time.Now()
-				s.sessions.Bind(cliTok, b)
-				writeWindowLimited(w, b.WindowLimitReason)
+				reason := authWindowReason(res)
+				store(func(x *SessionBinding) {
+					x.WindowLimitReason = reason
+					x.BoundAt = now
+				})
+				writeWindowLimited(w, reason)
 				return
 			default:
 				s.sessions.Delete(cliTok)
@@ -158,6 +210,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	}
 
 	loanBound := binding.Mode == "loan_passthrough" || binding.Mode == "loan_alias"
+	tracksLoan := attributesUsageToLoan(binding)
 	// A loan_alias binding carrying a Pulse-issued candidate allowlist selects
 	// among those accounts exactly like the shared pool (sticky + Switch dwell +
 	// per-bucket availability) instead of being pinned to one credential. An
@@ -165,6 +218,20 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	// legacy passthrough path — the same predicate sticky.Select uses.
 	loanPooled := binding.Mode == "loan_alias" && s.sticky != nil && binding.allowedSet() != nil
 	quotaPool := resolveQuotaPool(req.Context(), req.URL.Path, reqBodySnap, streamFS)
+	if (binding.Mode == "loan_alias" || binding.Mode == "loan_pool") &&
+		strings.Contains(req.URL.Path, "AgentService/Run") && s.pulse != nil {
+		model := findModelName(reqBodySnap())
+		capRes, err := s.pulse.CheckLoanUsageCap(binding.LoanID, model)
+		if err != nil {
+			log.Printf("[mitm] loan usage cap check failed loan=%s: %v", binding.LoanID, err)
+			http.Error(w, "cursor-pulse-proxy: 借用用量校验暂不可用，请稍后重试", http.StatusServiceUnavailable)
+			return
+		}
+		if capRes.Status == "limited" {
+			writeLoanUsageCapLimited(w, capRes.Message)
+			return
+		}
+	}
 	markPool := func() quotaPoolKind {
 		return effectiveMarkQuotaPool(req.URL.Path, reqBodySnap, quotaPool)
 	}
@@ -191,7 +258,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			log.Printf("[mitm] %s %s: %v", req.Method, req.URL.Path, err)
 			if s.pulse != nil {
 				ev := EventItem{EventType: "exhausted", Detail: err.Error()}
-				if loanBound {
+				if tracksLoan {
 					ev.LoanID = binding.LoanID
 					ev.CredentialID = binding.CredentialID
 				} else {
@@ -200,7 +267,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 				s.pulse.ReportEvent(ev)
 			}
 			msg := "cursor-quota-proxy: all API keys exhausted"
-			if loanBound {
+			if loanBound || binding.Mode == "loan_pool" {
 				msg = "cursor-pulse-proxy: loan key unavailable"
 			}
 			http.Error(w, msg, http.StatusServiceUnavailable)
@@ -214,7 +281,7 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 		}
 		copyHeaders(outReq.Header, req.Header)
 		outReq.Header.Del("Accept-Encoding")
-		if !skipAuth {
+		if rewriteAuth {
 			outReq.Header.Set("Authorization", "Bearer "+token)
 		}
 
@@ -228,14 +295,14 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			}
 			continue
 		}
-		if debugHTTP {
-			log.Printf("[mitm] << %d %s (key %s)", resp.StatusCode, req.URL.Path, entry.masked())
-		}
 		break
 	}
 	if resp == nil {
 		http.Error(w, "cursor-quota-proxy: upstream unreachable", http.StatusBadGateway)
 		return
+	}
+	if loanPooled || (!loanBound && s.sticky != nil) {
+		defer s.sticky.Track(cliTok, quotaPool)()
 	}
 
 	// --- non-200: whole-body classification ---
@@ -274,51 +341,6 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 	if debugHTTP {
 		log.Printf("[mitm] respCT=%q for %s (key %s)", respCT, req.URL.Path, entry.masked())
 	}
-	// onTok is shared by the Connect-envelope and SSE relay paths: it converts
-	// tapped TurnEnded token counts into a Pulse usage item attributed to the
-	// binding's proxy key or loan and the credential that actually served.
-	onTok := func(tc TokenCounts, streamProviderModel string) {
-		if s.pulse == nil {
-			return
-		}
-		var body []byte
-		if reqBodySnap != nil {
-			body = reqBodySnap()
-		}
-		if loanBound {
-			if binding.LoanID == "" {
-				return
-			}
-			// entry.credentialID is the account that actually served this
-			// turn: identical to binding.CredentialID on the pinned path,
-			// and the pool-selected candidate on the roaming path.
-			servedCredID := entry.credentialID
-			model := coalesceBilledModel(
-				logUsageModelTap(req.URL.Path, "", servedCredID, tc, body),
-				streamProviderModel,
-			)
-			s.pulse.EnqueueUsage(UsageItem{
-				LoanID:       binding.LoanID,
-				CredentialID: servedCredID,
-				Model:        model,
-				Tokens:       tc,
-			})
-			return
-		}
-		if binding.ProxyKeyID == "" {
-			return
-		}
-		model := coalesceBilledModel(
-			logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body),
-			streamProviderModel,
-		)
-		s.pulse.EnqueueUsage(UsageItem{
-			ProxyKeyID:   binding.ProxyKeyID,
-			CredentialID: entry.credentialID,
-			Model:        model,
-			Tokens:       tc,
-		})
-	}
 	// Cursor labels some Connect server-streaming responses (notably
 	// agent.v1.AgentService/RunSSE) as text/event-stream, but the body is
 	// ordinary Connect envelopes — same relay and usage tap as the CLI paths.
@@ -336,6 +358,48 @@ func (s *Server) handleMITM(w http.ResponseWriter, req *http.Request, authority 
 			copyHeaders(w.Header(), resp.Header)
 			w.WriteHeader(http.StatusOK)
 			return
+		}
+		onTok := func(tc TokenCounts, streamProviderModel string) {
+			if s.pulse == nil {
+				return
+			}
+			var body []byte
+			if reqBodySnap != nil {
+				body = reqBodySnap()
+			}
+			if tracksLoan {
+				if binding.LoanID == "" {
+					return
+				}
+				// entry.credentialID is the account that actually served this
+				// turn: identical to binding.CredentialID on the pinned path,
+				// and the pool-selected candidate on the roaming path.
+				servedCredID := entry.credentialID
+				model := coalesceBilledModel(
+					logUsageModelTap(req.URL.Path, "", servedCredID, tc, body),
+					streamProviderModel,
+				)
+				s.pulse.EnqueueUsage(UsageItem{
+					LoanID:       binding.LoanID,
+					CredentialID: servedCredID,
+					Model:        model,
+					Tokens:       tc,
+				})
+				return
+			}
+			if binding.ProxyKeyID == "" {
+				return
+			}
+			model := coalesceBilledModel(
+				logUsageModelTap(req.URL.Path, binding.ProxyKeyID, entry.credentialID, tc, body),
+				streamProviderModel,
+			)
+			s.pulse.EnqueueUsage(UsageItem{
+				ProxyKeyID:   binding.ProxyKeyID,
+				CredentialID: entry.credentialID,
+				Model:        model,
+				Tokens:       tc,
+			})
 		}
 		onFailure := func(kind failKind) {
 			if loanBound && !loanPooled {
@@ -383,17 +447,40 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "pulse client not configured", http.StatusServiceUnavailable)
 		return
 	}
-	res, ok := authorizeOrReject(w, s.pulse, pulseKey)
-	if !ok {
+	// Exchange carries no model: the first account comes from the auto order.
+	res, err := s.pulse.AuthorizeSeat(pulseKey, "", false, quotaPoolAuto, nil)
+	if err != nil {
+		log.Printf("[mitm] authorize fail-closed: %v", err)
+		http.Error(w, "authorize unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	// window_limited defers enforcement to business requests so agent login
-	// does not collapse into the misleading "API key is invalid" warning.
 	var windowLimitReason string
-	if res.Status == "window_limited" {
+	switch res.Status {
+	case "invalid":
+		http.Error(w, "invalid pulse key", http.StatusUnauthorized)
+		return
+	case "suspended":
+		msg := "suspended"
+		if res.Reason != nil {
+			msg = *res.Reason
+		}
+		http.Error(w, msg, http.StatusForbidden)
+		return
+	case "window_limited":
+		// Defer limit enforcement to business requests so agent login does not
+		// collapse into the misleading "API key is invalid" warning.
 		windowLimitReason = authWindowReason(res)
 		log.Printf("[mitm] exchange window_limited proxy_key=%s reason=%s (enforce on request)",
 			res.ProxyKeyID, windowLimitReason)
+	case "ok":
+		if assignmentMissing(res) {
+			log.Printf("[mitm] concurrency cap mode=%s loan_id=%s proxy_key=%s", res.Mode, res.LoanID, res.ProxyKeyID)
+			http.Error(w, "cursor-pulse-proxy: account concurrency limit", http.StatusServiceUnavailable)
+			return
+		}
+	default:
+		http.Error(w, "authorize rejected", http.StatusForbidden)
+		return
 	}
 
 	if res.Mode == "loan_passthrough" || res.Mode == "loan_alias" {
@@ -418,8 +505,9 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "cursor key exchange unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		clientTok, expiresAt := s.clientSessionToken(token)
 		if s.sessions != nil {
-			s.sessions.Bind(token, SessionBinding{
+			binding := SessionBinding{
 				Mode:                 res.Mode,
 				LoanID:               res.LoanID,
 				CredentialID:         res.CredentialID,
@@ -427,14 +515,60 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 				CursorAPIKey:         exchangeKey,
 				WindowLimitReason:    windowLimitReason,
 				AllowedCredentialIDs: res.CredentialIDs,
+				ExpiresAt:            expiresAt,
+			}
+			if res.SeatAdvised {
+				binding.BlockedCredentialIDs = res.BlockedCredentialIDs
+				assigned := strings.TrimSpace(res.AssignedCredentialID)
+				if assigned != "" && containsID(res.CredentialIDs, assigned) {
+					binding.AutoSticky = stickySlot{CredentialID: assigned, Since: time.Now()}
+				}
+			}
+			s.sessions.Bind(clientTok, binding)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"accessToken":  clientTok,
+			"refreshToken": "pulse",
+		})
+		log.Printf("[mitm] exchange ok %s loan_id=%s credential=%s", res.Mode, res.LoanID, res.CredentialID)
+		return
+	}
+
+	if res.Mode == "loan_pool" {
+		if res.LoanID == "" {
+			log.Printf("[mitm] loan_pool missing loan_id")
+			http.Error(w, "authorize misconfigured", http.StatusInternalServerError)
+			return
+		}
+		entry, token, err := s.exchangeFromPool(req.Context(), &res, pulseKey)
+		if err != nil {
+			if errors.Is(err, errPoolSessionCollision) {
+				http.Error(w, "cursor-pulse-proxy: unable to mint unique session token", http.StatusServiceUnavailable)
+				return
+			}
+			s.reportPoolExhausted(res, err.Error())
+			http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
+			return
+		}
+		clientTok, expiresAt := s.clientSessionToken(token)
+		if s.sessions != nil {
+			s.sessions.Bind(clientTok, SessionBinding{
+				Mode:                 res.Mode,
+				LoanID:               res.LoanID,
+				PulseKey:             pulseKey,
+				AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
+				WindowLimitReason:    windowLimitReason,
+				BlockedCredentialIDs: res.BlockedCredentialIDs,
+				ExpiresAt:            expiresAt,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"accessToken":  token,
+			"accessToken":  clientTok,
 			"refreshToken": "pulse",
 		})
-		log.Printf("[mitm] exchange ok %s loan_id=%s credential=%s", res.Mode, res.LoanID, res.CredentialID)
+		log.Printf("[mitm] exchange ok loan_pool loan_id=%s credential=%s", res.LoanID, entry.credentialID)
 		return
 	}
 
@@ -444,53 +578,333 @@ func (s *Server) handleExchange(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	entry, token, err := s.pool.token(req.Context())
+	entry, token, err := s.exchangeFromPool(req.Context(), &res, pulseKey)
 	if err != nil {
-		s.pulse.ReportEvent(EventItem{EventType: "exhausted", ProxyKeyID: res.ProxyKeyID, Detail: err.Error()})
-		http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
-		return
-	}
-	// Pool may return a JWT already bound to a different pulse key.
-	// Skip that credential and try other pool keys (same ProxyKeyID may re-bind).
-	if s.sessions != nil {
-		skip := map[string]bool{}
-		maxTries := s.pool.size()
-		if maxTries < 1 {
-			maxTries = 1
-		}
-		for tries := 0; tries < maxTries; tries++ {
-			if b, ok := s.sessions.Lookup(token); ok && b.ProxyKeyID != "" && b.ProxyKeyID != res.ProxyKeyID {
-				skip[entry.credentialID] = true
-				log.Printf("[mitm] exchange jwt collision proxy_key=%s held_by=%s skip_credential=%s",
-					res.ProxyKeyID, b.ProxyKeyID, entry.credentialID)
-				entry, token, err = s.pool.tokenSkipping(req.Context(), skip)
-				if err != nil {
-					s.pulse.ReportEvent(EventItem{EventType: "exhausted", ProxyKeyID: res.ProxyKeyID, Detail: err.Error()})
-					http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
-					return
-				}
-				continue
-			}
-			break
-		}
-		if b, ok := s.sessions.Lookup(token); ok && b.ProxyKeyID != "" && b.ProxyKeyID != res.ProxyKeyID {
-			log.Printf("[mitm] exchange jwt collision unresolved proxy_key=%s held_by=%s", res.ProxyKeyID, b.ProxyKeyID)
+		if errors.Is(err, errPoolSessionCollision) {
+			log.Printf("[mitm] exchange jwt collision unresolved proxy_key=%s", res.ProxyKeyID)
 			http.Error(w, "cursor-pulse-proxy: unable to mint unique session token", http.StatusServiceUnavailable)
 			return
 		}
-		s.sessions.Bind(token, SessionBinding{
-			ProxyKeyID:         res.ProxyKeyID,
-			PulseKey:           pulseKey,
-			StickyCredentialID: entry.credentialID,
-			WindowLimitReason:  windowLimitReason,
+		s.reportPoolExhausted(res, err.Error())
+		http.Error(w, "cursor-pulse-proxy: all API keys exhausted", http.StatusServiceUnavailable)
+		return
+	}
+	clientTok, expiresAt := s.clientSessionToken(token)
+	if s.sessions != nil {
+		s.sessions.Bind(clientTok, SessionBinding{
+			ProxyKeyID:           res.ProxyKeyID,
+			PulseKey:             pulseKey,
+			AutoSticky:           stickySlot{CredentialID: entry.credentialID, Since: time.Now()},
+			WindowLimitReason:    windowLimitReason,
+			BlockedCredentialIDs: res.BlockedCredentialIDs,
+			ExpiresAt:            expiresAt,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"accessToken":  token,
+		"accessToken":  clientTok,
 		"refreshToken": "pulse",
 	})
 	log.Printf("[mitm] exchange ok proxy_key=%s credential=%s", res.ProxyKeyID, entry.credentialID)
+}
+
+func attributesUsageToLoan(b SessionBinding) bool {
+	switch b.Mode {
+	case "loan_passthrough", "loan_alias", "loan_pool":
+		return b.LoanID != ""
+	default:
+		return false
+	}
+}
+
+// exchangeConflicts reports whether an existing session JWT cannot be reused
+// for this authorize result. loan_pool borrowers share an empty ProxyKeyID, so
+// identity is the loan id; a pk_ holder and a different loan both conflict.
+// Sessions are keyed by minted client tokens unless PROXY_OPAQUE_SESSION_TOKEN
+// is off, so an upstream JWT only ever collides in that legacy mode.
+func exchangeConflicts(existing SessionBinding, mode, proxyKeyID, loanID string) bool {
+	if existing.ProxyKeyID == "" && existing.LoanID == "" {
+		return false
+	}
+	if mode == "loan_pool" {
+		return existing.LoanID != loanID || existing.ProxyKeyID != ""
+	}
+	if proxyKeyID != "" && existing.ProxyKeyID == proxyKeyID && existing.LoanID == "" {
+		return false
+	}
+	return existing.ProxyKeyID != "" || existing.LoanID != ""
+}
+
+func (s *Server) reportPoolExhausted(res AuthResult, detail string) {
+	if s.pulse == nil {
+		return
+	}
+	ev := EventItem{EventType: "exhausted", Detail: detail}
+	if res.Mode == "loan_pool" {
+		ev.LoanID = res.LoanID
+	} else {
+		ev.ProxyKeyID = res.ProxyKeyID
+	}
+	s.pulse.ReportEvent(ev)
+}
+
+// exchangeFromPool mints a pool JWT that is not already bound to a different
+// borrower or proxy key. Same loan / same proxy key may re-bind.
+func (s *Server) exchangeFromPool(ctx context.Context, res *AuthResult, pulseKey string) (*keyEntry, string, error) {
+	if res != nil && res.SeatAdvised {
+		return s.exchangeAdvised(ctx, res, pulseKey)
+	}
+	base := AuthResult{}
+	if res != nil {
+		base = *res
+	}
+	return s.exchangeUnadvised(ctx, base, nil)
+}
+
+func (s *Server) exchangeAdvised(ctx context.Context, res *AuthResult, pulseKey string) (*keyEntry, string, error) {
+	current := strings.TrimSpace(res.AssignedCredentialID)
+	if current == "" {
+		return nil, "", errAllExhausted
+	}
+	seen := map[string]bool{}
+	maxTries := s.pool.size()
+	if maxTries < 1 {
+		maxTries = 1
+	}
+	for tries := 0; tries < maxTries; tries++ {
+		if current == "" || seen[current] {
+			return nil, "", errAllExhausted
+		}
+		seen[current] = true
+		entry, token, err := s.pool.tokenForCredential(ctx, current)
+		if err != nil && !errors.Is(err, errAllExhausted) && !isPermanentExchangeErr(err) {
+			return entry, "", err
+		}
+		collided := false
+		if err == nil && s.sessions != nil {
+			if b, ok := s.sessions.Lookup(token); ok && exchangeConflicts(b, res.Mode, res.ProxyKeyID, res.LoanID) {
+				collided = true
+				log.Printf("[mitm] exchange jwt collision mode=%s proxy_key=%s loan_id=%s held_proxy=%s held_loan=%s skip_credential=%s",
+					res.Mode, res.ProxyKeyID, res.LoanID, b.ProxyKeyID, b.LoanID, entry.credentialID)
+			}
+		}
+		if err == nil && !collided {
+			res.AssignedCredentialID = entry.credentialID
+			return entry, token, nil
+		}
+		if s.pulse == nil {
+			return s.exchangeUnadvised(ctx, *res, seen)
+		}
+		next, err := s.pulse.AuthorizeSeat(pulseKey, current, true, quotaPoolAuto, nil)
+		if err != nil || !next.SeatAdvised {
+			log.Printf("[mitm] seat reassignment unavailable: %v", err)
+			return s.exchangeUnadvised(ctx, *res, seen)
+		}
+		res.BlockedCredentialIDs = next.BlockedCredentialIDs
+		current = strings.TrimSpace(next.AssignedCredentialID)
+	}
+	return nil, "", errPoolSessionCollision
+}
+
+func (s *Server) exchangeUnadvised(ctx context.Context, res AuthResult, skip map[string]bool) (*keyEntry, string, error) {
+	var entry *keyEntry
+	var token string
+	var err error
+	if len(skip) == 0 {
+		entry, token, err = s.pool.token(ctx)
+	} else {
+		entry, token, err = s.pool.tokenSkipping(ctx, skip)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if s.sessions == nil {
+		return entry, token, nil
+	}
+	if skip == nil {
+		skip = map[string]bool{}
+	}
+	maxTries := s.pool.size()
+	if maxTries < 1 {
+		maxTries = 1
+	}
+	for tries := 0; tries < maxTries; tries++ {
+		b, ok := s.sessions.Lookup(token)
+		if !ok || !exchangeConflicts(b, res.Mode, res.ProxyKeyID, res.LoanID) {
+			return entry, token, nil
+		}
+		skip[entry.credentialID] = true
+		log.Printf("[mitm] exchange jwt collision mode=%s proxy_key=%s loan_id=%s held_proxy=%s held_loan=%s skip_credential=%s",
+			res.Mode, res.ProxyKeyID, res.LoanID, b.ProxyKeyID, b.LoanID, entry.credentialID)
+		entry, token, err = s.pool.tokenSkipping(ctx, skip)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if b, ok := s.sessions.Lookup(token); ok && exchangeConflicts(b, res.Mode, res.ProxyKeyID, res.LoanID) {
+		return nil, "", errPoolSessionCollision
+	}
+	return entry, token, nil
+}
+
+func assignmentMissing(res AuthResult) bool {
+	if !res.SeatAdvised || strings.TrimSpace(res.AssignedCredentialID) != "" {
+		return false
+	}
+	return seatFollowsAssignment(SessionBinding{
+		Mode:       res.Mode,
+		ProxyKeyID: res.ProxyKeyID,
+	}, res)
+}
+
+func seatFollowsAssignment(b SessionBinding, res AuthResult) bool {
+	if b.Mode == "loan_pool" {
+		return true
+	}
+	if b.Mode == "loan_alias" && len(res.CredentialIDs) > 0 {
+		return true
+	}
+	if b.Mode != "loan_passthrough" && b.Mode != "loan_alias" && b.ProxyKeyID != "" {
+		return true
+	}
+	return false
+}
+
+func containsID(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+func authWindowReason(res AuthResult) string {
+	if res.Reason != nil && strings.TrimSpace(*res.Reason) != "" {
+		return strings.TrimSpace(*res.Reason)
+	}
+	return "window_limited"
+}
+
+func windowLimitMessage(reason string) string {
+	switch reason {
+	case "window_5h_exceeded":
+		return "pulse: 5h window cost limit exceeded; raise limit or retry later"
+	case "window_7d_exceeded":
+		return "pulse: 7d window cost limit exceeded; raise limit or retry later"
+	case "", "window_limited":
+		return "pulse: window cost limit exceeded; raise limit or retry later"
+	default:
+		return "pulse: window cost limit exceeded (" + reason + "); raise limit or retry later"
+	}
+}
+
+func writeWindowLimited(w http.ResponseWriter, reason string) {
+	msg := windowLimitMessage(reason)
+	log.Printf("[mitm] reject request: %s", msg)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    "resource_exhausted",
+		"message": msg,
+	})
+}
+
+func writeLoanUsageCapLimited(w http.ResponseWriter, message string) {
+	log.Printf("[mitm] reject request: loan usage cap: %s", truncate(message, 200))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    "resource_exhausted",
+		"message": message,
+	})
+}
+
+func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
+	if kind == failAuth {
+		entry.invalidate()
+	}
+	if s.pulse != nil {
+		s.pulse.ReportEvent(EventItem{
+			EventType:    "rotation",
+			LoanID:       binding.LoanID,
+			CredentialID: binding.CredentialID,
+			Detail:       kind.String(),
+		})
+	}
+}
+
+func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cliTok string, pool quotaPoolKind) {
+	if kind == failAuth {
+		s.pool.markBad(entry)
+	} else {
+		s.pool.markQuotaExhausted(entry, pool)
+		if kind == failAccount {
+			s.sticky.RotateOnExhaustion(cliTok, &binding, entry.credentialID, pool)
+		}
+	}
+	if s.pulse != nil {
+		s.pulse.ReportEvent(EventItem{
+			EventType:    "rotation",
+			ProxyKeyID:   binding.ProxyKeyID,
+			LoanID:       binding.LoanID,
+			CredentialID: entry.credentialID,
+			Detail:       kind.String(),
+		})
+	}
+	if s.onRotate != nil {
+		s.onRotate(entry, binding, kind)
+	}
+}
+
+func copyHeaders(dst, src http.Header) {
+	for k, vs := range src {
+		if hopHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
+		dst.Del(k)
+		for _, v := range vs {
+			dst.Add(k, v)
+		}
+	}
+}
+
+// PROXY_DEBUG_HEADERS / PROXY_DEBUG_HTTP enable verbose request logging
+// (off by default).
+var (
+	debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""
+	debugHTTP    = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
+)
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func maskClientToken(tok string) string {
+	if len(tok) <= 12 {
+		return tok
+	}
+	return tok[:12]
+}
+
+// ideIdentityPassthrough reports paths the IDE serves with its own login JWT
+// that must never be rewritten to a pool credential. Rewriting GetMe makes the
+// client's identity-consistency check fail and it re-fetches in a tight loop
+// (observed: 800+ requests/min); team-scope endpoints 401 for pool credentials
+// and would otherwise mark pool keys auth-bad.
+func ideIdentityPassthrough(path string) bool {
+	switch path {
+	case "/aiserver.v1.DashboardService/GetMe",
+		"/aiserver.v1.DashboardService/GetUserProfile",
+		"/aiserver.v1.DashboardService/GetTeams",
+		"/aiserver.v1.DashboardService/GetTeamCommands",
+		"/aiserver.v1.AiService/GetUserStatus":
+		return true
+	}
+	return false
 }
 
 // ideSubStore is the login-identity lock state shared by the main port and
@@ -530,10 +944,11 @@ func (s *Server) ideLockSubInit(enabled bool) {
 	log.Printf("IDE sub lock: each proxy key pins to the first login identity (PROXY_IDE_LOCK_SUB)")
 }
 
-// authorizeOrReject maps an authorize call to the shared HTTP semantics:
+// authorizeOrReject maps a plain authorize call to the shared HTTP semantics:
 // "ok"/"window_limited" proceed (window limits are enforced on business
 // requests, not at login); everything else writes the error response itself
-// and reports handled=false.
+// and reports handled=false. Seat-aware exchange keeps its own flow
+// (AuthorizeSeat + assignmentMissing) in handleExchange.
 func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (AuthResult, bool) {
 	res, err := pulse.Authorize(key)
 	if err != nil {
@@ -558,23 +973,6 @@ func authorizeOrReject(w http.ResponseWriter, pulse *PulseClient, key string) (A
 		http.Error(w, "authorize rejected", http.StatusForbidden)
 		return res, false
 	}
-}
-
-// ideIdentityPassthrough reports paths the IDE serves with its own login JWT
-// that must never be rewritten to a pool credential. Rewriting GetMe makes the
-// client's identity-consistency check fail and it re-fetches in a tight loop
-// (observed: 800+ requests/min); team-scope endpoints 401 for pool credentials
-// and would otherwise mark pool keys auth-bad.
-func ideIdentityPassthrough(path string) bool {
-	switch path {
-	case "/aiserver.v1.DashboardService/GetMe",
-		"/aiserver.v1.DashboardService/GetUserProfile",
-		"/aiserver.v1.DashboardService/GetTeams",
-		"/aiserver.v1.DashboardService/GetTeamCommands",
-		"/aiserver.v1.AiService/GetUserStatus":
-		return true
-	}
-	return false
 }
 
 // bindIDESession handles IDE-originated business requests whose bearer token
@@ -638,13 +1036,6 @@ func (s *Server) bindIDESession(w http.ResponseWriter, cliTok string) (SessionBi
 	return b, true
 }
 
-func maskClientToken(tok string) string {
-	if len(tok) <= 12 {
-		return tok
-	}
-	return tok[:12]
-}
-
 // jwtSub best-effort extracts the "sub" claim from a JWT. IDE login tokens are
 // standard JWS shapes; failure returns "" (never blocks the request).
 func jwtSub(tok string) string {
@@ -671,97 +1062,4 @@ func jwtSub(tok string) string {
 		return ""
 	}
 	return c.Sub
-}
-
-// PROXY_DEBUG_HEADERS / PROXY_DEBUG_HTTP enable verbose request logging
-// (off by default).
-var (
-	debugHeaders = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HEADERS")) != ""
-	debugHTTP    = strings.TrimSpace(os.Getenv("PROXY_DEBUG_HTTP")) != ""
-)
-
-func truncateForLog(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
-func authWindowReason(res AuthResult) string {
-	if res.Reason != nil && strings.TrimSpace(*res.Reason) != "" {
-		return strings.TrimSpace(*res.Reason)
-	}
-	return "window_limited"
-}
-
-func windowLimitMessage(reason string) string {
-	switch reason {
-	case "window_5h_exceeded":
-		return "pulse: 5h window cost limit exceeded; raise limit or retry later"
-	case "window_7d_exceeded":
-		return "pulse: 7d window cost limit exceeded; raise limit or retry later"
-	case "", "window_limited":
-		return "pulse: window cost limit exceeded; raise limit or retry later"
-	default:
-		return "pulse: window cost limit exceeded (" + reason + "); raise limit or retry later"
-	}
-}
-
-func writeWindowLimited(w http.ResponseWriter, reason string) {
-	msg := windowLimitMessage(reason)
-	log.Printf("[mitm] reject request: %s", msg)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusTooManyRequests)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"code":    "resource_exhausted",
-		"message": msg,
-	})
-}
-
-func (s *Server) reportPassthroughFailure(entry *keyEntry, kind failKind, binding SessionBinding) {
-	if kind == failAuth {
-		entry.invalidate()
-	}
-	if s.pulse != nil {
-		s.pulse.ReportEvent(EventItem{
-			EventType:    "rotation",
-			LoanID:       binding.LoanID,
-			CredentialID: binding.CredentialID,
-			Detail:       kind.String(),
-		})
-	}
-}
-
-func (s *Server) mark(entry *keyEntry, kind failKind, binding SessionBinding, cliTok string, pool quotaPoolKind) {
-	if kind == failAuth {
-		s.pool.markBad(entry)
-	} else {
-		s.pool.markQuotaExhausted(entry, pool)
-		if kind == failAccount {
-			s.sticky.RotateOnExhaustion(cliTok, &binding, entry.credentialID, pool)
-		}
-	}
-	if s.pulse != nil {
-		s.pulse.ReportEvent(EventItem{
-			EventType:    "rotation",
-			ProxyKeyID:   binding.ProxyKeyID,
-			CredentialID: entry.credentialID,
-			Detail:       kind.String(),
-		})
-	}
-	if s.onRotate != nil {
-		s.onRotate(entry, binding, kind)
-	}
-}
-
-func copyHeaders(dst, src http.Header) {
-	for k, vs := range src {
-		if hopHeaders[http.CanonicalHeaderKey(k)] {
-			continue
-		}
-		dst.Del(k)
-		for _, v := range vs {
-			dst.Add(k, v)
-		}
-	}
 }

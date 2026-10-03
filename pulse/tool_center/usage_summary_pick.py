@@ -13,9 +13,7 @@ from sqlalchemy.orm import Session
 from pulse.storage.models import UsageSummary
 
 
-def billing_cycle_date_range(
-    cycle_start: str | None, cycle_end: str | None
-) -> tuple[str, str] | None:
+def billing_cycle_date_range(cycle_start: str | None, cycle_end: str | None) -> tuple[str, str] | None:
     if not cycle_start or not cycle_end:
         return None
     try:
@@ -25,9 +23,7 @@ def billing_cycle_date_range(
     return cycle_start, end.isoformat()
 
 
-def periods_for_board_cycle(
-    cycle_start: str | None, cycle_end: str | None
-) -> list[str]:
+def periods_for_board_cycle(cycle_start: str | None, cycle_end: str | None) -> list[str]:
     rng = billing_cycle_date_range(cycle_start, cycle_end)
     if not rng:
         return []
@@ -54,13 +50,8 @@ def prefer_summary_for_board_cycle(
         return current
     if not current:
         return nxt
-    cur_api = len(
-        ((current.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model")
-        or {}
-    )
-    next_api = len(
-        ((nxt.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model") or {}
-    )
+    cur_api = len(((current.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model") or {})
+    next_api = len(((nxt.get("cursor_pools") or {}).get("api") or {}).get("breakdown_by_model") or {})
     if next_api != cur_api:
         return nxt if next_api > cur_api else current
     return nxt if (nxt.get("period") or "") > (current.get("period") or "") else current
@@ -72,29 +63,17 @@ def usage_summary_board_payload(row: UsageSummary) -> dict:
         "period": row.period,
         "primary_metric_value": float(row.primary_metric_value),
         "primary_metric_unit": row.primary_metric_unit,
-        "reported_spend_usd": (
-            float(row.reported_spend_usd) if row.reported_spend_usd is not None else None
-        ),
+        "reported_spend_usd": (float(row.reported_spend_usd) if row.reported_spend_usd is not None else None),
         "estimated_included_spend_usd": (
-            float(row.estimated_included_spend_usd)
-            if row.estimated_included_spend_usd is not None
-            else None
+            float(row.estimated_included_spend_usd) if row.estimated_included_spend_usd is not None else None
         ),
         "quota_usage_ratio": row.quota_usage_ratio,
-        "billing_cycle_start": (
-            row.billing_cycle_start.isoformat() if row.billing_cycle_start else None
-        ),
-        "billing_cycle_end": (
-            row.billing_cycle_end.isoformat() if row.billing_cycle_end else None
-        ),
+        "billing_cycle_start": (row.billing_cycle_start.isoformat() if row.billing_cycle_start else None),
+        "billing_cycle_end": (row.billing_cycle_end.isoformat() if row.billing_cycle_end else None),
         "quota_denominator_snapshot": (
-            float(row.quota_denominator_snapshot)
-            if row.quota_denominator_snapshot is not None
-            else None
+            float(row.quota_denominator_snapshot) if row.quota_denominator_snapshot is not None else None
         ),
-        "cycle_metric_value": (
-            float(row.cycle_metric_value) if row.cycle_metric_value is not None else None
-        ),
+        "cycle_metric_value": (float(row.cycle_metric_value) if row.cycle_metric_value is not None else None),
         "cycle_quota_usage_ratio": row.cycle_quota_usage_ratio,
         "breakdown_by_model": row.breakdown_by_model,
         "cursor_pools": row.cursor_pools,
@@ -110,9 +89,7 @@ def attach_board_usage_summaries(session: Session, items: list[dict]) -> None:
     periods: set[str] = set()
     cycle_starts: set[date] = set()
     for item in items:
-        periods.update(
-            periods_for_board_cycle(item.get("cycle_start"), item.get("cycle_end"))
-        )
+        periods.update(periods_for_board_cycle(item.get("cycle_start"), item.get("cycle_end")))
         raw_start = item.get("cycle_start")
         if raw_start:
             try:

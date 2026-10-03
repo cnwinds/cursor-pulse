@@ -25,15 +25,11 @@ def _match_by_email(accounts: list[AiAccount], email: str) -> AiAccount | None:
     return None
 
 
-def _unbound_accounts(
-    cred_service: CredentialService, accounts: list[AiAccount]
-) -> list[AiAccount]:
+def _unbound_accounts(cred_service: CredentialService, accounts: list[AiAccount]) -> list[AiAccount]:
     return [account for account in accounts if account_needs_bind(cred_service, account.id)]
 
 
-def _multi_account_bind_hint(
-    accounts: list[AiAccount], cred_service: CredentialService
-) -> str:
+def _multi_account_bind_hint(accounts: list[AiAccount], cred_service: CredentialService) -> str:
     lines = ["您有多个 Cursor 账号，请指定要绑定的账号，例如："]
     for account in accounts:
         status = "未绑 Key" if account_needs_bind(cred_service, account.id) else "已绑"
@@ -45,9 +41,7 @@ def _multi_account_bind_hint(
 def _resolve_key_email(cred_service: CredentialService, api_key: str) -> str | None:
     try:
         exchange = cred_service.cursor_client.exchange_user_api_key_response(api_key)
-        return cred_service.cursor_client.resolve_api_key_account_email(
-            api_key, exchange=exchange
-        )
+        return cred_service.cursor_client.resolve_api_key_account_email(api_key, exchange=exchange)
     except Exception:
         return None
 
@@ -62,14 +56,8 @@ def resolve_bind_cursor_account(
     is_admin: bool,
 ) -> tuple[AiAccount | None, str | None]:
     """返回 (account, note)。account 为 None 时 note 为错误提示。"""
-    own_accounts = filter_cursor_accounts(
-        tool_repo.get_primary_accounts_for_member(member.id)
-    )
-    search_pool = (
-        filter_cursor_accounts(tool_repo.list_active_accounts())
-        if is_admin
-        else own_accounts
-    )
+    own_accounts = filter_cursor_accounts(tool_repo.get_primary_accounts_for_member(member.id))
+    search_pool = filter_cursor_accounts(tool_repo.list_active_accounts()) if is_admin else own_accounts
 
     if email:
         matched = _match_by_email(search_pool, email)
@@ -102,9 +90,7 @@ def resolve_bind_cursor_account(
                     f"台账中未找到 {email}，已绑定到你尚未绑 Key 的账号（{_account_label(account)}）。",
                 )
             if len(unbound_own) > 1:
-                lines = [
-                    f"未找到 Cursor 账号 {email}，你名下有 {len(unbound_own)} 个账号未绑 Key："
-                ]
+                lines = [f"未找到 Cursor 账号 {email}，你名下有 {len(unbound_own)} 个账号未绑 Key："]
                 for account in unbound_own:
                     lines.append(f"· {_account_label(account)}")
                 lines.append("请指定其中一个邮箱后重试。")

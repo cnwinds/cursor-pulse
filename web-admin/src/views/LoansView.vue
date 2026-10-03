@@ -1,12 +1,14 @@
 <template>
   <div class="loans-page" v-loading="loading">
-    <header class="page-header">
-      <div>
-        <h2>借用记录</h2>
+    <header class="page-header" :class="{ embedded }">
+      <div v-if="!embedded">
         <p class="desc">
-          管理临时 Key 借用。进行中 {{ activeCount }} 条；自动分配借用的消耗按本笔借用归因（代理账本，非 Cursor 账单），指定借用仍为账号用量差值近似。
+          管理临时 Key 借用。进行中 {{ activeCount }} 条。自动分配走账号池，使用中轮换，消耗按本笔借用归因；指定账号锁定一把 Key，消耗仍为账号用量差值近似。
         </p>
       </div>
+      <p v-else class="embedded-summary">
+        进行中 <strong>{{ activeCount }}</strong> 条 · 自动分配走账号池轮换，指定账号锁定单号
+      </p>
       <div class="header-actions">
         <div class="filter-switch">
           <span class="filter-label">仅显示正在借用</span>
@@ -24,112 +26,128 @@
       </div>
     </header>
 
-    <el-table :data="loans" stripe>
-      <el-table-column label="借出人" prop="borrower_name" width="120" />
-      <el-table-column label="借出账号" min-width="240">
+    <el-table :data="loans" stripe class="loans-table">
+      <el-table-column label="借出人" prop="borrower_name" min-width="68" show-overflow-tooltip />
+      <el-table-column label="借出账号" min-width="176" show-overflow-tooltip>
         <template #default="{ row }">
-          <span>{{ row.source_account_identifier }}</span>
-          <span v-if="row.primary_member_name" class="primary-member">
-            {{ row.primary_member_name }}
+          <span v-if="row.routing_mode === 'pool'" class="pool-line">
+            <span>账号池</span>
+            <el-tag size="small" type="warning" class="lender-mode-tag" title="使用过程中按打分表轮换，不锁定账号">
+              使用中轮换
+            </el-tag>
           </span>
-          <el-tag
-            v-if="row.lender_mode === 'auto'"
-            size="small"
-            type="warning"
-            class="lender-mode-tag"
-            title="自动分配借用：借用 Key 会在候选账号的 primary Key 之间游走"
-          >
-            自动
-          </el-tag>
+          <div v-else class="account-stack">
+            <div class="account-line1">
+              <span class="account-id">{{ row.source_account_identifier }}</span>
+            </div>
+            <span v-if="row.primary_member_name" class="account-owner">
+              {{ row.primary_member_name }}
+            </span>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" min-width="84">
         <template #default="{ row }">
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="交付模式" width="110">
+      <el-table-column label="分配方式" min-width="96" align="center">
         <template #default="{ row }">
-          <el-tag
-            :type="row.delivery_mode === 'proxy_alias' ? 'success' : 'info'"
-            size="small"
-          >
-            {{ row.delivery_mode === 'proxy_alias' ? '代理别名' : 'Cursor Key' }}
+          <el-tag :type="loanAssignmentTagType(row)" size="small">
+            {{ loanAssignmentLabel(row) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="到期自动归还" width="120" align="center">
+      <el-table-column label="用量限制" min-width="84" align="center">
         <template #default="{ row }">
-          <el-switch
-            v-if="canWrite && row.status === 'active'"
-            :model-value="row.auto_revoke_on_reset"
-            :loading="autoRevokeSavingId === row.id"
-            @change="(val: boolean) => setAutoRevoke(row, val)"
-          />
-          <span v-else class="muted">{{ row.auto_revoke_on_reset ? '是' : '否' }}</span>
+          <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
-      <el-table-column label="自动回收日" width="120">
+      <el-table-column label="借用消耗" min-width="84">
         <template #default="{ row }">
-          {{ row.loan_expires_on || '—' }}
+          <span class="loan-spend">${{ (row.borrowed_cents / 100).toFixed(2) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="借用时长" width="120">
+      <el-table-column label="proxy消耗" min-width="152" align="center">
         <template #default="{ row }">
-          {{ formatLoanDuration(row.created_at, row.revoked_at) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="借用消耗" width="110">
-        <template #default="{ row }">
-          ${{ (row.borrowed_cents / 100).toFixed(2) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="proxy 统计" width="120">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openUsages(row)">
-            ${{ ((row.proxy_cost_cents ?? 0) / 100).toFixed(2) }}
+          <el-button link type="primary" class="proxy-spend-btn" @click="openUsages(row)">
+            {{ formatProxySpend(row) }}
           </el-button>
         </template>
       </el-table-column>
-      <el-table-column label="创建时间" width="180">
-        <template #default="{ row }">{{ formatChinaTime(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column label="归还时间" width="180">
+      <el-table-column label="创建时间" min-width="88" align="center">
         <template #default="{ row }">
-          {{ row.revoked_at ? formatChinaTime(row.revoked_at) : '—' }}
+          <LoanTimeStack :iso="row.created_at" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="340" fixed="right">
+      <el-table-column min-width="124" align="center">
+        <template #header>
+          <div class="when-head">
+            <span>自动回收日</span>
+            <span>归还时间</span>
+          </div>
+        </template>
         <template #default="{ row }">
-          <CopyCommandDropdown
-            v-if="row.status === 'active'"
-            size="small"
-            :setup-url="`/api/v2/loans/${row.id}/client-setup`"
-          />
-          <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
-            size="small"
-            plain
-            @click="openReassignDialog(row)"
-          >
-            换出借账号
-          </el-button>
-          <el-button
-            v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
-            size="small"
-            plain
-            @click="revealCursorKey(row)"
-          >
-            底层 Key
-          </el-button>
-          <el-button
-            v-if="row.status === 'active'"
-            link
-            type="danger"
-            @click="revokeLoan(row)"
-          >
-            撤销
-          </el-button>
+          <div class="when-stack">
+            <el-tooltip
+              v-if="canToggleAutoRevoke(row)"
+              :content="row.auto_revoke_on_reset ? '点击关闭到期自动归还' : '点击开启到期自动归还'"
+              placement="top"
+            >
+              <button
+                type="button"
+                class="recycle-date"
+                :disabled="autoRevokeSavingId === row.id"
+                @click="setAutoRevoke(row, !row.auto_revoke_on_reset)"
+              >
+                {{ recycleDateText(row) }}
+              </button>
+            </el-tooltip>
+            <span v-else class="when-recycle">{{ recycleDateText(row) }}</span>
+            <el-tooltip
+              v-if="row.revoked_at"
+              :content="formatChinaTime(row.revoked_at)"
+              placement="top"
+            >
+              <span class="when-return">{{ returnTimeText(row.revoked_at) }}</span>
+            </el-tooltip>
+            <span v-else class="when-return">—</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" min-width="136" fixed="right" align="center">
+        <template #default="{ row }">
+          <div class="loan-actions">
+            <CopyCommandDropdown
+              v-if="row.status === 'active'"
+              icon-only
+              size="small"
+              :setup-url="`/api/v2/loans/${row.id}/client-setup`"
+            />
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias'"
+              content="调整出借方式"
+              placement="top"
+            >
+              <el-button link type="primary" aria-label="调整出借方式" @click="openReassignDialog(row)">
+                <el-icon><Switch /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip
+              v-if="canWrite && row.status === 'active' && row.delivery_mode === 'proxy_alias' && row.routing_mode !== 'pool'"
+              content="底层 Key"
+              placement="top"
+            >
+              <el-button link aria-label="底层 Key" @click="revealCursorKey(row)">
+                <el-icon><Key /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip v-if="row.status === 'active'" content="撤销" placement="top">
+              <el-button link type="danger" aria-label="撤销" @click="revokeLoan(row)">
+                <el-icon><CircleClose /></el-icon>
+              </el-button>
+            </el-tooltip>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -161,25 +179,18 @@
         </el-form-item>
         <el-form-item label="分配方式">
           <el-radio-group v-model="loanForm.lender_mode">
-            <el-radio value="manual">指定借用</el-radio>
-            <el-radio value="auto">自动分配借用</el-radio>
+            <el-radio value="manual">指定账号</el-radio>
+            <el-radio value="auto">自动（账号池轮换）</el-radio>
           </el-radio-group>
-          <p class="manual-hint">
-            指定借用：发放时在该账号建一把独立 Cursor Key，绑定后固定不变。
-            自动分配借用：借用 Key 在候选账号的 primary Key 之间按共享池方式游走
-            （同一会话 sticky，切换间隔至少 30 分钟），换号不会新建 Cursor Key。
+          <p v-if="loanForm.lender_mode === 'manual'" class="manual-hint">
+            指定账号：发放时在该账号建一把独立 Cursor Key，使用过程中不换号。
           </p>
         </el-form-item>
-        <el-form-item label="借出账号" :required="loanForm.lender_mode === 'manual'">
+        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="借出账号" required>
           <el-select
             v-model="loanForm.source_account_id"
             filterable
-            :disabled="loanForm.lender_mode === 'auto'"
-            :placeholder="
-              loanForm.lender_mode === 'auto'
-                ? '自动分配：由打分决定起始账号，之后按需游走'
-                : '选择借出账号（显示在借人数，含已满员）'
-            "
+            placeholder="选择借出账号（显示在借人数，含已满员）"
             style="width: 100%"
           >
             <el-option
@@ -189,26 +200,25 @@
               :value="r.account_id"
             />
           </el-select>
-          <p v-if="loanForm.lender_mode === 'auto' && autoPickHint" class="manual-hint">
-            {{ autoPickHint }}
-          </p>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="loanForm.note" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="目标模型">
+        <el-form-item v-if="loanForm.lender_mode === 'auto'" label="目标模型">
           <el-input
             v-model="loanForm.model"
-            placeholder="留空按总余量打分；填模型则由系统判定它属于哪个 Quota Pool"
+            placeholder="可选。填写后，确认时只检查该模型所属的 Auto 或 API 池是否有号"
           />
-          <p class="manual-hint">
-            只需填模型名，auto / api 桶由系统按既有计费口径自动判定，无需人工判断。
+          <p v-if="poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+            账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
           </p>
         </el-form-item>
-        <el-form-item label="重置日回收">
+        <el-form-item v-if="loanForm.lender_mode === 'manual'" label="重置日回收">
           <el-switch v-model="loanForm.auto_revoke_on_reset" />
         </el-form-item>
-        <p class="manual-hint">交付为代理别名 Key（pka_），须配置 HTTPS_PROXY 后使用。</p>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="loanForm.usage_caps" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="loanDialogVisible = false">取消</el-button>
@@ -216,20 +226,30 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="reassignDialogVisible" title="更换出借账号" width="520px">
+    <el-dialog v-model="reassignDialogVisible" title="调整出借方式" width="520px">
       <p class="manual-hint">
         借用人：{{ reassignLoan?.borrower_name || '—' }} ·
-        当前账号：{{ reassignLoan?.source_account_identifier || '—' }}
+        当前：{{
+          reassignLoan?.routing_mode === 'pool'
+            ? '账号池（使用中轮换）'
+            : reassignLoan?.source_account_identifier || '—'
+        }}
       </p>
       <p class="manual-hint">
-        pka_ 别名保持不变，借用人无需改本地配置；将在新账号创建底层 Key，并撤销旧账号远端 Key。
+        pka_ 别名保持不变，借用人无需改本地配置。切到指定账号时会在该账号创建底层 Key 并撤销旧远端 Key；切到自动分配则走账号池轮换。
       </p>
       <el-form label-width="100px">
-        <el-form-item label="新出借账号" required>
+        <el-form-item label="分配方式">
+          <el-radio-group v-model="reassignForm.lender_mode">
+            <el-radio value="manual">指定账号</el-radio>
+            <el-radio value="auto">自动（账号池轮换）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="借出账号" required>
           <el-select
             v-model="reassignForm.source_account_id"
             filterable
-            placeholder="选择新的出借账号"
+            placeholder="选择出借账号"
             style="width: 100%"
           >
             <el-option
@@ -240,52 +260,105 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="reassignForm.lender_mode === 'manual'" label="重置日回收">
+          <el-switch v-model="reassignForm.auto_revoke_on_reset" />
+        </el-form-item>
+        <p v-if="reassignForm.lender_mode === 'auto'" class="manual-hint">
+          使用过程中在已入池账号之间轮换，不锁定某一个账号。
+        </p>
+        <p v-if="reassignForm.lender_mode === 'auto' && poolPreviewLoaded && !poolHasCandidates" class="manual-hint">
+          账号池里还没有可轮换的账号。请先在「入池账号」页签开启入池。
+        </p>
+        <el-form-item label="用量限制">
+          <UsageCapRulesEditor v-model="reassignForm.usage_caps" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reassignDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="reassignSubmitting" @click="submitReassign">
-          确认更换
+          确认调整
         </el-button>
       </template>
     </el-dialog>
 
     <el-drawer v-model="usagesVisible" :title="`用量详情 - ${usagesTitle}`" size="720px">
-      <div class="usage-summary" v-if="usageSummary">
-        <div>借用消耗：${{ (usageSummary.borrowed_cents / 100).toFixed(2) }}</div>
-        <div>
-          proxy 估算（非账单）：${{ (usageSummary.proxy_cost_cents / 100).toFixed(2) }}（{{ usageSummary.request_count }} 次请求 · {{ formatTokensM(usageSummary.proxy_total_tokens) }}）
-          <span v-if="usageByAccount.length" class="usage-summary-sub">
-            · 涉及 {{ usageByAccount.length }} 个出借账号
-          </span>
-        </div>
-      </div>
-      <h4 class="usage-section-title">按出借账号汇总（本地估算）</h4>
-      <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading">
-        <el-table-column label="账号" min-width="200">
-          <template #default="{ row }">{{ formatAccountWithPrimary(row) }}</template>
-        </el-table-column>
-        <el-table-column prop="plan_name" label="计划" width="100" />
-        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
-        <el-table-column label="tokens" width="110" align="right">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-        <el-table-column label="费用" width="110" align="right">
-          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
-        </el-table-column>
-      </el-table>
-      <h4 class="usage-section-title">按模型汇总（本地估算）</h4>
-      <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading">
-        <el-table-column prop="model" label="模型" min-width="180" />
-        <el-table-column prop="request_count" label="请求数" width="88" align="right" />
-        <el-table-column label="tokens" width="110" align="right">
-          <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
-        </el-table-column>
-        <el-table-column label="费用" width="110" align="right">
-          <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
-        </el-table-column>
-      </el-table>
+      <el-collapse v-model="usageAccountSectionOpen" class="usage-section-collapse">
+        <el-collapse-item name="account">
+          <template #title>
+            <div class="usage-collapse-head">
+              <span class="usage-collapse-title">按出借账号汇总（本地估算）</span>
+              <span class="usage-collapse-totals">
+                账号数 {{ usageAccountTotals.accountCount }} · 请求数
+                {{ usageAccountTotals.requestCount }} · tokens
+                {{ formatTokensM(usageAccountTotals.totalTokens) }} · 费用 ${{
+                  (usageAccountTotals.costCents / 100).toFixed(2)
+                }}
+              </span>
+            </div>
+          </template>
+          <el-table :data="usageByAccount" class="usage-fill-table" v-loading="usagesLoading">
+            <el-table-column label="账号" min-width="168">
+              <template #default="{ row }">
+                <div class="account-stack">
+                  <span class="account-id">{{ row.account_identifier || '—' }}</span>
+                  <span v-if="row.primary_member_name" class="account-owner">
+                    {{ row.primary_member_name }}
+                  </span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="额度" min-width="176">
+              <template #default="{ row }">
+                <CodingPlanTierBars
+                  v-if="row.quota_display === 'coding_plan_tiers'"
+                  :tiers="row.quota_tiers"
+                />
+                <QuotaProgressBars
+                  v-else
+                  :total_pct="row.total_pct"
+                  :auto_pct="row.auto_pct"
+                  :api_pct="row.api_pct"
+                  :status="row.status"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+            <el-table-column label="tokens" width="110" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="110" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
+      <el-collapse v-model="usageModelSectionOpen" class="usage-section-collapse">
+        <el-collapse-item name="model">
+          <template #title>
+            <div class="usage-collapse-head">
+              <span class="usage-collapse-title">按模型汇总（本地估算）</span>
+              <span class="usage-collapse-totals">
+                模型数 {{ usageModelTotals.modelCount }} · 请求数
+                {{ usageModelTotals.requestCount }} · tokens
+                {{ formatTokensM(usageModelTotals.totalTokens) }} · 费用 ${{
+                  (usageModelTotals.costCents / 100).toFixed(2)
+                }}
+              </span>
+            </div>
+          </template>
+          <el-table :data="usageByModel" class="usage-fill-table" v-loading="usagesLoading">
+            <el-table-column prop="model" label="模型" min-width="180" />
+            <el-table-column prop="request_count" label="请求数" width="88" align="right" />
+            <el-table-column label="tokens" width="110" align="right">
+              <template #default="{ row }">{{ formatTokensM(row.total_tokens) }}</template>
+            </el-table-column>
+            <el-table-column label="费用" width="110" align="right">
+              <template #default="{ row }">${{ ((row.cost_cents ?? 0) / 100).toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-collapse-item>
+      </el-collapse>
       <h4 class="usage-section-title">proxy 明细（按天 · 本地估算）</h4>
-      <p class="usage-hint">点击整行展开 / 收起当天明细</p>
       <el-table
         :data="usageByDay"
         class="usage-fill-table day-usage-table"
@@ -299,14 +372,14 @@
           <template #default="{ row }">
             <div class="day-detail-wrap">
               <el-table :data="row.items" size="small" class="usage-fill-table day-detail-table">
-                <el-table-column label="时间" width="150">
+                <el-table-column label="时间" width="160" align="left">
                   <template #default="{ row: item }">{{ formatChinaTime(item.ts) }}</template>
                 </el-table-column>
-                <el-table-column label="账号" min-width="120" show-overflow-tooltip>
+                <el-table-column label="账号" min-width="168" show-overflow-tooltip>
                   <template #default="{ row: item }">{{ item.account_identifier || '—' }}</template>
                 </el-table-column>
-                <el-table-column prop="model" label="模型" min-width="100" show-overflow-tooltip />
-                <el-table-column label="tokens" width="72" align="right">
+                <el-table-column prop="model" label="模型" min-width="152" show-overflow-tooltip />
+                <el-table-column label="tokens" width="76" align="right">
                   <template #default="{ row: item }">{{ formatTokensM(item.total_tokens) }}</template>
                 </el-table-column>
                 <el-table-column label="费用" width="64" align="right">
@@ -331,7 +404,10 @@
 
     <el-dialog v-model="keyRevealVisible" title="Key 已生成（仅显示一次）" width="560px" :close-on-click-modal="false">
       <el-alert type="warning" :closable="false" show-icon class="mb">
-        <template v-if="revealedKey?.delivery_mode === 'proxy_alias'">
+        <template v-if="revealedKey?.routing_mode === 'pool'">
+          已下发账号池轮换 Key（pka_）。使用过程中会在已入池账号之间切换，没有单一底层 Key。请立即复制；关闭后可用「复制命令」再次获取。须配置 HTTPS_PROXY。
+        </template>
+        <template v-else-if="revealedKey?.delivery_mode === 'proxy_alias'">
           已下发代理别名 Key（pka_）。请立即复制；关闭后可用「复制命令」再次获取。用户须配置 HTTPS_PROXY。底层 Cursor Key 仅管理员可通过「底层 Key」查看。
         </template>
         <template v-else>
@@ -339,10 +415,12 @@
         </template>
       </el-alert>
       <div class="key-reveal">
-        <div class="muted">借出账号：{{ revealedKey?.source_account_identifier }}</div>
+        <div class="muted">
+          借出账号：{{ revealedKey?.routing_mode === 'pool' ? '账号池（使用中轮换）' : revealedKey?.source_account_identifier }}
+        </div>
         <div class="muted">借用人：{{ revealedKey?.borrower_name }}</div>
-        <div class="muted" v-if="revealedKey?.delivery_mode">
-          交付模式：{{ revealedKey.delivery_mode === 'proxy_alias' ? '代理别名 Key' : 'Cursor Key' }}
+        <div class="muted" v-if="revealedKey">
+          分配方式：{{ loanAssignmentLabel(revealedKey) }}
         </div>
         <el-input :model-value="revealedKey?.api_key" readonly>
           <template #append>
@@ -384,9 +462,23 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { copyText } from '@/utils/clipboard'
-import { formatChinaTime, formatLoanDuration } from '@/utils/time'
+import { formatChinaDateTimeParts, formatChinaTime } from '@/utils/time'
 import { formatTokensM } from '@/utils/usage'
+import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
+import CodingPlanTierBars from '@/components/CodingPlanTierBars.vue'
+import QuotaProgressBars from '@/components/QuotaProgressBars.vue'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import LoanTimeStack from '@/components/LoanTimeStack.vue'
+import UsageCapRulesEditor, { type UsageCapRule } from '@/components/borrow/UsageCapRulesEditor.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
+
+withDefaults(
+  defineProps<{
+    /** 嵌入「借用管理」页签时隐藏大标题 */
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
 
 const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('accounts:write'))
@@ -489,8 +581,12 @@ interface LoanRow {
   revoked_at: string | null
   borrowed_cents: number
   proxy_cost_cents: number | null
+  proxy_cost_today_cents?: number | null
+  assignment_label?: string | null
   lender_mode?: string | null
+  routing_mode?: string | null
   source_bound_at?: string | null
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)
@@ -512,13 +608,31 @@ const loanForm = ref({
   note: '',
   model: '',
   auto_revoke_on_reset: true,
+  usage_caps: [] as UsageCapRule[],
 })
-const autoPickHint = ref('')
-
+const poolPreview = ref<{ account_id: string; account_identifier: string; score?: number | null }[]>(
+  [],
+)
+const poolPreviewDual = ref<{
+  auto: { account_id: string; account_identifier: string; score?: number | null }[]
+  api: { account_id: string; account_identifier: string; score?: number | null }[]
+}>({ auto: [], api: [] })
+const poolPreviewPool = ref<'auto' | 'api' | null>(null)
+const poolPreviewLoaded = ref(false)
+const poolHasCandidates = computed(() => {
+  if (poolPreviewPool.value) return poolPreview.value.length > 0
+  if (poolPreview.value.length > 0) return true
+  return poolPreviewDual.value.auto.length + poolPreviewDual.value.api.length > 0
+})
 const reassignDialogVisible = ref(false)
 const reassignSubmitting = ref(false)
 const reassignLoan = ref<LoanRow | null>(null)
-const reassignForm = ref({ source_account_id: '' })
+const reassignForm = ref({
+  lender_mode: 'manual' as 'manual' | 'auto',
+  source_account_id: '',
+  auto_revoke_on_reset: true,
+  usage_caps: [] as UsageCapRule[],
+})
 const reassignOptions = ref<RecommendItem[]>([])
 const autoRevokeSavingId = ref<string | null>(null)
 
@@ -528,7 +642,10 @@ const revealedKey = ref<{
   api_key: string
   borrower_name: string
   source_account_identifier: string
+  assignment_label?: string | null
   delivery_mode?: string
+  lender_mode?: string | null
+  routing_mode?: string
 } | null>(null)
 
 const cursorKeyVisible = ref(false)
@@ -540,8 +657,29 @@ const usagesTitle = ref('')
 const usageByAccount = ref<LoanUsageByAccountRow[]>([])
 const usageByDay = ref<LoanUsageByDayRow[]>([])
 const usageByModel = ref<LoanUsageByModelRow[]>([])
-const usageSummary = ref<LoanUsageSummary | null>(null)
+const usageAccountSectionOpen = ref<string[]>([])
+const usageModelSectionOpen = ref<string[]>([])
 const expandedDayKeys = ref<string[]>([])
+
+const usageAccountTotals = computed(() => {
+  const rows = usageByAccount.value
+  return {
+    accountCount: rows.length,
+    requestCount: rows.reduce((sum, row) => sum + (row.request_count ?? 0), 0),
+    totalTokens: rows.reduce((sum, row) => sum + (row.total_tokens ?? 0), 0),
+    costCents: rows.reduce((sum, row) => sum + (row.cost_cents ?? 0), 0),
+  }
+})
+
+const usageModelTotals = computed(() => {
+  const rows = usageByModel.value
+  return {
+    modelCount: rows.length,
+    requestCount: rows.reduce((sum, row) => sum + (row.request_count ?? 0), 0),
+    totalTokens: rows.reduce((sum, row) => sum + (row.total_tokens ?? 0), 0),
+    costCents: rows.reduce((sum, row) => sum + (row.cost_cents ?? 0), 0),
+  }
+})
 
 interface LoanUsageRow {
   id: string
@@ -558,6 +696,12 @@ interface LoanUsageByAccountRow {
   account_identifier: string
   primary_member_name: string | null
   plan_name: string | null
+  quota_display?: 'cursor' | 'coding_plan_tiers'
+  quota_tiers?: Array<{ name: string; label?: string; utilization_pct?: number | null }>
+  total_pct?: number | null
+  auto_pct?: number | null
+  api_pct?: number | null
+  status?: string | null
   request_count: number
   total_tokens: number
   cost_cents: number
@@ -578,20 +722,10 @@ interface LoanUsageByModelRow {
   cost_cents: number
 }
 
-interface LoanUsageSummary {
-  borrowed_cents: number
-  proxy_cost_cents: number
-  proxy_total_tokens: number
-  request_count: number
-}
-
-function formatAccountWithPrimary(row: {
-  account_identifier?: string | null
-  primary_member_name?: string | null
-}) {
-  const account = row.account_identifier || '—'
-  if (!row.primary_member_name) return account
-  return `${account}（${row.primary_member_name}）`
+function formatProxySpend(row: LoanRow) {
+  const total = ((row.proxy_cost_cents ?? 0) / 100).toFixed(2)
+  const today = ((row.proxy_cost_today_cents ?? 0) / 100).toFixed(2)
+  return `$${total} / $${today}`
 }
 
 function loanStatusType(status: string) {
@@ -645,7 +779,38 @@ function onPageSizeChange() {
   loadLoans()
 }
 
+function prepareUsageCaps(
+  rules: UsageCapRule[],
+): { error: string } | { caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] } {
+  const seen = new Set<string>()
+  const caps: { period: UsageCapRule['period']; pool: UsageCapRule['pool']; cost_usd: number }[] = []
+  for (const rule of rules) {
+    if (rule.cost_usd == null) return { error: '请填写每条用量限制的整数美元' }
+    const key = `${rule.period}:${rule.pool}`
+    if (seen.has(key)) return { error: '同一周期和同一类型（Auto / API）只能有一条限制' }
+    seen.add(key)
+    caps.push({ period: rule.period, pool: rule.pool, cost_usd: rule.cost_usd })
+  }
+  return { caps }
+}
+
+function usageCapsFromRow(row: LoanRow): UsageCapRule[] {
+  return (row.usage_caps || []).map((rule) => ({
+    period: rule.period as UsageCapRule['period'],
+    pool: rule.pool as UsageCapRule['pool'],
+    cost_usd: rule.cost_usd ?? null,
+  }))
+}
+
+function usageCapsSignature(rules: { period: string; pool: string; cost_usd: number | null }[]) {
+  return [...rules]
+    .map((rule) => `${rule.period}:${rule.pool}:${rule.cost_usd ?? ''}`)
+    .sort()
+    .join('|')
+}
+
 async function openLoanDialog() {
+  loanForm.value.usage_caps = []
   await loadLoanDialogData()
   loanDialogVisible.value = true
 }
@@ -679,6 +844,11 @@ async function submitLoan() {
     ElMessage.warning(isAuto ? '请选择借用人' : '请选择借用人和借出账号')
     return
   }
+  const prepared = prepareUsageCaps(loanForm.value.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
+    return
+  }
   loanSubmitting.value = true
   try {
     const res = await client.post(
@@ -686,16 +856,18 @@ async function submitLoan() {
       {
         borrower_member_id: loanForm.value.borrower_member_id,
         note: loanForm.value.note || null,
-        auto_revoke_on_reset: loanForm.value.auto_revoke_on_reset,
+        auto_revoke_on_reset: isAuto ? false : loanForm.value.auto_revoke_on_reset,
         delivery_mode: 'proxy_alias',
         lender_mode: loanForm.value.lender_mode,
-        model: loanForm.value.model.trim() || null,
+        model: isAuto ? loanForm.value.model.trim() || null : null,
+        usage_caps: prepared.caps,
       },
     )
     loanDialogVisible.value = false
     revealedKey.value = res.data
     keyRevealVisible.value = true
     loanForm.value.note = ''
+    loanForm.value.usage_caps = []
     await loadLoans()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '分配失败')
@@ -704,65 +876,150 @@ async function submitLoan() {
   }
 }
 
-async function previewAutoPick() {
-  autoPickHint.value = ''
-  if (loanForm.value.lender_mode !== 'auto' || !loanForm.value.borrower_member_id) return
-  try {
-    const res = await client.post('/api/v2/loans/auto-pick', {
-      borrower_member_id: loanForm.value.borrower_member_id,
-      model: loanForm.value.model.trim() || null,
-    })
-    const picked = res.data.picked_account_id
-    const row = (res.data.ranked || []).find((r: any) => r.account_id === picked)
-    if (!row) {
-      autoPickHint.value = '当前没有可借出的富余账号'
-      return
+watch(
+  () => loanForm.value.lender_mode,
+  (mode) => {
+    if (mode === 'auto' && loanDialogVisible.value) void loadPoolPreview(false)
+  },
+)
+
+watch(
+  () => [loanForm.value.model, loanDialogVisible.value] as const,
+  () => {
+    if (loanDialogVisible.value && loanForm.value.lender_mode === 'auto') {
+      void loadPoolPreview(false)
     }
-    const by = res.data.decision?.picked_by === 'jev' ? 'Jev 主判' : '算法分'
-    autoPickHint.value = `预计选中：${row.account_identifier}（${by}，综合分 ${row.score}）`
+  },
+)
+
+function mapPoolPreviewRows(rows: unknown[]) {
+  return (rows as { account_id: string; account_identifier: string; score?: number | null }[]).slice(0, 3)
+}
+
+async function loadPoolPreview(forReassign = false) {
+  const isAuto = forReassign
+    ? reassignForm.value.lender_mode === 'auto'
+    : loanForm.value.lender_mode === 'auto'
+  if (!isAuto) return
+  poolPreviewLoaded.value = false
+  poolPreviewPool.value = null
+  poolPreviewDual.value = { auto: [], api: [] }
+  try {
+    const model = loanForm.value.model.trim()
+    const res = await client.get('/api/v2/proxy-pool/ranking', {
+      params: model ? { model } : undefined,
+    })
+    if (model && res.data.ranked) {
+      poolPreview.value = mapPoolPreviewRows(res.data.ranked)
+      const qp = res.data.quota_pool
+      poolPreviewPool.value = qp === 'api' || qp === 'auto' ? qp : null
+    } else if (res.data.boards) {
+      poolPreview.value = []
+      poolPreviewDual.value = {
+        auto: mapPoolPreviewRows(res.data.boards.auto?.ranked || []),
+        api: mapPoolPreviewRows(res.data.boards.api?.ranked || []),
+      }
+    } else {
+      poolPreview.value = mapPoolPreviewRows(res.data.ranked || [])
+    }
   } catch {
-    autoPickHint.value = '自动选号预览失败，仍可直接提交'
+    poolPreview.value = []
+    poolPreviewDual.value = { auto: [], api: [] }
+  } finally {
+    poolPreviewLoaded.value = true
+  }
+}
+
+async function openReassignDialog(row: LoanRow) {
+  reassignLoan.value = row
+  reassignForm.value = {
+    lender_mode: row.routing_mode === 'pool' ? 'auto' : 'manual',
+    source_account_id: row.source_account_id || '',
+    auto_revoke_on_reset: row.auto_revoke_on_reset ?? true,
+    usage_caps: usageCapsFromRow(row),
+  }
+  reassignDialogVisible.value = true
+  try {
+    await loadLoanDialogData()
+    reassignOptions.value = recommend.value
+    if (
+      reassignForm.value.lender_mode === 'manual' &&
+      !reassignForm.value.source_account_id &&
+      reassignOptions.value.length
+    ) {
+      reassignForm.value.source_account_id = reassignOptions.value[0].account_id
+    }
+    if (reassignForm.value.lender_mode === 'auto') void loadPoolPreview(true)
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '加载出借账号列表失败')
   }
 }
 
 watch(
-  () => [loanForm.value.lender_mode, loanForm.value.borrower_member_id, loanForm.value.model],
-  () => {
-    void previewAutoPick()
+  () => reassignForm.value.lender_mode,
+  (mode) => {
+    if (mode === 'auto' && reassignDialogVisible.value) void loadPoolPreview(true)
   },
 )
 
-async function openReassignDialog(row: LoanRow) {
-  reassignLoan.value = row
-  reassignForm.value.source_account_id = ''
-  await loadLoanDialogData()
-  reassignOptions.value = recommend.value.filter(
-    (r) => r.account_id !== row.source_account_id,
-  )
-  if (reassignOptions.value.length) {
-    reassignForm.value.source_account_id = reassignOptions.value[0].account_id
-  }
-  reassignDialogVisible.value = true
-}
-
 async function submitReassign() {
-  if (!reassignLoan.value || !reassignForm.value.source_account_id) {
-    ElMessage.warning('请选择新的出借账号')
+  if (!reassignLoan.value) return
+  const form = reassignForm.value
+  if (form.lender_mode === 'manual' && !form.source_account_id) {
+    ElMessage.warning('请选择出借账号')
+    return
+  }
+  const prepared = prepareUsageCaps(form.usage_caps)
+  if ('error' in prepared) {
+    ElMessage.warning(prepared.error)
+    return
+  }
+  const loan = reassignLoan.value
+  const assignmentSame =
+    form.lender_mode === 'auto'
+      ? loan.routing_mode === 'pool'
+      : loan.routing_mode !== 'pool' &&
+        loan.lender_mode !== 'auto' &&
+        form.source_account_id === loan.source_account_id &&
+        form.auto_revoke_on_reset === (loan.auto_revoke_on_reset ?? true)
+  const capsSame =
+    usageCapsSignature(prepared.caps) === usageCapsSignature(usageCapsFromRow(loan))
+  if (assignmentSame && capsSame) {
+    ElMessage.warning('出借方式与用量限制都没有变化')
     return
   }
   reassignSubmitting.value = true
   try {
     await client.post(`/api/v2/loans/${reassignLoan.value.id}/reassign-source`, {
-      source_account_id: reassignForm.value.source_account_id,
+      lender_mode: form.lender_mode,
+      source_account_id: form.lender_mode === 'manual' ? form.source_account_id : null,
+      auto_revoke_on_reset:
+        form.lender_mode === 'manual' ? form.auto_revoke_on_reset : undefined,
+      usage_caps: prepared.caps,
     })
-    ElMessage.success('已更换出借账号（pka_ 不变）')
+    ElMessage.success(assignmentSame ? '已保存用量限制（pka_ 不变）' : '已调整出借方式（pka_ 不变）')
     reassignDialogVisible.value = false
     await loadLoans()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '更换失败')
+    ElMessage.error(e.response?.data?.detail || '调整失败')
   } finally {
     reassignSubmitting.value = false
   }
+}
+
+function recycleDateText(row: LoanRow) {
+  if (!row.auto_revoke_on_reset) return '-'
+  return row.loan_expires_on || '-'
+}
+
+function returnTimeText(iso: string | null) {
+  const parts = formatChinaDateTimeParts(iso)
+  if (!parts) return '—'
+  return `${parts.date} ${parts.time.slice(0, 5)}`
+}
+
+function canToggleAutoRevoke(row: LoanRow) {
+  return canWrite.value && row.status === 'active' && row.routing_mode !== 'pool'
 }
 
 async function setAutoRevoke(row: LoanRow, enabled: boolean) {
@@ -845,13 +1102,13 @@ async function openUsages(row: LoanRow) {
   usageByAccount.value = []
   usageByDay.value = []
   usageByModel.value = []
-  usageSummary.value = null
+  usageAccountSectionOpen.value = []
+  usageModelSectionOpen.value = []
   expandedDayKeys.value = []
   usagesVisible.value = true
   usagesLoading.value = true
   try {
     const res = await client.get(`/api/v2/loans/${row.id}/usages`)
-    usageSummary.value = res.data.summary
     usageByAccount.value = res.data.by_account || []
     usageByModel.value = res.data.by_model || []
     usageByDay.value = res.data.by_day || []
@@ -892,13 +1149,103 @@ onMounted(loadLoans)
   margin-bottom: 20px;
   gap: 16px;
 }
-.page-header h2 {
-  margin: 0 0 8px;
+.page-header.embedded {
+  margin-bottom: 12px;
+  align-items: center;
+}
+.embedded-summary {
+  margin: 0;
+  flex: 1;
+  font-size: var(--pulse-text-base);
+  color: var(--el-text-color-secondary);
+}
+.embedded-summary strong {
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 .desc {
   margin: 0;
   color: var(--el-text-color-secondary);
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
+}
+.loans-table :deep(.el-table__cell .cell) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.loan-spend {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.proxy-spend-btn {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  max-width: none;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+.proxy-spend-btn :deep(span) {
+  overflow: visible;
+  text-overflow: clip;
+}
+.loan-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.loan-actions :deep(.el-button) {
+  padding: 4px;
+  margin: 0;
+  min-height: 28px;
+  min-width: 28px;
+}
+.loan-actions :deep(.el-icon) {
+  font-size: var(--pulse-text-lg);
+}
+.loan-actions :deep(.copy-cmd-icon-btn) {
+  padding: 4px;
+  min-height: 28px;
+  min-width: 28px;
+}
+.when-head,
+.when-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.25;
+}
+.when-head {
+  font-size: var(--pulse-text-sm);
+  font-weight: var(--pulse-font-medium);
+}
+.when-recycle,
+.recycle-date,
+.when-return {
+  font-size: var(--pulse-text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.when-return {
+  color: var(--el-text-color-secondary);
+}
+.recycle-date {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--pulse-text-sm);
+  color: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.recycle-date:hover {
+  color: var(--el-color-primary);
+}
+.recycle-date:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 .header-actions {
   display: flex;
@@ -913,17 +1260,42 @@ onMounted(loadLoans)
   margin-right: 4px;
 }
 .filter-label {
-  font-size: 14px;
+  font-size: var(--pulse-text-md);
   color: var(--el-text-color-regular);
 }
-.primary-member {
-  margin-left: 8px;
-  font-weight: 500;
-  color: var(--el-text-color-regular);
+.pool-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.account-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.25;
+  max-width: 100%;
+}
+.account-line1 {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.account-id {
+  font-size: var(--pulse-text-base);
+  white-space: nowrap;
+}
+.account-owner {
+  font-size: var(--pulse-text-xs);
+  color: var(--el-text-color-secondary);
 }
 .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .pager {
   display: flex;
@@ -939,27 +1311,44 @@ onMounted(loadLoans)
   margin-top: 12px;
   flex-wrap: wrap;
 }
-.usage-summary {
-  margin-bottom: 16px;
-  line-height: 1.7;
-  color: var(--el-text-color-regular);
-  font-size: 14px;
+.usage-section-collapse {
+  margin-bottom: 12px;
+  border: none;
 }
-.usage-summary-sub {
+.usage-section-collapse :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 40px;
+  line-height: 1.5;
+  border: none;
+}
+.usage-section-collapse :deep(.el-collapse-item__wrap) {
+  border: none;
+}
+.usage-section-collapse :deep(.el-collapse-item__content) {
+  padding-bottom: 4px;
+}
+.usage-collapse-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding-right: 8px;
+  width: 100%;
+}
+.usage-collapse-title {
+  font-size: var(--pulse-text-md);
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.usage-collapse-totals {
+  font-size: var(--pulse-text-base);
+  font-weight: 400;
   color: var(--el-text-color-secondary);
 }
 .usage-section-title {
-  margin: 0 0 12px;
-  font-size: 14px;
+  margin: 16px 0 12px;
+  font-size: var(--pulse-text-md);
   font-weight: 600;
-}
-.usage-section-title + .usage-fill-table + .usage-section-title {
-  margin-top: 20px;
-}
-.usage-hint {
-  margin: -4px 0 10px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 .usage-fill-table {
   width: 100%;
@@ -973,15 +1362,15 @@ onMounted(loadLoans)
 .day-detail-wrap {
   padding: 8px;
   background: var(--el-fill-color-lighter);
-  overflow-x: hidden;
 }
 .day-detail-table {
   width: 100%;
   --el-table-bg-color: transparent;
 }
-.day-detail-table :deep(.el-table__header-wrapper),
-.day-detail-table :deep(.el-table__body-wrapper) {
-  overflow-x: hidden !important;
+.day-detail-table :deep(.el-table__body td:first-child .cell),
+.day-detail-table :deep(.el-table__header th:first-child .cell) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .day-detail-table :deep(.el-table__body tr) {
   cursor: default;
@@ -992,7 +1381,7 @@ onMounted(loadLoans)
 .manual-hint {
   margin: 0 0 12px;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   line-height: 1.5;
 }
 </style>

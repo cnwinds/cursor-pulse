@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -12,7 +12,7 @@ def _uuid() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -30,9 +30,7 @@ class AssistantRow(Base):
 
 class IncomingEventRow(Base):
     __tablename__ = "ap_incoming_events"
-    __table_args__ = (
-        UniqueConstraint("channel", "channel_message_id", name="uq_ap_channel_message"),
-    )
+    __table_args__ = (UniqueConstraint("channel", "channel_message_id", name="uq_ap_channel_message"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     event_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)

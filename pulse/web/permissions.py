@@ -108,11 +108,7 @@ PORTAL_ROLE_DESCRIPTIONS: dict[str, str] = {
 
 
 def can_access_portal(member: Member) -> bool:
-    return (
-        member.portal_status == "active"
-        and member.status == "active"
-        and bool(member.portal_role)
-    )
+    return member.portal_status == "active" and member.status == "active" and bool(member.portal_role)
 
 
 def has_permission(member: Member, capability: str) -> bool:

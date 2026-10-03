@@ -87,7 +87,7 @@ class FeishuMessenger:
         chat_id = self.config.feishu.group_chat_id
         if not chat_id:
             raise RuntimeError("FEISHU_GROUP_CHAT_ID / feishu.group_chat_id 未配置")
-        content = f"<at user_id=\"all\">所有人</at> {text}" if at_all else text
+        content = f'<at user_id="all">所有人</at> {text}' if at_all else text
         return self._send_text(chat_id, "chat_id", content)
 
     def send_oto_text(self, user_id: str, content: str) -> dict:
@@ -106,9 +106,7 @@ class FeishuMessenger:
         try:
             message_id, file_key = download_code.split(":", 1)
         except ValueError as exc:
-            raise ValueError(
-                "download_code 需为 'message_id:file_key' 形式（飞书资源下载）"
-            ) from exc
+            raise ValueError("download_code 需为 'message_id:file_key' 形式（飞书资源下载）") from exc
         response = self._client.get(
             f"{FEISHU_OPEN_API}/im/v1/messages/{message_id}/resources/{file_key}",
             params={"type": "file"},

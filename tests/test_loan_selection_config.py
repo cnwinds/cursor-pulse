@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from pulse.config import AppConfig
+from pydantic import ValidationError
 
 
 def test_loan_selection_defaults():
@@ -17,10 +16,13 @@ def test_loan_selection_defaults():
     assert sel.weight_load == 0.15
     assert sel.weight_freshness == 0.10
     assert sel.proxy_deadline_power == 1.75
-    assert sel.proxy_weight_urgency == 0.52
-    assert sel.proxy_weight_headroom == 0.28
-    assert sel.proxy_weight_surplus == 0.17
+    assert sel.proxy_weight_urgency == 0.70
+    assert sel.proxy_weight_headroom == 0.15
+    assert sel.proxy_weight_surplus == 0.12
     assert sel.proxy_weight_freshness == 0.03
+    assert sel.max_concurrent_users == 3
+    assert sel.concurrent_ttl_seconds == 180
+    assert sel.min_switch_minutes == 20.0
 
 
 def test_loan_selection_yaml_override():
@@ -43,13 +45,13 @@ def test_loan_selection_yaml_override():
 
 def test_loan_selection_rejects_invalid_values():
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"max_active_loans_per_account": 0}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"max_active_loans_per_account": 0}}})
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
-            {"tool_center": {"loan_selection": {"weight_urgency": -0.1}}}
-        )
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"weight_urgency": -0.1}}})
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"max_concurrent_users": 101}}})
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"tool_center": {"loan_selection": {"concurrent_ttl_seconds": 10}}})
     with pytest.raises(ValidationError):
         AppConfig.model_validate(
             {

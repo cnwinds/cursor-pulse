@@ -19,9 +19,7 @@ from pulse.storage.models import AiAccountCredential
 # 连续重试到这个次数仍没成功，视为同步失败（与看板原判据一致）
 ABNORMAL_SYNC_RETRY_COUNT = 3
 
-SYNC_BLOCKER_STATUSES = frozenset(
-    {"no_credential", "key_revoked", "sync_failed", "unsynced"}
-)
+SYNC_BLOCKER_STATUSES = frozenset({"no_credential", "key_revoked", "sync_failed", "unsynced"})
 
 
 def credential_sync_blocker(cred: AiAccountCredential | None) -> str | None:
@@ -30,19 +28,14 @@ def credential_sync_blocker(cred: AiAccountCredential | None) -> str | None:
         return "no_credential"
     if cred.status != "active":
         return "key_revoked"
-    if (
-        cred.last_sync_status == "failed"
-        or int(cred.retry_count or 0) >= ABNORMAL_SYNC_RETRY_COUNT
-    ):
+    if cred.last_sync_status == "failed" or int(cred.retry_count or 0) >= ABNORMAL_SYNC_RETRY_COUNT:
         return "sync_failed"
     if cred.last_sync_status != "success":
         return "unsynced"
     return None
 
 
-def primary_credentials_by_account(
-    session: Session, account_ids: list[str]
-) -> dict[str, AiAccountCredential]:
+def primary_credentials_by_account(session: Session, account_ids: list[str]) -> dict[str, AiAccountCredential]:
     """账号 id → primary 凭证；同账号多把时优先 active 的那把。"""
     if not account_ids:
         return {}
@@ -60,9 +53,7 @@ def primary_credentials_by_account(
     return picked
 
 
-def sync_blockers_by_account(
-    session: Session, account_ids: list[str]
-) -> dict[str, str]:
+def sync_blockers_by_account(session: Session, account_ids: list[str]) -> dict[str, str]:
     """账号 id → 同步阻断原因；只含同步不正常的账号。"""
     creds = primary_credentials_by_account(session, account_ids)
     blockers: dict[str, str] = {}

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
-
 from pulse.storage.db import init_db
 from pulse.storage.models import AiAccount, UsageSummary
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 
@@ -74,9 +73,8 @@ def test_soft_delete_when_usage_summary_exists(account_env, session):
     row = session.get(AiAccount, account_id)
     assert row is not None
     assert row.deleted_at is not None
+    assert row.proxy_enabled is False
     assert repo.get_account(account_id) is None
     assert account_id not in {a.id for a in repo.list_accounts()}
-    summary = session.scalar(
-        select(UsageSummary).where(UsageSummary.account_id == account_id)
-    )
+    summary = session.scalar(select(UsageSummary).where(UsageSummary.account_id == account_id))
     assert summary is not None

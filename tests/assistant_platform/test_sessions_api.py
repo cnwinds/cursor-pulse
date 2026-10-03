@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -17,7 +19,6 @@ from assistant_platform.domain.events import IncomingMessageEvent
 from assistant_platform.storage.db import init_assistant_db
 from assistant_platform.storage.models import AuditEventRow
 from assistant_platform.storage.repository import AssistantRepository
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-1"
@@ -56,7 +57,7 @@ def _event(
         conversation_type="private",
         conversation_id=sender,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -135,7 +136,7 @@ def test_sessions_list_truncates_long_first_user_text(client):
 def test_sessions_list_first_user_text_null_without_user_message(client):
     test_client, sf, _ = client
     session = sf()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     empty = ChatSessionRow(
         id=str(uuid.uuid4()),
         assistant_id="xiaomai",
@@ -227,14 +228,10 @@ def test_session_delete_redacts_messages(client):
     )
     assert response.status_code == 200
     session = sf()
-    messages = session.scalars(
-        select(ChatMessageRow).where(ChatMessageRow.session_id == session_id)
-    ).all()
+    messages = session.scalars(select(ChatMessageRow).where(ChatMessageRow.session_id == session_id)).all()
     assert messages
     assert all(m.text_redacted == "[redacted]" for m in messages)
-    audit = session.scalars(
-        select(AuditEventRow).where(AuditEventRow.action == "session.deleted")
-    ).all()
+    audit = session.scalars(select(AuditEventRow).where(AuditEventRow.action == "session.deleted")).all()
     assert audit
     session.close()
 

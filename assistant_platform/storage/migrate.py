@@ -100,13 +100,13 @@ def migrate_assistant_schema(engine: Engine) -> None:
         SessionArchiveRow,
     )
     from assistant_platform.memory.opt_out import MemoryOptOutRow
-    from assistant_platform.memory.session_summary import SessionSummaryRow
     from assistant_platform.memory.semantic.migrate import migrate_pm_to_semantic
     from assistant_platform.memory.semantic.models import (
         CommitmentRow,
         DisclosureLogRow,
         SemanticAtomRow,
     )
+    from assistant_platform.memory.session_summary import SessionSummaryRow
     from assistant_platform.profiles.models import ProfileEffectiveRow, ProfileSignalRow
     from assistant_platform.storage.models import Base
 
@@ -138,11 +138,5 @@ def migrate_assistant_schema(engine: Engine) -> None:
         # introduced was already processed by the legacy flow. Mark them handled
         # so they are not mistaken for pending mid-turn messages after restart.
         with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE ap_chat_messages "
-                    "SET handled_at = created_at "
-                    "WHERE handled_at IS NULL"
-                )
-            )
+            conn.execute(text("UPDATE ap_chat_messages SET handled_at = created_at WHERE handled_at IS NULL"))
         logger.info("Backfilled ap_chat_messages.handled_at for pre-existing rows")

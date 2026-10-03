@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -67,7 +67,7 @@ def quota_env(_quota_app):
 
     snap = AccountQuotaSnapshot(
         account_id=cursor_account.id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=date(2026, 7, 1),
         cycle_end=date(2026, 8, 1),
         limit_cents=7000,
@@ -145,7 +145,7 @@ def test_quota_board_never_configured_key_is_not_healthy(quota_env):
     assert matched["status"] == "no_credential"
 
 
-def test_quota_board_revoked_key_is_not_healthy(quota_env):
+def test_quota_board_excludes_revoked_primary_key(quota_env):
     sf = quota_env["session_factory"]
     account = quota_env["cursor_account"]
     owner = quota_env["owner"]
@@ -158,8 +158,25 @@ def test_quota_board_revoked_key_is_not_healthy(quota_env):
     token = create_access_token(quota_env["config"], quota_env["owner"])
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
-    matched = next(item for item in res.json() if item["account_id"] == account.id)
-    assert matched["status"] == "key_revoked"
+    assert not any(item["account_id"] == account.id for item in res.json())
+
+
+def test_quota_board_excludes_soft_deleted_account(quota_env):
+    sf = quota_env["session_factory"]
+    account_id = quota_env["cursor_account"].id
+    owner = quota_env["owner"]
+    s = sf()
+    account = s.get(AiAccount, account_id)
+    account.deleted_at = datetime.now(UTC)
+    s.add(_primary_cred(account, owner, status="active", last_sync_status="success"))
+    s.commit()
+    s.close()
+
+    client = quota_env["client"]
+    token = create_access_token(quota_env["config"], quota_env["owner"])
+    res = client.get("/api/v2/quota-board", headers=_headers(token))
+    assert res.status_code == 200
+    assert not any(item["account_id"] == account_id for item in res.json())
 
 
 def test_quota_board_failed_key_is_sync_failed(quota_env):
@@ -235,9 +252,7 @@ def test_quota_board_three_sync_failures_overrides_exhausted(quota_env):
     account = quota_env["cursor_account"]
     owner = quota_env["owner"]
     s = sf()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
-    )
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     snap.total_pct = 110.0
     snap.used_cents = 7700
     snap.remaining_cents = 0
@@ -288,7 +303,7 @@ def test_quota_board_unsyncable_sorts_last(quota_env):
     s.add(
         AccountQuotaSnapshot(
             account_id=exhausted.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=today - timedelta(days=5),
             cycle_end=today + timedelta(days=25),
             limit_cents=7000,
@@ -300,7 +315,7 @@ def test_quota_board_unsyncable_sorts_last(quota_env):
     s.add(
         AccountQuotaSnapshot(
             account_id=healthy.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=today - timedelta(days=5),
             cycle_end=today + timedelta(days=25),
             limit_cents=7000,
@@ -343,9 +358,7 @@ def test_quota_board_include_summaries_embeds_cycle_row(quota_env):
             primary_metric_unit="usd",
             billing_cycle_start=date(2026, 7, 1),
             billing_cycle_end=date(2026, 8, 1),
-            cursor_pools={
-                "api": {"spend_usd": 12.5, "breakdown_by_model": {"claude-4-sonnet": 12.5}}
-            },
+            cursor_pools={"api": {"spend_usd": 12.5, "breakdown_by_model": {"claude-4-sonnet": 12.5}}},
         )
     )
     s.commit()
@@ -369,11 +382,9 @@ def test_quota_board_include_summaries_embeds_cycle_row(quota_env):
 def test_quota_board_exposes_cycle_end_at(quota_env):
     sf = quota_env["session_factory"]
     account_id = quota_env["cursor_account"].id
-    end_at = datetime(2026, 8, 1, 10, 18, 51, tzinfo=timezone.utc)
+    end_at = datetime(2026, 8, 1, 10, 18, 51, tzinfo=UTC)
     s = sf()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id)
-    )
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account_id))
     assert snap is not None
     snap.cycle_end_at = end_at
     s.commit()
@@ -383,9 +394,7 @@ def test_quota_board_exposes_cycle_end_at(quota_env):
     token = create_access_token(quota_env["config"], quota_env["owner"])
     res = client.get("/api/v2/quota-board", headers=_headers(token))
     assert res.status_code == 200
-    matched = next(
-        item for item in res.json() if item["account_id"] == account_id
-    )
+    matched = next(item for item in res.json() if item["account_id"] == account_id)
     assert matched["cycle_end_at"] is not None
     assert "2026-08-01" in matched["cycle_end_at"]
     assert "10:18:51" in matched["cycle_end_at"] or "18:18:51" in matched["cycle_end_at"]
@@ -396,9 +405,7 @@ def test_quota_board_api_remaining_follows_cursor_api_pct(quota_env):
     sf = quota_env["session_factory"]
     account = quota_env["cursor_account"]
     s = sf()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
-    )
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     assert snap is not None
     snap.limit_cents = 2000
     snap.used_cents = 16211
@@ -484,6 +491,77 @@ def test_loan_key_auto_mode_ignores_url_account(quota_env):
     # 没有可借账号时是 400 业务错误，而不是 404「账号不存在」
     assert res.status_code == 400
     assert res.json()["detail"] != "账号不存在"
+
+
+def test_loan_key_auto_issues_pool_route(quota_env):
+    """管理员自动分配签发账号池轮换 pka_，不锁定账号、不调用 CreateUserApiKey。"""
+    from pulse.ingestion.crypto import encrypt_secret
+
+    client = quota_env["client"]
+    config = quota_env["config"]
+    owner = quota_env["owner"]
+    borrower = quota_env["borrower"]
+    account = quota_env["cursor_account"]
+    token = create_access_token(config, owner)
+
+    s = quota_env["session_factory"]()
+    stored = s.get(AiAccount, account.id)
+    stored.proxy_enabled = True
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
+    snap.cycle_end = date(2026, 12, 31)
+    snap.auto_pct = 10.0
+    snap.api_pct = 10.0
+    snap.used_cents = 100
+    snap.remaining_cents = 6900
+    s.add(
+        AiAccountCredential(
+            account_id=account.id,
+            vendor_id=account.vendor_id,
+            credential_type="cursor_api_key",
+            encrypted_value=encrypt_secret("crsr_pool_primary_for_auto", TEST_KEY),
+            key_hint="crsr...uto",
+            key_role="primary",
+            status="active",
+            bound_by_member_id=owner.id,
+        )
+    )
+    s.commit()
+    s.close()
+
+    mock_client = MagicMock()
+    with patch("pulse.tool_center.key_loan_store.CursorApiClient", return_value=mock_client):
+        res = client.post(
+            "/api/v2/accounts/auto/loan-key",
+            headers=_headers(token),
+            json={
+                "borrower_member_id": borrower.id,
+                "lender_mode": "auto",
+                "auto_revoke_on_reset": True,
+            },
+        )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["api_key"].startswith("pka_")
+    assert body["routing_mode"] == "pool"
+    assert body["source_account_identifier"] is None
+    assert body["lender_mode"] == "auto"
+    mock_client.create_user_api_key.assert_not_called()
+
+    s = quota_env["session_factory"]()
+    loan = s.scalar(select(KeyLoan).where(KeyLoan.borrower_member_id == borrower.id))
+    assert loan is not None
+    assert loan.routing_mode == "pool"
+    assert loan.source_account_id is None
+    assert loan.credential_id is None
+    assert loan.auto_revoke_on_reset is False
+    listed = client.get("/api/v2/loans", headers=_headers(token))
+    assert listed.status_code == 200
+    item = next(row for row in listed.json()["items"] if row["id"] == loan.id)
+    assert item["routing_mode"] == "pool"
+    assert item["borrowed_basis"] == "proxy"
+    cursor = client.get(f"/api/v2/loans/{loan.id}/cursor-key", headers=_headers(token))
+    assert cursor.status_code == 400
+    s.close()
 
 
 def test_loan_key_manual_mode_still_validates_url_account(quota_env):
@@ -702,11 +780,7 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     token = create_access_token(config, owner)
 
     s = quota_env["session_factory"]()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(
-            AccountQuotaSnapshot.account_id == account.id
-        )
-    )
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     snap.cycle_start = date.today() - timedelta(days=15)
     snap.cycle_end = date.today() + timedelta(days=15)
     # 出借候选要求账号同步正常
@@ -728,7 +802,6 @@ def test_quota_recommend_returns_lender_ranking(quota_env):
     assert item["primary_member_name"] == quota_env["borrower"].display_name
 
 
-
 def test_quota_recommend_includes_account_at_loan_cap(quota_env):
     client = quota_env["client"]
     config = quota_env["config"]
@@ -738,11 +811,7 @@ def test_quota_recommend_includes_account_at_loan_cap(quota_env):
     token = create_access_token(config, owner)
 
     s = quota_env["session_factory"]()
-    snap = s.scalar(
-        select(AccountQuotaSnapshot).where(
-            AccountQuotaSnapshot.account_id == account.id
-        )
-    )
+    snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     snap.cycle_start = date.today() - timedelta(days=15)
     snap.cycle_end = date.today() + timedelta(days=15)
     _make_active_loan(s, account, borrower, owner)
@@ -847,9 +916,7 @@ def test_request_self_loan_and_mine_via_web(quota_env):
         lender = next(a for a in cursor_accounts if a.id != own_account.id)
 
         # Own account exhausted → eligible for self-service
-        own_snap = s.scalar(
-            select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == own_account.id)
-        )
+        own_snap = s.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == own_account.id))
         own_snap.total_pct = 95.0
         own_snap.used_cents = 6650
         own_snap.remaining_cents = 350
@@ -860,7 +927,7 @@ def test_request_self_loan_and_mine_via_web(quota_env):
         s.add(
             AccountQuotaSnapshot(
                 account_id=lender.id,
-                captured_at=datetime.now(timezone.utc),
+                captured_at=datetime.now(UTC),
                 cycle_start=date.today() - timedelta(days=5),
                 cycle_end=date.today() + timedelta(days=25),
                 limit_cents=7000,
@@ -889,11 +956,7 @@ def test_request_self_loan_and_mine_via_web(quota_env):
             TeamSetting(
                 team_id=owner.team_id,
                 section="proxy_addresses",
-                data={
-                    "addresses": [
-                        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
-                    ]
-                },
+                data={"addresses": [{"url": "http://proxy.example.com:8317", "display_name": "示例代理"}]},
             )
         )
         s.commit()

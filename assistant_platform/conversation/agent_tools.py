@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from assistant_platform.capabilities.resolve import ResolvedCapability
-from assistant_platform.memory.agent_tools import is_local_memory_tool, memory_tool_definitions
-from assistant_platform.skills.agent_tools import is_local_skill_tool, load_skill_docs_tool_definition
+from assistant_platform.memory.agent_tools import memory_tool_definitions
+from assistant_platform.skills.agent_tools import load_skill_docs_tool_definition
 
 TOOL_EXCLUSIONS = frozenset({"bot.help"})
 NOTIFY_USER_TOOL_NAME = "notify_user"
@@ -59,9 +60,7 @@ def tools_from_capabilities(
         schema = cap.input_schema or {"type": "object", "properties": {}}
         description = f"{cap.display_name}。{cap.description}".strip()
         if cap.risk_level in ("sensitive", "destructive") or cap.confirmation_required:
-            description += (
-                " 【高风险】调用前必须先向用户说明将执行的操作并获得明确同意。"
-            )
+            description += " 【高风险】调用前必须先向用户说明将执行的操作并获得明确同意。"
         tools.append(
             {
                 "type": "function",

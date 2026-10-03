@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
@@ -30,7 +31,7 @@ def _event(text: str = "我的用量") -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id="u1",
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -82,11 +83,7 @@ def test_end_turn_lock_after_reply_does_not_drop_final_message(monkeypatch):
         ).all()
     )
     assert any(m.text_redacted == "用量合计：1 美元" for m in finals), finals
-    reply_jobs = list(
-        db.scalars(
-            select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")
-        ).all()
-    )
+    reply_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")).all())
     assert reply_jobs, "reply.send job must remain after end_turn lock recovery"
     assert calls["n"] >= 2
 

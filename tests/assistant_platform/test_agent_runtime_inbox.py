@@ -26,9 +26,7 @@ def test_agent_injects_inbox_before_second_llm_round():
     llm.complete_with_tools.side_effect = [
         {
             "content": "",
-            "tool_calls": [
-                {"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}
-            ],
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": None,
@@ -86,9 +84,7 @@ def test_agent_injects_inbox_before_second_llm_round():
     assert reply == "6月用量如下"
     assert llm.complete_with_tools.call_count == 2
     second_messages = llm.complete_with_tools.call_args_list[1].kwargs["messages"]
-    user_contents = [
-        m["content"] for m in second_messages if m.get("role") == "user"
-    ]
+    user_contents = [m["content"] for m in second_messages if m.get("role") == "user"]
     assert "查询用量" in user_contents
     assert "查6月份的" in user_contents
     inbox.mark_consumed.assert_called_once_with("m2")

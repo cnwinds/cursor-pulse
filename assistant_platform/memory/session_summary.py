@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, DateTime, String, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -14,7 +14,6 @@ from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.memory.archive_models import ArchiveChunkRow, ArchiveMessageRow, resolve_archive_scope
 from assistant_platform.memory.contracts import (
     ArchivePipelineStatus,
-    MemoryScope,
     SessionSummary,
     SessionSummaryEvidence,
     SessionSummaryItem,
@@ -27,7 +26,7 @@ def _uuid() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _content_hash(text: str) -> str:
@@ -154,9 +153,7 @@ def build_session_summary_from_archive(
         conversation_id=session_row.conversation_id,
     )
     ordered = sorted(messages, key=lambda m: m.seq)
-    facts = _parse_prefixed_items(
-        ordered, session_id=session_row.id, chunks=chunks, prefix="事实:", kind="fact"
-    )
+    facts = _parse_prefixed_items(ordered, session_id=session_row.id, chunks=chunks, prefix="事实:", kind="fact")
     preferences = _parse_prefixed_items(
         ordered, session_id=session_row.id, chunks=chunks, prefix="偏好:", kind="preference"
     )
@@ -224,9 +221,7 @@ def upsert_session_summary(
     content_hash: str | None = None,
 ) -> SessionSummaryRow:
     digest = content_hash or summary_content_hash(summary)
-    row = session.scalar(
-        select(SessionSummaryRow).where(SessionSummaryRow.session_id == summary.session_id)
-    )
+    row = session.scalar(select(SessionSummaryRow).where(SessionSummaryRow.session_id == summary.session_id))
     now = _utcnow()
     payload = summary_to_json(summary)
     if row is None:

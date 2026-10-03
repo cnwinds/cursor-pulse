@@ -21,11 +21,17 @@ type Server struct {
 	sessions   *SessionMap
 	sticky     *StickySelect
 	sessionTTL time.Duration
-	onRotate   func(entry *keyEntry, binding SessionBinding, kind failKind)
-	transport  *http.Transport
+	// sessionTokens is nil when PROXY_OPAQUE_SESSION_TOKEN is off; exchange
+	// then hands clients the upstream Cursor JWT.
+	sessionTokens *sessionTokenMinter
+	onRotate      func(entry *keyEntry, binding SessionBinding, kind failKind)
+	transport     *http.Transport
 
 	passthroughMu sync.Mutex
 	passthrough   map[string]*keyEntry // credentialID → cached loan key JWT
+
+	cpStickyMu   sync.Mutex
+	cpStickyCred map[string]string // pkcp_ pulse key → last credential id
 
 	// shouldMITM reports whether a CONNECT target's TLS should be intercepted
 	// (true for Cursor backends); other allowlisted hosts are tunneled blindly.
@@ -55,16 +61,35 @@ type Server struct {
 }
 
 func NewServer(pool *Pool, ca *CA, pulse *PulseClient, sessions *SessionMap) *Server {
-	return &Server{
+	s := &Server{
 		pool:             pool,
 		ca:               ca,
 		pulse:            pulse,
 		sessions:         sessions,
 		sticky:           NewStickySelect(pool, sessions),
+		sessionTokens:    newSessionTokenMinter(),
 		transport:        newOutboundTransport(nil),
 		shouldMITM:       defaultShouldMITM,
 		connectAllowlist: resolveConnectAllowlist(),
 	}
+	s.useSeatAdvisor()
+	return s
+}
+
+func (s *Server) useSeatAdvisor() {
+	if s == nil || s.sticky == nil || s.pulse == nil {
+		return
+	}
+	s.sticky.SetAdvisor(func(binding *SessionBinding, current string, release bool, pool quotaPoolKind) (string, []string, bool, error) {
+		if binding == nil || strings.TrimSpace(binding.PulseKey) == "" {
+			return "", nil, false, nil
+		}
+		res, err := s.pulse.AuthorizeSeat(binding.PulseKey, current, release, pool, binding.heldOutside(pool))
+		if err != nil {
+			return "", nil, false, err
+		}
+		return res.AssignedCredentialID, res.BlockedCredentialIDs, res.SeatAdvised, nil
+	})
 }
 
 // SetUpstreamProxy routes MITM upstream (Cursor) traffic via the given proxy.
@@ -85,6 +110,7 @@ func (s *Server) withIDEKey(key string) *Server {
 		sessions:         s.sessions,
 		sticky:           s.sticky,
 		sessionTTL:       s.sessionTTL,
+		sessionTokens:    s.sessionTokens,
 		onRotate:         s.onRotate,
 		transport:        s.transport,
 		shouldMITM:       s.shouldMITM,
@@ -106,6 +132,10 @@ func defaultShouldMITM(authority string) bool {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isOpenAICompatPath(r) {
+		s.handleOpenAICompat(w, r)
+		return
+	}
 	if r.Method == http.MethodConnect {
 		s.handleConnect(w, r)
 		return
@@ -130,7 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.Error(w, "cursor-quota-proxy: CONNECT only", http.StatusBadRequest)
+	http.Error(w, "cursor-quota-proxy: CONNECT only (or use /openai/v1 for Coding Plan)", http.StatusBadRequest)
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +272,7 @@ func (s *Server) passthroughToken(ctx context.Context, binding SessionBinding) (
 		if s.pulse == nil || strings.TrimSpace(binding.PulseKey) == "" {
 			return nil, "", fmt.Errorf("loan_alias re-authorize unavailable")
 		}
-		res, err := s.pulse.Authorize(binding.PulseKey)
+		res, err := s.pulse.AuthorizeSeat(binding.PulseKey, binding.CredentialID, false, quotaPoolAuto, nil)
 		if err != nil {
 			return nil, "", err
 		}

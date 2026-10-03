@@ -4,9 +4,9 @@ import logging
 from typing import Any
 
 from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
+from assistant_platform.memory.observability import log_web_search
 
 from pulse.capabilities.handlers.common import resolve_actor_member
-from assistant_platform.memory.observability import log_web_search
 from pulse.capabilities.web.provider import SearchProviderError, get_search_provider
 from pulse.capabilities.web.rate_limit import check_web_rate_limit
 

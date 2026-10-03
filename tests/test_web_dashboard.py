@@ -1,16 +1,16 @@
 import pytest
 
 pytest.importorskip("fastapi")
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from pulse.config import AppConfig, TenantConfig, WebConfig
 from pulse.storage.models import AccountQuotaSnapshot, AiAccountCredential, UsageDailyAggregate
 from pulse.tool_center.ingestion_status import period_date_range
 from pulse.tool_center.repository import ToolCenterRepository
-from pulse.web.dashboard_api import DASHBOARD_TREND_DAYS
 from pulse.tool_center.seed import seed_v2_catalog
 from pulse.web.auth_tokens import create_access_token
+from pulse.web.dashboard_api import DASHBOARD_TREND_DAYS
 from pulse.web.portal import bootstrap_portal_owner
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
@@ -110,7 +110,13 @@ def test_dashboard_overview_sections_owner(dash_client_with_roles):
     assert res.status_code == 200
     sections = res.json()["sections"]
     assert set(sections) == {
-        "quota", "usage", "loans", "sync", "proxy", "integrations", "recent_activity",
+        "quota",
+        "usage",
+        "loans",
+        "sync",
+        "proxy",
+        "integrations",
+        "recent_activity",
     }
     assert sections["quota"]["exhausted_count"] == 0
     assert sections["quota"]["risk_top"] == []
@@ -177,18 +183,12 @@ def test_dashboard_overview_section_failure_isolated(dash_client_with_roles, mon
     assert sections["quota"] is not None
 
 
-def test_dashboard_overview_does_not_build_full_ingestion_payload(
-    dash_client_with_roles, monkeypatch
-):
+def test_dashboard_overview_does_not_build_full_ingestion_payload(dash_client_with_roles, monkeypatch):
     def _boom(*args, **kwargs):
         raise AssertionError("full ingestion payload should not run for dashboard")
 
-    monkeypatch.setattr(
-        "pulse.tool_center.ingestion_status.build_ingestion_status_payload", _boom
-    )
-    monkeypatch.setattr(
-        "pulse.tool_center.usage_analytics.build_usage_analytics_overview", _boom
-    )
+    monkeypatch.setattr("pulse.tool_center.ingestion_status.build_ingestion_status_payload", _boom)
+    monkeypatch.setattr("pulse.tool_center.usage_analytics.build_usage_analytics_overview", _boom)
     monkeypatch.setattr("pulse.web.dashboard_api.settings_for_api", _boom)
     client, config, owner, _viewer, _acct = dash_client_with_roles
     token = create_access_token(config, owner)
@@ -379,7 +379,7 @@ def test_dashboard_overview_quota_risk_top(_dash_app):
     s.add(
         AccountQuotaSnapshot(
             account_id=exhausted_acc.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=today - timedelta(days=5),
             cycle_end=today + timedelta(days=25),
             limit_cents=7000,
@@ -391,7 +391,7 @@ def test_dashboard_overview_quota_risk_top(_dash_app):
     s.add(
         AccountQuotaSnapshot(
             account_id=warning_acc.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=today - timedelta(days=5),
             cycle_end=today + timedelta(days=25),
             limit_cents=7000,

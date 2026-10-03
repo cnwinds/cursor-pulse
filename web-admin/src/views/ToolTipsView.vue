@@ -2,7 +2,6 @@
   <div class="tips-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>使用技巧知识库</h2>
         <p class="desc">团队分享的 AI 工具心得。员工可通过钉钉发送「心得：…」自动整理入库。</p>
       </div>
       <div class="header-actions">
@@ -149,8 +148,8 @@ onMounted(load)
   margin-bottom: 20px;
 }
 .desc {
-  color: #64748b;
-  font-size: 14px;
+  color: var(--pulse-text-secondary);
+  font-size: var(--pulse-text-md);
   margin-top: 4px;
 }
 .header-actions {

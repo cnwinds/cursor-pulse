@@ -2,10 +2,9 @@
   <div class="usage-analytics" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>用量分析</h2>
-        <p class="desc">
-          选定日历区间内的 Cursor Token 规模与结构（与额度看板互补；池划分优先 kind，无 kind 时按模型名近似）。
-          <span v-if="overview?.timezone" class="tz">时区 {{ overview.timezone }}</span>
+        <p class="desc desc-oneline">
+          所选日期的 Cursor 用量。GLM / MiniMax / Kimi 请打开
+          <router-link to="/quota-board">额度看板</router-link>。
         </p>
       </div>
       <el-button @click="loadOverview">刷新</el-button>
@@ -81,7 +80,7 @@
 
     <el-row :gutter="12" class="kpi-row">
       <el-col :xs="12" :sm="8" :md="4" v-for="item in kpiItems" :key="item.label">
-        <el-card shadow="never" class="kpi-card">
+        <el-card shadow="never" class="kpi-card" :class="item.tone ? `kpi-card--${item.tone}` : ''">
           <div class="kpi-label">{{ item.label }}</div>
           <div class="kpi-value">{{ item.value }}</div>
         </el-card>
@@ -221,6 +220,7 @@ import {
   DEFAULT_DISPLAY_TIMEZONE,
   formatYmd,
 } from '@/utils/time'
+import { usageKpiToneForLabel } from '@/utils/usageChartColors'
 import { formatSpend, formatTokens, kindFamilyLabel } from '@/utils/usage'
 
 type Dimension = 'account' | 'model' | 'family' | 'pool'
@@ -230,6 +230,7 @@ interface AccountRow {
   id: string
   account_identifier: string
   primary_member_id?: string | null
+  vendor_slug?: string | null
 }
 
 interface MemberRow {
@@ -331,24 +332,34 @@ const dimensionLabel = computed(() => {
 const dimensionColumnLabel = computed(() => dimensionLabel.value)
 
 const kpiItems = computed(() => {
+  const placeholder = (label: string) => ({
+    label,
+    value: '—',
+    tone: usageKpiToneForLabel(label),
+  })
   const k = overview.value?.kpi
   if (!k) {
     return [
-      { label: '总 Token', value: '—' },
-      { label: '输入', value: '—' },
-      { label: '输出', value: '—' },
-      { label: 'Cache Read', value: '—' },
-      { label: '事件数', value: '—' },
-      { label: '估算花费', value: '—' },
+      placeholder('总 Token'),
+      placeholder('输入'),
+      placeholder('输出'),
+      placeholder('Cache Read'),
+      placeholder('事件数'),
+      placeholder('估算花费'),
     ]
   }
+  const row = (label: string, value: string) => ({
+    label,
+    value,
+    tone: usageKpiToneForLabel(label),
+  })
   return [
-    { label: '总 Token', value: formatTokens(k.tokens_total) },
-    { label: '输入', value: formatTokens(k.tokens_input) },
-    { label: '输出', value: formatTokens(k.tokens_output) },
-    { label: 'Cache Read', value: formatTokens(k.tokens_cache_read) },
-    { label: '事件数', value: String(k.event_count) },
-    { label: '估算花费', value: formatSpend(k.cost_usd) },
+    row('总 Token', formatTokens(k.tokens_total)),
+    row('输入', formatTokens(k.tokens_input)),
+    row('输出', formatTokens(k.tokens_output)),
+    row('Cache Read', formatTokens(k.tokens_cache_read)),
+    row('事件数', String(k.event_count)),
+    row('估算花费', formatSpend(k.cost_usd)),
   ]
 })
 
@@ -401,7 +412,7 @@ const trendOption = computed(() => dailyTrendChartOption(overview.value?.series_
 const structOption = computed(() => {
   const rows = chartSeries.value.filter((r) => r.tokens_total > 0)
   return {
-    color: ['#2563eb', '#0d9488', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b', '#14b8a6', '#e11d48'],
+    color: ['#6366f1', '#38bdf8', '#f59e0b', '#ef4444', '#818cf8', 'var(--pulse-text-secondary)', '#4f46e5', '#e11d48'],
     tooltip: {
       trigger: 'item',
       formatter: (p: { name: string; value: number; percent: number }) =>
@@ -421,7 +432,7 @@ const structOption = computed(() => {
 const rankOption = computed(() => {
   const rows = [...chartSeries.value].reverse()
   return {
-    color: ['#2563eb'],
+    color: ['#6366f1'],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -542,7 +553,7 @@ async function openDrill(row: TableRow) {
 
 async function loadFilters() {
   const [accRes, memberRes] = await Promise.all([
-    client.get('/api/v2/accounts'),
+    client.get('/api/v2/accounts', { params: { vendor_slug: 'cursor' } }),
     client.get('/api/v2/members'),
   ])
   accounts.value = accRes.data
@@ -583,7 +594,9 @@ onMounted(async () => {
 
 <style scoped>
 .usage-analytics {
-  max-width: 1400px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .page-header {
   display: flex;
@@ -591,18 +604,24 @@ onMounted(async () => {
   align-items: flex-start;
   margin-bottom: 16px;
 }
-.page-header h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-}
 .desc {
   margin: 0;
-  color: #64748b;
-  font-size: 13px;
+  color: var(--pulse-text-secondary);
+  line-height: var(--pulse-leading-normal);
+}
+.desc-oneline {
+  max-width: 100%;
+}
+.desc-oneline a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.desc-oneline a:hover {
+  text-decoration: underline;
 }
 .tz {
   margin-left: 8px;
-  color: #94a3b8;
+  color: var(--pulse-text-muted);
 }
 .filter-card {
   margin-bottom: 12px;
@@ -612,10 +631,9 @@ onMounted(async () => {
 }
 .filters {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  overflow-x: auto;
 }
 .filter-preset {
   flex: 0 0 auto;
@@ -638,15 +656,31 @@ onMounted(async () => {
 .kpi-card {
   margin-bottom: 12px;
 }
+.kpi-card--input {
+  border-top: 3px solid var(--pulse-color-accent) !important;
+  background: var(--pulse-color-accent-muted);
+}
+.kpi-card--cache {
+  border-top: 3px solid var(--pulse-color-accent-soft) !important;
+  background: rgba(129, 140, 248, 0.1);
+}
+.kpi-card--output {
+  border-top: 3px solid hsl(24 88% 48%) !important;
+  background: hsl(24 88% 48% / 0.08);
+}
+.kpi-card--total {
+  border-top: 3px solid var(--pulse-color-accent-hover) !important;
+  background: rgba(99, 102, 241, 0.06);
+}
+.kpi-card--cost {
+  border-top: 3px solid #d97706 !important;
+  background: hsl(32 90% 50% / 0.08);
+}
 .kpi-label {
-  font-size: 12px;
-  color: #64748b;
   margin-bottom: 6px;
 }
 .kpi-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #0f172a;
+  color: var(--pulse-text-strong);
 }
 .chart-row {
   margin-bottom: 12px;
@@ -656,14 +690,11 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 .chart-title {
-  font-size: 14px;
-  font-weight: 600;
   margin-bottom: 8px;
-  color: #0f172a;
 }
 .chart-hint {
   margin-left: 8px;
-  font-weight: 400;
+  font-weight: var(--pulse-font-regular);
 }
 .chart {
   height: 300px;
@@ -677,9 +708,5 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 8px;
-}
-.muted {
-  color: #94a3b8;
-  font-size: 12px;
 }
 </style>

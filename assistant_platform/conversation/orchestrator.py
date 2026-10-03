@@ -12,13 +12,14 @@ from assistant_platform.capabilities.pulse_client import PulseCapabilityClient
 from assistant_platform.capabilities.resolve import resolve_capabilities
 from assistant_platform.config import AssistantConfig, resolve_effective_chat_memory, resolve_effective_llm
 from assistant_platform.conversation.agent_policy import build_agent_system
-from assistant_platform.conversation.agent_runtime import AgentRuntime, AgentUnavailable
+from assistant_platform.conversation.agent_runtime import AgentRuntime, AgentUnavailable, ReplyStreamSink
 from assistant_platform.conversation.agent_tools import (
     TOOL_EXCLUSIONS,
     tool_name_for_capability,
 )
 from assistant_platform.conversation.agent_trace import persist_agent_trace_event
 from assistant_platform.conversation.models import ChatMessageRow, ChatSessionRow
+from assistant_platform.conversation.reply_timing import ReplyTurnTimer
 from assistant_platform.conversation.responder import simple_reply
 from assistant_platform.conversation.session_history import load_session_history_messages
 from assistant_platform.conversation.subject import resolve_subject_id
@@ -28,18 +29,18 @@ from assistant_platform.conversation.turn_inbox import (
     try_schedule_next_turn,
 )
 from assistant_platform.evolution.clustering import cluster_low_score_reviews
+from assistant_platform.integrations.channel_reply import send_channel_reply
+from assistant_platform.integrations.reply_stream import WebReplyStream
 from assistant_platform.llm import build_assistant_llm_client
-from assistant_platform.memory.archive_pipeline import run_archive_pipeline, should_run_archive_pipeline
 from assistant_platform.memory.agent_tools import MemoryToolService
+from assistant_platform.memory.archive_pipeline import run_archive_pipeline, should_run_archive_pipeline
 from assistant_platform.memory.archive_search import resolve_search_scope
 from assistant_platform.memory.context_builder import build_recall_bundle
-from assistant_platform.profiles.signals import create_profile_signal_from_session
 from assistant_platform.memory.semantic.domain import VisibilityContext
 from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
+from assistant_platform.profiles.signals import create_profile_signal_from_session
 from assistant_platform.prompts.compose import compose_system_supplement
-from assistant_platform.conversation.reply_timing import ReplyTurnTimer
 from assistant_platform.review.auto_review import run_auto_review
-from assistant_platform.integrations.channel_reply import send_channel_reply
 from assistant_platform.skills.models import SkillActorContext, SkillDocResult
 from assistant_platform.skills.registry import DEFAULT_SKILL_WINDOW_LINES, SkillRegistry
 from assistant_platform.skills.vector_sync import build_skill_vector_index
@@ -118,6 +119,7 @@ def _persist_and_queue_reply(
     text: str,
     kind: str,
     trigger_message_id: str | None = None,
+    stream_id: str | None = None,
 ) -> ChatMessageRow:
     meta: dict[str, Any] = {"kind": kind}
     if trigger_message_id:
@@ -138,6 +140,8 @@ def _persist_and_queue_reply(
         "text": text,
         "kind": kind,
     }
+    if stream_id:
+        reply_payload["stream_id"] = stream_id
     repo.add_outbox(
         assistant_id=session_row.assistant_id,
         team_id=session_row.team_id,
@@ -146,8 +150,7 @@ def _persist_and_queue_reply(
     )
     repo.add_job(job_type="reply.send", payload=reply_payload)
     logger.info(
-        "reply.timing stage=reply_queued session_id=%s message_id=%s kind=%s "
-        "preview=%r",
+        "reply.timing stage=reply_queued session_id=%s message_id=%s kind=%s preview=%r",
         session_row.id,
         assistant_message.id,
         kind,
@@ -164,6 +167,7 @@ def _persist_and_deliver_interim(
     session_row: ChatSessionRow,
     reply_endpoint: dict,
     text: str,
+    stream_id: str | None = None,
 ) -> ChatMessageRow:
     """Persist interim message and deliver immediately (no reply.send job)."""
     assistant_message = ChatMessageRow(
@@ -182,6 +186,8 @@ def _persist_and_deliver_interim(
         "text": text,
         "kind": "interim",
     }
+    if stream_id:
+        reply_payload["stream_id"] = stream_id
     repo.add_outbox(
         assistant_id=session_row.assistant_id,
         team_id=session_row.team_id,
@@ -274,9 +280,7 @@ def _turn_context_snapshot(
             ("memory_get_session_summary", "会话摘要"),
             ("memory_read_range", "范围读取"),
         ):
-            tools.append(
-                {"name": name, "capability_key": "", "display_name": label}
-            )
+            tools.append({"name": name, "capability_key": "", "display_name": label})
     tools.append(
         {
             "name": "notify_user",
@@ -303,9 +307,7 @@ def _load_skill_previews(
                 max_lines=DEFAULT_SKILL_WINDOW_LINES,
             )
         except Exception:
-            logger.exception(
-                "skill preview load failed skill_id=%s", card.skill_id
-            )
+            logger.exception("skill preview load failed skill_id=%s", card.skill_id)
     return previews
 
 
@@ -321,6 +323,7 @@ def generate_reply_text(
     turn_inbox: TurnInbox | None = None,
     on_interim_reply: Callable[[str], None] | None = None,
     on_agent_trace: Callable[[dict[str, Any]], None] | None = None,
+    stream_sink: ReplyStreamSink | None = None,
 ) -> str:
     if incoming is None:
         return simple_reply(text)
@@ -356,11 +359,7 @@ def generate_reply_text(
             session_id=session_row.id,
             limit=llm_cfg.agent_history_max_messages,
         )
-        if (
-            history
-            and history[-1].get("role") == "user"
-            and history[-1].get("content") == text
-        ):
+        if history and history[-1].get("role") == "user" and history[-1].get("content") == text:
             history = history[:-1]
 
         if chat_memory.features.auto_recall_per_turn:
@@ -428,9 +427,7 @@ def generate_reply_text(
             if config.skills_vector.enabled:
                 skill_vector_index = None
                 try:
-                    skill_vector_index = build_skill_vector_index(
-                        db_session, config, registry=skill_registry
-                    )
+                    skill_vector_index = build_skill_vector_index(db_session, config, registry=skill_registry)
                 except Exception:
                     logger.exception("skill vector index build failed; injecting no cards")
                 if skill_vector_index is not None:
@@ -440,9 +437,7 @@ def generate_reply_text(
                         logger.exception("skill vector route failed; injecting no cards")
                         skill_cards = []
             else:
-                logger.debug(
-                    "skills vector disabled; no skill cards injected"
-                )
+                logger.debug("skills vector disabled; no skill cards injected")
             if skill_cards:
                 skill_previews = _load_skill_previews(
                     registry=skill_registry,
@@ -484,9 +479,7 @@ def generate_reply_text(
     )
     owns = pulse_client is None
     try:
-        executor = CapabilityExecutor(
-            session=db_session, config=config, pulse_client=pulse
-        )
+        executor = CapabilityExecutor(session=db_session, config=config, pulse_client=pulse)
         runtime = AgentRuntime(
             llm=client,
             executor=executor,
@@ -510,6 +503,7 @@ def generate_reply_text(
             inbox=turn_inbox,
             on_interim_reply=on_interim_reply,
             on_agent_trace=on_agent_trace,
+            stream_sink=stream_sink,
         )
     except AgentUnavailable as exc:
         return str(exc) or _UNAVAILABLE
@@ -537,9 +531,7 @@ def process_session_job(
     if user_message is None or user_message.session_id != session_id:
         raise ValueError(f"user message not found for session: {message_id}")
 
-    incoming = (
-        db_session.get(IncomingEventRow, incoming_event_id) if incoming_event_id else None
-    )
+    incoming = db_session.get(IncomingEventRow, incoming_event_id) if incoming_event_id else None
     reply_endpoint = incoming.reply_endpoint_json if incoming else {}
 
     text = user_message.text_redacted or ""
@@ -555,19 +547,20 @@ def process_session_job(
     try:
         # Idempotent retry: reply may already be committed while job bookkeeping
         # failed and requeued (must not generate a second user-visible final).
-        existing_final = _final_reply_for_trigger(
-            db_session, session_id=session_id, trigger_message_id=message_id
-        )
+        existing_final = _final_reply_for_trigger(db_session, session_id=session_id, trigger_message_id=message_id)
         if existing_final is not None:
             logger.info(
-                "skip duplicate session.process session_id=%s trigger_message_id=%s "
-                "existing_final=%s",
+                "skip duplicate session.process session_id=%s trigger_message_id=%s existing_final=%s",
                 session_id,
                 message_id,
                 existing_final.id,
             )
             timer.mark("session_process_skipped_duplicate")
             return
+
+        stream: WebReplyStream | None = None
+        if reply_endpoint.get("channel") == "web" and resolve_effective_llm(config).stream_web_replies:
+            stream = WebReplyStream(config=config, session_id=session_id, reply_endpoint=reply_endpoint)
 
         def emit_interim(text: str) -> None:
             timer.mark("interim_emit", preview=(text or "")[:80])
@@ -578,6 +571,7 @@ def process_session_job(
                 session_row=session_row,
                 reply_endpoint=reply_endpoint,
                 text=text,
+                stream_id=stream.take_stream_id() if stream is not None else None,
             )
 
         def emit_trace(event: dict) -> None:
@@ -593,18 +587,24 @@ def process_session_job(
                 logger.exception("emit agent trace failed; continuing turn")
 
         timer.mark("agent_run_start")
-        reply_text = generate_reply_text(
-            db_session,
-            config=config,
-            incoming=incoming,
-            text=text,
-            session_row=session_row,
-            display_name=display_name,
-            pulse_client=pulse_client,
-            turn_inbox=inbox,
-            on_interim_reply=emit_interim,
-            on_agent_trace=emit_trace,
-        )
+        try:
+            reply_text = generate_reply_text(
+                db_session,
+                config=config,
+                incoming=incoming,
+                text=text,
+                session_row=session_row,
+                display_name=display_name,
+                pulse_client=pulse_client,
+                turn_inbox=inbox,
+                on_interim_reply=emit_interim,
+                on_agent_trace=emit_trace,
+                stream_sink=stream,
+            )
+        except Exception:
+            if stream is not None:
+                stream.discard()
+            raise
         timer.mark("agent_run_done", reply_preview=(reply_text or "")[:80])
 
         _persist_and_queue_reply(
@@ -615,6 +615,7 @@ def process_session_job(
             text=reply_text,
             kind="final",
             trigger_message_id=message_id,
+            stream_id=stream.take_stream_id() if stream is not None else None,
         )
         # Commit before turn teardown so a lock failure in ``end_turn`` cannot
         # rollback the user-visible final reply + reply.send job (silent no-reply).

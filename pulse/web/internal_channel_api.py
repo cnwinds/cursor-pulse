@@ -1,10 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import threading
 import time
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException
@@ -13,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from pulse.channels.base import messenger_delivered, outbound_messenger_or_none
 from pulse.config import AppConfig
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,15 @@ class ChannelReplyBody(BaseModel):
     session_id: str | None = None
     message_id: str | None = None
     kind: str = "final"
+    stream_id: str | None = None
+
+
+class ChannelStreamBody(BaseModel):
+    reply_endpoint: dict[str, Any] = Field(default_factory=dict)
+    stream_id: str = Field(min_length=1, max_length=64)
+    session_id: str | None = None
+    text: str = ""
+    done: bool = False
 
 
 _recent_channel_deliveries: dict[str, float] = {}
@@ -38,23 +47,31 @@ def _dedupe_key(*, message_id: str | None, text: str, kind: str) -> str | None:
     return None
 
 
-def _already_delivered(dedupe_key: str | None) -> bool:
-    if not dedupe_key:
-        return False
+def _prune_dedupe_locked(now: float) -> None:
+    expired = [key for key, ts in _recent_channel_deliveries.items() if now - ts > _DEDUPE_TTL_SECONDS]
+    for key in expired:
+        _recent_channel_deliveries.pop(key, None)
 
+
+def _try_begin_delivery(dedupe_key: str | None) -> bool:
+    """Claim a dedupe slot. True = proceed; False = already claimed/delivered."""
+    if not dedupe_key:
+        return True
     now = time.monotonic()
     with _dedupe_lock:
-        expired = [
-            key
-            for key, ts in _recent_channel_deliveries.items()
-            if now - ts > _DEDUPE_TTL_SECONDS
-        ]
-        for key in expired:
-            _recent_channel_deliveries.pop(key, None)
+        _prune_dedupe_locked(now)
         if dedupe_key in _recent_channel_deliveries:
-            return True
+            return False
         _recent_channel_deliveries[dedupe_key] = now
-        return False
+        return True
+
+
+def _abort_delivery(dedupe_key: str | None) -> None:
+    """Release a claim so a failed attempt can be retried."""
+    if not dedupe_key:
+        return
+    with _dedupe_lock:
+        _recent_channel_deliveries.pop(dedupe_key, None)
 
 
 def _get_channel_messenger(config: AppConfig):
@@ -96,22 +113,67 @@ def deliver_channel_reply(
     assistant_session_id: str | None = None,
     assistant_message_id: str | None = None,
     kind: str = "final",
+    stream_id: str | None = None,
 ) -> dict[str, str]:
     dedupe_key = _dedupe_key(
         message_id=assistant_message_id,
         text=text,
         kind=kind,
     )
+    if not _try_begin_delivery(dedupe_key):
+        channel = str(reply_endpoint.get("channel", "") or "")
+        if channel == "web" and stream_id and session is not None:
+            from pulse.web.portal_chat import close_portal_chat_stream
+
+            close_portal_chat_stream(session, stream_id)
+        elif channel in _SUPPORTED_IM_CHANNELS:
+            logger.info(
+                "channel reply deduped: message_id=%s kind=%s",
+                assistant_message_id,
+                kind,
+            )
+        return {"status": "sent", "reason": "deduplicated"}
+
+    result = _deliver_channel_reply_once(
+        config,
+        reply_endpoint=reply_endpoint,
+        text=text,
+        messenger=messenger,
+        session=session,
+        team_id=team_id,
+        assistant_session_id=assistant_session_id,
+        assistant_message_id=assistant_message_id,
+        kind=kind,
+        stream_id=stream_id,
+    )
+    if result.get("status") != "sent":
+        _abort_delivery(dedupe_key)
+    return result
+
+
+def _deliver_channel_reply_once(
+    config: AppConfig,
+    *,
+    reply_endpoint: dict[str, Any],
+    text: str,
+    messenger=None,
+    session=None,
+    team_id: str | None = None,
+    assistant_session_id: str | None = None,
+    assistant_message_id: str | None = None,
+    kind: str = "final",
+    stream_id: str | None = None,
+) -> dict[str, str]:
     channel = str(reply_endpoint.get("channel", "") or "")
     if channel == "web":
-        if _already_delivered(dedupe_key):
-            return {"status": "sent", "reason": "deduplicated"}
+        from pulse.web.portal_chat import close_portal_chat_stream, store_portal_chat_delivery
+
         member_id = str(reply_endpoint.get("member_id", "")).strip()
         if not member_id or session is None or not team_id:
             return {"status": "queued", "reason": "missing_web_context"}
         try:
-            from pulse.web.portal_chat import store_portal_chat_delivery
-
+            if stream_id:
+                close_portal_chat_stream(session, stream_id)
             store_portal_chat_delivery(
                 session,
                 team_id=team_id,
@@ -130,34 +192,23 @@ def deliver_channel_reply(
     if channel not in _SUPPORTED_IM_CHANNELS:
         return {"status": "noop", "reason": "unsupported_channel"}
 
-    if _already_delivered(dedupe_key):
-        logger.info(
-            "channel reply deduped: message_id=%s kind=%s",
-            assistant_message_id,
-            kind,
-        )
-        return {"status": "sent", "reason": "deduplicated"}
-
     logger.info(
         "reply.timing stage=channel_deliver_start message_id=%s kind=%s channel=%s at=%s",
         assistant_message_id,
         kind,
         channel,
-        serialize_datetime(datetime.now(timezone.utc)),
+        serialize_datetime(datetime.now(UTC)),
     )
     deliver_t0 = time.monotonic()
 
     effective_messenger = messenger if messenger is not None else _get_channel_messenger(config)
     if effective_messenger is None:
-        logger.warning(
-            "channel reply skipped: messenger unavailable (BOT_PLATFORM / credentials)"
-        )
+        logger.warning("channel reply skipped: messenger unavailable (BOT_PLATFORM / credentials)")
         return {"status": "queued", "reason": "messenger_unavailable"}
 
     def _log_deliver_done(status: str, reason: str = "") -> dict[str, str]:
         logger.info(
-            "reply.timing stage=channel_deliver_done message_id=%s kind=%s status=%s "
-            "reason=%s elapsed_ms=%d",
+            "reply.timing stage=channel_deliver_done message_id=%s kind=%s status=%s reason=%s elapsed_ms=%d",
             assistant_message_id,
             kind,
             status,
@@ -195,9 +246,7 @@ def deliver_channel_reply(
                     return _log_deliver_done("queued", "group_send_skipped")
                 return _log_deliver_done("sent")
             except Exception:
-                logger.exception(
-                    "group reply failed for feishu conversation_id=%s", conversation_id
-                )
+                logger.exception("group reply failed for feishu conversation_id=%s", conversation_id)
                 return _log_deliver_done("queued", "group_send_failed")
 
         # dingtalk: only allow reply into the configured work group
@@ -242,6 +291,7 @@ def register_internal_channel_routes(app, config: AppConfig, get_db, team_repo_f
             assistant_session_id=body.session_id,
             assistant_message_id=body.message_id,
             kind=body.kind,
+            stream_id=body.stream_id,
         )
         if result.get("status") != "sent":
             logger.warning(
@@ -253,3 +303,30 @@ def register_internal_channel_routes(app, config: AppConfig, get_db, team_repo_f
         else:
             session.commit()
         return result
+
+    @app.post(
+        "/api/internal/v1/channel/stream",
+        dependencies=[Depends(require_internal_service)],
+    )
+    def internal_channel_stream(body: ChannelStreamBody, session: Session = Depends(get_db)):
+        from pulse.web.portal_chat import close_portal_chat_stream, upsert_portal_chat_stream
+
+        if str(body.reply_endpoint.get("channel", "") or "") != "web":
+            return {"status": "noop", "reason": "unsupported_channel"}
+        member_id = str(body.reply_endpoint.get("member_id", "")).strip()
+        if not member_id:
+            return {"status": "noop", "reason": "missing_member_id"}
+        team, _repo = team_repo_fn(session)
+        if body.done:
+            close_portal_chat_stream(session, body.stream_id)
+        else:
+            upsert_portal_chat_stream(
+                session,
+                team_id=team.id,
+                member_id=member_id,
+                stream_id=body.stream_id,
+                text=body.text,
+                assistant_session_id=body.session_id,
+            )
+        session.commit()
+        return {"status": "ok"}

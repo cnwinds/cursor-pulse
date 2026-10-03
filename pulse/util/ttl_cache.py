@@ -63,14 +63,11 @@ class TTLCache:
         with self._lock:
             self._entries.pop(key, None)
 
-
     def _sweep_locked(self, ttl_seconds: float) -> None:
         """在持锁状态下清过期条目；仍超上限则按存入时间丢弃最旧的一批。"""
         now = time.monotonic()
         if ttl_seconds > 0:
-            for stale in [
-                key for key, entry in self._entries.items() if now - entry[0] > ttl_seconds
-            ]:
+            for stale in [key for key, entry in self._entries.items() if now - entry[0] > ttl_seconds]:
                 self._entries.pop(stale, None)
         overflow = len(self._entries) - self.max_entries
         if overflow <= 0:

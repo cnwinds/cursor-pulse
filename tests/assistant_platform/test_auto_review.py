@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from sqlalchemy import select
 
@@ -29,7 +29,7 @@ def _event(*, text: str = "你好") -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id="u1",
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -135,9 +135,7 @@ def test_run_auto_review_queues_human_review_when_score_below_60():
     session.commit()
 
     assert review.score == 50
-    human = session.scalar(
-        select(HumanReviewRow).where(HumanReviewRow.session_id == session_row.id)
-    )
+    human = session.scalar(select(HumanReviewRow).where(HumanReviewRow.session_id == session_row.id))
     assert human is not None
     assert human.reviewer is None
     assert human.notes == "auto_queued"
@@ -153,9 +151,7 @@ def test_session_close_job_runs_auto_review():
     process_session_close_job(session, {"session_id": session_row.id}, _config())
     session.commit()
 
-    review = session.scalar(
-        select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id)
-    )
+    review = session.scalar(select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id))
     assert review is not None
     assert review.score == 80
     session.close()
@@ -170,16 +166,12 @@ def test_idle_close_enqueues_review_via_session_close_job():
 
     from assistant_platform.storage.models import BackgroundJobRow
 
-    close_job = session.scalar(
-        select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.close")
-    )
+    close_job = session.scalar(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.close"))
     assert close_job is not None
 
     process_session_close_job(session, close_job.payload_json, _config())
     session.commit()
 
-    review = session.scalar(
-        select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id)
-    )
+    review = session.scalar(select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id))
     assert review is not None
     session.close()

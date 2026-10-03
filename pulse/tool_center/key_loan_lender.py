@@ -1,17 +1,36 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from pulse.config import LoanSelectionConfig
 from pulse.storage.models import AiAccount, KeyLoan, Member
 from pulse.tool_center.burn_rate import LenderCandidate, recommend_lenders
+from pulse.tool_center.key_loan_delivery import ROUTING_POOL
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.sync_health import sync_blockers_by_account
 from pulse.util.datetime_fmt import ensure_aware
+
+
+def select_team_loans(team_id: str):
+    """本团队的借用，含没有出借账号的账号池轮换借用。
+
+    指定借用靠出借账号归属团队；账号池借用没有 source account，改靠借用人归属。
+    """
+    return (
+        select(KeyLoan)
+        .outerjoin(AiAccount, KeyLoan.source_account_id == AiAccount.id)
+        .outerjoin(Member, KeyLoan.borrower_member_id == Member.id)
+        .where(
+            or_(
+                AiAccount.team_id == team_id,
+                and_(KeyLoan.routing_mode == ROUTING_POOL, Member.team_id == team_id),
+            )
+        )
+    )
 
 
 def member_names_by_id(session: Session, member_ids: set[str]) -> dict[str, str]:
@@ -19,10 +38,8 @@ def member_names_by_id(session: Session, member_ids: set[str]) -> dict[str, str]
     ids = {mid for mid in member_ids if mid}
     if not ids:
         return {}
-    return {
-        member.id: member.display_name
-        for member in session.scalars(select(Member).where(Member.id.in_(ids)))
-    }
+    return {member.id: member.display_name for member in session.scalars(select(Member).where(Member.id.in_(ids)))}
+
 
 def account_loan_deadline(account: AiAccount) -> date | None:
     """账号上借用 key 的自动回收日：额度重置日与订阅到期日取先到者。
@@ -40,7 +57,7 @@ def account_loan_deadline(account: AiAccount) -> date | None:
 def _loan_created_date(loan: KeyLoan) -> date:
     created = loan.created_at
     if created.tzinfo is not None:
-        return created.astimezone(timezone.utc).date()
+        return created.astimezone(UTC).date()
     return created.date()
 
 
@@ -57,15 +74,17 @@ def active_loan_counts_by_account(session: Session, team_id: str) -> dict[str, i
     rows = session.execute(
         select(KeyLoan.source_account_id, func.count())
         .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-        .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
+        .where(
+            AiAccount.team_id == team_id,
+            AiAccount.deleted_at.is_(None),
+            KeyLoan.status == "active",
+        )
         .group_by(KeyLoan.source_account_id)
     ).all()
     return {account_id: count for account_id, count in rows}
 
 
-def last_bound_at_by_account(
-    session: Session, account_ids: list[str]
-) -> dict[str, datetime]:
+def last_bound_at_by_account(session: Session, account_ids: list[str]) -> dict[str, datetime]:
     """每个账号最近一次出借绑定时刻（驻留窗口基准）。
 
     取全部状态的借用记录：账号刚被切走（上一笔已回收）或刚被绑上（进行中）
@@ -103,18 +122,14 @@ def build_lender_candidates(
     exclude_account_ids = exclude_account_ids or set()
     repo = ToolCenterRepository(session, team_id)
     accounts = [
-        account
-        for account in repo.list_active_accounts(vendor_slug="cursor")
-        if account.id not in exclude_account_ids
+        account for account in repo.list_active_accounts(vendor_slug="cursor") if account.id not in exclude_account_ids
     ]
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     loan_counts = active_loan_counts_by_account(session, team_id)
     accounts = [account for account in accounts if snapshots.get(account.id)]
     sync_blockers = sync_blockers_by_account(session, [account.id for account in accounts])
     accounts = [account for account in accounts if account.id not in sync_blockers]
-    bound_at_by_account = last_bound_at_by_account(
-        session, [account.id for account in accounts]
-    )
+    bound_at_by_account = last_bound_at_by_account(session, [account.id for account in accounts])
     primary_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names = member_names_by_id(session, primary_ids)
     candidates: list[LenderCandidate] = []
@@ -154,11 +169,6 @@ def recommend_lender_for_borrower(
     :func:`pulse.tool_center.key_loan_auto.resolve_auto_lender`，它在这之上叠加
     Jev 主判与护栏。本函数保留为「只看算法分」的入口，供回测、对照与工具使用。
     """
-    candidates = build_lender_candidates(
-        session, team_id, exclude_account_ids=exclude_account_ids
-    )
-    ranked = recommend_lenders(
-        candidates, today, loan_selection=loan_selection, pool=pool
-    )
+    candidates = build_lender_candidates(session, team_id, exclude_account_ids=exclude_account_ids)
+    ranked = recommend_lenders(candidates, today, loan_selection=loan_selection, pool=pool)
     return ranked[0] if ranked else None
-

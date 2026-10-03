@@ -4,8 +4,6 @@ import logging
 from pathlib import Path
 from typing import Protocol
 
-import httpx
-
 from pulse.http_clients import outbound_client
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -24,9 +24,9 @@ from assistant_platform.memory.contracts import (
     SearchPageMeta,
 )
 from assistant_platform.memory.observability import log_recall_bundle
-from assistant_platform.profiles.compiler import compile_profile_guidance
 from assistant_platform.memory.semantic.domain import VisibilityContext
 from assistant_platform.memory.semantic.repository import SemanticMemoryRepository
+from assistant_platform.profiles.compiler import compile_profile_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def build_recall_bundle(
         page=page,
         token_estimate=token_estimate,
         recall_sources=tuple(dict.fromkeys(sources)),
-        built_at=datetime.now(timezone.utc),
+        built_at=datetime.now(UTC),
         degraded=degraded,
         degrade_reason=degrade_reason,
     )
@@ -217,7 +217,6 @@ def format_recall_block(bundle: RecallBundle) -> str:
         lines.append("")
     if bundle.page.total_hits:
         lines.append(
-            f"（召回 {bundle.page.returned_count}/{bundle.page.total_hits} 片段，"
-            f"约 {bundle.token_estimate} tokens）"
+            f"（召回 {bundle.page.returned_count}/{bundle.page.total_hits} 片段，约 {bundle.token_estimate} tokens）"
         )
     return "\n".join(lines).strip()

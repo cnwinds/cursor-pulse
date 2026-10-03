@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import select
@@ -41,7 +41,7 @@ def _incoming_row(*, msg_id: str, text: str) -> tuple[IncomingMessageEvent, Inco
         conversation_id="u1",
         reply_endpoint={"member_id": "m1", "role": "member"},
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
     incoming = IncomingEventRow(
         event_id=event.event_id,
@@ -81,9 +81,7 @@ def test_process_session_job_injects_inbox_during_tool_rounds():
     fake_llm.complete_with_tools.side_effect = [
         {
             "content": "",
-            "tool_calls": [
-                {"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}
-            ],
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-07"}'}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": None,
@@ -158,11 +156,7 @@ def test_process_session_job_injects_inbox_during_tool_rounds():
     user_texts = [m["content"] for m in second_llm_messages if m.get("role") == "user"]
     assert "查6月份的" in user_texts
 
-    follow_jobs = list(
-        db.scalars(
-            select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")
-        )
-    )
+    follow_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "session.process")))
     assert follow_jobs == []
 
     db.refresh(user_msg2)
@@ -185,9 +179,7 @@ def test_process_session_job_sends_interim_before_final():
     fake_llm.complete_with_tools.side_effect = [
         {
             "content": "好的，我先查一下，请稍等",
-            "tool_calls": [
-                {"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-06"}'}
-            ],
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": '{"period":"2026-06"}'}],
             "raw_assistant_message": {
                 "role": "assistant",
                 "content": "好的，我先查一下，请稍等",
@@ -263,9 +255,7 @@ def test_process_session_job_sends_interim_before_final():
     assistant_rows = [
         row
         for row in db.scalars(
-            select(ChatMessageRow)
-            .where(ChatMessageRow.role == "assistant")
-            .order_by(ChatMessageRow.created_at.asc())
+            select(ChatMessageRow).where(ChatMessageRow.role == "assistant").order_by(ChatMessageRow.created_at.asc())
         )
         if not (row.meta_json or {}).get("ledger_only")
     ]
@@ -276,11 +266,98 @@ def test_process_session_job_sends_interim_before_final():
     assert assistant_rows[1].meta_json["kind"] == "final"
     assert assistant_rows[1].text_redacted == "6月用量结果"
 
-    reply_jobs = list(
-        db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send"))
-    )
+    reply_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")))
     assert len(reply_jobs) == 1
     assert reply_jobs[0].payload_json["kind"] == "final"
+    db.close()
+
+
+def test_process_session_job_streams_web_drafts_and_links_them_to_replies():
+    Session = init_assistant_db("sqlite://", team_id=TEAM)
+    db = Session()
+    config = _cfg()
+
+    event1, incoming1 = _incoming_row(msg_id="m1", text="我的用量")
+    incoming1.channel = "web"
+    incoming1.reply_endpoint_json = {"channel": "web", "member_id": "m1", "role": "member"}
+    db.add(incoming1)
+    db.flush()
+    session_row, user_msg1 = attach_user_message(db, event1, incoming_event_id=incoming1.id)
+    begin_turn(db, session_row, trigger_message_id=user_msg1.id)
+    db.commit()
+
+    script = [
+        {
+            "content": "好的，我来查",
+            "tool_calls": [{"id": "c1", "name": "usage_query", "arguments": "{}"}],
+            "raw_assistant_message": {
+                "role": "assistant",
+                "content": "好的，我来查",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "usage_query", "arguments": "{}"}}
+                ],
+            },
+        },
+        {
+            "content": "### 你的用量",
+            "tool_calls": [],
+            "raw_assistant_message": {"role": "assistant", "content": "### 你的用量"},
+        },
+    ]
+
+    def complete_with_tools(*, messages, tools, temperature=0.1, on_content_delta=None):
+        step = script.pop(0)
+        assert on_content_delta is not None
+        on_content_delta(step["content"])
+        return step
+
+    fake_llm = MagicMock()
+    fake_llm.complete_with_tools.side_effect = complete_with_tools
+
+    from assistant_platform.contracts.provider import CapabilityInvokeResult
+
+    pulse_client = MagicMock()
+    pulse_client.invoke.return_value = CapabilityInvokeResult(status="succeeded", user_message="", result={})
+    usage_cap = ResolvedCapability(
+        key="usage.query",
+        version="1",
+        risk_level="read",
+        display_name="查询用量",
+        description="",
+        confirmation_required=False,
+    )
+    streamed: list[dict] = []
+
+    with (
+        patch("assistant_platform.conversation.orchestrator.build_assistant_llm_client", return_value=fake_llm),
+        patch("assistant_platform.conversation.orchestrator.resolve_capabilities", return_value=[usage_cap]),
+        patch("assistant_platform.capabilities.executor.resolve_capabilities", return_value=[usage_cap]),
+        patch(
+            "assistant_platform.conversation.orchestrator.send_channel_reply",
+            return_value={"status": "sent"},
+        ) as deliver,
+        patch(
+            "assistant_platform.integrations.reply_stream.send_channel_stream",
+            side_effect=lambda payload, _cfg: streamed.append(payload) or {"status": "ok"},
+        ),
+    ):
+        process_session_job(
+            db,
+            {"incoming_event_id": incoming1.id, "session_id": session_row.id, "message_id": user_msg1.id},
+            config,
+            pulse_client=pulse_client,
+        )
+    db.commit()
+
+    assert [(p["text"], p["done"]) for p in streamed] == [("好的，我来查", False), ("### 你的用量", False)]
+    interim_payload = deliver.call_args[0][0]
+    assert interim_payload["kind"] == "interim"
+    assert interim_payload["stream_id"] == streamed[0]["stream_id"]
+
+    reply_jobs = list(db.scalars(select(BackgroundJobRow).where(BackgroundJobRow.job_type == "reply.send")))
+    assert len(reply_jobs) == 1
+    assert reply_jobs[0].payload_json["kind"] == "final"
+    assert reply_jobs[0].payload_json["stream_id"] == streamed[1]["stream_id"]
     db.close()
 
 
@@ -343,4 +420,3 @@ def test_process_session_job_queues_follow_up_when_pending_at_end():
     assert len(follow_jobs) == 1
     assert follow_jobs[0].payload_json["message_id"] == user_msg2.id
     db.close()
-

@@ -1,11 +1,10 @@
 import pytest
-from sqlalchemy import create_engine
-
 from pulse.chat.admin_tools import DEFAULT_ROUTER
 from pulse.chat.planner import _plan_with_rules
 from pulse.config import AppConfig, TenantConfig
 from pulse.storage.models import Base, Member
 from pulse.web.portal import bootstrap_portal_owner
+from sqlalchemy import create_engine
 from tests.conftest import make_team_repo
 
 
@@ -17,9 +16,7 @@ def owner_member():
 
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     team, repo = make_team_repo(session)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin1", display_name="Admin", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin1", display_name="Admin", password="x")
     repo.commit()
     return owner
 

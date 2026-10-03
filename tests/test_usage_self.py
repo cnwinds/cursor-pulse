@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-
 from pulse.storage.db import init_db
 from pulse.storage.models import (
     AiAccountCredential,
@@ -136,7 +135,7 @@ def test_load_account_model_usage_daily_aggregate():
                 tokens_input=100,
                 tokens_output=200,
                 tokens_cache_read=50,
-                updated_at=datetime(2026, 7, 15, 4, 30, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 7, 15, 4, 30, 0, tzinfo=UTC),
             )
         )
         session.commit()
@@ -225,7 +224,7 @@ def test_format_lists_all_models():
                 "events": 10,
                 "tokens": 100,
                 "cost_usd": 1.5,
-                "data_updated_at": datetime(2026, 7, 15, 4, 30, 0, tzinfo=timezone.utc),
+                "data_updated_at": datetime(2026, 7, 15, 4, 30, 0, tzinfo=UTC),
                 "models": [
                     {"model": "m1", "events": 6, "tokens": 60, "cost_usd": 1.0},
                     {"model": "m2", "events": 4, "tokens": 40, "cost_usd": 0.5},
@@ -245,11 +244,7 @@ def test_format_lists_all_models():
 
 
 def _loan_created(created_at: datetime | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
-        created_at=created_at
-        if created_at is not None
-        else datetime(2026, 7, 27, 1, 56, 7)
-    )
+    return SimpleNamespace(created_at=created_at if created_at is not None else datetime(2026, 7, 27, 1, 56, 7))
 
 
 def test_resolve_loan_usage_window_billing_cycle_uses_full_loan_period():
@@ -425,7 +420,7 @@ def test_loan_borrowed_quota_pct_fallback_limit_cents():
 
 
 def test_format_includes_loan_section():
-    created = datetime(2026, 7, 10, 9, 0, 0, tzinfo=timezone.utc)
+    created = datetime(2026, 7, 10, 9, 0, 0, tzinfo=UTC)
     msg = format_usage_self_message(
         mode="billing_cycle",
         period="2026-07",
@@ -464,8 +459,8 @@ def test_format_includes_loan_section():
 
 
 def test_format_loan_section_with_proxy():
-    created = datetime(2026, 7, 20, 9, 0, 0, tzinfo=timezone.utc)
-    updated = datetime(2026, 7, 22, 10, 0, 0, tzinfo=timezone.utc)
+    created = datetime(2026, 7, 20, 9, 0, 0, tzinfo=UTC)
+    updated = datetime(2026, 7, 22, 10, 0, 0, tzinfo=UTC)
     msg = format_usage_self_message(
         mode="billing_cycle",
         period="2026-07",
@@ -514,9 +509,7 @@ def test_format_loan_section_with_proxy():
 def test_build_usage_self_payload_empty_schema():
     session = init_db("sqlite:///:memory:")()
     team, _repo = make_team_repo(session)
-    config = SimpleNamespace(
-        collection=SimpleNamespace(timezone="Asia/Shanghai", period_format="%Y-%m")
-    )
+    config = SimpleNamespace(collection=SimpleNamespace(timezone="Asia/Shanghai", period_format="%Y-%m"))
     payload = build_usage_self_payload(
         session,
         accounts=[],
@@ -538,12 +531,10 @@ def test_build_usage_self_payload_loan_datetimes_are_json_safe(monkeypatch):
 
     from pulse.tool_center import usage_self as mod
 
-    now = datetime(2026, 7, 10, 9, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 10, 9, 0, 0, tzinfo=UTC)
     session = init_db("sqlite:///:memory:")()
     team, _repo = make_team_repo(session)
-    config = SimpleNamespace(
-        collection=SimpleNamespace(timezone="Asia/Shanghai", period_format="%Y-%m")
-    )
+    config = SimpleNamespace(collection=SimpleNamespace(timezone="Asia/Shanghai", period_format="%Y-%m"))
 
     class _FakeLoan:
         pass
@@ -597,7 +588,7 @@ def test_build_usage_self_payload_loan_datetimes_are_json_safe(monkeypatch):
 
 
 def test_format_accepts_schema_loan_nested():
-    created = datetime(2026, 7, 10, 9, 0, 0, tzinfo=timezone.utc)
+    created = datetime(2026, 7, 10, 9, 0, 0, tzinfo=UTC)
     msg = format_usage_self_message(
         mode="billing_cycle",
         period="2026-07",

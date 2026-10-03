@@ -1,12 +1,9 @@
 <template>
   <div class="users-page" v-loading="loading">
     <header class="page-header">
-      <div>
-        <h2>用户与权限</h2>
-        <p class="desc">
-          可创建本地用户（挂台账）、审批 OAuth 首次登录，并在启用钉钉/飞书后关联渠道身份。
-        </p>
-      </div>
+      <p class="desc">
+        可创建本地用户（挂台账）、审批 OAuth 首次登录，并在启用钉钉/飞书后关联渠道身份。
+      </p>
     </header>
 
     <section class="panel pending-panel" :class="{ 'is-empty': !pendingUsers.length }">
@@ -681,7 +678,9 @@ const loadDirectoryTreeNode: LoadFunction = async (node, resolve) => {
 function pickDirectoryUser(row: DirectoryCandidate | DirectoryTreeNode) {
   const memberId = row.member_id || row.id
   const displayName =
-    ('display_name' in row && row.display_name) || row.label || ''
+    ('display_name' in row && row.display_name) ||
+    ('label' in row && row.label) ||
+    ''
   const channelUserId = row.channel_user_id || ''
   const portalStatus = row.portal_status
   const channel =
@@ -774,18 +773,13 @@ onMounted(load)
 .users-page {
   max-width: 1100px;
 }
-.page-header h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-}
 .desc {
   margin: 0;
-  color: #64748b;
-  font-size: 14px;
+  color: var(--pulse-text-secondary);
 }
 .panel {
   background: #fff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--pulse-border);
   border-radius: 12px;
   padding: 20px;
   margin-top: 20px;
@@ -817,14 +811,14 @@ onMounted(load)
 }
 .directory-search-hint {
   margin: 8px 0 0;
-  font-size: 13px;
-  color: #64748b;
+  font-size: var(--pulse-text-base);
+  color: var(--pulse-text-secondary);
 }
 .directory-tree-wrap {
   min-height: 360px;
   max-height: 420px;
   overflow: auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--pulse-border);
   border-radius: 8px;
   padding: 8px 12px;
 }
@@ -840,12 +834,12 @@ onMounted(load)
 }
 .panel-head h3 {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: var(--pulse-text-body-lg);
 }
 .panel-desc {
   margin: 0;
-  color: #94a3b8;
-  font-size: 13px;
+  color: var(--pulse-text-muted);
+  font-size: var(--pulse-text-base);
 }
 .pending-panel {
   padding: 12px 16px;
@@ -862,8 +856,8 @@ onMounted(load)
   font-weight: 400;
 }
 .pending-empty-hint {
-  color: #94a3b8;
-  font-size: 13px;
+  color: var(--pulse-text-muted);
+  font-size: var(--pulse-text-base);
   white-space: nowrap;
 }
 .pending-list {
@@ -877,9 +871,9 @@ onMounted(load)
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--pulse-border);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--pulse-bg-muted);
 }
 .user-info,
 .user-cell {
@@ -891,8 +885,8 @@ onMounted(load)
   font-weight: 600;
 }
 .meta {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
 }
 .pending-actions {
   display: flex;
@@ -900,8 +894,8 @@ onMounted(load)
 }
 .dialog-desc {
   margin: 0 0 16px;
-  color: #64748b;
-  font-size: 14px;
+  color: var(--pulse-text-secondary);
+  font-size: var(--pulse-text-md);
 }
 .role-grid {
   display: grid;
@@ -911,7 +905,7 @@ onMounted(load)
 .role-card {
   text-align: left;
   padding: 14px 16px;
-  border: 2px solid #e2e8f0;
+  border: 2px solid var(--pulse-border);
   border-radius: 10px;
   background: #fff;
   cursor: pointer;
@@ -933,8 +927,8 @@ onMounted(load)
   margin-bottom: 6px;
 }
 .role-desc {
-  font-size: 12px;
-  color: #64748b;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-secondary);
   line-height: 1.4;
 }
 .custom-perms {

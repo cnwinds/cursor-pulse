@@ -10,6 +10,8 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from datetime import UTC
+
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.storage.models import Member
 from pulse.tool_center.repository import ToolCenterRepository
@@ -114,7 +116,7 @@ def test_list_accounts_embeds_credential_status_in_one_response(cred_env):
             sync_enabled=True,
             bound_by_member_id=owner.id,
             last_sync_status="success",
-            last_sync_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+            last_sync_at=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
         )
     )
     session.commit()
@@ -145,12 +147,8 @@ def test_bind_credential_triggers_sync(mock_cred_client_cls, mock_sync_client_cl
 
     mock_cursor_key_exchange(mock_client, email=account.account_identifier.lower())
     mock_client.exchange_api_key.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     from pulse.integrations.cursor_api import map_usage_event
 
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
@@ -173,9 +171,7 @@ def test_bind_credential_triggers_sync(mock_cred_client_cls, mock_sync_client_cl
 
 @patch("pulse.ingestion.sync.CursorApiClient")
 @patch("pulse.ingestion.credentials.CursorApiClient")
-def test_bind_credential_account_mismatch_returns_409(
-    mock_cred_client_cls, mock_sync_client_cls, cred_env
-):
+def test_bind_credential_account_mismatch_returns_409(mock_cred_client_cls, mock_sync_client_cls, cred_env):
     client = cred_env["client"]
     config = cred_env["config"]
     member = cred_env["member"]
@@ -203,9 +199,7 @@ def test_bind_credential_account_mismatch_returns_409(
 
 @patch("pulse.ingestion.sync.CursorApiClient")
 @patch("pulse.ingestion.credentials.CursorApiClient")
-def test_bind_credential_auto_fills_empty_identifier(
-    mock_cred_client_cls, mock_sync_client_cls, cred_env
-):
+def test_bind_credential_auto_fills_empty_identifier(mock_cred_client_cls, mock_sync_client_cls, cred_env):
     client = cred_env["client"]
     config = cred_env["config"]
     member = cred_env["member"]
@@ -226,12 +220,8 @@ def test_bind_credential_auto_fills_empty_identifier(
     from tests.conftest import mock_cursor_key_exchange
 
     mock_cursor_key_exchange(mock_client, email=key_email)
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     from pulse.integrations.cursor_api import map_usage_event
 
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])

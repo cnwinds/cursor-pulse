@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,7 +51,7 @@ def client():
             conversation_type="private",
             conversation_id="u1",
             text_redacted="hello",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
         ),
     )
     session.commit()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-
 from pulse.http_clients import (
     internal_async_client,
     internal_client,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,9 +54,7 @@ def loan_client_env(_loan_client_app):
     proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin", display_name="Admin", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin", display_name="Admin", password="x")
     borrower = repo.add_member("borrower", "Borrower")
     borrower.portal_role = "ai_member"
     borrower.portal_status = "active"
@@ -69,7 +67,7 @@ def loan_client_env(_loan_client_app):
     s.add(
         AccountQuotaSnapshot(
             account_id=cursor_account.id,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
             cycle_start=date(2026, 7, 1),
             cycle_end=date(2026, 8, 1),
             limit_cents=7000,
@@ -96,9 +94,7 @@ def _headers(token: str) -> dict:
 
 
 def _seed_proxy_addresses(env, addresses=None):
-    addresses = addresses or [
-        {"url": "http://proxy.example.com:8317", "display_name": "示例代理"}
-    ]
+    addresses = addresses or [{"url": "http://proxy.example.com:8317", "display_name": "示例代理"}]
     s = env["session_factory"]()
     s.add(
         TeamSetting(
@@ -181,6 +177,42 @@ def test_loan_payload_includes_proxy_cost(loan_client_env):
     assert res.status_code == 200
     loan = next(item for item in res.json()["items"] if item["id"] == loan_id)
     assert loan["proxy_cost_cents"] == 50
+    assert loan["proxy_cost_today_cents"] == 50
+    assert loan["assignment_label"] == "指定账号"
+
+
+def test_loan_proxy_today_cost_excludes_older_usage(loan_client_env):
+    env = loan_client_env
+    loan_id, _ = _issue_loan(env)
+    token = create_access_token(env["config"], env["owner"])
+
+    s = env["session_factory"]()
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=10,
+            cost_cents=100,
+            ts=datetime(2020, 6, 1, 12, 0, tzinfo=UTC),
+        )
+    )
+    s.add(
+        ProxyKeyUsage(
+            proxy_key_id=None,
+            loan_id=loan_id,
+            credential_id="cred-1",
+            total_tokens=5,
+            cost_cents=7,
+        )
+    )
+    s.commit()
+    s.close()
+
+    res = env["client"].get("/api/v2/loans", headers=_headers(token))
+    loan = next(item for item in res.json()["items"] if item["id"] == loan_id)
+    assert loan["proxy_cost_cents"] == 107
+    assert loan["proxy_cost_today_cents"] == 7
 
 
 def test_auto_loan_borrowed_cents_follows_proxy_ledger(loan_client_env):
@@ -275,9 +307,9 @@ def test_loan_usages_detail(loan_client_env):
     assert body["by_account"][0]["request_count"] == 1
     assert body["by_account"][0]["total_tokens"] == 100
     assert body["by_account"][0]["cost_cents"] == 42
-    assert body["by_model"] == [
-        {"model": "gpt-5", "request_count": 1, "total_tokens": 100, "cost_cents": 42}
-    ]
+    assert body["by_account"][0]["total_pct"] == 28.5
+    assert body["by_account"][0]["status"] == "healthy"
+    assert body["by_model"] == [{"model": "gpt-5", "request_count": 1, "total_tokens": 100, "cost_cents": 42}]
     assert len(body["by_day"]) == 1
     assert body["by_day"][0]["request_count"] == 1
     assert body["by_day"][0]["total_tokens"] == 100
@@ -378,9 +410,7 @@ def test_loan_usages_grouped_by_account(loan_client_env):
     assert body["by_account"][2]["primary_member_name"] is None
     matched = next(i for i in body["items"] if i["account_identifier"] == primary_id)
     assert matched["primary_member_name"] == "Borrower"
-    assert any(
-        i["account_identifier"] is None and i["primary_member_name"] is None for i in body["items"]
-    )
+    assert any(i["account_identifier"] is None and i["primary_member_name"] is None for i in body["items"])
 
 
 def test_loan_usages_by_model_aggregates_all_rows(loan_client_env):
@@ -449,9 +479,9 @@ def test_loan_usages_by_day_groups_china_calendar(loan_client_env):
     # 2026-07-23 16:00 UTC = 2026-07-24 00:00 China
     # 2026-07-23 15:00 UTC = 2026-07-23 23:00 China
     for ts, tokens, cost in [
-        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=timezone.utc), 100, 10),
-        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=timezone.utc), 200, 20),
-        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=timezone.utc), 50, 5),
+        (datetime(2026, 7, 23, 16, 0, 0, tzinfo=UTC), 100, 10),
+        (datetime(2026, 7, 23, 17, 0, 0, tzinfo=UTC), 200, 20),
+        (datetime(2026, 7, 23, 15, 0, 0, tzinfo=UTC), 50, 5),
     ]:
         s.add(
             ProxyKeyUsage(

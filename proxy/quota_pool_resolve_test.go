@@ -24,40 +24,45 @@ func TestResolveQuotaPoolWaitsForStreamBody(t *testing.T) {
 	}
 }
 
-func TestResolveQuotaPoolEmptyStreamUnknown(t *testing.T) {
+func TestResolveQuotaPoolEmptyStreamIsAuto(t *testing.T) {
 	pr, pw := io.Pipe()
 	fs := newFrameSource(pr)
 	_ = pw.Close()
 
 	pool := resolveQuotaPool(context.Background(), "/agent.v1.AgentService/Run", fs.snapshot, fs)
-	if pool != quotaPoolUnknown {
-		t.Fatalf("got %v want unknown", pool)
+	if pool != quotaPoolAuto {
+		t.Fatalf("got %v want auto", pool)
+	}
+}
+
+func TestResolveQuotaPoolNonRunIsAuto(t *testing.T) {
+	body := []byte("x")
+	pool := resolveQuotaPool(context.Background(), "/aiserver.v1.AiService/AvailableModels", func() []byte { return body }, nil)
+	if pool != quotaPoolAuto {
+		t.Fatalf("got %v want auto", pool)
 	}
 }
 
 func TestEffectiveMarkQuotaPoolFromBody(t *testing.T) {
-	req := buildRequestedModel("composer-2.5", false, true)
+	req := buildRequestedModel("gpt-5.6-sol", false, true)
 	body := buildAgentRunEnvelope(req)
 	snap := func() []byte { return body }
 
-	got := effectiveMarkQuotaPool("/agent.v1.AgentService/Run", snap, quotaPoolUnknown)
-	if got != quotaPoolAuto {
-		t.Fatalf("got %v want auto", got)
+	got := effectiveMarkQuotaPool("/agent.v1.AgentService/Run", snap, quotaPoolAuto)
+	if got != quotaPoolAPI {
+		t.Fatalf("model arrived after selection: got %v want api", got)
 	}
 	if effectiveMarkQuotaPool("/agent.v1.AgentService/Run", snap, quotaPoolAPI) != quotaPoolAPI {
-		t.Fatal("initial pool should win when set")
+		t.Fatal("api at selection time should win")
 	}
 }
 
-func TestUnknownSnapshotRequiresBothPools(t *testing.T) {
+func TestSnapshotHeadroomIsPerPool(t *testing.T) {
 	apiFull := 100.0
 	autoOK := 15.0
 	e := &keyEntry{credentialQuotaState: credentialQuotaState{autoPct: &autoOK, apiPct: &apiFull}}
-	if e.hasQuotaForPool(quotaPoolUnknown) {
-		t.Fatal("unknown pool should fail when api snapshot full")
-	}
 	if !e.hasQuotaForPool(quotaPoolAuto) {
-		t.Fatal("auto pool should still pass")
+		t.Fatal("auto pool should pass")
 	}
 	if e.hasQuotaForPool(quotaPoolAPI) {
 		t.Fatal("api pool should fail")

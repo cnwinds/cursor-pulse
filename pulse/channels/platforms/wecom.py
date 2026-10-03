@@ -10,9 +10,7 @@ class WeComMessenger:
         self.config = config
 
     def _not_impl(self, *args, **kwargs):
-        raise NotImplementedError(
-            "企业微信平台尚未实现。请使用 bot.name=none（Web）/ dingtalk / feishu。"
-        )
+        raise NotImplementedError("企业微信平台尚未实现。请使用 bot.name=none（Web）/ dingtalk / feishu。")
 
     send_group_text = _not_impl
     send_oto_text = _not_impl

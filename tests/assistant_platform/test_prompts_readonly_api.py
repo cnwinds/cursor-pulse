@@ -5,10 +5,11 @@ from fastapi.testclient import TestClient
 
 pytest.importorskip("fastapi")
 
+from tests.assistant_actor_helpers import signed_actor_headers
+
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-prompts-readonly-api"
@@ -67,6 +68,4 @@ def test_prompt_write_returns_410(client: TestClient, path: str):
     response = client.post(path, json={"key": "x", "content": "y"}, headers=_headers())
 
     assert response.status_code == 410
-    assert response.json()["detail"] == (
-        "Prompt editing retired; edit files in assistant_platform/prompts/docs"
-    )
+    assert response.json()["detail"] == ("Prompt editing retired; edit files in assistant_platform/prompts/docs")

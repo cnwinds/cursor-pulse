@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 
 import pytest
-
 from pulse.config import LoanSelectionConfig
 from pulse.llm.jev import JevAnswer, JevDecision, JevError
 from pulse.storage.models import AccountQuotaSnapshot
@@ -16,7 +15,7 @@ from pulse.tool_center.auto_lender import (
 from pulse.tool_center.burn_rate import LenderCandidate
 
 TODAY = date(2026, 7, 10)
-NOW = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
 
 def _snapshot(*, account_id: str, total_pct: float, api_pct: float) -> AccountQuotaSnapshot:
@@ -53,6 +52,8 @@ def _two_candidates():
 
 
 class FakeJev:
+    model = "typesafe/jev-1.13"
+
     def __init__(self, decision=None, error=None):
         self.decision = decision
         self.error = error
@@ -76,9 +77,7 @@ def _decision(choice, *, confidence=0.9, probabilities=None, owner=None):
             raw={
                 "choice": choice,
                 "confidence": confidence,
-                "probabilities": probabilities
-                if probabilities is not None
-                else {"acc-a": 0.3, "acc-b": 0.7},
+                "probabilities": probabilities if probabilities is not None else {"acc-a": 0.3, "acc-b": 0.7},
             },
         )
     }
@@ -97,39 +96,35 @@ def _clean_state():
 
 
 def _auto_cfg(**kwargs) -> LoanSelectionConfig:
-    base = {"auto_mode": True, "auto_cache_seconds": 600.0}
+    base = {"auto_cache_seconds": 600.0}
     base.update(kwargs)
     return LoanSelectionConfig(**base)
 
 
-def test_auto_mode_off_keeps_algorithm_order():
+def test_legacy_auto_mode_flag_does_not_gate_jev():
+    """选号不再看 loan_selection.auto_mode，只看有没有 Jev 客户端。"""
     jev = FakeJev(decision=_decision("acc-b"))
     board = rank_lenders(
         _two_candidates(),
-        loan_selection=LoanSelectionConfig(auto_mode=False),
+        loan_selection=LoanSelectionConfig(auto_mode=False, auto_cache_seconds=600.0),
         today=TODAY,
         now=NOW,
         jev=jev,
     )
-    assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
-    assert board["decision"]["picked_by"] == "algorithm"
-    assert board["decision"]["fallback_reason"] == "auto_mode_off"
-    assert jev.calls == 0
+    assert [r["account_id"] for r in board["ranked"]] == ["acc-b", "acc-a"]
+    assert board["decision"]["picked_by"] == "jev"
+    assert jev.calls == 1
 
 
 def test_jev_unavailable_falls_back():
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=None
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=None)
     assert board["decision"]["picked_by"] == "algorithm"
     assert board["decision"]["fallback_reason"] == "jev_unavailable"
 
 
 def test_jev_pick_is_promoted_to_front():
     jev = FakeJev(decision=_decision("acc-b"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert [r["account_id"] for r in board["ranked"]] == ["acc-b", "acc-a"]
     assert board["ranked"][0]["picked"] is True
     assert board["ranked"][1]["picked"] is False
@@ -139,15 +134,34 @@ def test_jev_pick_is_promoted_to_front():
     assert jev.calls == 1
 
 
+def test_decision_includes_jev_trace_on_call():
+    jev = FakeJev(decision=_decision("acc-b"))
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
+    trace = board["decision"]["jev_trace"]
+    assert trace["meta"]["status"] == "called"
+    assert trace["input"]["model"]
+    assert set(trace["input"]["questions"]) == {
+        PICK_QUESTION,
+        f"{OWNER_QUESTION_PREFIX}acc-a",
+        f"{OWNER_QUESTION_PREFIX}acc-b",
+    }
+    assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
+    assert trace["guards"]["pick_choice"] == "acc-b"
+    assert trace["meta"]["called_at"]
+    assert trace["meta"]["duration_ms"] is not None
+    assert trace["meta"]["duration_ms"] >= 0
+
+
 def test_state_and_questions_carry_candidate_features():
     jev = FakeJev(decision=_decision("acc-a"))
-    rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     state = jev.last_state
     assert state["quota_pool"] == "unknown"
     assert {c["account_id"] for c in state["candidates"]} == {"acc-a", "acc-b"}
-    assert state["constraints"]["switch_dwell_minutes"] == 30.0
+    assert state["constraints"]["switch_dwell_minutes"] == 20.0
+    assert "max_concurrent_proxy_users" in state["constraints"]
+    assert "active_loans" not in state["candidates"][0]
+    assert "proxy_active_seats" in state["candidates"][0]
     # 每个候选一问「是否影响主负责人」，且 choice 的 criteria 覆盖全部候选
     assert set(jev.last_questions) == {
         PICK_QUESTION,
@@ -173,11 +187,7 @@ def test_low_confidence_falls_back():
 
 
 def test_narrow_margin_falls_back():
-    jev = FakeJev(
-        decision=_decision(
-            "acc-b", probabilities={"acc-a": 0.48, "acc-b": 0.52}, confidence=0.9
-        )
-    )
+    jev = FakeJev(decision=_decision("acc-b", probabilities={"acc-a": 0.48, "acc-b": 0.52}, confidence=0.9))
     board = rank_lenders(
         _two_candidates(),
         loan_selection=_auto_cfg(auto_min_margin=0.05),
@@ -190,26 +200,20 @@ def test_narrow_margin_falls_back():
 
 def test_unknown_account_falls_back():
     jev = FakeJev(decision=_decision("acc-zzz"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "unknown_account"
 
 
 def test_missing_pick_answer_falls_back():
     jev = FakeJev(decision=JevDecision(answers={}, model="m"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "no_pick_answer"
 
 
 def test_owner_unsafe_blocks_the_pick():
     """Jev 选中 b，但 b 被判定会侵占主负责人预留 → 回落算法首选。"""
     jev = FakeJev(decision=_decision("acc-b", owner={"acc-b": 0.9, "acc-a": 0.05}))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
     assert board["decision"]["fallback_reason"] == "owner_unsafe"
     assert board["decision"]["owner_safe"] == {"acc-b": False, "acc-a": True}
@@ -217,9 +221,7 @@ def test_owner_unsafe_blocks_the_pick():
 
 def test_jev_error_falls_back():
     jev = FakeJev(error=JevError("boom"))
-    board = rank_lenders(
-        _two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev
-    )
+    board = rank_lenders(_two_candidates(), loan_selection=_auto_cfg(), today=TODAY, now=NOW, jev=jev)
     assert board["decision"]["fallback_reason"] == "jev_error"
     assert [r["account_id"] for r in board["ranked"]] == ["acc-a", "acc-b"]
 
@@ -233,6 +235,32 @@ def test_decision_cache_avoids_repeat_calls():
     assert first["decision"]["cached"] is False
     assert second["decision"]["cached"] is True
     assert [r["account_id"] for r in second["ranked"]] == ["acc-b", "acc-a"]
+
+
+def test_jev_bypass_cache_forces_repeat_call():
+    jev = FakeJev(decision=_decision("acc-b"))
+    cfg = _auto_cfg()
+    rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    second = rank_lenders(
+        _two_candidates(),
+        loan_selection=cfg,
+        today=TODAY,
+        now=NOW,
+        jev=jev,
+        jev_bypass_cache=True,
+    )
+    assert jev.calls == 2
+    assert second["decision"]["jev_trace"]["meta"]["force_refresh"] is True
+
+
+def test_decision_cache_includes_jev_output_in_trace():
+    jev = FakeJev(decision=_decision("acc-b"))
+    cfg = _auto_cfg()
+    rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    second = rank_lenders(_two_candidates(), loan_selection=cfg, today=TODAY, now=NOW, jev=jev)
+    trace = second["decision"]["jev_trace"]
+    assert trace["meta"]["status"] == "cached"
+    assert trace["output"]["answers"][PICK_QUESTION]["choice"] == "acc-b"
 
 
 def test_cache_ignores_minutes_since_switch():
@@ -306,9 +334,7 @@ def test_excluded_candidates_are_not_sent_to_jev():
         jev=jev,
     )
     assert set(jev.last_questions[PICK_QUESTION]["criteria"]) == {"acc-a", "acc-b"}
-    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {
-        "acc-full": "exhausted"
-    }
+    assert {e["account_id"]: e["reason"] for e in board["excluded"]} == {"acc-full": "exhausted"}
 
 
 def test_pool_argument_is_forwarded_to_state_and_scoring():

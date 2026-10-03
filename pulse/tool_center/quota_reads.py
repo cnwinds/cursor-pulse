@@ -30,9 +30,7 @@ def latest_snapshots_for_accounts(
     return latest
 
 
-def _latest_snapshots_chunk(
-    session: Session, ids: list[str]
-) -> dict[str, AccountQuotaSnapshot]:
+def _latest_snapshots_chunk(session: Session, ids: list[str]) -> dict[str, AccountQuotaSnapshot]:
     latest_at = (
         select(
             AccountQuotaSnapshot.account_id.label("account_id"),
@@ -71,15 +69,11 @@ def latest_snapshots_for_team(
     """
     from pulse.tool_center.repository import ACTIVE_ACCOUNT_STATUSES
 
-    query = select(AiAccount.id).where(
-        AiAccount.team_id == team_id, AiAccount.deleted_at.is_(None)
-    )
+    query = select(AiAccount.id).where(AiAccount.team_id == team_id, AiAccount.deleted_at.is_(None))
     if active_only:
         query = query.where(AiAccount.status.in_(ACTIVE_ACCOUNT_STATUSES))
     if vendor_slug is not None:
-        query = query.where(
-            AiAccount.vendor_id.in_(select(AiVendor.id).where(AiVendor.slug == vendor_slug))
-        )
+        query = query.where(AiAccount.vendor_id.in_(select(AiVendor.id).where(AiVendor.slug == vendor_slug)))
     return latest_snapshots_for_accounts(session, session.scalars(query).all())
 
 

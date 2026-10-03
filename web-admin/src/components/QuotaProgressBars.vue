@@ -66,38 +66,41 @@ function toneFromPct(v: number | null | undefined, fallback?: string | null): To
   return 'ok'
 }
 
-const rows = computed<ProgressRow[]>(() => [
-  {
-    key: 'total',
-    label: 'Total',
-    title: 'Total',
-    pct: pctNum(props.total_pct),
-    width: pctWidth(props.total_pct),
-    text: pctText(props.total_pct),
-    tone: toneFromPct(props.total_pct, props.status),
-    sub: false,
-  },
-  {
-    key: 'auto',
-    label: 'Auto',
-    title: 'Auto + Composer',
-    pct: pctNum(props.auto_pct),
-    width: pctWidth(props.auto_pct),
-    text: pctText(props.auto_pct),
-    tone: toneFromPct(props.auto_pct),
-    sub: true,
-  },
-  {
-    key: 'api',
-    label: 'API',
-    title: 'API',
-    pct: pctNum(props.api_pct),
-    width: pctWidth(props.api_pct),
-    text: pctText(props.api_pct),
-    tone: toneFromPct(props.api_pct),
-    sub: true,
-  },
-])
+const rows = computed<ProgressRow[]>(() => {
+  const totalTone = toneFromPct(props.total_pct, props.status)
+  return [
+    {
+      key: 'total',
+      label: 'Total',
+      title: 'Total',
+      pct: pctNum(props.total_pct),
+      width: pctWidth(props.total_pct),
+      text: pctText(props.total_pct),
+      tone: totalTone,
+      sub: false,
+    },
+    {
+      key: 'auto',
+      label: 'Auto',
+      title: 'Auto + Composer',
+      pct: pctNum(props.auto_pct),
+      width: pctWidth(props.auto_pct),
+      text: pctText(props.auto_pct),
+      tone: totalTone,
+      sub: true,
+    },
+    {
+      key: 'api',
+      label: 'API',
+      title: 'API',
+      pct: pctNum(props.api_pct),
+      width: pctWidth(props.api_pct),
+      text: pctText(props.api_pct),
+      tone: totalTone,
+      sub: true,
+    },
+  ]
+})
 </script>
 
 <style scoped>
@@ -110,14 +113,14 @@ const rows = computed<ProgressRow[]>(() => [
 
 .quota-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 30px;
+  grid-template-columns: 38px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 6px;
   min-height: 22px;
 }
 
 .quota-row.sub {
-  grid-template-columns: 38px minmax(0, 1fr) 30px;
+  grid-template-columns: 38px minmax(0, 1fr) max-content;
   padding-left: 10px;
   min-height: 17px;
   position: relative;
@@ -135,7 +138,7 @@ const rows = computed<ProgressRow[]>(() => [
 }
 
 .quota-label {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   color: var(--el-text-color-primary);
   white-space: nowrap;
@@ -143,7 +146,7 @@ const rows = computed<ProgressRow[]>(() => [
 }
 
 .quota-row.sub .quota-label {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 400;
   color: var(--el-text-color-secondary);
 }
@@ -186,16 +189,17 @@ const rows = computed<ProgressRow[]>(() => [
 }
 
 .quota-pct {
-  font-size: 11px;
+  font-size: var(--pulse-text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: right;
   line-height: 1;
+  white-space: nowrap;
   color: var(--el-text-color-primary);
 }
 
 .quota-row.sub .quota-pct {
-  font-size: 10px;
+  font-size: var(--pulse-text-xs);
   font-weight: 500;
   color: var(--el-text-color-secondary);
 }

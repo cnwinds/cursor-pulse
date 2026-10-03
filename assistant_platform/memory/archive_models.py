@@ -8,9 +8,9 @@ chunks and FTS/vector indexes are derived from these rows.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from assistant_platform.memory.contracts import MemoryScope
@@ -22,7 +22,7 @@ def _uuid() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def resolve_archive_scope(
@@ -74,9 +74,7 @@ class ArchiveMessageRow(Base):
     """Permanent redacted message snapshot with stable session sequence."""
 
     __tablename__ = "ap_archive_messages"
-    __table_args__ = (
-        UniqueConstraint("session_id", "seq", name="uq_ap_archive_messages_session_seq"),
-    )
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_ap_archive_messages_session_seq"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     session_id: Mapped[str] = mapped_column(String(36), index=True)

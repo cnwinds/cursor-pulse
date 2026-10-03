@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from pathlib import Path
@@ -7,10 +7,9 @@ try:
     import dingtalk_stream
     from dingtalk_stream import AckMessage
 except ImportError as exc:  # pragma: no cover - exercised when [dingtalk] not installed
-    raise ImportError(
-        "钉钉渠道需要 dingtalk-stream。请安装：pip install 'cursor-pulse[dingtalk]'"
-    ) from exc
+    raise ImportError("钉钉渠道需要 dingtalk-stream。请安装：pip install 'cursor-pulse[dingtalk]'") from exc
 
+from pulse.channels.commands import CURSOR_BIND_GUIDE
 from pulse.channels.dingtalk.files import (
     extract_file_attachment,
     extract_incoming_text,
@@ -18,17 +17,16 @@ from pulse.channels.dingtalk.files import (
     inbox_dest,
     incoming_message_type,
 )
-from pulse.channels.commands import CURSOR_BIND_GUIDE
 from pulse.channels.dingtalk.guide_image import (
     save_guide_image_override,
 )
+from pulse.channels.dingtalk.messenger import DingTalkMessenger
 from pulse.channels.dingtalk.work_group import (
     activate_work_group,
     is_work_group_activation,
     persist_work_group_binding,
     sync_group_display_name,
 )
-from pulse.channels.dingtalk.messenger import DingTalkMessenger
 from pulse.channels.inbound import InboundMessage, dispatch_text_command
 from pulse.channels.outbound_ledger import (
     record_outbound_ledger,
@@ -116,10 +114,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
 
         if delivered:
             if is_group:
-                cid = (
-                    incoming_message.conversation_id
-                    or resolve_group_conversation_id(self.pulse_config, "dingtalk")
-                )
+                cid = incoming_message.conversation_id or resolve_group_conversation_id(self.pulse_config, "dingtalk")
                 if cid:
                     self._record_local_outbound(
                         text=text,
@@ -266,9 +261,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
 
         if handle_picture_locally and picture_code:
             if user_id in self._pending_guide_upload:
-                await self._save_guide_image_from_picture(
-                    picture_code, incoming, user_id, is_group
-                )
+                await self._save_guide_image_from_picture(picture_code, incoming, user_id, is_group)
                 return
             await self._handle_picture(
                 picture_code,
@@ -314,13 +307,9 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             return
 
         # Cursor-only: never download usage attachments (CSV/XLSX); just guide bind-key.
-        if (
-            extract_file_attachment(raw, incoming)
-            or incoming_message_type(raw, incoming) == "file"
-        ):
+        if extract_file_attachment(raw, incoming) or incoming_message_type(raw, incoming) == "file":
             self.reply_text(
-                "Cursor 用量请绑定 API Key 自动同步，不再接受文件上传。\n\n"
-                f"{CURSOR_BIND_GUIDE}",
+                f"Cursor 用量请绑定 API Key 自动同步，不再接受文件上传。\n\n{CURSOR_BIND_GUIDE}",
                 incoming,
             )
             return
@@ -372,10 +361,7 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
             user_id=user_id,
             user_name=user_name,
             channel=channel,
-            detail=(
-                "📷 截图已收到。Cursor 用量请绑定 API Key 自动同步。\n\n"
-                f"{CURSOR_BIND_GUIDE}"
-            ),
+            detail=(f"📷 截图已收到。Cursor 用量请绑定 API Key 自动同步。\n\n{CURSOR_BIND_GUIDE}"),
         )
 
     async def _save_guide_image_from_picture(
@@ -414,17 +400,11 @@ class DingTalkChannelHandler(dingtalk_stream.ChatbotHandler):
                         )
                         session.commit()
                         self.messenger.clear_image_media_cache()
-                        reply = (
-                            bridge_reply
-                            if bridge_reply.startswith("✅")
-                            else f"✅ {bridge_reply}"
-                        )
+                        reply = bridge_reply if bridge_reply.startswith("✅") else f"✅ {bridge_reply}"
                     finally:
                         session.close()
                 except Exception:
-                    logger.exception(
-                        "Capability bridge failed for guide_image.update; falling back to legacy save"
-                    )
+                    logger.exception("Capability bridge failed for guide_image.update; falling back to legacy save")
                     save_guide_image_override(self.pulse_config.storage.raw_files_dir, dest)
                     self.messenger.clear_image_media_cache()
             else:

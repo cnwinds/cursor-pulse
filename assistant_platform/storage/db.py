@@ -16,8 +16,8 @@ import assistant_platform.memory.archive_models  # noqa: F401 — register archi
 import assistant_platform.memory.opt_out  # noqa: F401 — register opt-out table on Base
 import assistant_platform.memory.semantic.models  # noqa: F401 — register semantic memory tables on Base
 import assistant_platform.memory.session_summary  # noqa: F401 — register summary table on Base
-import assistant_platform.prompts.models  # noqa: F401 — register prompt tables on Base
 import assistant_platform.profiles.models  # noqa: F401 — register profile signal tables on Base
+import assistant_platform.prompts.models  # noqa: F401 — register prompt tables on Base
 import assistant_platform.review.models  # noqa: F401 — register review tables on Base
 import assistant_platform.secrets.store  # noqa: F401 — register ap_secrets on Base
 from assistant_platform.capabilities.seed import seed_phase1_capabilities
@@ -69,9 +69,7 @@ def init_assistant_db(database_url: str, *, team_id: str = "") -> sessionmaker[S
     Base.metadata.create_all(engine)
     migrate_assistant_schema(engine)
     effective_team_id = team_id or "default"
-    seed_session = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
-    )()
+    seed_session = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)()
     try:
         seed_phase1_capabilities(seed_session, effective_team_id)
         seed_review_rubrics(seed_session)

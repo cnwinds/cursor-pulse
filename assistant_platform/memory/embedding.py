@@ -13,8 +13,6 @@ import math
 import re
 from typing import Protocol
 
-import httpx
-
 from pulse.http_clients import outbound_client
 
 _TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)

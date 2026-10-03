@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from pulse.llm.jev import build_jev_client
 from pulse.proxy import service as proxy_service
 from pulse.proxy.usage_rollup import rollup_proxy_usages
+from pulse.settings.team_store import effective_loan_selection
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
@@ -20,25 +21,31 @@ from pulse.storage.models import (
     Member,
     ProxyKeyUsage,
 )
+from pulse.tool_center.account_visibility import account_is_active_row, exclude_from_quota_board
+from pulse.tool_center.auto_lender import rank_lenders, try_force_jev_refresh
 from pulse.tool_center.burn_rate import (
     analyze_burn_rate,
     display_api_remaining_cents,
     display_remaining_cents,
 )
-from pulse.tool_center.auto_lender import rank_lenders
-from pulse.tool_center.key_loan_lender import active_loan_counts_by_account
+from pulse.tool_center.coding_plan_board import analyze_coding_plan_burn, quota_tiers_for_board
 from pulse.tool_center.key_loan_auto import (
     record_auto_lender_decision,
     resolve_auto_lender,
 )
-from pulse.tool_center.key_loan_delivery import LENDER_MODE_AUTO, LENDER_MODE_MANUAL
-from pulse.tool_center.quota_pool import quota_pool_for_model
+from pulse.tool_center.key_loan_delivery import (
+    LENDER_MODE_AUTO,
+    LENDER_MODE_MANUAL,
+    ROUTING_POOL,
+)
+from pulse.tool_center.key_loan_lender import active_loan_counts_by_account, select_team_loans
 from pulse.tool_center.key_loans import (
     KeyLoanError,
     KeyLoanService,
     build_lender_candidates,
     finalize_reassign_old_remote_revoke,
     issue_loan_key,
+    issue_pool_loan,
     loan_payload,
     loan_payloads,
     reassign_loan_source,
@@ -46,6 +53,7 @@ from pulse.tool_center.key_loans import (
     reveal_loan_cursor_key,
     reveal_loan_user_key,
 )
+from pulse.tool_center.quota_pool import quota_pool_for_model
 from pulse.tool_center.quota_reads import latest_snapshots_for_accounts
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.sync_health import (
@@ -64,6 +72,12 @@ logger = logging.getLogger(__name__)
 _UNSYNCABLE_STATUSES = SYNC_BLOCKER_STATUSES | {"unknown"}
 
 
+class UsageCapRuleBody(BaseModel):
+    period: Literal["5h", "week", "month"]
+    pool: Literal["auto", "api"]
+    cost_usd: int = Field(ge=1)
+
+
 class LoanKeyBody(BaseModel):
     """为成员分配 Key 的请求体。"""
 
@@ -72,10 +86,16 @@ class LoanKeyBody(BaseModel):
     auto_revoke_on_reset: bool = True
     key_name: str | None = None
     delivery_mode: Literal["proxy_alias"] = "proxy_alias"
-    # manual: 用 URL 上的 account_id 固定出借账号；auto: 由 Auto Lender 选号
+    # manual: 用 URL 上的 account_id 固定出借账号；auto: 走账号池轮换，不锁定账号
     lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
     # 借用人主要使用的模型；给出时按该模型所属 Quota Pool 打分
     model: str | None = None
+    usage_caps: list[UsageCapRuleBody] = Field(default_factory=list)
+
+
+class LoanUsageCapPatchBody(BaseModel):
+    clear: bool = False
+    usage_caps: list[UsageCapRuleBody] = Field(default_factory=list)
 
 
 class AutoPickBody(BaseModel):
@@ -83,10 +103,14 @@ class AutoPickBody(BaseModel):
 
     borrower_member_id: str
     model: str | None = None
+    force_jev: bool = False
 
 
 class ReassignLoanBody(BaseModel):
-    source_account_id: str
+    lender_mode: Literal[LENDER_MODE_MANUAL, LENDER_MODE_AUTO] = LENDER_MODE_MANUAL
+    source_account_id: str | None = None
+    auto_revoke_on_reset: bool | None = None
+    usage_caps: list[UsageCapRuleBody] | None = None
 
 
 class LoanPatchBody(BaseModel):
@@ -95,6 +119,21 @@ class LoanPatchBody(BaseModel):
 
 class SelfLoanBody(BaseModel):
     note: str | None = None
+
+
+def _parsed_usage_cap_items(body) -> list[dict]:
+    raw = getattr(body, "usage_caps", None) or []
+    return [item.model_dump() if hasattr(item, "model_dump") else item for item in raw]
+
+
+def _parsed_usage_cap_rules(body) -> list[dict]:
+    from pulse.proxy.loan_usage_cap import UsageCapConfigError, parse_usage_cap_rules
+
+    try:
+        rules = parse_usage_cap_rules(_parsed_usage_cap_items(body))
+    except UsageCapConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [rule.as_dict() for rule in rules]
 
 
 def _encryption_key(config) -> str:
@@ -119,13 +158,17 @@ def _board_item(
     primary_member_name = None
     if account.primary_member_id and member_names:
         primary_member_name = member_names.get(account.primary_member_id)
+    vendor_slug = account.vendor.slug if account.vendor else None
     base = {
         "account_id": account.id,
         "account_identifier": account.account_identifier,
         "primary_member_id": account.primary_member_id,
         "primary_member_name": primary_member_name,
         "vendor_name": account.vendor.name if account.vendor else None,
+        "vendor_slug": vendor_slug,
+        "display_mode": "coding_plan_tiers" if vendor_slug in ("glm", "minimax", "kimi") else "cursor",
         "plan_name": account.plan.plan_name if account.plan else None,
+        "has_usage_detail": vendor_slug == "cursor",
         "usage_resets_on": account.usage_resets_on.isoformat() if account.usage_resets_on else None,
         "resets_on_source": account.resets_on_source,
         "has_snapshot": snapshot is not None,
@@ -155,7 +198,13 @@ def _board_item(
             "display_api_remaining_cents": None,
         }
     else:
-        analysis = analyze_burn_rate(snapshot, today)
+        is_coding_plan = getattr(snapshot, "sync_kind", "cursor") == "coding_plan" or base["display_mode"] == (
+            "coding_plan_tiers"
+        )
+        if is_coding_plan:
+            analysis = analyze_coding_plan_burn(snapshot, today)
+        else:
+            analysis = analyze_burn_rate(snapshot, today)
         item = {
             **base,
             "status": analysis.status,
@@ -166,9 +215,7 @@ def _board_item(
             "api_limit_usd": analysis.api_limit_usd,
             "quota_progress": analysis.quota_progress,
             "projected_exhaustion_date": (
-                analysis.projected_exhaustion_date.isoformat()
-                if analysis.projected_exhaustion_date
-                else None
+                analysis.projected_exhaustion_date.isoformat() if analysis.projected_exhaustion_date else None
             ),
             "exhausts_before_reset": analysis.exhausts_before_reset,
             "days_until_reset": analysis.days_until_reset,
@@ -178,9 +225,10 @@ def _board_item(
             "limit_cents": snapshot.limit_cents,
             "used_cents": snapshot.used_cents,
             "remaining_cents": snapshot.remaining_cents,
-            "display_remaining_cents": display_remaining_cents(snapshot),
-            "display_api_remaining_cents": display_api_remaining_cents(snapshot),
+            "display_remaining_cents": display_remaining_cents(snapshot) if not is_coding_plan else None,
+            "display_api_remaining_cents": display_api_remaining_cents(snapshot) if not is_coding_plan else None,
             "captured_at": serialize_datetime(snapshot.captured_at),
+            "quota_tiers": quota_tiers_for_board(snapshot) if is_coding_plan else [],
         }
     if sync_blocker:
         item["status"] = sync_blocker
@@ -197,23 +245,25 @@ def build_quota_board_items(
     session: Session,
     team_id: str,
     *,
+    vendor_slug: str | None = "cursor",
     include_usage_summaries: bool = False,
 ) -> list[dict]:
     repo = ToolCenterRepository(session, team_id)
     today = date.today()
-    accounts = repo.list_active_accounts(vendor_slug="cursor")
+    accounts = repo.list_active_accounts(vendor_slug=vendor_slug)
     snapshots = latest_snapshots_for_accounts(session, [account.id for account in accounts])
     member_ids = {a.primary_member_id for a in accounts if a.primary_member_id}
     member_names: dict[str, str] = {}
     if member_ids:
-        members = session.scalars(
-            select(Member).where(Member.id.in_(member_ids))
-        ).all()
+        members = session.scalars(select(Member).where(Member.id.in_(member_ids))).all()
         member_names = {m.id: m.display_name for m in members}
     loan_counts = active_loan_counts_by_account(session, team_id)
     creds = primary_credentials_by_account(session, [account.id for account in accounts])
     items = []
     for account in accounts:
+        sync_blocker = credential_sync_blocker(creds.get(account.id))
+        if not account_is_active_row(account) or exclude_from_quota_board(sync_blocker):
+            continue
         snapshot = snapshots.get(account.id)
         items.append(
             _board_item(
@@ -222,25 +272,22 @@ def build_quota_board_items(
                 today,
                 member_names=member_names,
                 active_loans=loan_counts.get(account.id, 0),
-                sync_blocker=credential_sync_blocker(creds.get(account.id)),
+                sync_blocker=sync_blocker,
             )
         )
     items.sort(key=lambda x: (_status_rank(x["status"]), -(x.get("quota_progress") or 0)))
-    if include_usage_summaries:
+    if include_usage_summaries and vendor_slug == "cursor":
         attach_board_usage_summaries(session, items)
     return items
 
 
 def count_active_loans(session: Session, team_id: str) -> int:
-    return (
-        session.scalar(
-            select(func.count())
-            .select_from(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(AiAccount.team_id == team_id, KeyLoan.status == "active")
-        )
-        or 0
-    )
+    active = select_team_loans(team_id).where(KeyLoan.status == "active")
+    return session.scalar(select(func.count()).select_from(active.subquery())) or 0
+
+
+def loan_in_team(session: Session, team_id: str, loan_id: str) -> KeyLoan | None:
+    return session.scalar(select_team_loans(team_id).where(KeyLoan.id == loan_id))
 
 
 def register_quota_routes(app, get_db, require_capability, team_repo_fn, config):
@@ -250,11 +297,18 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     )
     def quota_board(
         include_summaries: bool = Query(default=False),
+        vendor: str | None = Query(default="cursor", alias="vendor"),
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
+        vendor_slug = (vendor or "cursor").strip().lower()
+        if vendor_slug not in ("cursor", "glm", "minimax", "kimi"):
+            raise HTTPException(status_code=400, detail="vendor 须为 cursor、glm、minimax 或 kimi")
         return build_quota_board_items(
-            session, team.id, include_usage_summaries=include_summaries
+            session,
+            team.id,
+            vendor_slug=vendor_slug,
+            include_usage_summaries=include_summaries,
         )
 
     @app.get(
@@ -274,7 +328,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         candidates = build_lender_candidates(session, team.id)
         board = rank_lenders(
             candidates,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(session, config, team.id),
             # 模型未知 → unknown：两桶都要有余量（与 Go snapshotQuotaOK 一致）
             pool=quota_pool_for_model(model),
             today=today,
@@ -294,19 +348,13 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        base = (
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(AiAccount.team_id == team.id)
-        )
+        base = select_team_loans(team.id)
         if status:
             base = base.where(KeyLoan.status == status)
 
         total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
         active_count = count_active_loans(session, team.id)
-        loans = session.scalars(
-            base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
-        ).all()
+        loans = session.scalars(base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)).all()
         return {
             "items": loan_payloads(list(loans), session),
             "total": total,
@@ -324,30 +372,16 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
-        base = (
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(
-                AiAccount.team_id == team.id,
-                KeyLoan.borrower_member_id == user.member.id,
-            )
-        )
+        base = select_team_loans(team.id).where(KeyLoan.borrower_member_id == user.member.id)
         if status:
             base = base.where(KeyLoan.status == status)
         total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
-        active_count = session.scalar(
-            select(func.count())
-            .select_from(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(
-                AiAccount.team_id == team.id,
-                KeyLoan.borrower_member_id == user.member.id,
-                KeyLoan.status == "active",
-            )
-        ) or 0
-        loans = session.scalars(
-            base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)
-        ).all()
+        mine_active = select_team_loans(team.id).where(
+            KeyLoan.borrower_member_id == user.member.id,
+            KeyLoan.status == "active",
+        )
+        active_count = session.scalar(select(func.count()).select_from(mine_active.subquery())) or 0
+        loans = session.scalars(base.order_by(KeyLoan.created_at.desc()).offset(offset).limit(limit)).all()
         return {
             "items": loan_payloads(list(loans), session),
             "total": total,
@@ -373,7 +407,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 borrower=user.member,
                 note=body.note,
                 bound_by_member_id=user.member.id,
-                loan_selection=config.tool_center.loan_selection,
+                loan_selection=effective_loan_selection(session, config, team.id),
             )
             log_admin_action(
                 session,
@@ -401,20 +435,36 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         "/api/v2/loans/auto-pick",
         dependencies=[Depends(require_capability("accounts:read"))],
     )
-    def loans_auto_pick(body: AutoPickBody, session: Session = Depends(get_db)):
+    def loans_auto_pick(
+        body: AutoPickBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:read")),
+    ):
         """Auto Lender 预览：打分排序 + Jev 决策，供「为成员分配 Key」先看再确认。"""
         team, _ = team_repo_fn(session)
         borrower = session.get(Member, body.borrower_member_id)
         if not borrower or borrower.team_id != team.id:
             raise HTTPException(status_code=400, detail="借用人不存在")
+        jev_bypass_cache = False
+        if body.force_jev:
+            if not has_permission(user.member, "accounts:write"):
+                raise HTTPException(status_code=403, detail="强制刷新 Jev 需要 accounts:write 权限")
+            wait = try_force_jev_refresh(team.id)
+            if wait is not None:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"强制 Jev 刷新过于频繁，请 {int(wait) + 1} 秒后再试",
+                )
+            jev_bypass_cache = True
         resolved = resolve_auto_lender(
             session,
             team.id,
             borrower_member_id=body.borrower_member_id,
             model=body.model,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(session, config, team.id),
             jev=build_jev_client(config),
             jev_config=config.jev,
+            jev_bypass_cache=jev_bypass_cache,
         )
         return {
             "ranked": resolved["ranked"],
@@ -449,38 +499,49 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
             raise HTTPException(status_code=400, detail="借用人不存在")
 
         enc_key = _encryption_key(config)
+        cap_rules = _parsed_usage_cap_rules(body)
         try:
-            result = issue_loan_key(
-                session,
-                enc_key,
-                team_id=team.id,
-                # auto 模式忽略 URL 上的账号，由 Auto Lender 选号
-                source_account_id=None if is_auto else account_id,
-                borrower_member_id=body.borrower_member_id,
-                bound_by_member_id=user.member.id,
-                note=body.note,
-                auto_revoke_on_reset=body.auto_revoke_on_reset,
-                key_name=body.key_name,
-                delivery_mode=body.delivery_mode,
-                loan_selection=config.tool_center.loan_selection,
-                enforce_loan_cap=False,
-                lender_mode=body.lender_mode,
-                model=body.model,
-                jev=build_jev_client(config),
-                jev_config=config.jev,
-                on_decision=lambda result: record_auto_lender_decision(session, result),
-            )
+            if is_auto:
+                # 管理员自动分配 = 账号池轮换，确认时不选号、不建 Cursor Key。
+                result = issue_pool_loan(
+                    session,
+                    enc_key,
+                    team_id=team.id,
+                    borrower_member_id=body.borrower_member_id,
+                    note=body.note,
+                    model=body.model,
+                    loan_selection=effective_loan_selection(session, config, team.id),
+                    jev=build_jev_client(config),
+                    usage_cap_rules=cap_rules,
+                )
+            else:
+                result = issue_loan_key(
+                    session,
+                    enc_key,
+                    team_id=team.id,
+                    source_account_id=account_id,
+                    borrower_member_id=body.borrower_member_id,
+                    bound_by_member_id=user.member.id,
+                    note=body.note,
+                    auto_revoke_on_reset=body.auto_revoke_on_reset,
+                    key_name=body.key_name,
+                    delivery_mode=body.delivery_mode,
+                    loan_selection=effective_loan_selection(session, config, team.id),
+                    enforce_loan_cap=False,
+                    lender_mode=body.lender_mode,
+                    model=body.model,
+                    jev=build_jev_client(config),
+                    jev_config=config.jev,
+                    on_decision=lambda result: record_auto_lender_decision(session, result),
+                    usage_cap_rules=cap_rules,
+                )
             log_admin_action(
                 session,
                 team_id=team.id,
                 member_id=user.member.id,
                 action="quota.loan_key",
                 capability="accounts:write",
-                detail=(
-                    f"{account_id}->{borrower.display_name}"
-                    if not is_auto
-                    else f"auto:{result.get('source_account_identifier')}->{borrower.display_name}"
-                ),
+                detail=(f"{account_id}->{borrower.display_name}" if not is_auto else f"pool->{borrower.display_name}"),
             )
             session.commit()
             try:
@@ -508,20 +569,14 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
     ):
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
 
         payload = loan_payload(loan, session)
         rows = (
             session.execute(
-                select(ProxyKeyUsage)
-                .where(ProxyKeyUsage.loan_id == loan_id)
-                .order_by(ProxyKeyUsage.ts.desc())
+                select(ProxyKeyUsage).where(ProxyKeyUsage.loan_id == loan_id).order_by(ProxyKeyUsage.ts.desc())
             )
             .scalars()
             .all()
@@ -549,11 +604,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         from pulse.settings import PROXY_ADDRESSES_REQUIRED_DETAIL, configured_proxy_addresses
 
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         is_admin = has_permission(user.member, "accounts:write")
@@ -573,12 +624,8 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         if not addresses:
             raise HTTPException(status_code=422, detail=PROXY_ADDRESSES_REQUIRED_DETAIL)
 
-        commands = proxy_service.build_client_setup_commands(
-            plaintext_key=plaintext, addresses=addresses
-        )
-        chosen = proxy_service.pick_client_setup_command(
-            commands, shell=shell, proxy_url=proxy_url
-        )
+        commands = proxy_service.build_client_setup_commands(plaintext_key=plaintext, addresses=addresses)
+        chosen = proxy_service.pick_client_setup_command(commands, shell=shell, proxy_url=proxy_url)
         return {
             "plaintext_key": plaintext,
             "delivery_mode": getattr(loan, "delivery_mode", None) or "cursor_direct",
@@ -599,15 +646,13 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         """管理员应急查看底层 Cursor Key（借用人不可见）。"""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         if loan.status != "active":
             raise HTTPException(status_code=410, detail="借用已结束，无法查看底层 Key")
+        if loan.routing_mode == ROUTING_POOL:
+            raise HTTPException(status_code=400, detail="账号池轮换借用没有单一底层 Key")
 
         enc_key = _encryption_key(config)
         try:
@@ -633,6 +678,46 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         }
 
     @app.patch(
+        "/api/v2/loans/{loan_id}/usage-cap",
+        dependencies=[Depends(require_capability("accounts:write"))],
+    )
+    def patch_loan_usage_cap(
+        loan_id: str,
+        body: LoanUsageCapPatchBody,
+        session: Session = Depends(get_db),
+        user: PortalUser = Depends(require_capability("accounts:write")),
+    ):
+        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
+        from pulse.tool_center.key_loan_delivery import DELIVERY_CURSOR_DIRECT, DELIVERY_PROXY_ALIAS
+
+        team, _ = team_repo_fn(session)
+        loan = loan_in_team(session, team.id, loan_id)
+        if not loan:
+            raise HTTPException(status_code=404, detail="借用记录不存在")
+        if loan.status != "active":
+            raise HTTPException(status_code=400, detail="仅进行中的借用可修改封顶")
+        delivery = getattr(loan, "delivery_mode", None) or DELIVERY_CURSOR_DIRECT
+        if delivery != DELIVERY_PROXY_ALIAS:
+            raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+
+        try:
+            rules = [] if body.clear else parse_usage_cap_rules(_parsed_usage_cap_items(body))
+        except UsageCapConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        apply_usage_cap_rules(loan, rules)
+
+        log_admin_action(
+            session,
+            team_id=team.id,
+            member_id=user.member.id,
+            action="quota.patch_loan_usage_cap",
+            capability="accounts:write",
+            detail=loan_id,
+        )
+        session.commit()
+        return loan_payload(loan, session)
+
+    @app.patch(
         "/api/v2/loans/{loan_id}",
         dependencies=[Depends(require_capability("accounts:write"))],
     )
@@ -644,15 +729,16 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
     ):
         """Update mutable loan flags. Does not change expires_on."""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         if loan.status != "active":
             raise HTTPException(status_code=400, detail="仅进行中的借用可修改")
+        if loan.routing_mode == ROUTING_POOL:
+            raise HTTPException(
+                status_code=400,
+                detail="账号池轮换借用没有单一重置日，不能按重置日回收",
+            )
 
         prev = bool(loan.auto_revoke_on_reset)
         loan.auto_revoke_on_reset = bool(body.auto_revoke_on_reset)
@@ -677,17 +763,48 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         session: Session = Depends(get_db),
         user: PortalUser = Depends(require_capability("accounts:write")),
     ):
-        """更换出借账号，保持同一 pka_ 不变。"""
+        """调整出借方式或出借账号，保持同一 pka_ 不变。"""
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
 
         enc_key = _encryption_key(config)
+        from pulse.proxy.loan_usage_cap import UsageCapConfigError, apply_usage_cap_rules, parse_usage_cap_rules
+
+        if body.usage_caps is not None:
+            delivery = getattr(loan, "delivery_mode", None) or ""
+            if delivery != "proxy_alias":
+                raise HTTPException(status_code=400, detail="仅代理别名借用可配置用量封顶")
+            try:
+                apply_usage_cap_rules(loan, parse_usage_cap_rules(_parsed_usage_cap_items(body)))
+            except UsageCapConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        target_pool = body.lender_mode == LENDER_MODE_AUTO
+        current_pool = getattr(loan, "routing_mode", None) == ROUTING_POOL
+        assignment_same = target_pool and current_pool
+        if not target_pool and not current_pool:
+            # 自助借用是 lender_mode=auto 且仍绑着起始账号。对话框里选「指定账号」
+            # 并确认，就要走换绑把游走钉住，不能因为账号 id 相同只改用量限制。
+            already_manual = (getattr(loan, "lender_mode", None) or LENDER_MODE_MANUAL) != LENDER_MODE_AUTO
+            assignment_same = (
+                already_manual
+                and loan.source_account_id == body.source_account_id
+                and (body.auto_revoke_on_reset is None or body.auto_revoke_on_reset == loan.auto_revoke_on_reset)
+            )
+        if assignment_same and body.usage_caps is not None:
+            log_admin_action(
+                session,
+                team_id=team.id,
+                member_id=user.member.id,
+                action="quota.patch_loan_usage_cap",
+                capability="accounts:write",
+                detail=loan_id,
+            )
+            session.commit()
+            return loan_payload(loan, session)
+
         try:
             result = reassign_loan_source(
                 session,
@@ -696,8 +813,10 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
                 loan_id=loan_id,
                 new_source_account_id=body.source_account_id,
                 bound_by_member_id=user.member.id,
-                loan_selection=config.tool_center.loan_selection,
+                loan_selection=effective_loan_selection(session, config, team.id),
                 enforce_loan_cap=False,
+                lender_mode=body.lender_mode,
+                auto_revoke_on_reset=body.auto_revoke_on_reset,
             )
             # Commit loan→new credential before remote-revoking the old Cursor key,
             # so a failed commit cannot leave pka_ pointing at a revoked remote key.
@@ -739,11 +858,7 @@ def register_quota_routes(app, get_db, require_capability, team_repo_fn, config)
         user: PortalUser = Depends(require_capability("loans:self")),
     ):
         team, _ = team_repo_fn(session)
-        loan = session.scalar(
-            select(KeyLoan)
-            .join(AiAccount, KeyLoan.source_account_id == AiAccount.id)
-            .where(KeyLoan.id == loan_id, AiAccount.team_id == team.id)
-        )
+        loan = loan_in_team(session, team.id, loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="借用记录不存在")
         is_admin = has_permission(user.member, "accounts:write")

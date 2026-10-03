@@ -5,15 +5,14 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from assistant_platform.contracts.provider import CapabilityInvokeRequest
 from pulse.capabilities.invoke import invoke_capability
 from pulse.capabilities.manifest import get_manifest, list_operations
 from pulse.capabilities.web.fetch import safe_fetch
 from pulse.capabilities.web.provider import SearchProviderError, get_search_provider
-from pulse.capabilities.web.tavily import TavilySearchProvider
-from pulse.capabilities.web.ssrf import SsrfBlockedError, resolve_and_validate_url
 from pulse.capabilities.web.rate_limit import reset_web_rate_limits
+from pulse.capabilities.web.ssrf import SsrfBlockedError, resolve_and_validate_url
+from pulse.capabilities.web.tavily import TavilySearchProvider
 from pulse.config import WebSearchConfig, load_config
 from pulse.storage.db import init_db
 from pulse.storage.models import Member

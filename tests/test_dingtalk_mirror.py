@@ -1,8 +1,7 @@
-﻿from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-
 from pulse.channels.dingtalk.mirror import (
     build_event_from_dingtalk,
     mirror_dingtalk_message,
@@ -53,9 +52,7 @@ async def test_mirror_posts_when_enabled_async():
     incoming.sender_nick = "N"
     with patch("pulse.channels.dingtalk.mirror.internal_async_client") as AsyncClient:
         client = AsyncClient.return_value.__aenter__.return_value
-        client.post = AsyncMock(
-            return_value=MagicMock(status_code=200, json=lambda: {"created": True})
-        )
+        client.post = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: {"created": True}))
         await mirror_dingtalk_message(
             incoming,
             text="hi",

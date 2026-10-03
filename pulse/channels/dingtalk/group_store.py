@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from pulse.storage.models import Team
 from pulse.settings import patch_team_setting
+from pulse.storage.models import Team
 
 
 def _binding_from_team_settings(data: dict[str, Any]) -> dict[str, str | None]:
@@ -52,10 +52,13 @@ def load_persisted_group_id(
     team_slug: str = "default",
     database_url: str | None = None,
 ) -> str | None:
-    return load_persisted_group_binding(
-        team_slug=team_slug,
-        database_url=database_url,
-    ).get("open_conversation_id") or None
+    return (
+        load_persisted_group_binding(
+            team_slug=team_slug,
+            database_url=database_url,
+        ).get("open_conversation_id")
+        or None
+    )
 
 
 def save_group_binding(

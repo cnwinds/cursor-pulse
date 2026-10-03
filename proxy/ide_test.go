@@ -185,8 +185,11 @@ func TestIDEBindsUnboundSessionToIDEKey(t *testing.T) {
 	if !strings.Contains(body, "upstream-auth=Bearer tokA") && !strings.Contains(body, "upstream-auth=Bearer tokB") {
 		t.Fatalf("Authorization not rewritten to pool token: %s", body)
 	}
-	if authCalls.Load() != 1 {
-		t.Fatalf("expected 1 authorize for the TOFU bind, got %d", authCalls.Load())
+	// First request: TOFU bind plus (since the seat architecture) one seat
+	// advisor consult from sticky.Select — both hit /authorize.
+	afterFirst := authCalls.Load()
+	if afterFirst < 1 || afterFirst > 2 {
+		t.Fatalf("expected 1-2 authorizes for TOFU bind (+seat advisor), got %d", afterFirst)
 	}
 
 	// Second request reuses the binding: no new authorize, still rewritten.
@@ -194,8 +197,8 @@ func TestIDEBindsUnboundSessionToIDEKey(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, "upstream-auth=Bearer tok") {
 		t.Fatalf("second business request: status %d body %s", status, body)
 	}
-	if authCalls.Load() != 1 {
-		t.Fatalf("binding should be reused without re-authorize, got %d calls", authCalls.Load())
+	if authCalls.Load() != afterFirst {
+		t.Fatalf("binding should be reused without re-authorize, got %d -> %d calls", afterFirst, authCalls.Load())
 	}
 }
 

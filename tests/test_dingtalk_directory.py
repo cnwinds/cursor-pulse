@@ -1,5 +1,4 @@
 import pytest
-
 from pulse.integrations.dingtalk_directory import (
     list_directory_tree_children,
     search_directory_by_name,

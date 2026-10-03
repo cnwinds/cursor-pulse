@@ -6,9 +6,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.proxy import usage as usage_mod
+from pulse.proxy.clock import WINDOW_5H, WINDOW_7D, utcnow
+from pulse.proxy.keys import generate_coding_plan_proxy_key, generate_proxy_key, hash_proxy_key
 from pulse.storage.models import ProxyEvent, ProxyKey
 from pulse.util.datetime_fmt import serialize_datetime
 
@@ -31,9 +31,7 @@ def cents_to_usd(cents: int | None) -> int | None:
 
 
 def find_key_by_plaintext(session: Session, plaintext: str) -> ProxyKey | None:
-    return session.execute(
-        select(ProxyKey).where(ProxyKey.key_hash == hash_proxy_key(plaintext))
-    ).scalar_one_or_none()
+    return session.execute(select(ProxyKey).where(ProxyKey.key_hash == hash_proxy_key(plaintext))).scalar_one_or_none()
 
 
 def create_key(
@@ -70,6 +68,44 @@ def create_key(
     return key, plaintext
 
 
+def create_coding_plan_key(
+    session: Session,
+    *,
+    name: str,
+    member_id: str,
+    coding_plan_vendor: str,
+    window_5h_cost_limit_cents: int | None = None,
+    window_7d_cost_limit_cents: int | None = None,
+    expires_at: datetime | None = None,
+    encryption_key: str = "",
+) -> tuple[ProxyKey, str]:
+    from pulse.ingestion.crypto import encrypt_secret
+    from pulse.openai_proxy.upstream import CP_VENDORS
+
+    vendor = coding_plan_vendor.strip().lower()
+    if vendor not in CP_VENDORS:
+        raise ValueError(f"unsupported coding_plan_vendor: {coding_plan_vendor}")
+    plaintext, key_hash, hint = generate_coding_plan_proxy_key()
+    encrypted = None
+    if encryption_key.strip():
+        encrypted = encrypt_secret(plaintext, encryption_key.strip())
+    key = ProxyKey(
+        key_hash=key_hash,
+        key_hint=hint,
+        encrypted_key=encrypted,
+        name=name,
+        member_id=member_id,
+        mode="coding_plan",
+        coding_plan_vendor=vendor,
+        window_5h_cost_limit_cents=window_5h_cost_limit_cents,
+        window_7d_cost_limit_cents=window_7d_cost_limit_cents,
+        expires_at=expires_at,
+    )
+    session.add(key)
+    session.flush()
+    return key, plaintext
+
+
 def reveal_plaintext(key: ProxyKey, encryption_key: str) -> str | None:
     """还原明文；无密文或解密失败返回 None。"""
     if not key.encrypted_key or not encryption_key.strip():
@@ -87,10 +123,7 @@ def build_client_command(*, shell: str, proxy_url: str, plaintext_key: str) -> s
     url = proxy_url.rstrip("/")
     if shell == "powershell":
         # cmd 子进程隔离环境变量；可在 PowerShell / cmd 中直接粘贴
-        return (
-            f'cmd /c "set HTTPS_PROXY={url}&& '
-            f'set CURSOR_API_KEY={plaintext_key}&& agent -k"'
-        )
+        return f'cmd /c "set HTTPS_PROXY={url}&& set CURSOR_API_KEY={plaintext_key}&& agent -k"'
     # bash / linux / macos：前缀赋值仅作用于该命令
     return f'HTTPS_PROXY="{url}" CURSOR_API_KEY="{plaintext_key}" agent -k'
 
@@ -121,17 +154,13 @@ def build_client_setup_commands(*, plaintext_key: str, addresses) -> list[dict]:
                     "proxy_url": proxy_url,
                     "proxy_name": display_name,
                     "shell": sh,
-                    "command": build_client_command(
-                        shell=sh, proxy_url=proxy_url, plaintext_key=plaintext_key
-                    ),
+                    "command": build_client_command(shell=sh, proxy_url=proxy_url, plaintext_key=plaintext_key),
                 }
             )
     return commands
 
 
-def pick_client_setup_command(
-    commands: list[dict], *, shell: str, proxy_url: str | None = None
-) -> dict:
+def pick_client_setup_command(commands: list[dict], *, shell: str, proxy_url: str | None = None) -> dict:
     if proxy_url:
         wanted = proxy_url.rstrip("/")
         for item in commands:
@@ -192,22 +221,29 @@ def record_event(
     )
 
 
-
-def key_summaries(
-    session: Session, keys: list[ProxyKey], *, now: datetime | None = None
-) -> list[dict]:
+def key_summaries(session: Session, keys: list[ProxyKey], *, now: datetime | None = None) -> list[dict]:
     now = now or utcnow()
     ids = [key.id for key in keys]
     totals = usage_mod.usage_totals_by_proxy_key(session, ids)
+    req_counts = usage_mod.usage_request_counts_by_proxy_key(session, ids)
     used_5h = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_5H)
     used_7d = usage_mod.window_costs_by_proxy_key(session, ids, since=now - WINDOW_7D)
+    tok_5h = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_5H)
+    tok_7d = usage_mod.window_tokens_by_proxy_key(session, ids, since=now - WINDOW_7D)
+    req_5h = usage_mod.window_request_counts_by_proxy_key(session, ids, since=now - WINDOW_5H)
+    req_7d = usage_mod.window_request_counts_by_proxy_key(session, ids, since=now - WINDOW_7D)
     return [
         _key_summary_row(
             key,
             total_tokens=totals.get(key.id, (0, 0))[0],
             total_cost=totals.get(key.id, (0, 0))[1],
+            request_count=req_counts.get(key.id, 0),
             used_5h=used_5h.get(key.id, 0),
             used_7d=used_7d.get(key.id, 0),
+            window_5h_tokens=tok_5h.get(key.id, 0),
+            window_7d_tokens=tok_7d.get(key.id, 0),
+            window_5h_request_count=req_5h.get(key.id, 0),
+            window_7d_request_count=req_7d.get(key.id, 0),
         )
         for key in keys
     ]
@@ -218,8 +254,13 @@ def _key_summary_row(
     *,
     total_tokens: int,
     total_cost: int,
+    request_count: int,
     used_5h: int,
     used_7d: int,
+    window_5h_tokens: int,
+    window_7d_tokens: int,
+    window_5h_request_count: int,
+    window_7d_request_count: int,
 ) -> dict:
     return {
         "id": key.id,
@@ -227,6 +268,7 @@ def _key_summary_row(
         "name": key.name,
         "member_id": key.member_id,
         "mode": key.mode,
+        "coding_plan_vendor": key.coding_plan_vendor,
         "window_5h_cost_limit_cents": key.window_5h_cost_limit_cents,
         "window_7d_cost_limit_cents": key.window_7d_cost_limit_cents,
         "window_5h_cost_usd": cents_to_usd(key.window_5h_cost_limit_cents),
@@ -237,8 +279,13 @@ def _key_summary_row(
         "created_at": serialize_datetime(key.created_at),
         "total_tokens": total_tokens,
         "total_cost_cents": total_cost,
+        "request_count": request_count,
         "window_5h_cost_cents": used_5h,
         "window_7d_cost_cents": used_7d,
+        "window_5h_tokens": window_5h_tokens,
+        "window_7d_tokens": window_7d_tokens,
+        "window_5h_request_count": window_5h_request_count,
+        "window_7d_request_count": window_7d_request_count,
     }
 
 

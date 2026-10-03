@@ -3,9 +3,9 @@ from assistant_platform.capabilities.resolve import ResolvedCapability
 from assistant_platform.conversation.agent_tools import (
     NOTIFY_USER_TOOL_NAME,
     TOOL_EXCLUSIONS,
-    tools_from_capabilities,
-    tool_name_for_capability,
     resolve_capability_for_tool_name,
+    tool_name_for_capability,
+    tools_from_capabilities,
 )
 
 

@@ -25,22 +25,15 @@ def load_skill_docs_tool_definition() -> dict[str, Any]:
                     "skill_id": {"type": "string"},
                     "start_line": {
                         "type": "integer",
-                        "description": (
-                            "从正文第几行开始读取（1-based）。"
-                            "续读时传上一段返回的 next_start_line。"
-                        ),
+                        "description": ("从正文第几行开始读取（1-based）。续读时传上一段返回的 next_start_line。"),
                     },
                     "max_lines": {
                         "type": "integer",
-                        "description": (
-                            f"本次最多返回多少行，默认 {DEFAULT_SKILL_WINDOW_LINES}。"
-                        ),
+                        "description": (f"本次最多返回多少行，默认 {DEFAULT_SKILL_WINDOW_LINES}。"),
                     },
                     "section": {
                         "type": "string",
-                        "description": (
-                            "已废弃，忽略：现每个 skill_id 对应单个 Markdown 文件。"
-                        ),
+                        "description": ("已废弃，忽略：现每个 skill_id 对应单个 Markdown 文件。"),
                     },
                 },
                 "required": ["skill_id"],

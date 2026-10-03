@@ -8,8 +8,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
-
 from pulse.ingestion.credentials import CredentialService
 from pulse.ingestion.sync import CursorSyncService, _apply_period_usage
 from pulse.integrations.cursor_api import map_usage_event
@@ -17,6 +15,7 @@ from pulse.storage.db import init_db
 from pulse.storage.models import AccountQuotaSnapshot, AiAccount, Member
 from pulse.tool_center.repository import ToolCenterRepository
 from pulse.tool_center.seed import seed_v2_catalog
+from sqlalchemy import select
 from tests.conftest import make_team_repo
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -47,9 +46,7 @@ def test_apply_period_usage_writes_snapshot_and_resets_on(session):
     assert account.usage_resets_on is not None
     assert account.resets_on_source == "api"
 
-    stored = session.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id)
-    )
+    stored = session.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == account.id))
     assert stored is not None
     assert stored.limit_cents == 7000
     assert stored.used_cents == 3500
@@ -104,12 +101,8 @@ def test_sync_writes_quota_snapshot(session):
 
     mock_cursor_key_exchange(mock_client, email=cursor_account.account_identifier.lower())
     mock_client.exchange_api_key.return_value = "session-token"
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw_event)
     mock_client.iter_filtered_usage_events.return_value = iter([dto])
 
@@ -123,9 +116,7 @@ def test_sync_writes_quota_snapshot(session):
     sync_service = CursorSyncService(session, TEST_KEY, cursor_client=mock_client)
     sync_service.sync_account(cursor_account.id, channel="scheduler")
 
-    snap = session.scalar(
-        select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == cursor_account.id)
-    )
+    snap = session.scalar(select(AccountQuotaSnapshot).where(AccountQuotaSnapshot.account_id == cursor_account.id))
     assert snap is not None
     account = session.get(AiAccount, cursor_account.id)
     assert account.usage_resets_on is not None
@@ -155,12 +146,8 @@ def test_sync_backfills_empty_account_identifier_via_get_me(session):
 
     mock_cursor_key_exchange(mock_client, email=None)
     mock_client.get_me.return_value = {"email": "backfill@example.com"}
-    mock_client.get_current_period_usage.return_value = json.loads(
-        (FIXTURES / "cursor_period_usage.json").read_text()
-    )
-    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    mock_client.get_current_period_usage.return_value = json.loads((FIXTURES / "cursor_period_usage.json").read_text())
+    raw_event = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     mock_client.iter_filtered_usage_events.return_value = iter([map_usage_event(raw_event)])
 
     cred_service = CredentialService(session, TEST_KEY, cursor_client=mock_client)

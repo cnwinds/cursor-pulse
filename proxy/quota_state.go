@@ -17,33 +17,22 @@ func (q *credentialQuotaState) quotaFullyExhausted() bool {
 }
 
 func (q *credentialQuotaState) runtimeQuotaOK(pool quotaPoolKind) bool {
-	switch pool {
-	case quotaPoolAuto:
-		return !q.autoQuotaExhausted
-	case quotaPoolAPI:
+	if pool == quotaPoolAPI {
 		return !q.apiQuotaExhausted
-	default:
-		return !q.quotaFullyExhausted()
 	}
+	return !q.autoQuotaExhausted
 }
 
 func (q *credentialQuotaState) snapshotQuotaOK(pool quotaPoolKind) bool {
-	switch pool {
-	case quotaPoolAuto:
-		return pctQuotaOK(q.autoPct)
-	case quotaPoolAPI:
+	if pool == quotaPoolAPI {
 		return pctQuotaOK(q.apiPct)
-	default:
-		return pctQuotaOK(q.autoPct) && pctQuotaOK(q.apiPct)
 	}
+	return pctQuotaOK(q.autoPct)
 }
 
 // availableFor reports Snapshot Headroom plus runtime marks for pool.
 // Auth cooldown is authCooling — not folded in here.
 func (q *credentialQuotaState) availableFor(pool quotaPoolKind) bool {
-	if pool == quotaPoolUnknown {
-		return !q.quotaFullyExhausted() && q.snapshotQuotaOK(pool)
-	}
 	return q.runtimeQuotaOK(pool) && q.snapshotQuotaOK(pool)
 }
 
@@ -68,26 +57,18 @@ func (q *credentialQuotaState) setFullyQuotaExhausted() {
 
 // observeExhaustion marks pool exhausted. Returns whether state changed.
 func (q *credentialQuotaState) observeExhaustion(pool quotaPoolKind) bool {
-	switch pool {
-	case quotaPoolAuto:
-		if q.autoQuotaExhausted {
-			return false
-		}
-		q.autoQuotaExhausted = true
-		return true
-	case quotaPoolAPI:
+	if pool == quotaPoolAPI {
 		if q.apiQuotaExhausted {
 			return false
 		}
 		q.apiQuotaExhausted = true
 		return true
-	default:
-		if q.quotaFullyExhausted() {
-			return false
-		}
-		q.setFullyQuotaExhausted()
-		return true
 	}
+	if q.autoQuotaExhausted {
+		return false
+	}
+	q.autoQuotaExhausted = true
+	return true
 }
 
 // decayQuotaMarks clears runtime Quota Pool exhaustion only.

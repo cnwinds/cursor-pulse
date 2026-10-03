@@ -145,11 +145,7 @@ def test_user_allow_guide_for_non_owner():
 
 def test_disabled_definition_disappears():
     session = _session()
-    definition = session.scalar(
-        select(CapabilityDefinitionRow).where(
-            CapabilityDefinitionRow.key == "cursor.key.bind"
-        )
-    )
+    definition = session.scalar(select(CapabilityDefinitionRow).where(CapabilityDefinitionRow.key == "cursor.key.bind"))
     assert definition is not None
     definition.status = "disabled"
     session.commit()
@@ -166,9 +162,7 @@ def test_disabled_definition_disappears():
 def test_user_allow_cannot_revive_disabled_definition():
     session = _session()
     definition = session.scalar(
-        select(CapabilityDefinitionRow).where(
-            CapabilityDefinitionRow.key == "guide_image.update"
-        )
+        select(CapabilityDefinitionRow).where(CapabilityDefinitionRow.key == "guide_image.update")
     )
     assert definition is not None
     definition.status = "disabled"

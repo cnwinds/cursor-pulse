@@ -7,6 +7,7 @@ from datetime import date
 
 from pulse.channels.commands_common import encryption_key
 from pulse.proxy.usage import loan_proxy_usage_summary
+from pulse.settings.team_store import effective_loan_selection
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository
 from pulse.tool_center.burn_rate import analyze_burn_rate
@@ -38,9 +39,7 @@ def _loan_item_dict(loan_svc, loan) -> dict:
     remaining_headroom_pct: float | None = None
     snapshot = loan_svc.latest_snapshot(loan.source_account_id)
     if snapshot is not None:
-        remaining_headroom_pct = analyze_burn_rate(
-            snapshot, date.today()
-        ).remaining_headroom_pct
+        remaining_headroom_pct = analyze_burn_rate(snapshot, date.today()).remaining_headroom_pct
 
     # Full loan lifetime for "我的借用" summary (from creation onward).
     proxy = loan_proxy_usage_summary(
@@ -124,9 +123,7 @@ def read_self_loan(repo: Repository, config, member: Member) -> str:
             count = int(loan.get("proxy_request_count") or 0)
             tokens = int(loan.get("proxy_total_tokens") or 0)
             cost = float(loan.get("proxy_cost_usd") or 0)
-            lines.append(
-                f"用量：{count:,} 次 · {tokens:,} tokens · ≈${cost:.2f}（Proxy 精确计量）"
-            )
+            lines.append(f"用量：{count:,} 次 · {tokens:,} tokens · ≈${cost:.2f}（Proxy 精确计量）")
             headroom = loan.get("remaining_headroom_pct")
             if headroom is not None:
                 lines.append(f"还能用：{float(headroom):.1f}%")
@@ -147,6 +144,7 @@ def read_self_loan(repo: Repository, config, member: Member) -> str:
         blocks.append("\n".join(lines))
     blocks.append("归还请发送：归还 Key")
     return "\n\n".join(blocks)
+
 
 def return_loan(repo: Repository, config, member: Member) -> str:
     from pulse.tool_center.key_loan_notify import notify_loan_reclaimed
@@ -174,10 +172,7 @@ def return_loan(repo: Repository, config, member: Member) -> str:
             )
         except Exception:
             logger.exception("key loan reclaim notify failed after return")
-        return (
-            f"✅ 已归还借用（{loan.id[:8]}），Key 已撤销。\n"
-            f"借用消耗：${borrowed_cents / 100:.2f}"
-        )
+        return f"✅ 已归还借用（{loan.id[:8]}），Key 已撤销。\n借用消耗：${borrowed_cents / 100:.2f}"
     except Exception as exc:
         repo.session.rollback()
         return f"归还失败：{exc}"
@@ -190,7 +185,7 @@ def request_loan(
     *,
     note: str | None = None,
 ) -> str:
-    from pulse.tool_center.key_loan_notify import format_borrower_issued, proxy_public_url
+    from pulse.tool_center.key_loan_notify import format_borrower_issued, resolve_proxy_addresses
 
     payload = request_loan_payload(repo, config, member, note=note)
     if payload.get("ok"):
@@ -199,8 +194,11 @@ def request_loan(
             loan_id=str(payload.get("loan_id") or ""),
             loan_expires_on=payload.get("loan_expires_on"),
             warning=payload.get("warning"),
-            proxy_url=proxy_public_url(config),
+            addresses=resolve_proxy_addresses(repo.session, config),
             delivery_mode=payload.get("delivery_mode"),
+            lender_mode=payload.get("lender_mode"),
+            routing_mode=payload.get("routing_mode"),
+            assignment_label=payload.get("assignment_label"),
         )
     return str(payload.get("error") or "借 Key 失败")
 
@@ -214,10 +212,11 @@ def request_loan_payload(
     notify: bool = True,
     skip_borrower_notify: bool = True,
 ) -> dict:
+    from pulse.proxy.key_crud import build_client_setup_commands
     from pulse.tool_center.key_loan_notify import (
         build_setup_commands,
         notify_loan_issued,
-        proxy_public_url,
+        resolve_proxy_addresses,
     )
     from pulse.tool_center.key_loans import KeyLoanError, request_self_service_loan
 
@@ -232,26 +231,31 @@ def request_loan_payload(
             team_id=repo.team_id,
             borrower=member,
             note=note,
-            loan_selection=config.tool_center.loan_selection,
+            loan_selection=effective_loan_selection(repo.session, config, repo.team_id),
         )
         repo.session.flush()
-        proxy_url = proxy_public_url(config)
+        addresses = resolve_proxy_addresses(repo.session, config)
+        proxy_url = addresses[0].url.rstrip("/")
         api_key = result.get("api_key") or ""
-        setup_commands = (
-            build_setup_commands(api_key=api_key, proxy_url=proxy_url) if api_key else {}
-        )
+        setup_commands = build_setup_commands(api_key=api_key, proxy_url=proxy_url) if api_key else {}
+        setup_command_items = build_client_setup_commands(plaintext_key=api_key, addresses=addresses) if api_key else []
         payload = {
             "ok": True,
             "schema_version": 1,
             "api_key": api_key,
             "delivery_mode": result.get("delivery_mode") or "proxy_alias",
+            "lender_mode": result.get("lender_mode"),
+            "routing_mode": result.get("routing_mode"),
+            "assignment_label": result.get("assignment_label"),
             "warning": result.get("warning"),
             "loan_id": result.get("loan_id"),
             "loan_expires_on": result.get("loan_expires_on"),
             "borrower_member_id": result.get("borrower_member_id") or member.id,
             "borrower_name": result.get("borrower_name") or member.display_name,
             "setup_commands": setup_commands,
+            "setup_command_items": setup_command_items,
             "proxy_url": proxy_url,
+            "proxy_addresses": [{"url": a.url, "display_name": a.display_name} for a in addresses],
         }
         if notify:
             try:
@@ -262,9 +266,7 @@ def request_loan_payload(
                     skip_borrower=skip_borrower_notify,
                 )
             except Exception:
-                logger.exception(
-                    "key loan issued notify failed after self-service request"
-                )
+                logger.exception("key loan issued notify failed after self-service request")
         return payload
     except KeyLoanError as exc:
         repo.session.rollback()
@@ -272,6 +274,7 @@ def request_loan_payload(
     except Exception as exc:
         repo.session.rollback()
         return {"ok": False, "error": f"借 Key 失败：{exc}", "error_code": "loan_failed"}
+
 
 def list_active_loans(repo: Repository, config, *, team_id: str) -> str:
     from pulse.tool_center.key_loans import KeyLoanService, loan_payload
@@ -292,12 +295,10 @@ def list_active_loans(repo: Repository, config, *, team_id: str) -> str:
     proxy_totals = loan_proxy_totals_by_loan(repo.session, [loan.id for loan in shown])
     for loan in shown:
         payload = loan_payload(loan, repo.session)
-        approx = loan_svc.approximate_borrowed_cents(
-            loan, proxy_cents=proxy_totals.get(loan.id, (0, 0))[1]
-        )
+        approx = loan_svc.approximate_borrowed_cents(loan, proxy_cents=proxy_totals.get(loan.id, (0, 0, 0))[1])
         lines.append(
             f"· {loan.id[:8]} {payload['borrower_name'] or '—'} "
-            f"← {payload['source_account_identifier']} "
+            f"← {payload['source_account_identifier'] or '账号池'} "
             f"(${approx / 100:.2f})"
         )
     lines.append("撤销：撤销借用 ID前8位")

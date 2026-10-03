@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker
-
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import AiAccountCredential, Base
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import sessionmaker
 
 
 def _legacy_credentials_sql() -> str:

@@ -5,7 +5,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from pulse.channels.commands import (
     BIND_CURSOR_RE,
     CURSOR_BIND_GUIDE,
@@ -55,7 +54,7 @@ def test_bind_command_requires_encryption_key(bot_repo):
         credentials=CredentialConfig(encryption_key=""),
     )
     reply = handle_bind_cursor_command(
-        f"绑定 cursor key crsr_test_key_1234567890",
+        "绑定 cursor key crsr_test_key_1234567890",
         member.channel_user_id,
         config,
         repo,

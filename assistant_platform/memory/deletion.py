@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from assistant_platform.memory.archive_indexer import purge_session_index
 from assistant_platform.memory.archive_models import MemoryScope, SessionArchiveRow
+from assistant_platform.memory.semantic.domain import team_id_to_namespace
+from assistant_platform.memory.semantic.models import CommitmentRow, SemanticAtomRow
 from assistant_platform.memory.session_summary import SessionSummaryRow
 from assistant_platform.profiles.compiler import compile_and_persist_effective_profile
 from assistant_platform.profiles.models import ProfileEffectiveRow, ProfileSignalRow
-from assistant_platform.memory.semantic.models import CommitmentRow, SemanticAtomRow
-from assistant_platform.memory.semantic.domain import team_id_to_namespace
 
 
 @dataclass
@@ -50,17 +50,13 @@ def _purge_semantic_memory_for_session(
     session_id: str,
 ) -> tuple[int, int]:
     atoms_removed = 0
-    for row in session.scalars(
-        select(SemanticAtomRow).where(SemanticAtomRow.namespace == namespace)
-    ).all():
+    for row in session.scalars(select(SemanticAtomRow).where(SemanticAtomRow.namespace == namespace)).all():
         if _evidence_references_session(row.evidence_json, session_id):
             session.delete(row)
             atoms_removed += 1
 
     commitments_removed = 0
-    for row in session.scalars(
-        select(CommitmentRow).where(CommitmentRow.namespace == namespace)
-    ).all():
+    for row in session.scalars(select(CommitmentRow).where(CommitmentRow.namespace == namespace)).all():
         if _evidence_references_session(row.evidence_json, session_id):
             session.delete(row)
             commitments_removed += 1
@@ -101,9 +97,7 @@ def purge_session_memory(
 ) -> SessionMemoryDeletionResult:
     """Remove all derived memory for one closed session."""
     result = SessionMemoryDeletionResult(session_id=session_id)
-    archive = session.scalar(
-        select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id)
-    )
+    archive = session.scalar(select(SessionArchiveRow).where(SessionArchiveRow.session_id == session_id))
     if archive is None and team_id is None:
         return result
     effective_team = (archive.team_id if archive else team_id) or ""
@@ -111,9 +105,7 @@ def purge_session_memory(
 
     purge_session_index(session, session_id)
 
-    summary = session.scalar(
-        select(SessionSummaryRow).where(SessionSummaryRow.session_id == session_id)
-    )
+    summary = session.scalar(select(SessionSummaryRow).where(SessionSummaryRow.session_id == session_id))
     if summary is not None:
         session.delete(summary)
         result.summaries_removed = 1
@@ -122,9 +114,7 @@ def purge_session_memory(
         session.delete(archive)
         result.archives_removed = 1
 
-    atoms, commitments = _purge_semantic_memory_for_session(
-        session, namespace=namespace, session_id=session_id
-    )
+    atoms, commitments = _purge_semantic_memory_for_session(session, namespace=namespace, session_id=session_id)
     result.atoms_removed = atoms
     result.commitments_removed = commitments
 

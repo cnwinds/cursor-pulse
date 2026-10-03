@@ -24,9 +24,7 @@ def run_auto_review(db_session: Session, session_id: str) -> SessionReviewRow:
     if session_row is None:
         raise ValueError(f"session not found: {session_id}")
 
-    existing = db_session.scalar(
-        select(SessionReviewRow).where(SessionReviewRow.session_id == session_id)
-    )
+    existing = db_session.scalar(select(SessionReviewRow).where(SessionReviewRow.session_id == session_id))
     if existing is not None:
         return existing
 

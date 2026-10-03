@@ -49,12 +49,7 @@ def incoming_message_type(raw: dict, incoming: Any | None = None) -> str | None:
 
 
 def _extract_from_content_blob(content: dict[str, Any]) -> FileAttachment | None:
-    file_name = (
-        content.get("fileName")
-        or content.get("file_name")
-        or content.get("name")
-        or "upload.csv"
-    )
+    file_name = content.get("fileName") or content.get("file_name") or content.get("name") or "upload.csv"
     download_code = content.get("downloadCode") or content.get("download_code")
     if not download_code:
         return None

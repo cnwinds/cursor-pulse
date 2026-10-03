@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -29,9 +29,7 @@ def load_usage_dataframe(session: Session, period: str) -> pd.DataFrame:
     if not ingestion_ids:
         return pd.DataFrame()
 
-    records = session.scalars(
-        select(UsageRecord).where(UsageRecord.ingestion_id.in_(ingestion_ids))
-    ).all()
+    records = session.scalars(select(UsageRecord).where(UsageRecord.ingestion_id.in_(ingestion_ids))).all()
     members = {m.id: m.display_name for m in session.scalars(select(Member)).all()}
 
     rows = [
@@ -105,9 +103,7 @@ def _dispatch_query(
         return (
             "team_ranking_forbidden",
             {},
-            prefix
-            + "团队用量排名仅管理员可查看。\n"
-            "你可以发送「我的」查看提交状态，或「查询 我的用量」查看本人用量。",
+            prefix + "团队用量排名仅管理员可查看。\n你可以发送「我的」查看提交状态，或「查询 我的用量」查看本人用量。",
         )
 
     if not is_admin and member_id:
@@ -119,14 +115,10 @@ def _dispatch_query(
         ascending = bool(re.search(r"(最少|最低|最小)", q))
         if "token" in q or "tokens" in q:
             plan = "groupby member_name tokens_total sum sort"
-            ranked = df.groupby("member_name")["tokens_total"].sum().sort_values(
-                ascending=ascending
-            )
+            ranked = df.groupby("member_name")["tokens_total"].sum().sort_values(ascending=ascending)
         elif "花费" in q or "付费" in q or "cost" in q or "$" in q:
             plan = "groupby member_name cost_usd sum sort"
-            ranked = df.groupby("member_name")["cost_usd"].sum().sort_values(
-                ascending=ascending
-            )
+            ranked = df.groupby("member_name")["cost_usd"].sum().sort_values(ascending=ascending)
         else:
             plan = "groupby member_name count sort"
             ranked = df.groupby("member_name").size().sort_values(ascending=ascending)
@@ -164,9 +156,7 @@ def _dispatch_query(
                 lines.append(f"{i}. {name} — {int(cnt):,} 次")
             return plan, {str(k): int(v) for k, v in top.items()}, "\n".join(lines)
 
-    if "总共" in q or "合计" in q or "总量" in q or (
-        "用量" in q and ("我" in q or "本人" in q)
-    ):
+    if "总共" in q or "合计" in q or "总量" in q or ("用量" in q and ("我" in q or "本人" in q)):
         plan = "period_totals"
         summary = {
             "events": len(df),
@@ -185,8 +175,7 @@ def _dispatch_query(
     return (
         "unsupported",
         {},
-        prefix
-        + "暂不支持该问法。你可以试试：\n"
+        prefix + "暂不支持该问法。你可以试试：\n"
         "· 查询 我的用量\n"
         "· 查询 总共多少\n"
         "· 查询 模型 composer-2.5\n"

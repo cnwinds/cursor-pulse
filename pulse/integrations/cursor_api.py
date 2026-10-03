@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -97,7 +97,7 @@ def resolve_account_email_from_exchange(data: dict) -> str | None:
 
 def map_usage_event(raw: dict) -> UsageEventDTO:
     ts_ms = int(raw["timestamp"])
-    event_at = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    event_at = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
     token = raw.get("tokenUsage") or {}
     input_t = int(token.get("inputTokens") or 0)
     output_t = int(token.get("outputTokens") or 0)
@@ -105,9 +105,7 @@ def map_usage_event(raw: dict) -> UsageEventDTO:
     cache_write = int(token.get("cacheWriteTokens") or 0)
     cents = float(raw.get("chargedCents") or token.get("totalCents") or 0)
     conv = raw.get("conversationId") or ""
-    external_id = hashlib.sha256(
-        f"{raw['timestamp']}:{raw.get('model')}:{conv}".encode()
-    ).hexdigest()[:32]
+    external_id = hashlib.sha256(f"{raw['timestamp']}:{raw.get('model')}:{conv}".encode()).hexdigest()[:32]
     kind = raw.get("kind") or "unknown"
     cost_raw = "included" if "INCLUDED" in kind else "usage_based"
     return UsageEventDTO(
@@ -188,9 +186,7 @@ class CursorApiClient:
                 self._token_cache[cache_key] = _CachedAccessToken(token, expires_at)
             return data
 
-    def resolve_api_key_account_email(
-        self, api_key: str, *, exchange: dict | None = None
-    ) -> str | None:
+    def resolve_api_key_account_email(self, api_key: str, *, exchange: dict | None = None) -> str | None:
         data = exchange or self.exchange_user_api_key_response(api_key)
         email = resolve_account_email_from_exchange(data)
         if email:
@@ -258,12 +254,8 @@ class CursorApiClient:
             raise last_exc
         raise RuntimeError("cursor dashboard request failed")
 
-    def get_current_period_usage(
-        self, token: str, *, api_key: str | None = None
-    ) -> dict:
-        return self._post_dashboard(
-            token, "GetCurrentPeriodUsage", {}, api_key=api_key
-        )
+    def get_current_period_usage(self, token: str, *, api_key: str | None = None) -> dict:
+        return self._post_dashboard(token, "GetCurrentPeriodUsage", {}, api_key=api_key)
 
     def get_me(self, token: str, *, api_key: str | None = None) -> dict:
         return self._post_dashboard(token, "GetMe", {}, api_key=api_key)
@@ -298,27 +290,17 @@ class CursorApiClient:
                 break
             page += 1
 
-    def create_user_api_key(
-        self, token: str, name: str, *, api_key: str | None = None
-    ) -> dict:
-        return self._post_dashboard(
-            token, "CreateUserApiKey", {"name": name}, api_key=api_key
-        )
+    def create_user_api_key(self, token: str, name: str, *, api_key: str | None = None) -> dict:
+        return self._post_dashboard(token, "CreateUserApiKey", {"name": name}, api_key=api_key)
 
-    def list_user_api_keys(
-        self, token: str, *, api_key: str | None = None
-    ) -> list[dict]:
+    def list_user_api_keys(self, token: str, *, api_key: str | None = None) -> list[dict]:
         data = self._post_dashboard(token, "ListUserApiKeys", {}, api_key=api_key)
         return data.get("apiKeys") or []
 
-    def revoke_user_api_key(
-        self, token: str, key_id: int, *, api_key: str | None = None
-    ) -> None:
+    def revoke_user_api_key(self, token: str, key_id: int, *, api_key: str | None = None) -> None:
         self._post_dashboard(token, "RevokeUserApiKey", {"id": key_id}, api_key=api_key)
 
-    def get_hard_limit(
-        self, token: str, *, api_key: str | None = None, team_id: int | None = None
-    ) -> dict:
+    def get_hard_limit(self, token: str, *, api_key: str | None = None, team_id: int | None = None) -> dict:
         body: dict = {}
         if team_id is not None:
             body["teamId"] = team_id

@@ -39,9 +39,7 @@ def _parse_loan_note(arguments: dict[str, Any]) -> str | None:
 
 
 def _parse_loan_id_prefix(arguments: dict[str, Any]) -> str | None:
-    prefix = _optional_str(arguments, "loan_id_prefix") or _optional_str(
-        arguments, "loan_id"
-    )
+    prefix = _optional_str(arguments, "loan_id_prefix") or _optional_str(arguments, "loan_id")
     if prefix:
         return prefix
     text = _optional_str(arguments, "text")
@@ -83,6 +81,7 @@ def handle_key_loan_request(
             "proxy_url": payload.get("proxy_url"),
         },
     )
+
 
 def handle_key_loan_return(
     session,
@@ -156,9 +155,7 @@ def handle_key_loan_revoke(
     prefix = _parse_loan_id_prefix(request.arguments)
     if not prefix:
         return _fail("invalid_arguments", "缺少 loan_id_prefix")
-    reply = revoke_loan(
-        repo, config, loan_id_prefix=prefix, team_id=request.team_id
-    )
+    reply = revoke_loan(repo, config, loan_id_prefix=prefix, team_id=request.team_id)
     if reply.startswith("撤销失败"):
         return _fail("revoke_failed", reply)
     return _success(reply, capability_key="key.loan.revoke")

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 _ADMIN_MARKER_KEYS = frozenset(
     {
         "submission.status.read",

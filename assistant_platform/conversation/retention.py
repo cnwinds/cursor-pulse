@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -21,11 +21,9 @@ def purge_messages_older_than(
 
     Permanent ``ap_archive_*`` rows are never touched by this purge.
     """
-    effective_now = now or datetime.now(timezone.utc)
+    effective_now = now or datetime.now(UTC)
     cutoff = effective_now - timedelta(days=days)
-    archived_session_ids = select(SessionArchiveRow.session_id).where(
-        SessionArchiveRow.archive_status == "ready"
-    )
+    archived_session_ids = select(SessionArchiveRow.session_id).where(SessionArchiveRow.archive_status == "ready")
     stmt = delete(ChatMessageRow).where(
         ChatMessageRow.created_at < cutoff,
         ChatMessageRow.session_id.in_(archived_session_ids),
@@ -40,11 +38,9 @@ def count_expired_messages(
     days: int = DEFAULT_RETENTION_DAYS,
     now: datetime | None = None,
 ) -> int:
-    effective_now = now or datetime.now(timezone.utc)
+    effective_now = now or datetime.now(UTC)
     cutoff = effective_now - timedelta(days=days)
-    archived_session_ids = select(SessionArchiveRow.session_id).where(
-        SessionArchiveRow.archive_status == "ready"
-    )
+    archived_session_ids = select(SessionArchiveRow.session_id).where(SessionArchiveRow.archive_status == "ready")
     return int(
         session.scalar(
             select(func.count())

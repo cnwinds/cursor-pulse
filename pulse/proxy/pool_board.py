@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import NamedTuple
 
 from sqlalchemy import func, select
@@ -86,7 +86,10 @@ def _pool_primary_context(session: Session) -> PoolPrimaryContext:
     accounts = {
         a.id: a
         for a in session.execute(
-            select(AiAccount).where(AiAccount.id.in_(account_ids))
+            select(AiAccount).where(
+                AiAccount.id.in_(account_ids),
+                AiAccount.deleted_at.is_(None),
+            )
         ).scalars()
     }
     latest_snaps = latest_snapshots_for_accounts(session, account_ids)
@@ -102,12 +105,8 @@ def _pool_primary_context(session: Session) -> PoolPrimaryContext:
         ).all()
     )
     bound_at_by_account = last_bound_at_by_account(session, account_ids)
-    member_names = member_names_by_id(
-        session, {a.primary_member_id for a in accounts.values() if a.primary_member_id}
-    )
-    return PoolPrimaryContext(
-        rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names
-    )
+    member_names = member_names_by_id(session, {a.primary_member_id for a in accounts.values() if a.primary_member_id})
+    return PoolPrimaryContext(rows, accounts, latest_snaps, loan_counts, bound_at_by_account, member_names)
 
 
 def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
@@ -118,11 +117,11 @@ def _pool_scoring_clock(latest_snaps: dict) -> tuple[date, datetime]:
             continue
         t = snap.captured_at
         if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
+            t = t.replace(tzinfo=UTC)
         captured.append(t)
-    now = max(captured) if captured else datetime.now(timezone.utc)
+    now = max(captured) if captured else datetime.now(UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     return now.date(), now
 
 
@@ -162,6 +161,9 @@ def _build_pool_lender_candidates(
                     {
                         "account_id": aid,
                         "account_identifier": account.account_identifier,
+                        "primary_member_name": (
+                            member_names.get(account.primary_member_id) if account.primary_member_id else None
+                        ),
                         "reason": "no_snapshot",
                         "active_loans": active_loans,
                         "status": None,
@@ -187,9 +189,7 @@ def _build_pool_lender_candidates(
                 reserve_pct=account.proxy_reserve_pct,
                 bound_at=bound_at_by_account.get(aid),
                 primary_member_name=(
-                    member_names.get(account.primary_member_id)
-                    if account.primary_member_id
-                    else None
+                    member_names.get(account.primary_member_id) if account.primary_member_id else None
                 ),
             )
         )
@@ -230,9 +230,7 @@ def loan_candidate_credentials(
             cached = _loan_candidates_get(loan_id, ttl_seconds)
             if cached is not None:
                 return cached
-            ordered = _rank_loan_candidates(
-                session, loan, loan_selection=loan_selection
-            )
+            ordered = _rank_loan_candidates(session, loan, loan_selection=loan_selection)
             _loan_candidates_put(loan_id, ordered, ttl_seconds=ttl_seconds)
             return ordered
     finally:
@@ -271,15 +269,15 @@ def _rank_loan_candidates(session: Session, loan, *, loan_selection=None) -> lis
     candidates = [
         candidate
         for candidate in candidates
-        if candidate.account_id not in own_accounts
-        and candidate.account_id not in blockers
+        if candidate.account_id not in own_accounts and candidate.account_id not in blockers
     ]
 
     today, now = _pool_scoring_clock(ctx.latest_snaps)
     board = rank_lenders(
         candidates,
         loan_selection=loan_selection,
-        pool="unknown",
+        # 白名单只圈定可游走的账号（任一桶有余量）；选座时再按请求的桶表排序过滤。
+        pool=None,
         today=today,
         now=now,
         # 借用路径的硬过滤，但不在借人数上限上排除：本笔借用自己就可能占满名额，
@@ -329,9 +327,7 @@ def _loan_candidates_get(loan_id: str, ttl_seconds: float) -> list[str] | None:
     return _loan_candidates.get(loan_id, ttl_seconds)
 
 
-def _loan_candidates_put(
-    loan_id: str, credential_ids: list[str], *, ttl_seconds: float = 0.0
-) -> None:
+def _loan_candidates_put(loan_id: str, credential_ids: list[str], *, ttl_seconds: float = 0.0) -> None:
     """写白名单缓存；ttl 只用于超上限时清理过期项。"""
     _loan_candidates.put(loan_id, credential_ids, ttl_seconds=ttl_seconds)
 
@@ -347,7 +343,6 @@ def forget_loan_candidate_cache(loan_id: str) -> None:
 
 
 def list_pool_credentials(
-
     session: Session,
     *,
     encryption_key: str,
@@ -416,18 +411,77 @@ def list_pool_credentials(
     return out
 
 
+def ranked_pool_credential_pairs(
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    quota_pool: str = "auto",
+) -> list[tuple[str, str]]:
+    """``quota_pool``（auto/api）打分表顺序的 ``(primary credential_id, account_id)``，不含密钥明文。
+
+    与打分表、``list_pool_credentials`` 同一套 ``rank_lenders``（含 Jev 缓存）。
+    同时在线选座用它，避免为了顺序去解密 Cursor Key。
+    """
+    from pulse.tool_center.auto_lender import rank_lenders
+
+    ctx = _pool_primary_context(session)
+    if not ctx.creds:
+        return []
+    candidates, _excluded = _build_pool_lender_candidates(
+        ctx.accounts,
+        ctx.latest_snaps,
+        ctx.loan_counts,
+        {c.account_id for c in ctx.creds},
+        include_no_snap_excluded=False,
+        bound_at_by_account=ctx.bound_at_by_account,
+        member_names=ctx.member_names,
+    )
+    today, now = _pool_scoring_clock(ctx.latest_snaps)
+    board = rank_lenders(
+        candidates,
+        loan_selection=loan_selection,
+        pool="api" if quota_pool == "api" else "auto",
+        today=today,
+        now=now,
+        enforce_loan_cap=False,
+        jev=jev,
+    )
+    by_account = {cred.account_id: cred.id for cred in ctx.creds}
+    pairs: list[tuple[str, str]] = []
+    for row in board["ranked"]:
+        account_id = row["account_id"]
+        cred_id = by_account.get(account_id)
+        if cred_id:
+            pairs.append((cred_id, account_id))
+    return pairs
+
+
 def list_pool_ranking_board(
-    session: Session, *, loan_selection=None, jev=None, quota_pool=None
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    quota_pool=None,
+    jev_bypass_cache: bool = False,
 ) -> dict:
     """Credential Pool Board explain view: ranked + excluded + decision (no secrets)."""
     from pulse.tool_center.auto_lender import rank_lenders
 
     ctx = _pool_primary_context(session)
     if not ctx.creds:
+        selection = loan_selection
+        ttl = float(getattr(selection, "concurrent_ttl_seconds", 180) or 180)
+        max_seats = int(getattr(selection, "max_concurrent_users", 3) or 0)
         return {
             "ranked": [],
             "excluded": [],
             "decision": {"picked_by": "algorithm", "fallback_reason": "no_credentials"},
+            "seat_snapshot": {
+                "max_concurrent_users": max_seats,
+                "ttl_seconds": int(ttl),
+            },
+            "quota_pool": quota_pool,
         }
 
     candidates, excluded_no_snap = _build_pool_lender_candidates(
@@ -448,9 +502,75 @@ def list_pool_ranking_board(
         now=now,
         enforce_loan_cap=False,
         jev=jev,
+        jev_bypass_cache=jev_bypass_cache,
+    )
+    from pulse.proxy.occupancy import get_occupancy
+
+    selection = loan_selection
+    ttl = float(getattr(selection, "concurrent_ttl_seconds", 180) or 180)
+    max_seats = int(getattr(selection, "max_concurrent_users", 3) or 0)
+    seat_counts = get_occupancy().count_by_account(ttl_seconds=ttl)
+
+    def _with_proxy_seats(row: dict) -> dict:
+        aid = row.get("account_id") or ""
+        out = dict(row)
+        out["proxy_active_seats"] = int(seat_counts.get(aid, 0))
+        return out
+
+    ranked = [_with_proxy_seats(r) for r in board["ranked"]]
+    excluded = [_with_proxy_seats(r) for r in excluded_no_snap + board["excluded"]]
+    return {
+        "ranked": ranked,
+        "excluded": excluded,
+        "decision": board["decision"],
+        "seat_snapshot": {
+            "max_concurrent_users": max_seats,
+            "ttl_seconds": int(ttl),
+        },
+        "quota_pool": quota_pool,
+    }
+
+
+def list_pool_ranking_boards(
+    session: Session,
+    *,
+    loan_selection=None,
+    jev=None,
+    jev_bypass_cache: bool = False,
+) -> dict:
+    """Auto / API Quota Pool 各一份打分表，就是代理选号用的两张顺序表。"""
+    kwargs = dict(
+        loan_selection=loan_selection,
+        jev=jev,
+        jev_bypass_cache=jev_bypass_cache,
     )
     return {
-        "ranked": board["ranked"],
-        "excluded": excluded_no_snap + board["excluded"],
-        "decision": board["decision"],
+        "auto": list_pool_ranking_board(session, **kwargs, quota_pool="auto"),
+        "api": list_pool_ranking_board(session, **kwargs, quota_pool="api"),
     }
+
+
+def list_pool_credentials_grouped(
+    session: Session,
+    *,
+    encryption_key: str,
+    loan_selection=None,
+    jev=None,
+) -> dict[str, list[dict]]:
+    """Go 代理热更新：auto / api 两张顺序表，``all`` 是两表凭证并集（只用于查找）。"""
+    common = dict(
+        session=session,
+        encryption_key=encryption_key,
+        loan_selection=loan_selection,
+        jev=jev,
+    )
+    auto = list_pool_credentials(**common, quota_pool="auto")
+    api = list_pool_credentials(**common, quota_pool="api")
+    seen: set[str] = set()
+    union: list[dict] = []
+    for item in auto + api:
+        if item["credential_id"] in seen:
+            continue
+        seen.add(item["credential_id"])
+        union.append(item)
+    return {"all": union, "auto": auto, "api": api}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
@@ -22,7 +22,7 @@ BACKGROUND_JOB_TYPES = frozenset({"session.close"})
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _begin_claim_transaction(db_session: Session) -> None:
@@ -33,7 +33,7 @@ def _begin_claim_transaction(db_session: Session) -> None:
 
 def _job_sort_key(job: BackgroundJobRow) -> tuple:
     priority = _JOB_TYPE_PRIORITY.get(job.job_type, 5)
-    created = job.created_at or datetime.min.replace(tzinfo=timezone.utc)
+    created = job.created_at or datetime.min.replace(tzinfo=UTC)
     return (priority, created, job.id)
 
 
@@ -62,17 +62,11 @@ def claim_next_job(
         # cannot fill the claim window and starve interactive workers.
         if allowed_job_types is not None:
             stmt = stmt.where(BackgroundJobRow.job_type.in_(tuple(allowed_job_types)))
-        jobs = list(
-            db_session.scalars(stmt.order_by(BackgroundJobRow.created_at.asc()).limit(100)).all()
-        )
+        jobs = list(db_session.scalars(stmt.order_by(BackgroundJobRow.created_at.asc()).limit(100)).all())
         jobs.sort(key=_job_sort_key)
         for job in jobs:
             session_id = str(job.payload_json.get("session_id") or "")
-            if (
-                job.job_type in _SESSION_LOCK_JOB_TYPES
-                and session_id
-                and session_id in blocked_session_ids
-            ):
+            if job.job_type in _SESSION_LOCK_JOB_TYPES and session_id and session_id in blocked_session_ids:
                 continue
             updated = db_session.execute(
                 update(BackgroundJobRow)

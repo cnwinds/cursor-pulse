@@ -3,12 +3,11 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from pulse.util.datetime_fmt import serialize_datetime
 from pulse.storage.models import (
     AccessRequest,
     AdminAuditLog,
@@ -17,6 +16,7 @@ from pulse.storage.models import (
     KnowledgeEntry,
     Member,
 )
+from pulse.util.datetime_fmt import serialize_datetime
 from pulse.web.permissions import PORTAL_ROLE_LABELS
 
 _UUID_RE = re.compile(
@@ -104,7 +104,7 @@ def log_admin_action(
         action=action,
         capability=capability,
         detail=detail,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     session.add(row)
     session.flush()
@@ -192,15 +192,10 @@ def format_audit_detail(action: str, detail: str | None, ctx: _AuditContext) -> 
             loan_part, rest = detail.split(":", 1)
             route, _, revoke_tail = rest.partition(":old_remote_revoked:")
             old_id, new_id = route.split("->", 1)
-            text = (
-                f"将 {_loan_label(ctx, loan_part)} 出借账号 "
-                f"从 {old_id.strip() or '—'} 换为 {new_id.strip() or '—'}"
-            )
+            text = f"将 {_loan_label(ctx, loan_part)} 出借账号 从 {old_id.strip() or '—'} 换为 {new_id.strip() or '—'}"
             if revoke_tail:
                 text += (
-                    "（旧远端 Key 已撤销）"
-                    if revoke_tail.strip().lower() in {"1", "true"}
-                    else "（旧远端 Key 未撤销）"
+                    "（旧远端 Key 已撤销）" if revoke_tail.strip().lower() in {"1", "true"} else "（旧远端 Key 未撤销）"
                 )
             return text
         return detail
@@ -341,9 +336,7 @@ def _build_audit_context(session: Session, team_id: str, rows: list[AdminAuditLo
             dingtalk_ids.add(row.detail.strip())
 
     if uuids:
-        members = session.scalars(
-            select(Member).where(Member.team_id == team_id, Member.id.in_(uuids))
-        ).all()
+        members = session.scalars(select(Member).where(Member.team_id == team_id, Member.id.in_(uuids))).all()
         ctx.members_by_id = {member.id: member for member in members}
 
     if dingtalk_ids:

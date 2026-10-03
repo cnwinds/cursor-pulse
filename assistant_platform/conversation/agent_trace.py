@@ -80,13 +80,9 @@ def persist_agent_trace_event(
     elif event_type == "tool":
         name = str(event.get("name") or "").strip() or "unknown"
         arguments = redact_tool_arguments(event.get("arguments"))
-        result_text = redact_tool_result(
-            event.get("result") if isinstance(event.get("result"), str) else None
-        )
+        result_text = redact_tool_result(event.get("result") if isinstance(event.get("result"), str) else None)
         if result_text is None and event.get("result") is not None:
-            result_text = redact_tool_result(
-                json.dumps(event.get("result"), ensure_ascii=False, default=str)
-            )
+            result_text = redact_tool_result(json.dumps(event.get("result"), ensure_ascii=False, default=str))
         row = ChatMessageRow(
             session_id=session_row.id,
             role="tool",
@@ -104,9 +100,7 @@ def persist_agent_trace_event(
         skills = event.get("skills") if isinstance(event.get("skills"), list) else []
         tools = event.get("tools") if isinstance(event.get("tools"), list) else []
         skill_ids = [
-            str(item.get("skill_id") or item.get("name") or "").strip()
-            for item in skills
-            if isinstance(item, dict)
+            str(item.get("skill_id") or item.get("name") or "").strip() for item in skills if isinstance(item, dict)
         ]
         tool_names = [
             str(item.get("name") or item.get("capability_key") or "").strip()

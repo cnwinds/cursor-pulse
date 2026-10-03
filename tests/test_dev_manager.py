@@ -24,10 +24,13 @@ def test_default_services():
 
 def test_is_cursor_mitm_proxy_url():
     assert _is_cursor_mitm_proxy_url("http://192.168.11.39:8317") is True
-    assert _is_cursor_mitm_proxy_url(
-        "http://192.168.11.39:8317",
-        proxy_public_url="http://192.168.11.39:8317",
-    ) is True
+    assert (
+        _is_cursor_mitm_proxy_url(
+            "http://192.168.11.39:8317",
+            proxy_public_url="http://192.168.11.39:8317",
+        )
+        is True
+    )
     assert _is_cursor_mitm_proxy_url("http://127.0.0.1:7890") is False
 
 
@@ -82,9 +85,7 @@ def test_build_command_proxy(tmp_path, monkeypatch):
 
     from pulse.dev import services as svc
 
-    fake = tmp_path / (
-        "cursor-pulse-proxy.exe" if sys.platform == "win32" else "cursor-pulse-proxy"
-    )
+    fake = tmp_path / ("cursor-pulse-proxy.exe" if sys.platform == "win32" else "cursor-pulse-proxy")
     fake.write_bytes(b"x")
     monkeypatch.setattr(svc, "ensure_proxy_binary", lambda root=None: fake)
     command, cwd, extra = svc.build_command("proxy")
@@ -195,6 +196,7 @@ def test_find_listening_pid_parses_netstat():
   TCP    [::1]:5173             [::]:0                 LISTENING       51076
   TCP    127.0.0.1:8080         127.0.0.1:51669        TIME_WAIT       0
 """
+
     def fake_run(cmd, **kwargs):
         if cmd[0] == "powershell":
             return type("R", (), {"stdout": "", "returncode": 0})()

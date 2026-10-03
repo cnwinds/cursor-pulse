@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from pulse.integrations.cursor_api import (
     CursorApiClient,
     email_from_jwt_payload,
@@ -21,17 +20,13 @@ def _fake_jwt(*, exp: int | None = None, email: str | None = None) -> str:
     payload: dict = {"exp": exp if exp is not None else int(time.time()) + 3600}
     if email:
         payload["email"] = email
-    encoded = (
-        base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    )
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     return f"hdr.{encoded}.sig"
 
 
 def test_resolve_account_email_from_exchange():
     token = _fake_jwt(email="User@Example.com")
-    assert resolve_account_email_from_exchange(
-        {"accessToken": token, "refreshToken": "ref"}
-    ) == "user@example.com"
+    assert resolve_account_email_from_exchange({"accessToken": token, "refreshToken": "ref"}) == "user@example.com"
     assert email_from_jwt_payload({"preferred_username": "a@b.com"}) == "a@b.com"
 
 
@@ -46,9 +41,7 @@ def _mock_exchange(mock_client_cls, token: str = "tok"):
 
 
 def test_map_usage_event():
-    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())[
-        "usageEventsDisplay"
-    ][0]
+    raw = json.loads((FIXTURES / "cursor_usage_events.json").read_text())["usageEventsDisplay"][0]
     dto = map_usage_event(raw)
     assert dto.model == "composer-2.5"
     assert dto.cost_usd == pytest.approx(0.0345)
@@ -145,9 +138,7 @@ def test_post_dashboard_retries_on_401(mock_client_cls):
 def test_resolve_api_key_account_email_falls_back_to_get_me():
     client = CursorApiClient()
     token = _fake_jwt()
-    client.exchange_user_api_key_response = MagicMock(
-        return_value={"accessToken": token, "refreshToken": "ref"}
-    )
+    client.exchange_user_api_key_response = MagicMock(return_value={"accessToken": token, "refreshToken": "ref"})
     client.get_me = MagicMock(return_value={"email": "Feong@live.com"})
 
     assert client.resolve_api_key_account_email("crsr_test") == "feong@live.com"

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -19,7 +21,6 @@ from assistant_platform.evaluation.stub import run_evaluation_stub
 from assistant_platform.prompts.seed import get_production_release
 from assistant_platform.review.auto_review import run_auto_review
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-eval"
@@ -37,7 +38,7 @@ def _event(*, sender: str = "u1", text: str = "测试") -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id=sender,
         text_redacted=text,
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 

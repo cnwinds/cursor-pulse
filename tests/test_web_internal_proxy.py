@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,8 +11,8 @@ pytest.importorskip("fastapi")
 
 from pulse.config import AppConfig, CredentialConfig, InternalApiConfig, TenantConfig, WebConfig
 from pulse.ingestion.crypto import encrypt_secret
-from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.proxy import service as proxy_service
+from pulse.proxy.keys import generate_proxy_key, hash_proxy_key
 from pulse.storage.models import (
     AccountQuotaSnapshot,
     AiAccount,
@@ -27,7 +27,7 @@ from pulse.web.portal import bootstrap_portal_owner
 from tests.conftest import make_module_web_client, make_team_repo, make_test_session_factory
 
 TEST_KEY = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
-NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 TODAY = date(2026, 7, 22)
 
 
@@ -199,7 +199,6 @@ def _seed_loan_alias(env, *, loan_status: str = "active", lender_mode: str = "ma
     """建一笔 pka_ 别名借用（loan Key + 别名哈希），返回 (cred_id, loan_id)。"""
     from pulse.tool_center.key_loans import DELIVERY_PROXY_ALIAS
 
-
     s = env["sf"]()
     cred = AiAccountCredential(
         account_id=env["account_id"],
@@ -228,6 +227,43 @@ def _seed_loan_alias(env, *, loan_status: str = "active", lender_mode: str = "ma
     s.commit()
     s.close()
     return cred.id, loan.id
+
+
+def test_authorize_loan_pool_skips_cursor_key(env):
+    from pulse.tool_center.key_loans import DELIVERY_PROXY_ALIAS
+
+    pool_key = "pka_pool_route_test_key"
+    s = env["sf"]()
+    loan = KeyLoan(
+        source_account_id=None,
+        credential_id=None,
+        routing_mode="pool",
+        lender_mode="auto",
+        status="active",
+        delivery_mode=DELIVERY_PROXY_ALIAS,
+        alias_key_hash=hash_proxy_key(pool_key),
+        alias_key_hint=pool_key[:12],
+        alias_encrypted_key=encrypt_secret(pool_key, TEST_KEY),
+        borrower_member_id=None,
+    )
+    s.add(loan)
+    s.commit()
+    loan_id = loan.id
+    s.close()
+
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": pool_key},
+        headers=_h(),
+    )
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["status"] == "ok"
+    assert body["mode"] == "loan_pool"
+    assert body["loan_id"] == loan_id
+    assert body["proxy_key_id"] is None
+    assert body.get("cursor_api_key") in (None, "")
+    assert body["credential_id"] is None
 
 
 def test_authorize_loan_alias_ok(env):
@@ -339,7 +375,6 @@ def test_loan_candidate_credentials_excludes_borrower_own_accounts(env):
 def test_loan_candidate_credentials_cached(env):
     """同一 loan 第二次调用命中缓存，reset 后缓存清空。"""
     from pulse.proxy.pool_board import (
-
         _loan_candidates,
         loan_candidate_credentials,
         reset_loan_candidate_cache,
@@ -539,6 +574,9 @@ def test_pool_returns_only_enabled_credentials(env):
     assert creds[0]["api_key"] == "cursor-key-1"
     assert creds[0]["auto_pct"] == 10.0
     assert creds[0]["api_pct"] == 5.0
+    by_pool = resp.json().get("credentials_by_pool") or {}
+    assert by_pool.get("auto") is not None
+    assert by_pool.get("api") is not None
 
 
 def test_pool_excludes_loan_credentials(env):
@@ -614,9 +652,7 @@ def test_record_usage_missing_both_ids_skipped(env):
 def test_usage_records_without_suspend(env):
     client, sf = env["client"], env["sf"]
     s = sf()
-    key, _ = proxy_service.create_key(
-        s, name="k", member_id="m1", window_5h_cost_limit_cents=100
-    )
+    key, _ = proxy_service.create_key(s, name="k", member_id="m1", window_5h_cost_limit_cents=100)
     s.commit()
     s.close()
     resp = client.post(
@@ -720,9 +756,7 @@ def test_pool_excludes_disabled_account_and_undecryptable(env):
 
 def test_internal_token_header_and_503(env):
     # X-Pulse-Internal-Token 头路径
-    resp = env["client"].get(
-        "/api/internal/v1/proxy/pool", headers={"X-Pulse-Internal-Token": "internal-token"}
-    )
+    resp = env["client"].get("/api/internal/v1/proxy/pool", headers={"X-Pulse-Internal-Token": "internal-token"})
     assert resp.status_code == 200
     # 错误 token
     resp = env["client"].get("/api/internal/v1/proxy/pool", headers=_h("wrong"))
@@ -864,7 +898,7 @@ def test_pool_ranking_board_carries_owner_and_switch_recency(env):
 
     漏填这两项会让驻留降权恒为 1.0，且 Jev 看到的 owner 退化成 unassigned。
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pulse.proxy.pool_board import list_pool_ranking_board
     from pulse.storage.models import KeyLoan, Member
@@ -910,7 +944,7 @@ def test_pool_ranking_board_carries_owner_and_switch_recency(env):
             baseline_used_cents=0,
             status="active",
             lender_mode="manual",
-            source_bound_at=datetime.now(timezone.utc),
+            source_bound_at=datetime.now(UTC),
         )
     )
     default = s.get(AiAccount, env["account_id"])
@@ -1040,3 +1074,311 @@ def test_pool_keeps_total_exhausted_when_one_bucket_has_headroom(env):
     mixed_row = next(c for c in resp.json()["credentials"] if c["api_key"] == "cursor-key-mixed")
     assert mixed_row["auto_pct"] == 100.0
     assert mixed_row["api_pct"] == 40.0
+
+
+def _seat_keys(env, n: int, *, same_member: bool = False) -> list[str]:
+    from pulse.storage.models import Member
+
+    s = env["sf"]()
+    plains = []
+    shared = None
+    for i in range(n):
+        if same_member and shared is not None:
+            member_id = shared
+        else:
+            member = Member(
+                team_id=env["team_id"],
+                display_name=f"Seat {i}",
+                channel_user_id=f"seat-{i}-{n}",
+                status="active",
+            )
+            s.add(member)
+            s.flush()
+            member_id = member.id
+            shared = member_id
+        _key, plain = proxy_service.create_key(s, name=f"seat-{i}", member_id=member_id)
+        plains.append(plain)
+    s.commit()
+    s.close()
+    return plains
+
+
+def _authorize(env, pulse_key: str, **extra) -> dict:
+    resp = env["client"].post(
+        "/api/internal/v1/proxy/authorize",
+        json={"pulse_key": pulse_key, **extra},
+        headers=_h(),
+    )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_authorize_reports_current_credential_and_caps_seats(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+
+    first, second = _seat_keys(env, 2)
+    one = _authorize(env, first)
+    assert one["status"] == "ok"
+    assert one["seat_advised"] is True
+    assert one["max_concurrent_users"] == 1
+    assert one["assigned_credential_id"] == env["cred_id"]
+
+    kept = _authorize(env, first, current_credential_id=env["cred_id"])
+    assert kept["assigned_credential_id"] == env["cred_id"]
+
+    other = _authorize(env, second)
+    assert other["assigned_credential_id"] in (None, "")
+    assert env["cred_id"] in other["blocked_credential_ids"]
+
+    released = _authorize(env, first, current_credential_id=env["cred_id"], release_current=True)
+    assert released["assigned_credential_id"] in (None, "")
+    took = _authorize(env, second)
+    assert took["assigned_credential_id"] == env["cred_id"]
+
+
+def test_authorize_same_member_is_one_seat(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    first, second = _seat_keys(env, 2, same_member=True)
+    assert _authorize(env, first)["assigned_credential_id"] == env["cred_id"]
+    assert _authorize(env, second)["assigned_credential_id"] == env["cred_id"]
+
+
+def _seed_api_full_account(env) -> str:
+    s = env["sf"]()
+    account = AiAccount(
+        vendor_id=env["vendor_id"],
+        plan_id=env["plan_id"],
+        account_identifier="acct-api-full",
+        team_id=env["team_id"],
+        proxy_enabled=True,
+    )
+    s.add(account)
+    s.flush()
+    cred = AiAccountCredential(
+        account_id=account.id,
+        vendor_id=env["vendor_id"],
+        credential_type="api_key",
+        encrypted_value=encrypt_secret("cursor-key-api-full", TEST_KEY),
+        key_hint="af...ll",
+        key_role="primary",
+        status="active",
+        bound_by_member_id="m1",
+    )
+    s.add(cred)
+    snap = _healthy_snap(account.id, cycle_end=TODAY + timedelta(days=15))
+    snap.api_pct = 100.0
+    s.add(snap)
+    s.commit()
+    s.close()
+    return cred.id
+
+
+def test_authorize_treats_legacy_unknown_pool_as_auto(env):
+    """旧版代理可能发 unknown：按 auto 选座（api 桶已满的账号照样可分），不拒绝授权。"""
+    from pulse.proxy.occupancy import reset_occupancy
+
+    reset_occupancy()
+    full_cred = _seed_api_full_account(env)
+    (plain,) = _seat_keys(env, 1)
+    body = _authorize(env, plain, current_credential_id=env["cred_id"], release_current=True, quota_pool="unknown")
+    assert body["status"] == "ok"
+    assert body["assigned_credential_id"] == full_cred
+
+
+def test_authorize_api_pool_never_assigns_account_without_api_headroom(env):
+    quota_pool = "api"
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    full_cred = _seed_api_full_account(env)
+    holder, other = _seat_keys(env, 2)
+
+    first = _authorize(env, holder, current_credential_id=full_cred, release_current=True, quota_pool=quota_pool)
+    assert first["assigned_credential_id"] == env["cred_id"]
+
+    # 唯一有 api 余量的账号已满：宁可不分配，也不能分到 api 桶已满的账号
+    blocked = _authorize(env, other, current_credential_id=full_cred, release_current=True, quota_pool=quota_pool)
+    assert blocked["seat_advised"] is True
+    assert blocked["assigned_credential_id"] in (None, "")
+
+
+def test_authorize_auto_pool_may_assign_account_with_only_auto_headroom(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    full_cred = _seed_api_full_account(env)
+    first, second = _seat_keys(env, 2)
+    taken = _authorize(env, first, quota_pool="auto")["assigned_credential_id"]
+    assert taken in (env["cred_id"], full_cred)
+    rest = _authorize(env, second, quota_pool="auto")["assigned_credential_id"]
+    assert {taken, rest} == {env["cred_id"], full_cred}
+
+
+def test_authorize_defaults_to_auto_pool(env):
+    """没有 quota_pool 的请求按 auto：api 桶已满的账号照样可分。"""
+    from pulse.proxy.occupancy import reset_occupancy
+
+    reset_occupancy()
+    full_cred = _seed_api_full_account(env)
+    (plain,) = _seat_keys(env, 1)
+    body = _authorize(env, plain, current_credential_id=env["cred_id"], release_current=True)
+    assert body["assigned_credential_id"] == full_cred
+
+
+def test_authorize_held_slot_keeps_seat_when_other_slot_releases(env):
+    """同一会话 auto/api 两槽同在一个账号：api 槽换走时，auto 槽的座位不能被拆。"""
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    holder, other = _seat_keys(env, 2)
+    assert _authorize(env, holder, quota_pool="auto")["assigned_credential_id"] == env["cred_id"]
+
+    left = _authorize(
+        env,
+        holder,
+        current_credential_id=env["cred_id"],
+        release_current=True,
+        quota_pool="api",
+        held_credential_ids=[env["cred_id"]],
+    )
+    assert left["assigned_credential_id"] in (None, "")
+
+    blocked = _authorize(env, other, quota_pool="auto")
+    assert blocked["assigned_credential_id"] in (None, "")
+    assert env["cred_id"] in blocked["blocked_credential_ids"]
+
+
+def test_authorize_release_without_held_frees_seat(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    holder, other = _seat_keys(env, 2)
+    assert _authorize(env, holder)["assigned_credential_id"] == env["cred_id"]
+    _authorize(env, holder, current_credential_id=env["cred_id"], release_current=True)
+    assert _authorize(env, other)["assigned_credential_id"] == env["cred_id"]
+
+
+def test_authorize_seat_uses_team_jev_config(env, monkeypatch):
+    """选座与打分表同一份生效配置：团队里开 Jev，选座也要按团队配置建 Jev 客户端。"""
+    import pulse.llm.jev as jev_module
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="jev",
+        patch={"enabled": True, "api_key": "team-jev-key"},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    seen: list = []
+
+    def fake_build(config):
+        seen.append(config.jev)
+        return None
+
+    monkeypatch.setattr(jev_module, "build_jev_client", fake_build)
+    (plain,) = _seat_keys(env, 1)
+    assert _authorize(env, plain)["assigned_credential_id"] == env["cred_id"]
+    assert seen, "seat assignment should build a Jev client"
+    assert all(cfg.enabled and cfg.api_key == "team-jev-key" for cfg in seen)
+
+
+def test_authorize_pinned_loan_keeps_seat_when_account_is_full(env):
+    from pulse.proxy.occupancy import reset_occupancy
+    from pulse.settings.team_store import patch_team_setting
+
+    reset_occupancy()
+    s = env["sf"]()
+    patch_team_setting(
+        s,
+        team_id=env["team_id"],
+        section="tool_center",
+        patch={"loan_selection": {"max_concurrent_users": 1}},
+        member_id=None,
+    )
+    s.commit()
+    s.close()
+    (plain,) = _seat_keys(env, 1)
+    assert _authorize(env, plain)["assigned_credential_id"] == env["cred_id"]
+
+    loan_cred, _loan_id = _seed_loan_credential(env)
+    body = _authorize(env, LOAN_PLAINTEXT, current_credential_id=loan_cred)
+    assert body["status"] == "ok"
+    assert body["mode"] == "loan_passthrough"
+    assert body["seat_advised"] is True
+    assert body["assigned_credential_id"] == loan_cred

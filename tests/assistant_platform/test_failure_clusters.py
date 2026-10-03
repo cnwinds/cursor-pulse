@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 pytest.importorskip("fastapi")
+
+from tests.assistant_actor_helpers import signed_actor_headers
 
 from assistant_platform.api.app import create_assistant_app
 from assistant_platform.config import AssistantConfig
@@ -19,7 +21,6 @@ from assistant_platform.evolution.models import FailureClusterRow, PromptChangeP
 from assistant_platform.prompts.seed import get_production_release
 from assistant_platform.review.auto_review import run_auto_review
 from assistant_platform.storage.db import init_assistant_db
-from tests.assistant_actor_helpers import signed_actor_headers
 
 SERVICE_TOKEN = "assistant-secret"
 TEAM_ID = "team-evolution"
@@ -37,7 +38,7 @@ def _event(*, msg_id: str | None = None) -> IncomingMessageEvent:
         conversation_type="private",
         conversation_id="u1",
         text_redacted="hello",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
     )
 
 
@@ -79,18 +80,12 @@ def test_cluster_low_score_reviews_creates_cluster_and_draft_proposal():
     cluster_low_score_reviews(session)
     session.commit()
 
-    cluster = session.scalar(
-        select(FailureClusterRow).where(FailureClusterRow.tag == "error_messages")
-    )
+    cluster = session.scalar(select(FailureClusterRow).where(FailureClusterRow.tag == "error_messages"))
     assert cluster is not None
     assert session_row.id in cluster.session_ids_json
     assert cluster.size >= 1
 
-    proposal = session.scalar(
-        select(PromptChangeProposalRow).where(
-            PromptChangeProposalRow.cluster_id == cluster.id
-        )
-    )
+    proposal = session.scalar(select(PromptChangeProposalRow).where(PromptChangeProposalRow.cluster_id == cluster.id))
     assert proposal is not None
     assert proposal.status == "draft"
     assert proposal.diff_text
@@ -145,9 +140,7 @@ def test_approve_proposal_does_not_change_production_release(api_client):
         headers=_headers(),
     )
     assert resp.status_code == 410
-    assert resp.json()["detail"] == (
-        "Prompt editing retired; edit files in assistant_platform/prompts/docs"
-    )
+    assert resp.json()["detail"] == ("Prompt editing retired; edit files in assistant_platform/prompts/docs")
 
     db = sf()
     try:

@@ -2,7 +2,6 @@
   <div class="capabilities-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>工具授权</h2>
         <p class="desc">
           此处只控制谁能调用 Capability（Tool），与技能卡片说明书无关。
         </p>
@@ -446,8 +445,8 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 .desc {
-  color: #64748b;
-  font-size: 14px;
+  color: var(--pulse-text-secondary);
+  font-size: var(--pulse-text-md);
   margin-top: 4px;
   max-width: 720px;
   line-height: 1.5;
@@ -463,12 +462,12 @@ onMounted(async () => {
 }
 .field-hint {
   margin-top: 6px;
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: var(--pulse-text-sm);
+  color: var(--pulse-text-muted);
   line-height: 1.4;
 }
 .muted {
-  color: #94a3b8;
-  font-size: 13px;
+  color: var(--pulse-text-muted);
+  font-size: var(--pulse-text-base);
 }
 </style>

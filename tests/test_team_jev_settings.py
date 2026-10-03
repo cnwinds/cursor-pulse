@@ -31,9 +31,7 @@ def settings_client(_jev_settings_app, tmp_path):
     proxy.bind(sf)
     s = sf()
     team, repo = make_team_repo(s)
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="a1", display_name="A", password="x"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="a1", display_name="A", password="x")
     repo.commit()
     s.close()
     return client, config, owner, team.id, sf
@@ -104,9 +102,7 @@ def test_team_jev_settings_reach_effective_config(settings_client):
     )
     session.commit()
 
-    runtime = effective_config_for_tenant(
-        session, AppConfig(tenant=TenantConfig(slug="test", name="Test"))
-    )
+    runtime = effective_config_for_tenant(session, AppConfig(tenant=TenantConfig(slug="test", name="Test")))
     session.close()
 
     assert runtime.jev.enabled is True

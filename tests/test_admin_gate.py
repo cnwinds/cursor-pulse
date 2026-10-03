@@ -1,4 +1,4 @@
-﻿from pulse.channels.admin_gate import is_channel_admin
+from pulse.channels.admin_gate import is_channel_admin
 
 
 def test_empty_admin_list_means_nobody_is_admin():

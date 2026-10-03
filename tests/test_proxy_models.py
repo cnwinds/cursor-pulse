@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from pulse.storage.migrate import migrate_schema
 from pulse.storage.models import (
     AiAccount,
@@ -13,6 +9,9 @@ from pulse.storage.models import (
     ProxyKey,
     ProxyKeyUsage,
 )
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 def _engine():
@@ -27,17 +26,8 @@ def test_migrate_creates_proxy_tables_and_credential_column():
     engine = _engine()
     # 模拟遗留库：只有不含 proxy_enabled 的 ai_account_credentials / ai_accounts
     with engine.begin() as conn:
-        conn.execute(
-            text("CREATE TABLE ai_account_credentials (id VARCHAR(36) PRIMARY KEY)")
-        )
-        conn.execute(
-            text(
-                "CREATE TABLE ai_accounts ("
-                "id VARCHAR(36) PRIMARY KEY, "
-                "account_identifier VARCHAR(256)"
-                ")"
-            )
-        )
+        conn.execute(text("CREATE TABLE ai_account_credentials (id VARCHAR(36) PRIMARY KEY)"))
+        conn.execute(text("CREATE TABLE ai_accounts (id VARCHAR(36) PRIMARY KEY, account_identifier VARCHAR(256))"))
     migrate_schema(engine)
     tables = set(inspect(engine).get_table_names())
     assert {"proxy_keys", "proxy_key_usages", "proxy_events"} <= tables
@@ -58,14 +48,7 @@ def test_migrate_creates_proxy_tables_and_credential_column():
 def test_migrate_backfills_account_proxy_from_credentials():
     engine = _engine()
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "CREATE TABLE ai_accounts ("
-                "id VARCHAR(36) PRIMARY KEY, "
-                "account_identifier VARCHAR(256)"
-                ")"
-            )
-        )
+        conn.execute(text("CREATE TABLE ai_accounts (id VARCHAR(36) PRIMARY KEY, account_identifier VARCHAR(256))"))
         conn.execute(
             text(
                 "CREATE TABLE ai_account_credentials ("
@@ -76,12 +59,7 @@ def test_migrate_backfills_account_proxy_from_credentials():
             )
         )
         conn.execute(text("INSERT INTO ai_accounts (id, account_identifier) VALUES ('a1', 'acct')"))
-        conn.execute(
-            text(
-                "INSERT INTO ai_account_credentials (id, account_id, proxy_enabled) "
-                "VALUES ('c1', 'a1', 1)"
-            )
-        )
+        conn.execute(text("INSERT INTO ai_account_credentials (id, account_id, proxy_enabled) VALUES ('c1', 'a1', 1)"))
     migrate_schema(engine)
     with engine.connect() as conn:
         enabled = conn.execute(text("SELECT proxy_enabled FROM ai_accounts WHERE id='a1'")).scalar()
@@ -127,14 +105,9 @@ def test_migrate_reactivates_legacy_limit_suspended_keys():
     migrate_schema(engine)
     with engine.connect() as conn:
         row1 = conn.execute(
-            text(
-                "SELECT status, suspended_reason, token_limit, mode "
-                "FROM proxy_keys WHERE id='k1'"
-            )
+            text("SELECT status, suspended_reason, token_limit, mode FROM proxy_keys WHERE id='k1'")
         ).one()
-        row2 = conn.execute(
-            text("SELECT status, suspended_reason FROM proxy_keys WHERE id='k2'")
-        ).one()
+        row2 = conn.execute(text("SELECT status, suspended_reason FROM proxy_keys WHERE id='k2'")).one()
     assert row1[0] == "active"
     assert row1[1] is None
     assert row1[2] is None

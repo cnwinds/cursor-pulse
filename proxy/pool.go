@@ -19,9 +19,9 @@ import (
 var errAllExhausted = errors.New("all API keys exhausted")
 
 const (
-	exchangePath           = "/auth/exchange_user_api_key"
-	exchangeTimeout        = 15 * time.Second
-	authBadCooldown          = 2 * time.Minute
+	exchangePath    = "/auth/exchange_user_api_key"
+	exchangeTimeout = 15 * time.Second
+	authBadCooldown = 2 * time.Minute
 )
 
 // exchangeHTTPError is returned for non-2xx responses from Cursor's exchange.
@@ -76,13 +76,6 @@ func pctQuotaOK(pct *float64) bool {
 		return true
 	}
 	return *pct < 100
-}
-
-// snapshotIntakeOK matches Pulse Credential Pool Intake: at least one Quota
-// Pool still has snapshot headroom (OR). Request-time unknown selection uses
-// snapshotQuotaOK, which requires both buckets.
-func snapshotIntakeOK(autoPct, apiPct *float64) bool {
-	return pctQuotaOK(autoPct) || pctQuotaOK(apiPct)
 }
 
 // invalidate clears the cached JWT so the next ensureToken re-exchanges.
@@ -144,9 +137,15 @@ func (e *keyEntry) ensureToken(ctx context.Context, client *http.Client, exchang
 }
 
 type Pool struct {
-	mu   sync.Mutex
+	mu sync.Mutex
+	// keys is every pool credential (lookup only; its order is not a selection order).
 	keys []*keyEntry
-	cur  int
+	// Per Quota Pool order from Pulse (auto / api scoring board). Selection only
+	// walks these. Without a Pulse snapshot (local -keys mode) keys is used.
+	keysAuto []*keyEntry
+	keysAPI  []*keyEntry
+	perPool  bool
+	cur      int
 
 	client       *http.Client
 	exchangeBase string
@@ -188,16 +187,17 @@ func (p *Pool) SetUpstreamProxy(upstream *url.URL) {
 	p.client.Transport = newOutboundTransport(upstream)
 }
 
-// ReplaceFromPulse merges Pulse pool credentials into the live pool.
-// Same credential_id keeps quota exhaustion + cached JWT; auth-bad cooldown is
-// cleared so keys can be retried after Pulse reconnects. Removed ids are dropped;
-// new ids are appended. Cursor position is preserved when possible.
-func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	prevCur := p.cur
+// PulsePoolSnapshot is the internal /proxy/pool payload: every pool credential
+// (Default) plus the auto / api selection orders.
+type PulsePoolSnapshot struct {
+	Default []PoolCredential
+	Auto    []PoolCredential
+	API     []PoolCredential
+}
+
+func mergeCredentialList(prev []*keyEntry, creds []PoolCredential) []*keyEntry {
 	byID := map[string]*keyEntry{}
-	for _, e := range p.keys {
+	for _, e := range prev {
 		byID[e.credentialID] = e
 	}
 	var next []*keyEntry
@@ -207,7 +207,7 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 		}
 		if old, ok := byID[c.CredentialID]; ok {
 			old.apiKey = c.APIKey
-			old.clearAuthCooldown() // allow retry after Pulse/pool refresh
+			old.clearAuthCooldown()
 			old.autoPct = c.AutoPct
 			old.apiPct = c.ApiPct
 			next = append(next, old)
@@ -222,7 +222,25 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 			},
 		})
 	}
-	p.keys = next
+	return next
+}
+
+// ReplaceFromPulse merges a credential list without per-pool orders (legacy).
+func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
+	p.ReplaceFromPulseSnapshot(PulsePoolSnapshot{Default: creds})
+}
+
+// ReplaceFromPulseSnapshot hot-updates the credential set and the auto/api
+// Quota Pool orderings. Per-pool entries share keyEntry with keys so runtime
+// marks stay consistent across lists.
+func (p *Pool) ReplaceFromPulseSnapshot(snap PulsePoolSnapshot) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	prevCur := p.cur
+	p.keys = mergeCredentialList(p.keys, snap.Default)
+	p.keysAuto = sharedEntries(p.keys, snap.Auto)
+	p.keysAPI = sharedEntries(p.keys, snap.API)
+	p.perPool = snap.Auto != nil || snap.API != nil
 	if len(p.keys) == 0 {
 		p.cur = 0
 	} else if prevCur >= len(p.keys) {
@@ -230,7 +248,35 @@ func (p *Pool) ReplaceFromPulse(creds []PoolCredential) {
 	} else {
 		p.cur = prevCur
 	}
-	log.Printf("[pool] hot-updated: %d credential(s)", len(p.keys))
+	log.Printf("[pool] hot-updated: default=%d auto=%d api=%d", len(p.keys), len(p.keysAuto), len(p.keysAPI))
+}
+
+// sharedEntries maps a Pulse per-pool order onto the keyEntry objects in keys.
+// Credentials missing from keys are skipped.
+func sharedEntries(keys []*keyEntry, creds []PoolCredential) []*keyEntry {
+	byID := make(map[string]*keyEntry, len(keys))
+	for _, e := range keys {
+		byID[e.credentialID] = e
+	}
+	var out []*keyEntry
+	for _, c := range creds {
+		if e, ok := byID[c.CredentialID]; ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// keysOrderedFor is the selection order for pool: the Pulse board order when
+// Pulse sent one (possibly empty: no account qualifies), else keys.
+func (p *Pool) keysOrderedFor(pool quotaPoolKind) []*keyEntry {
+	if p.perPool || len(p.keysAuto) > 0 || len(p.keysAPI) > 0 {
+		if pool == quotaPoolAPI {
+			return append([]*keyEntry(nil), p.keysAPI...)
+		}
+		return append([]*keyEntry(nil), p.keysAuto...)
+	}
+	return append([]*keyEntry(nil), p.keys...)
 }
 
 func (p *Pool) size() int {
@@ -242,22 +288,23 @@ func (p *Pool) size() int {
 // token returns a usable JWT for the current key, minting or rotating as
 // needed. Returns errAllExhausted when every key is marked exhausted/bad.
 func (p *Pool) token(ctx context.Context) (*keyEntry, string, error) {
-	return p.tokenForQuotaPool(ctx, quotaPoolUnknown, nil)
+	return p.tokenForQuotaPool(ctx, quotaPoolAuto, nil)
 }
 
 // tokenSkipping walks the pool like token but skips credential IDs in skipCredIDs.
 // Skips are temporary for this call only (not permanent exhaustion).
 func (p *Pool) tokenSkipping(ctx context.Context, skipCredIDs map[string]bool) (*keyEntry, string, error) {
-	return p.tokenForQuotaPool(ctx, quotaPoolUnknown, skipCredIDs)
+	return p.tokenForQuotaPool(ctx, quotaPoolAuto, skipCredIDs)
 }
 
 func (p *Pool) tokenForQuotaPool(ctx context.Context, pool quotaPoolKind, skipCredIDs map[string]bool) (*keyEntry, string, error) {
 	return p.tokenForQuotaPoolWithin(ctx, pool, skipCredIDs, nil)
 }
 
-// tokenForQuotaPoolWithin is tokenForQuotaPool restricted to allowed credential
-// IDs (nil = whole pool). Scoped callers are loan_alias bindings: the loan may
-// only use accounts Pulse ranked as candidates for that borrower.
+// tokenForQuotaPoolWithin walks pool's order from the top and returns the first
+// usable credential, restricted to allowed IDs (nil = whole pool). Scoped
+// callers are loan_alias bindings: the loan may only use accounts Pulse ranked
+// as candidates for that borrower.
 func (p *Pool) tokenForQuotaPoolWithin(
 	ctx context.Context,
 	pool quotaPoolKind,
@@ -265,21 +312,18 @@ func (p *Pool) tokenForQuotaPoolWithin(
 	allowed map[string]bool,
 ) (*keyEntry, string, error) {
 	p.mu.Lock()
-	keys := append([]*keyEntry(nil), p.keys...)
-	start := p.cur
+	keys := p.keysOrderedFor(pool)
 	p.mu.Unlock()
 
-	n := len(keys)
-	if n == 0 {
+	if len(keys) == 0 {
 		return nil, "", errAllExhausted
 	}
-	for i := 0; i < n; i++ {
+	for _, e := range keys {
 		// Client gone → stop without burning the pool.
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
 
-		e := keys[(start+i)%n]
 		if allowed != nil && !allowed[e.credentialID] {
 			continue
 		}
@@ -349,34 +393,21 @@ func (p *Pool) tokenForCredential(ctx context.Context, credentialID string) (*ke
 	return entry, tok, nil
 }
 
-// nextAvailableAfter returns the next usable credential after credentialID in pool order.
-func (p *Pool) nextAvailableAfter(credentialID string) *keyEntry {
-	return p.nextAvailableForQuota(credentialID, quotaPoolUnknown)
-}
-
-func (p *Pool) nextAvailableForQuota(credentialID string, pool quotaPoolKind) *keyEntry {
-	return p.nextAvailableForQuotaWithin(credentialID, pool, nil)
-}
-
-// nextAvailableForQuotaWithin is nextAvailableForQuota restricted to allowed
-// credential IDs (nil = whole pool), used by whitelist-scoped loan bindings.
-func (p *Pool) nextAvailableForQuotaWithin(credentialID string, pool quotaPoolKind, allowed map[string]bool) *keyEntry {
+// nextAvailableForQuotaWithin is the local (Pulse unreachable) replacement for
+// a credential being left: the first usable credential from the top of pool's
+// order, skipping leaving, IDs outside allowed (nil = whole pool) and blocked
+// IDs (accounts at the concurrent-user cap).
+func (p *Pool) nextAvailableForQuotaWithin(leaving string, pool quotaPoolKind, allowed, blocked map[string]bool) *keyEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	n := len(p.keys)
-	if n == 0 {
-		return nil
-	}
-	start := 0
-	for i, e := range p.keys {
-		if e.credentialID == credentialID {
-			start = (i + 1) % n
-			break
+	for _, e := range p.keysOrderedFor(pool) {
+		if e.credentialID == leaving {
+			continue
 		}
-	}
-	for i := 0; i < n; i++ {
-		e := p.keys[(start+i)%n]
 		if allowed != nil && !allowed[e.credentialID] {
+			continue
+		}
+		if blocked != nil && blocked[e.credentialID] {
 			continue
 		}
 		if !e.unavailable() && e.hasQuotaForPool(pool) {
@@ -413,7 +444,14 @@ func (p *Pool) current() *keyEntry {
 
 // markExhausted marks both usage buckets exhausted (legacy full-account rotation).
 func (p *Pool) markExhausted(e *keyEntry) {
-	p.markQuotaExhausted(e, quotaPoolUnknown)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e.quotaFullyExhausted() {
+		return
+	}
+	e.setFullyQuotaExhausted()
+	log.Printf("[pool] key %s marked exhausted (quota)", e.masked())
+	p.advanceLocked()
 }
 
 func (p *Pool) markQuotaExhausted(e *keyEntry, pool quotaPoolKind) {
@@ -422,14 +460,7 @@ func (p *Pool) markQuotaExhausted(e *keyEntry, pool quotaPoolKind) {
 	if !e.observeExhaustion(pool) {
 		return
 	}
-	switch pool {
-	case quotaPoolAuto:
-		log.Printf("[pool] key %s marked auto quota exhausted", e.masked())
-	case quotaPoolAPI:
-		log.Printf("[pool] key %s marked api quota exhausted", e.masked())
-	default:
-		log.Printf("[pool] key %s marked exhausted (quota)", e.masked())
-	}
+	log.Printf("[pool] key %s marked %s quota exhausted", e.masked(), pool)
 	if e.quotaFullyExhausted() {
 		p.advanceLocked()
 	}

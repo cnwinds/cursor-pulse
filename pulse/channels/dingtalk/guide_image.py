@@ -4,9 +4,7 @@ from pathlib import Path
 
 BIND_KEY_GUIDE_MARKER = "绑定 cursor"
 
-DEFAULT_GUIDE_IMAGE = (
-    Path(__file__).resolve().parent.parent / "assets" / "cursor_bind_key_guide.png"
-)
+DEFAULT_GUIDE_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "cursor_bind_key_guide.png"
 
 
 def override_guide_image_path(raw_files_dir: str | Path) -> Path:

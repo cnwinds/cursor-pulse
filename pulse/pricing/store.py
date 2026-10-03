@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -119,9 +119,7 @@ def get_team_pricing_row(session: Session, team_id: str) -> TeamSetting | None:
     )
 
 
-def load_team_cursor_pricing(
-    session: Session, team_id: str
-) -> tuple[PricingTable, str, TeamSetting | None]:
+def load_team_cursor_pricing(session: Session, team_id: str) -> tuple[PricingTable, str, TeamSetting | None]:
     """Return (table, source, row). source is override|builtin."""
     row = get_team_pricing_row(session, team_id)
     if row and isinstance(row.data, dict) and row.data:
@@ -140,7 +138,7 @@ def save_team_cursor_pricing(
     member_id: str | None,
 ) -> TeamSetting:
     normalized = validate_pricing_payload(data)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     row = get_team_pricing_row(session, team_id)
     if row is None:
         row = TeamSetting(

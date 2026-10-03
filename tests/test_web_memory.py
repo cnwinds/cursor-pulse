@@ -27,9 +27,7 @@ def memory_client(_memory_app):
     team, repo = make_team_repo(session)
     member = repo.add_member("u1", "Alice")
     member.portal_status = "pending"
-    owner = bootstrap_portal_owner(
-        repo, channel_user_id="admin1", display_name="Admin", password="pass1234"
-    )
+    owner = bootstrap_portal_owner(repo, channel_user_id="admin1", display_name="Admin", password="pass1234")
     repo.commit()
     session.close()
     yield client, config, owner, team.id
@@ -42,11 +40,14 @@ def test_memory_admin_endpoints_removed(memory_client):
     assert client.get("/api/memory/atoms", headers=headers).status_code == 404
     assert client.get("/api/memory/commitments", headers=headers).status_code == 404
     assert client.get("/api/memory/principles", headers=headers).status_code == 404
-    assert client.post(
-        "/api/memory/principles",
-        headers=headers,
-        json={"rule": "x", "tier": "learned"},
-    ).status_code == 404
+    assert (
+        client.post(
+            "/api/memory/principles",
+            headers=headers,
+            json={"rule": "x", "tier": "learned"},
+        ).status_code
+        == 404
+    )
     assert client.get("/api/memory/disclosure", headers=headers).status_code == 404
     assert client.get("/api/memory/evolution", headers=headers).status_code == 404
     assert client.post("/api/memory/evolution/run", headers=headers).status_code == 404

@@ -46,9 +46,7 @@ def build_login_url(
     return url, state
 
 
-def exchange_code_for_userid(
-    config: AppConfig, code: str, *, redirect_uri: str | None = None
-) -> tuple[str, str]:
+def exchange_code_for_userid(config: AppConfig, code: str, *, redirect_uri: str | None = None) -> tuple[str, str]:
     if not config.feishu.app_id or not config.feishu.app_secret:
         raise FeishuOAuthError("未配置飞书应用凭证")
 
@@ -72,9 +70,7 @@ def exchange_code_for_userid(
             raise FeishuOAuthError(f"换取 user_access_token 失败: {token_resp.text}")
         token_data = token_resp.json()
         if token_data.get("code") not in (None, 0):
-            raise FeishuOAuthError(
-                f"换取 user_access_token 失败: {token_data.get('error_description') or token_data}"
-            )
+            raise FeishuOAuthError(f"换取 user_access_token 失败: {token_data.get('error_description') or token_data}")
         access_token = token_data.get("access_token")
         if not access_token:
             raise FeishuOAuthError(f"飞书未返回 access_token: {token_data}")

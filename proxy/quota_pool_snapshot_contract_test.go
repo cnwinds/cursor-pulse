@@ -8,11 +8,10 @@ import (
 )
 
 type snapshotContractCase struct {
-	Name       string             `json:"name"`
-	AutoPct    *float64           `json:"auto_pct"`
-	ApiPct     *float64           `json:"api_pct"`
-	IntakeOK   bool               `json:"intake_ok"`
-	SnapshotOK map[string]bool    `json:"snapshot_ok"`
+	Name       string          `json:"name"`
+	AutoPct    *float64        `json:"auto_pct"`
+	ApiPct     *float64        `json:"api_pct"`
+	SnapshotOK map[string]bool `json:"snapshot_ok"`
 }
 
 func TestQuotaPoolSnapshotContract(t *testing.T) {
@@ -29,14 +28,10 @@ func TestQuotaPoolSnapshotContract(t *testing.T) {
 		t.Fatal("contract fixture empty")
 	}
 	for _, c := range cases {
-		if got := snapshotIntakeOK(c.AutoPct, c.ApiPct); got != c.IntakeOK {
-			t.Errorf("%s: intake_ok want %v got %v", c.Name, c.IntakeOK, got)
-		}
 		e := &keyEntry{credentialQuotaState: credentialQuotaState{autoPct: c.AutoPct, apiPct: c.ApiPct}}
 		checks := map[string]quotaPoolKind{
-			"unknown": quotaPoolUnknown,
-			"auto":    quotaPoolAuto,
-			"api":     quotaPoolAPI,
+			"auto": quotaPoolAuto,
+			"api":  quotaPoolAPI,
 		}
 		for name, pool := range checks {
 			got := e.snapshotQuotaOK(pool)

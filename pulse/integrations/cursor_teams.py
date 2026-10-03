@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from pulse.util.datetime_fmt import serialize_datetime
-
-import httpx
+from datetime import UTC, datetime
 
 from pulse.config import CursorTeamsConfig
 from pulse.http_clients import outbound_client
+from pulse.util.datetime_fmt import serialize_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +41,7 @@ class CursorTeamsClient:
                     "period": period,
                     "source": "cursor_teams_api",
                     "status": "not_available",
-                    "fetched_at": serialize_datetime(datetime.now(timezone.utc)),
+                    "fetched_at": serialize_datetime(datetime.now(UTC)),
                     "message": "Admin API 端点待 Cursor 官方发布；当前请使用 API Key 自动同步。",
                 }
             response.raise_for_status()

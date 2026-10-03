@@ -6,6 +6,57 @@
 
 ### 新增
 
+- **借用 Key 滚动用量限制**：管理员可为 `pka_` 借用配置多条规则（滚动 5 小时 / 7 天 / 30 天，Auto 或 API，整数美元），任一达到即限制对应桶；分配和调整出借方式里用「+」添加，没有规则时不展开。代理在 `AgentService/Run` 超限返回中文 429 与恢复时间，BYOK 与 `cr*` 直连不计入。
+
+### 变更
+
+- **借用记录展示用量限制**：借用记录和「我的借用」按 Auto / API 显示每条滚动限额的已用/上限和短进度，列宽固定；同一类型的多条用「或」连接；未设置显示「不限」。恢复时间在悬停里。
+- **借用记录合并回收与归还**：自动回收日和归还时间收成一列两行。归还时间悬停可看精确到秒。
+- **打分表去掉余量列**：入选排序不再显示 Auto 余量 / API 余量。额度列仍显示 Auto / API 用量比例，打分仍按该桶余量计算。
+- **借用记录表格收窄**：自动回收日/归还时间放到创建时间后面；各列收到刚好放下内容的宽度，避免横向滚动。宽屏时这些列按比例拉满整行。
+- **用量限制悬停提示**：借用记录与「我的借用」的限额 tooltip 显示滚动窗口还剩多久重置。
+- **管理端页标题**：各页去掉与顶栏重复的 h2，保留说明文案与操作区。
+- **额度看板隐藏已删账号**：软删除账号与 primary Key 已吊销（Key已删除）的账号不再出现在额度看板；其它列表继续按 `deleted_at` 过滤。
+- **指定账号分配不再填写目标模型**：账号由管理员选定，模型名不参与发 Key。自动（账号池轮换）仍可填写，用来在确认前检查对应 Auto/API 池是否有号。
+
+### 修复
+
+- **OpenAI 网关流式用量**：`POST /openai/v1/chat/completions` 在 `stream: true` 时边转发 SSE 边解析末包 `usage`，写入 proxy 明细；请求会补上 `stream_options.include_usage`。需重新部署 Go 代理后生效。
+
+## [0.6.0] - 2026-09-29
+
+### 变更
+
+- **Switch dwell 默认间隔**：`loan_selection.min_switch_minutes` 与 Go `PROXY_STICKY_MIN_DWELL` 默认值由 30 分钟改为 **20 分钟**（已保存的团队选号规则不变，需在「借用管理 → 选号规则」手动改或设环境变量）。
+
+### 新增
+
+- **Web 小脉流式回复**：LLM 改为 SSE 流式调用，Web 聊天边生成边显示（「小脉 · 输入中」草稿气泡）；工具仍返回 JSON 由 LLM 按技能模板排版。草稿存 `portal_chat_streams`，正式回复带 `stream_id` 时同事务替换。钉钉/飞书仍发整条。可用 `ASSISTANT_LLM_STREAM_WEB_REPLIES=false` 或团队设置 `assistant_llm.stream_web_replies` 关闭。
+- **Web 小脉聊天历史**：用户消息也写入 `portal_chat_deliveries`，新增 `GET /api/chat/history`；刷新后恢复历史并续接进行中的回复。消息显示发送时间（中国时区），回复按 Markdown 渲染；输入框内悬浮发送按钮，抽屉加宽。
+- **Jev 外呼耗时**：`jev_trace.meta` 记录 `called_at`（UTC ISO）与 `duration_ms`（HTTP 端到端）；缓存命中时沿用首次外呼的时间与耗时。摘要 Tab 与中国时区展示；审计 `lender_auto_pick` 附带 `jev_called_at` / `jev_duration_ms`。
+- **noul 响应解析**：识别 OpenRouter 返回的 `{"type":"noul","noul":…}`，主负责人安全判定与报文表格可正确显示。
+- **Jev 输入改用「在用」占座**：发给 Jev 的 `state` / `questions` 使用经代理上报的 `proxy_active_seats`（按成员计座），不再包含固定借用笔数 `active_loans`；约束改为 `max_concurrent_proxy_users`。
+- **打分表 Jev 报文**：`/proxy-pool/ranking` 的 `decision.jev_trace` 返回 Decisions 请求的 `state` / `questions` 与响应 `answers`（含缓存命中时的出参快照）。借用管理 → 打分表可通过「Jev 报文」抽屉查看摘要、护栏与完整 JSON；「为成员分配 Key」选自动分配时亦可查看同一池顺序的报文。
+- **Jev 强制外呼**：`GET /proxy-pool/ranking?force_jev=1`（需 `proxy:write`，30s/团队限流）与 `POST /loans/auto-pick` 的 `force_jev` 可绕过 TTL 缓存。指定账号分配时按借用人 + 目标模型调用 auto-pick 预览 Jev 报文；额度看板可打开池顺序报文。
+
+### 修复
+
+- **代理用量上报失败可补发**：`flushUsage` 重试失败后把批次放回缓冲区（带上限与短暂退避），不再整批丢弃。
+- **代理 OpenAI 网关请求体上限**：`/openai/v1/chat/completions` 与 MITM 共用 `PROXY_MAX_BODY`（默认 32 MiB），超限返回 413。
+- **代理根服务器超时**：`http.Server` 设置 `ReadHeaderTimeout` / `IdleTimeout`，与 MITM 连接一致。
+- **小脉 `reply.send` 投递失败可重试**：HTTP 失败或返回非 `sent`/`skipped` 时抛错，走 job 失败重试，不再静默标 `done`。渠道去重改为「先占坑、失败释放」，避免首次失败后重试被误判为已发送。
+- **长对话不被 90 s 卡死回收误重跑**：job 执行期间每约 30 s 心跳刷新 `updated_at`；`job_processing_timeout_seconds` 仍按距上次心跳计时，崩溃可及时回收。
+- **安全：代理换票不再下发上游 Cursor JWT**：`pka_`/`pk_` 换票原先把 `exchange_user_api_key` 返回的真实 `accessToken` 交给客户端，借用人可直连 Cursor 调 Dashboard（含创建 Key）。现默认签发代理替身 JWT（`PROXY_OPAQUE_SESSION_TOKEN`，设 `off` 可回退），真实 token 仅留在代理内存；MITM 转发业务与 `/auth/*` 时再换成上游 JWT。
+- **安全：`/admin/*` 未登录任意文件读取**：静态路由仅过滤 `..`，`/admin//etc/...` 或 `%2F` 编码的绝对路径可读取服务器任意文件。现解析后校验必须位于 SPA 目录内。升级后建议轮换 JWT 密钥、内部 service token 与 `ASSISTANT_SECRET_KEY`。
+- **安全：设置密钥明文查看收紧**：`GET /api/settings/{section}/reveal/{key}` 由 `settings:read` 改为需 `settings:write`，审计员、运营员不再能查看钉钉/飞书/LLM 等密钥明文；前端无写权限时隐藏查看按钮。
+- **Web 小脉显示旧回复**：`POST /api/chat` 曾固定返回 `poll_after=0`，前端从最早的投递开始轮询，重复显示历史回复并提前停止，新回复看不到。现从本次用户消息之后轮询；无回应超过 5 分钟自动解除「正在想」并提示。
+
+## [0.5.0] - 2026-09-22
+
+### 新增
+
+- **同时在线人数**：Go 代理在换票、会话续期和因额度耗尽换号时，把当前连接的凭证上报给 Web。Web 按人计座（同一成员在同一个账号上的多个会话算 1 人，同时用两个账号则各占一席），默认同一个账号不超过 3 个经代理的同时使用者。没有候选账号时不算人数上限。已经在座的人不被挤走；指定账号的借用始终留在原账号。0 表示不限制。主负责人直接使用 Cursor 不计入。规则和参数在「系统设置 → 选号规则」。
+- **管理员自动分配走账号池轮换**：借用记录里选「自动（账号池轮换）」会签发没有单一出借账号的 `pka_`（`routing_mode=pool`）。使用过程中与历史接入密钥共用已入池账号和打分表，确认时不锁定账号，也不新建 Cursor Key。指定账号仍固定绑定。自助申请 Key 仍是候选账号白名单游走。导航「共享池代理」改为「账号池」：默认是入池开关，打分表保留，原接入密钥收到「历史接入密钥」。
 - **借用两种分配方式**：`lender_mode=manual`（指定借用）在选定账号上建一把独立 Cursor Key 并固定绑定；`lender_mode=auto`（自动分配借用）由 Auto Lender 打分决定起始账号，之后借用 Key 在候选账号的 **primary** Key 之间按共享池方式游走（per-session sticky + 30 分钟驻留 + 按 Quota Pool），换号不新建 Cursor Key。自助借 Key 默认走自动分配。
 - **Jev 主判（OpenRouter Decisions）**：接入 TypeSafe System One 决策模型 `typesafe/jev-1.13`，用 `choice` 问该借哪个账号、`noul` 逐候选问是否侵占主负责人预留。它只在存活候选上重排，调用失败 / 置信度不足 / 首选与次优间隔过小 / 判定影响主负责人时一律回落算法分；带特征哈希缓存与连续失败熔断。可在「系统设置 → Jev 决策模型」配置，或走 `JEV_*` 环境变量。
 - **按 Quota Pool 打分**：给出目标模型时按该模型所属桶（`auto` / `api`）取余量与空闲额度；桶由既有计费口径 `pulse/pricing/billing_scope.py` 自动判定，无需人工指定；`unknown` 退化为两桶都要有余量。
@@ -32,6 +83,11 @@
 - **换绑/发放失败残留远端 Key**：远端 Key 已创建但本地事务失败时，只回滚数据库，Cursor 侧那条 Key 因无本地记录而无法回收。改为失败即 best-effort 吊销。
 - **日趋势图例重叠**：ECharts 6 默认把 legend 放在底部，grid 底部留白不够，图例会叠在日期和矮柱上。概览 / 用量分析共用的日趋势改为顶部图例，并加大 `grid.top`。
 - **概览与用量分析日趋势对齐**：两页共用同一套日聚合；日趋势改为堆叠柱（输入/输出/cache，柱高=当日总 Token）+ 花费折线，避免平滑面积图把相邻日「鼓包」。概览改为本账期全日序列，不再截成近 14 天。
+
+### 变更（借用管理 UI）
+
+- **借用管理合并页**：共享池代理导航改为「账号池 / 借用管理」；选号规则、打分表、借用记录集中展示；移除独立 Proxy Keys 页与设置内选号规则 Tab。
+- **借 Key 通知**：钉钉/IM 下发临时 Key 时列出系统设置中全部有效代理地址及对应 PowerShell / bash 启动命令（多地址带展示名）。
 
 ### 变更（概览与用量）
 
@@ -144,7 +200,9 @@
 - 用量同步依赖 Cursor 未公开 API，可能随 Cursor 升级失效（见 [docs/cursor-usage-api.md](docs/cursor-usage-api.md)）
 - MITM Proxy 需终端信任自签 CA，存在合规风险，默认不启用（见 [proxy/README.md](proxy/README.md)）
 
-[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/cnwinds/cursor-pulse/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/cnwinds/cursor-pulse/compare/v0.1.0...v0.2.0

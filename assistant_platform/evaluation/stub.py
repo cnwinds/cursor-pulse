@@ -25,9 +25,7 @@ def run_evaluation_stub(
     comparisons: list[dict] = []
     total_score = 0
     for session_row in closed_sessions:
-        review = db_session.scalar(
-            select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id)
-        )
+        review = db_session.scalar(select(SessionReviewRow).where(SessionReviewRow.session_id == session_row.id))
         baseline_score = review.score if review is not None else 80
         replay_score = max(0, min(100, baseline_score + 2))
         comparisons.append(

@@ -64,12 +64,8 @@ def _portal_user_rows(session: Session, members: list[Member]) -> list[dict]:
             .order_by(MemberIdentity.channel.asc(), MemberIdentity.external_id.asc())
         ).all()
         for row in rows:
-            by_member.setdefault(row.member_id, []).append(
-                {"channel": row.channel, "external_id": row.external_id}
-            )
-    return [
-        _portal_user_row(m, session, identities=by_member.get(m.id, [])) for m in members
-    ]
+            by_member.setdefault(row.member_id, []).append({"channel": row.channel, "external_id": row.external_id})
+    return [_portal_user_row(m, session, identities=by_member.get(m.id, [])) for m in members]
 
 
 def _portal_directory_row(member: Member) -> dict:
@@ -281,13 +277,9 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
             raise HTTPException(404, detail="成员不存在")
         drop_snapshot = None
         if body.merge:
-            other = resolve_member(
-                session, team.id, channel=body.channel, external_id=body.external_id
-            )
+            other = resolve_member(session, team.id, channel=body.channel, external_id=body.external_id)
             if other is not None and other.id != member.id:
-                drop_snapshot = (
-                    f"drop={other.id}/{other.display_name}/role={other.portal_role}"
-                )
+                drop_snapshot = f"drop={other.id}/{other.display_name}/role={other.portal_role}"
         try:
             member = link_identity(
                 session,
@@ -346,16 +338,12 @@ def register_portal_users_routes(app, config: AppConfig, get_db, require_capabil
                     detail="请提供 username，为该用户创建 Web 登录名后再设密码",
                 )
             try:
-                link_identity(
-                    session, member, channel="web", external_id=username, merge_if_taken=False
-                )
+                link_identity(session, member, channel="web", external_id=username, merge_if_taken=False)
             except IdentityError as exc:
                 raise HTTPException(400, detail=str(exc)) from exc
         elif member.channel == "web":
             try:
-                ensure_identity(
-                    session, member, channel="web", external_id=member.channel_user_id
-                )
+                ensure_identity(session, member, channel="web", external_id=member.channel_user_id)
             except IdentityError:
                 pass
         try:

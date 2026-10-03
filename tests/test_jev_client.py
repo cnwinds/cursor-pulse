@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from pulse.config import AppConfig, JevConfig
 from pulse.llm.jev import (
     JevClient,
@@ -84,9 +83,7 @@ def test_decide_custom_base_url_and_model(patch_outbound):
         return httpx.Response(200, json={"answers": {"pick": {"choice": "a"}}})
 
     patch_outbound(handler)
-    client = JevClient(
-        api_key="k", base_url="https://openrouter.ai/api/", model="typesafe/jev-latest"
-    )
+    client = JevClient(api_key="k", base_url="https://openrouter.ai/api/", model="typesafe/jev-latest")
     client.decide(state="raw", questions={"pick": build_choice_question("x", {"a": "b"})})
 
     assert seen["url"] == "https://openrouter.ai/api/alpha/decisions"
@@ -102,9 +99,7 @@ def test_decide_requires_questions():
 
 def test_decide_raises_on_http_error(patch_outbound):
     patch_outbound(
-        lambda request: httpx.Response(
-            401, json={"error": {"code": 401, "message": "Missing Authentication header"}}
-        )
+        lambda request: httpx.Response(401, json={"error": {"code": 401, "message": "Missing Authentication header"}})
     )
     client = JevClient(api_key="bad")
     with pytest.raises(JevError) as exc:
@@ -115,9 +110,7 @@ def test_decide_raises_on_http_error(patch_outbound):
 
 def test_decide_raises_on_error_body_with_200(patch_outbound):
     patch_outbound(
-        lambda request: httpx.Response(
-            200, json={"error": {"code": 402, "message": "Insufficient credits"}}
-        )
+        lambda request: httpx.Response(200, json={"error": {"code": 402, "message": "Insufficient credits"}})
     )
     client = JevClient(api_key="k")
     with pytest.raises(JevError) as exc:
@@ -150,6 +143,7 @@ def test_decide_raises_on_network_error(patch_outbound):
         (True, 1.0),
         (False, 0.0),
         ({"probability": 0.25}, 0.25),
+        ({"type": "noul", "noul": 0.44}, 0.44),
         ({"probabilities": {"true": 0.7, "false": 0.3}}, 0.7),
         ({"choice": "a"}, None),
         (None, None),

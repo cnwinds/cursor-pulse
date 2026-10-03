@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 
 import pytest
 from sqlalchemy import func, select
@@ -48,7 +48,7 @@ def api_env(_internal_capabilities_app):
 
     snap = AccountQuotaSnapshot(
         account_id=actor_account.id,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
         cycle_start=date(2026, 7, 1),
         cycle_end=date(2026, 8, 1),
         limit_cents=7000,
@@ -213,9 +213,7 @@ def test_invoke_handles_concurrent_idempotency_conflict(api_env, monkeypatch):
             user_message="cached-from-winner",
             result={"accounts": []},
         )
-        invocation_store.save_invocation(
-            session, request=winner_request, result=winner_result
-        )
+        invocation_store.save_invocation(session, request=winner_request, result=winner_result)
         session.commit()
     finally:
         session.close()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -30,13 +30,9 @@ logger = logging.getLogger(__name__)
 OnDemandNotify = Callable[[AiAccount, OnDemandEnforceResult], None]
 
 
-def _recompute_account_summaries(
-    session: Session, team_id: str, account_id: str
-) -> None:
+def _recompute_account_summaries(session: Session, team_id: str, account_id: str) -> None:
     repo = ToolCenterRepository(session, team_id)
-    periods = session.scalars(
-        select(UsageSummary.period).where(UsageSummary.account_id == account_id)
-    ).all()
+    periods = session.scalars(select(UsageSummary.period).where(UsageSummary.account_id == account_id)).all()
     for period in periods:
         repo.recompute_usage_summary(account_id, period)
 
@@ -65,7 +61,7 @@ def _apply_period_usage(
 
     snapshot = AccountQuotaSnapshot(
         account_id=account.id,
-        captured_at=captured_at or datetime.now(timezone.utc),
+        captured_at=captured_at or datetime.now(UTC),
         cycle_start=cycle_start,
         cycle_end=cycle_end,
         cycle_start_at=cycle_start_at,
@@ -102,9 +98,7 @@ class CursorSyncService:
         self.on_demand_notify = on_demand_notify
         self.enforce_on_demand_disabled = enforce_on_demand_disabled
         self.app_config = app_config
-        self.credential_service = CredentialService(
-            session, encryption_key, cursor_client=self.cursor_client
-        )
+        self.credential_service = CredentialService(session, encryption_key, cursor_client=self.cursor_client)
 
     def _expire_loans_after_sync(self, account_id: str) -> None:
         """Reclaim auto-revoke loans for the synced account after cycle refresh."""
@@ -135,9 +129,7 @@ class CursorSyncService:
     def _enforce_on_demand(self, account: AiAccount, token: str, api_key: str) -> None:
         if not self.enforce_on_demand_disabled:
             return
-        result = enforce_on_demand_disabled(
-            self.cursor_client, token, api_key=api_key
-        )
+        result = enforce_on_demand_disabled(self.cursor_client, token, api_key=api_key)
         if result.status == "already_disabled":
             return
         if result.status == "disabled_now":
@@ -158,16 +150,11 @@ class CursorSyncService:
                 account.id,
                 result.error,
             )
-        if (
-            result.status in ("disabled_now", "disable_failed", "check_failed")
-            and self.on_demand_notify
-        ):
+        if result.status in ("disabled_now", "disable_failed", "check_failed") and self.on_demand_notify:
             try:
                 self.on_demand_notify(account, result)
             except Exception:
-                logger.exception(
-                    "on-demand notify failed for account %s", account.id
-                )
+                logger.exception("on-demand notify failed for account %s", account.id)
 
     def sync_account(
         self,
@@ -181,9 +168,7 @@ class CursorSyncService:
             raise ValueError("no active credential")
 
         account = self.session.scalar(
-            select(AiAccount)
-            .options(joinedload(AiAccount.vendor))
-            .where(AiAccount.id == account_id)
+            select(AiAccount).options(joinedload(AiAccount.vendor)).where(AiAccount.id == account_id)
         )
         if not account or not account.vendor:
             raise ValueError("account not found")
@@ -203,18 +188,14 @@ class CursorSyncService:
                 if key_email:
                     _apply_key_account_identifier(account, key_email)
             self._enforce_on_demand(account, token, api_key)
-            period_usage = self.cursor_client.get_current_period_usage(
-                token, api_key=api_key
-            )
+            period_usage = self.cursor_client.get_current_period_usage(token, api_key=api_key)
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             end_ms = int(now.timestamp() * 1000)
             start_ms = int(period_usage["billingCycleStart"])
 
             events = list(
-                self.cursor_client.iter_filtered_usage_events(
-                    token, start_ms=start_ms, end_ms=end_ms, api_key=api_key
-                )
+                self.cursor_client.iter_filtered_usage_events(token, start_ms=start_ms, end_ms=end_ms, api_key=api_key)
             )
 
             by_period: dict[str, list] = defaultdict(list)

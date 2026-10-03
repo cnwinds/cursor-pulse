@@ -32,7 +32,13 @@ Key Loan 的出借账号原本由管理员在额度看板手工指定，发放�
    早期实现是「定时任务 + `reassign_loan_source`」，每次换号都要在 Cursor 侧新建一把 Key 并吊销旧 Key，且粒度只能是分钟级，做不到「使用过程中灵活更换」。该路径已退休（`reevaluate_auto_loans` 与 `auto_lender_reevaluate` 作业移除）；`reassign_loan_source` 保留为管理员手动改绑。
 
 7. **Switch dwell 分两层，作用不同。**
-   评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickySince` + `stickyMinDwell` 保证同一会话在窗口内不因桶耗尽换账号。自动分配借用真正生效的是后者。
+   评分侧 `loan_selection.min_switch_minutes` 只影响降权（`recency_penalty`）；请求侧由 Go `SessionBinding.StickyLastActive` + `stickyMinDwell` 按**两次请求间隔**保证密集聊天不因桶耗尽换账号。自动分配借用真正生效的是后者。
+
+8. **管理员「自动分配」改为账号池路由（`routing_mode=pool`）。**
+   发放的 pka_ 不选定起始账号，也不新建 Cursor Key。授权返回 `mode=loan_pool`，Go 与历史 `pk_` 共用同一 Credential Pool（入池账号、打分表、sticky）。指定账号仍是固定借用。自助借 Key 仍走上面的候选白名单，不改成整池。`pk_` 发放留在「账号池 → 历史接入密钥」；新成员走借用记录的自动分配。入池开关和打分表保留。
+
+9. **同一账号的同时在线人数有上限。**
+   默认 3（`loan_selection.max_concurrent_users`，0 为不限制）。Go 在换票、会话续期、以及 sticky 因额度耗尽换号时上报 `current_credential_id`；`release_current` 表示正在离开该凭证。Web 按成员计座（否则按借用单或接入密钥）：同一成员在同一账号上只占一席，同时使用两个账号则各占一席。超时（默认 180 秒）后座位失效。已在座的人不被后来者挤走。指定借用占座但不会因为满员被拒绝。顾问调用失败时 Go 按本地顺序选号并跳过上次的满员名单；Web 明确返回空分配时不再把人放进已满账号。没有候选且不是正在离开时不算人数上限，代理按池空处理。座位在单个 Web 进程的内存里。整套规则和可调参数在「系统设置 → 选号规则」，团队覆盖经 `effective_config` 生效。池轮询只读已保存的团队配置，不在这条路径上创建团队或回填成员。
 
 ## 后果
 

@@ -7,6 +7,7 @@ from pulse.tool_center.account_pick import filter_cursor_accounts
 from pulse.tool_center.key_loan_delivery import KeyLoanError
 from pulse.tool_center.repository import ToolCenterRepository
 
+
 def _borrower_cursor_key_required_message(
     *,
     for_admin: bool = False,
@@ -18,14 +19,8 @@ def _borrower_cursor_key_required_message(
             return f"借用人还有 {count} 个 Cursor 账号未绑 Key，请先通知其完成绑定。"
         return "借用人名下 Cursor 账号未全部绑定 Key。"
     if count:
-        return (
-            f"你还有 {count} 个 Cursor 账号未绑 Key，请先绑定后再申请。\n"
-            "发送：绑定 cursor 你的邮箱@c.com crsr_..."
-        )
-    return (
-        "请先为名下每个 Cursor 账号绑定 Key。\n"
-        "发送：绑定 cursor 你的邮箱@c.com crsr_..."
-    )
+        return f"你还有 {count} 个 Cursor 账号未绑 Key，请先绑定后再申请。\n发送：绑定 cursor 你的邮箱@c.com crsr_..."
+    return "请先为名下每个 Cursor 账号绑定 Key。\n发送：绑定 cursor 你的邮箱@c.com crsr_..."
 
 
 def borrower_unbound_cursor_accounts(
@@ -51,9 +46,7 @@ def borrower_has_bound_cursor_key(
     borrower_member_id: str,
 ) -> bool:
     accounts = filter_cursor_accounts(
-        ToolCenterRepository(session, team_id).get_primary_accounts_for_member(
-            borrower_member_id
-        )
+        ToolCenterRepository(session, team_id).get_primary_accounts_for_member(borrower_member_id)
     )
     if not accounts:
         return False
@@ -75,4 +68,3 @@ def ensure_borrower_has_cursor_key(
                 unbound_accounts=unbound,
             )
         )
-

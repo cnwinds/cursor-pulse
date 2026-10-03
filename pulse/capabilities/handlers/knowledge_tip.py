@@ -36,8 +36,7 @@ def handle_knowledge_tip_create(
             status="failed",
             error_code="invalid_arguments",
             user_message=(
-                "缺少 title 或 body。请先与用户确认技巧标题与 Markdown 正文"
-                "（含技巧说明、操作步骤），再提交。"
+                "缺少 title 或 body。请先与用户确认技巧标题与 Markdown 正文（含技巧说明、操作步骤），再提交。"
             ),
         )
 

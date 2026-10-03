@@ -232,10 +232,7 @@ def _grouped_account_rows(
     primary_ids = {row[2] for row in raw_rows if row[2]}
     member_names: dict[str, str] = {}
     if primary_ids:
-        member_names = {
-            m.id: m.display_name
-            for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))
-        }
+        member_names = {m.id: m.display_name for m in session.scalars(select(Member).where(Member.id.in_(primary_ids)))}
     account_rows = []
     for account_id, identifier, primary_id, ti, to, tcr, events, cost in raw_rows:
         metrics = _round_metrics(_bucket_from_sums(ti, to, tcr, events, cost))
@@ -320,9 +317,7 @@ def _grouped_model_rows(
         {"pool": pool, "pool_label": POOL_LABELS.get(pool, pool), **_round_metrics(bucket)}
         for pool, bucket in by_pool.items()
     ]
-    family_rows = [
-        {"family": family, **_round_metrics(bucket)} for family, bucket in by_family.items()
-    ]
+    family_rows = [{"family": family, **_round_metrics(bucket)} for family, bucket in by_family.items()]
     return (
         sorted(model_rows, key=lambda x: (-x["tokens_total"], x["model"], x["kind_family"])),
         sorted(pool_rows, key=lambda x: (-x["tokens_total"], x["pool"])),

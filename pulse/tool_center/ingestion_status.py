@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -42,7 +42,7 @@ def period_date_range(period: str) -> tuple[date, date]:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def resolve_account_ingestion_status(
@@ -57,9 +57,7 @@ def resolve_account_ingestion_status(
             return "no_credential"
         if credential.last_sync_status == "failed":
             return "sync_failed"
-        if credential.last_sync_at and credential.last_sync_at < _utcnow() - timedelta(
-            hours=_SYNC_STALE_HOURS
-        ):
+        if credential.last_sync_at and credential.last_sync_at < _utcnow() - timedelta(hours=_SYNC_STALE_HOURS):
             return "sync_stale"
         return "synced"
     return "unsubmitted"
@@ -85,9 +83,7 @@ def _assess_date_compliance(period: str, date_min: date | None, date_max: date |
 
 
 def _ingestion_date_range(session: Session, ingestion_id: str) -> tuple[date | None, date | None]:
-    rows = session.scalars(
-        select(UsageRecord.event_date).where(UsageRecord.ingestion_id == ingestion_id)
-    ).all()
+    rows = session.scalars(select(UsageRecord.event_date).where(UsageRecord.ingestion_id == ingestion_id)).all()
     if not rows:
         return None, None
     return min(rows), max(rows)
@@ -95,9 +91,7 @@ def _ingestion_date_range(session: Session, ingestion_id: str) -> tuple[date | N
 
 def _avg_confidence(session: Session, ingestion_id: str) -> float | None:
     value = session.scalar(
-        select(func.avg(UsageRecord.extraction_confidence)).where(
-            UsageRecord.ingestion_id == ingestion_id
-        )
+        select(func.avg(UsageRecord.extraction_confidence)).where(UsageRecord.ingestion_id == ingestion_id)
     )
     if value is None:
         return None
@@ -164,9 +158,7 @@ def _latest_ingestions_for_accounts(
             & (UsageIngestion.billing_period == period),
         )
     ):
-        if row.account_id and (
-            row.account_id not in latest or row.id > latest[row.account_id].id
-        ):
+        if row.account_id and (row.account_id not in latest or row.id > latest[row.account_id].id):
             latest[row.account_id] = row
     return latest
 
@@ -227,9 +219,7 @@ def _ingestion_payload(
         "data_date_min": date_min.isoformat() if date_min else None,
         "data_date_max": date_max.isoformat() if date_max else None,
         "extraction_confidence": confidence,
-        "primary_metric_value": (
-            float(usage_summary.primary_metric_value) if usage_summary else None
-        ),
+        "primary_metric_value": (float(usage_summary.primary_metric_value) if usage_summary else None),
         "primary_metric_unit": usage_summary.primary_metric_unit if usage_summary else None,
         "quota_usage_ratio": usage_summary.quota_usage_ratio if usage_summary else None,
     }
@@ -260,8 +250,7 @@ def build_account_ingestion_status(
     latest_ingestion: UsageIngestion | None,
     credential: AiAccountCredential | None = None,
     ingestions_by_id: dict[str, UsageIngestion] | None = None,
-    record_stats_by_id: dict[str, tuple[date | None, date | None, float | None]]
-    | None = None,
+    record_stats_by_id: dict[str, tuple[date | None, date | None, float | None]] | None = None,
 ) -> dict[str, Any]:
     period_start, period_end = period_date_range(period)
     plan = account.plan
@@ -272,19 +261,12 @@ def build_account_ingestion_status(
         "period_start": period_start.isoformat(),
         "period_end": period_end.isoformat(),
         "period_range_label": f"{period_start} ~ {period_end}",
-        "hint": (
-            f"请提交覆盖 {period_start} ~ {period_end} 的用量数据"
-            f"（{_format_methods_label(methods)}）"
-        ),
+        "hint": (f"请提交覆盖 {period_start} ~ {period_end} 的用量数据（{_format_methods_label(methods)}）"),
     }
 
-    primary_name = (
-        member_names.get(account.primary_member_id) if account.primary_member_id else None
-    )
+    primary_name = member_names.get(account.primary_member_id) if account.primary_member_id else None
     secondary_names = [
-        member_names.get(m.member_id, m.member_id)
-        for m in account.secondary_members
-        if member_names.get(m.member_id)
+        member_names.get(m.member_id, m.member_id) for m in account.secondary_members if member_names.get(m.member_id)
     ]
 
     base: dict[str, Any] = {
@@ -314,9 +296,7 @@ def build_account_ingestion_status(
         return base
 
     pending = latest_ingestion if latest_ingestion and latest_ingestion.status == "pending_review" else None
-    state = resolve_account_ingestion_status(
-        account, period, credential, usage_summary, pending
-    )
+    state = resolve_account_ingestion_status(account, period, credential, usage_summary, pending)
     is_cursor = bool(account.vendor and account.vendor.slug == "cursor")
 
     if is_cursor:
@@ -336,9 +316,7 @@ def build_account_ingestion_status(
                 if ingestions_by_id is not None:
                     ingestion = ingestions_by_id.get(usage_summary.latest_ingestion_id)
                 else:
-                    ingestion = session.get(
-                        UsageIngestion, usage_summary.latest_ingestion_id
-                    )
+                    ingestion = session.get(UsageIngestion, usage_summary.latest_ingestion_id)
             if ingestion is None:
                 ingestion = latest_ingestion
             if ingestion:
@@ -368,9 +346,7 @@ build_account_submission_status = build_account_ingestion_status
 def _credential_map(session: Session, account_ids: list[str]) -> dict[str, AiAccountCredential]:
     if not account_ids:
         return {}
-    rows = session.scalars(
-        select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids))
-    ).all()
+    rows = session.scalars(select(AiAccountCredential).where(AiAccountCredential.account_id.in_(account_ids))).all()
     return {row.account_id: row for row in rows}
 
 
@@ -403,9 +379,7 @@ def summarize_ingestion_status(session: Session, team_id: str) -> dict[str, Any]
         if not account.primary_member_id:
             state_counts["missing_primary"] += 1
             continue
-        state = resolve_account_ingestion_status(
-            account, "", credentials.get(account.id), None, None
-        )
+        state = resolve_account_ingestion_status(account, "", credentials.get(account.id), None, None)
         state_counts[state] = state_counts.get(state, 0) + 1
         if state in cursor_done:
             submitted_count += 1
@@ -467,20 +441,14 @@ def build_ingestion_status_payload(
         }
     credentials = _credential_map(session, visible_ids)
     latest_by_account = _latest_ingestions_for_accounts(session, visible_ids, period)
-    needed_ingestion_ids = {
-        ingestion.id for ingestion in latest_by_account.values()
-    }
+    needed_ingestion_ids = {ingestion.id for ingestion in latest_by_account.values()}
     for summary in summaries.values():
         if summary.latest_ingestion_id:
             needed_ingestion_ids.add(summary.latest_ingestion_id)
-    ingestions_by_id: dict[str, UsageIngestion] = {
-        ingestion.id: ingestion for ingestion in latest_by_account.values()
-    }
+    ingestions_by_id: dict[str, UsageIngestion] = {ingestion.id: ingestion for ingestion in latest_by_account.values()}
     missing_ids = needed_ingestion_ids - set(ingestions_by_id)
     if missing_ids:
-        for ingestion in session.scalars(
-            select(UsageIngestion).where(UsageIngestion.id.in_(missing_ids))
-        ):
+        for ingestion in session.scalars(select(UsageIngestion).where(UsageIngestion.id.in_(missing_ids))):
             ingestions_by_id[ingestion.id] = ingestion
     record_stats_by_id = _ingestion_record_stats(session, list(needed_ingestion_ids))
 
@@ -517,11 +485,7 @@ def build_ingestion_status_payload(
 
     period_start, period_end = period_date_range(period)
     cursor_done = {"synced", "sync_stale"}
-    submitted_count = sum(
-        1
-        for row in account_rows
-        if row.get("ingestion_state") in cursor_done
-    )
+    submitted_count = sum(1 for row in account_rows if row.get("ingestion_state") in cursor_done)
 
     groups: dict[str, dict[str, Any]] = {}
     for row in account_rows:

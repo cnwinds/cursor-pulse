@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
@@ -17,9 +17,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    create_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -31,7 +30,7 @@ def _uuid() -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Team(Base):
@@ -61,9 +60,7 @@ class Member(Base):
     last_portal_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     department_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     manager_channel_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    manager_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True, index=True
-    )
+    manager_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
     employment_status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -71,7 +68,7 @@ class Member(Base):
         back_populates="member",
         foreign_keys="UsageIngestion.member_id",
     )
-    identities: Mapped[list["MemberIdentity"]] = relationship(
+    identities: Mapped[list[MemberIdentity]] = relationship(
         back_populates="member",
         # Do not use delete-orphan: reassigning identity.member_id during merge
         # would otherwise delete the row instead of moving it.
@@ -86,9 +83,7 @@ class MemberIdentity(Base):
     """
 
     __tablename__ = "member_identities"
-    __table_args__ = (
-        UniqueConstraint("team_id", "channel", "external_id", name="uq_member_identity"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "channel", "external_id", name="uq_member_identity"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), index=True)
@@ -129,9 +124,7 @@ class UsageIngestion(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     member: Mapped[Member | None] = relationship(back_populates="ingestions", foreign_keys=[member_id])
-    usage_records: Mapped[list[UsageRecord]] = relationship(
-        back_populates="ingestion", cascade="all, delete-orphan"
-    )
+    usage_records: Mapped[list[UsageRecord]] = relationship(back_populates="ingestion", cascade="all, delete-orphan")
 
 
 class UsageRecord(Base):
@@ -267,9 +260,7 @@ class AiVendor(Base):
 
 class AiPlan(Base):
     __tablename__ = "ai_plans"
-    __table_args__ = (
-        UniqueConstraint("vendor_id", "slug", "effective_from", name="uq_plan_vendor_slug_from"),
-    )
+    __table_args__ = (UniqueConstraint("vendor_id", "slug", "effective_from", name="uq_plan_vendor_slug_from"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     vendor_id: Mapped[str] = mapped_column(ForeignKey("ai_vendors.id"), index=True)
@@ -287,9 +278,7 @@ class AiPlan(Base):
     usage_submit_methods: Mapped[list] = mapped_column(JSON, default=list)
     official_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
-    superseded_by_plan_id: Mapped[str | None] = mapped_column(
-        ForeignKey("ai_plans.id"), nullable=True
-    )
+    superseded_by_plan_id: Mapped[str | None] = mapped_column(ForeignKey("ai_plans.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     vendor: Mapped[AiVendor] = relationship(back_populates="plans")
@@ -298,9 +287,7 @@ class AiPlan(Base):
 
 class AiAccount(Base):
     __tablename__ = "ai_accounts"
-    __table_args__ = (
-        Index("ix_ai_accounts_team_status_deleted", "team_id", "status", "deleted_at"),
-    )
+    __table_args__ = (Index("ix_ai_accounts_team_status_deleted", "team_id", "status", "deleted_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"), index=True, nullable=True)
@@ -309,9 +296,7 @@ class AiAccount(Base):
     account_identifier: Mapped[str] = mapped_column(String(256), index=True)
     ownership: Mapped[str] = mapped_column(String(16), default="company")
     status: Mapped[str] = mapped_column(String(16), default="shared")
-    primary_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True, index=True
-    )
+    primary_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
     shared_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     monthly_budget_cap: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
     budget_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
@@ -324,6 +309,13 @@ class AiAccount(Base):
     proxy_score_adjust: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 主负责人保留量：该账号 Quota Pool 必须留出的余量百分比（None/0 = 不保留）
     proxy_reserve_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Coding Plan OpenAI 网关专用池（与 Cursor MITM proxy_enabled 分离）
+    cp_proxy_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # glm: zai | bigmodel — minimax: cn | global
+    api_region: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 智谱团队版（国内）：与 api_key 一并用于 ?type=2 额度查询
+    glm_organization_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    glm_project_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -352,9 +344,7 @@ class AiAccountCredential(Base):
     key_role: Mapped[str] = mapped_column(String(16), default="primary")
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     remote_key_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    assignee_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True, index=True
-    )
+    assignee_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
     bound_by_member_id: Mapped[str] = mapped_column(ForeignKey("members.id"))
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -390,9 +380,7 @@ class AiAccountPlanHistory(Base):
     plan_id: Mapped[str] = mapped_column(ForeignKey("ai_plans.id"), index=True)
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
-    changed_by_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True
-    )
+    changed_by_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -407,14 +395,10 @@ class UsageSummary(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
     period: Mapped[str] = mapped_column(String(7), index=True)
-    latest_ingestion_id: Mapped[str | None] = mapped_column(
-        ForeignKey("usage_ingestions.id"), nullable=True
-    )
+    latest_ingestion_id: Mapped[str | None] = mapped_column(ForeignKey("usage_ingestions.id"), nullable=True)
     sync_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    submitted_by_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True
-    )
+    submitted_by_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True)
     primary_metric_value: Mapped[float] = mapped_column(Numeric(12, 4))
     primary_metric_unit: Mapped[str] = mapped_column(String(16))
     reported_spend_usd: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
@@ -450,6 +434,8 @@ class AccountQuotaSnapshot(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    sync_kind: Mapped[str] = mapped_column(String(16), default="cursor")
+    quota_extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cycle_start: Mapped[date] = mapped_column(Date)
     cycle_end: Mapped[date] = mapped_column(Date)
     # Exact Cursor billingCycleStart/End (ms→UTC). Prefer over date-only EOD for hours_to_deadline.
@@ -465,16 +451,16 @@ class AccountQuotaSnapshot(Base):
 
 class KeyLoan(Base):
     __tablename__ = "key_loans"
-    __table_args__ = (
-        Index("ix_key_loans_status_source", "status", "source_account_id"),
-    )
+    __table_args__ = (Index("ix_key_loans_status_source", "status", "source_account_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    source_account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
-    credential_id: Mapped[str] = mapped_column(ForeignKey("ai_account_credentials.id"), index=True)
-    borrower_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True, index=True
+    source_account_id: Mapped[str | None] = mapped_column(ForeignKey("ai_accounts.id"), nullable=True, index=True)
+    credential_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_account_credentials.id"), nullable=True, index=True
     )
+    # pinned | pool. Pool loans have no single source account.
+    routing_mode: Mapped[str] = mapped_column(String(16), default="pinned")
+    borrower_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
     borrower_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     baseline_used_cents: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -486,27 +472,26 @@ class KeyLoan(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # cursor_direct: 用户持 cr*；proxy_alias: 用户持 pka_，底层 cr* 仅服务端/管理员可见
     delivery_mode: Mapped[str] = mapped_column(String(32), default="cursor_direct")
-    alias_key_hash: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, unique=True, index=True
-    )
+    alias_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     alias_key_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
     alias_encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # manual: 管理员/自助选定的固定出借账号；auto: Auto Lender 选起始账号，代理在白名单内游走
+    # manual: 固定出借账号；auto: 自助白名单游走，或配合 routing_mode=pool 的账号池轮换
     # 取值见 pulse.tool_center.key_loan_delivery；存储层不反向依赖，故内联默认值
     lender_mode: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     # 当前出借账号的绑定时刻；auto 模式的 30 分钟驻留窗口以此为基准
-    source_bound_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    source_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Legacy single-period caps. New writes use usage_cap_rules; these stay for rows not yet migrated.
+    usage_cap_period: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    auto_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    api_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # [{"period": "5h"|"week"|"month", "pool": "auto"|"api", "limit_cents": int}, ...]
+    # Any matching rule blocks that pool (OR). Empty list means unlimited.
+    usage_cap_rules: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class UsageDailyAggregate(Base):
     __tablename__ = "usage_daily_aggregates"
-    __table_args__ = (
-        UniqueConstraint(
-            "account_id", "event_date", "model", "kind_family", name="uq_daily_agg"
-        ),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "event_date", "model", "kind_family", name="uq_daily_agg"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(ForeignKey("ai_accounts.id"), index=True)
@@ -536,17 +521,11 @@ class AccessRequest(Base):
     vendor_id: Mapped[str] = mapped_column(ForeignKey("ai_vendors.id"), index=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
-    manager_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True, index=True
-    )
-    decided_by_member_id: Mapped[str | None] = mapped_column(
-        ForeignKey("members.id"), nullable=True
-    )
+    manager_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True, index=True)
+    decided_by_member_id: Mapped[str | None] = mapped_column(ForeignKey("members.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    assigned_account_id: Mapped[str | None] = mapped_column(
-        ForeignKey("ai_accounts.id"), nullable=True
-    )
+    assigned_account_id: Mapped[str | None] = mapped_column(ForeignKey("ai_accounts.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -558,9 +537,7 @@ class AccessRequest(Base):
 
 class CapabilityInvocationRow(Base):
     __tablename__ = "capability_invocations"
-    __table_args__ = (
-        UniqueConstraint("team_id", "idempotency_key", name="uq_capability_invocation_idempotency"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "idempotency_key", name="uq_capability_invocation_idempotency"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     team_id: Mapped[str] = mapped_column(String(36), index=True)
@@ -584,6 +561,19 @@ class PortalChatDelivery(Base):
     kind: Mapped[str] = mapped_column(String(16), default="final")
     text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class PortalChatStream(Base):
+    """In-progress assistant reply draft for the web chat (removed once committed)."""
+
+    __tablename__ = "portal_chat_streams"
+
+    stream_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    team_id: Mapped[str] = mapped_column(String(36), index=True)
+    member_id: Mapped[str] = mapped_column(String(36), index=True)
+    assistant_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class KnowledgeEntry(Base):
@@ -616,7 +606,8 @@ class ProxyKey(Base):
     encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str] = mapped_column(String(128))
     member_id: Mapped[str] = mapped_column(ForeignKey("members.id"), index=True)
-    mode: Mapped[str] = mapped_column(String(16), default="quota")  # always quota; empty windows = unlimited
+    mode: Mapped[str] = mapped_column(String(16), default="quota")  # quota | coding_plan
+    coding_plan_vendor: Mapped[str | None] = mapped_column(String(16), nullable=True)
     window_5h_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     window_7d_cost_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")  # active|suspended|revoked
@@ -634,9 +625,7 @@ class ProxyKeyUsage(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    proxy_key_id: Mapped[str | None] = mapped_column(
-        ForeignKey("proxy_keys.id"), nullable=True, index=True
-    )
+    proxy_key_id: Mapped[str | None] = mapped_column(ForeignKey("proxy_keys.id"), nullable=True, index=True)
     loan_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     credential_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
@@ -649,6 +638,18 @@ class ProxyKeyUsage(Base):
     total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_cents: Mapped[int] = mapped_column(Integer, default=0)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    usage_cap_pool: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+
+class CpOpenAiStickyBinding(Base):
+    """Per pkcp_ key: bound Coding Plan credential for Switch dwell stickiness."""
+
+    __tablename__ = "cp_openai_sticky_bindings"
+
+    proxy_key_id: Mapped[str] = mapped_column(ForeignKey("proxy_keys.id"), primary_key=True)
+    credential_id: Mapped[str] = mapped_column(String(36), index=True)
+    sticky_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class ProxyEvent(Base):
@@ -675,6 +676,4 @@ class PortalRefreshToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    replaced_by_id: Mapped[str | None] = mapped_column(
-        ForeignKey("portal_refresh_tokens.id"), nullable=True
-    )
+    replaced_by_id: Mapped[str | None] = mapped_column(ForeignKey("portal_refresh_tokens.id"), nullable=True)

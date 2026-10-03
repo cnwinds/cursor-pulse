@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import os
@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 from assistant_platform.contracts.provider import CapabilityInvokeResult
 from pulse.channels.capability_bridge import (
     format_capability_reply,
@@ -79,9 +78,7 @@ def test_invoke_via_assistant_raises_on_http_error():
     with patch("pulse.channels.capability_bridge.internal_client") as Client:
         client = Client.return_value.__enter__.return_value
         response = MagicMock(status_code=500)
-        response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "boom", request=MagicMock(), response=response
-        )
+        response.raise_for_status.side_effect = httpx.HTTPStatusError("boom", request=MagicMock(), response=response)
         client.post.return_value = response
         with pytest.raises(httpx.HTTPStatusError):
             invoke_via_assistant(
@@ -224,7 +221,10 @@ def test_quota_command_falls_back_when_bridge_fails(bot_repo):
 @patch("pulse.ingestion.sync.CursorSyncService")
 @patch("pulse.ingestion.credentials.CredentialService")
 def test_bind_command_uses_bridge_when_flag_on(mock_cred_cls, mock_sync_cls, bot_repo):
-    repo, member, = bot_repo
+    (
+        repo,
+        member,
+    ) = bot_repo
     config = _bridge_config(cursor_key_bind=True)
     with patch(
         "pulse.channels.capability_bridge.invoke_via_assistant",
@@ -311,7 +311,7 @@ def test_guide_image_handler_uses_bridge_when_flag_on(tmp_path):
 
     session = init_db("sqlite:///:memory:")()
     team, repo = make_team_repo(session)
-    admin = repo.add_member("admin-1", "Admin")
+    repo.add_member("admin-1", "Admin")
     config.admin.channel_user_ids = ["admin-1"]
     session.commit()
     handler.session_factory = MagicMock(return_value=session)
@@ -326,11 +326,7 @@ def test_guide_image_handler_uses_bridge_when_flag_on(tmp_path):
     ):
         import asyncio
 
-        asyncio.run(
-            handler._save_guide_image_from_picture(
-                "dl-code", incoming, "admin-1", is_group=False
-            )
-        )
+        asyncio.run(handler._save_guide_image_from_picture("dl-code", incoming, "admin-1", is_group=False))
         bridge.assert_called_once()
         assert bridge.call_args.kwargs["capability_key"] == "guide_image.update"
         assert "image_base64" in bridge.call_args.kwargs["arguments"]

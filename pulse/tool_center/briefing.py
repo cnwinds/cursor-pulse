@@ -83,18 +83,14 @@ def build_anonymous_group_digest(session: Session, period: str, *, team_id: str)
             sign = "+" if mom >= 0 else ""
             mom_text = f"（环比 {sign}{mom}%）"
         lines.append("")
-        lines.append(
-            f"{bucket['vendor_name']}（{bucket['currency']}）"
-            f"本月合计 {bucket['total_usage']:.2f}{mom_text}"
-        )
+        lines.append(f"{bucket['vendor_name']}（{bucket['currency']}）本月合计 {bucket['total_usage']:.2f}{mom_text}")
         if bucket.get("avg_quota_ratio") is not None:
             lines.append(f"  试用/共享账号平均额度使用率：{bucket['avg_quota_ratio']}%")
 
     if metrics["account_count_suggest_dedicated"]:
         lines.append("")
         lines.append(
-            f"💡 有 {metrics['account_count_suggest_dedicated']} 个账号达到升级评估条件，"
-            "管理员将跟进独立账号申请。"
+            f"💡 有 {metrics['account_count_suggest_dedicated']} 个账号达到升级评估条件，管理员将跟进独立账号申请。"
         )
 
     lines.append("")

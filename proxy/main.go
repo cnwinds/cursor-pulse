@@ -140,6 +140,14 @@ Point agent at this proxy and trust the CA (PowerShell):
 	if pulseMode {
 		srv.sessionTTL = resolveSessionTTL(*sessionTTL)
 		srv.sticky = NewStickySelectWithDwell(pool, sessions, resolveStickyMinDwell(*stickyMinDwell))
+		srv.useSeatAdvisor()
+		if sessionTokensEnabled() {
+			log.Printf("exchange issues proxy-minted session tokens (PROXY_OPAQUE_SESSION_TOKEN)")
+		} else {
+			srv.sessionTokens = nil
+			log.Printf("WARNING: PROXY_OPAQUE_SESSION_TOKEN=off - exchange returns upstream Cursor JWTs to clients")
+		}
+		go pruneSessions(sessions, 10*time.Minute)
 	}
 	srv.caPEMPath = caPEMPath
 	srv.idePulseKey = firstNonEmpty(*idePulseKey, os.Getenv("PROXY_IDE_PULSE_KEY"), cfg.IdePulseKey)
@@ -176,7 +184,13 @@ Point agent at this proxy and trust the CA (PowerShell):
 	}
 	log.Printf("cursor upstream: %s", redactUpstreamProxy(upstreamRaw))
 
-	log.Fatal(http.ListenAndServe(cfg.Listen, srv))
+	httpSrv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           srv,
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		IdleTimeout:       defaultIdleTimeout,
+	}
+	log.Fatal(httpSrv.ListenAndServe())
 }
 
 func pollExhaustedReset(pool *Pool, every time.Duration) {
@@ -188,16 +202,26 @@ func pollExhaustedReset(pool *Pool, every time.Duration) {
 	}
 }
 
+func pruneSessions(sessions *SessionMap, every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for range tick.C {
+		if n := sessions.Prune(time.Now()); n > 0 {
+			log.Printf("[session] pruned %d expired session(s)", n)
+		}
+	}
+}
+
 func pollPool(pool *Pool, pulse *PulseClient, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
 	refresh := func() {
-		creds, err := pulse.FetchPool()
+		snap, err := pulse.FetchPool()
 		if err != nil {
 			log.Printf("[pool] fetch: %v", err)
 			return
 		}
-		pool.ReplaceFromPulse(creds)
+		pool.ReplaceFromPulseSnapshot(snap)
 	}
 	refresh()
 	for range tick.C {
@@ -218,11 +242,11 @@ const defaultSessionTTL = 120 * time.Second
 
 // defaultStickyMinDwell is the Switch dwell default: a CLI session keeps its
 // sticky credential for at least this long before quota pressure may rotate it.
-const defaultStickyMinDwell = 30 * time.Minute
+const defaultStickyMinDwell = 20 * time.Minute
 
 // stickyMinDwellUsage is the flag/env help text for Switch dwell.
 const stickyMinDwellUsage = "min time a CLI session keeps its sticky credential " +
-	"(default 30m; env PROXY_STICKY_MIN_DWELL, 0/off disables)"
+	"(default 20m; env PROXY_STICKY_MIN_DWELL, 0/off disables)"
 
 func resolveStickyMinDwell(flagVal time.Duration) time.Duration {
 	if flagVal > 0 {

@@ -1,4 +1,11 @@
 import { formatSpend, formatTokens } from '@/utils/usage'
+import {
+  USAGE_COLOR_INPUT,
+  USAGE_COLOR_INPUT_CACHE,
+  USAGE_COLOR_OUTPUT,
+  USAGE_COST_COLOR,
+  USAGE_TREND_SERIES_COLORS,
+} from '@/utils/usageChartColors'
 
 export type DailyTrendPoint = {
   date: string
@@ -31,7 +38,7 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
   const labels = days.map((d) => d.date.slice(5))
   const parts = days.map(tokenParts)
   return {
-    color: ['#2563eb', '#0d9488', '#8b5cf6', '#f59e0b'],
+    color: [...USAGE_TREND_SERIES_COLORS],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -80,6 +87,7 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
         type: 'bar',
         stack: 'tokens',
         barMaxWidth: 28,
+        itemStyle: { color: USAGE_COLOR_INPUT },
         data: parts.map((p) => p.input),
       },
       {
@@ -87,6 +95,7 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
         type: 'bar',
         stack: 'tokens',
         barMaxWidth: 28,
+        itemStyle: { color: USAGE_COLOR_OUTPUT },
         data: parts.map((p) => p.output),
       },
       {
@@ -94,6 +103,7 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
         type: 'bar',
         stack: 'tokens',
         barMaxWidth: 28,
+        itemStyle: { color: USAGE_COLOR_INPUT_CACHE },
         data: parts.map((p) => p.cache),
       },
       {
@@ -102,6 +112,8 @@ export function dailyTrendChartOption(days: DailyTrendPoint[]) {
         yAxisIndex: 1,
         showSymbol: true,
         symbolSize: 6,
+        itemStyle: { color: USAGE_COST_COLOR },
+        lineStyle: { color: USAGE_COST_COLOR },
         data: days.map((d) => d.cost_usd),
       },
     ],

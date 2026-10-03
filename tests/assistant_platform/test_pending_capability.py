@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from assistant_platform.conversation.models import ChatSessionRow
 from assistant_platform.conversation.pending import (
@@ -33,7 +33,7 @@ def test_set_and_get_pending():
 
 def test_pending_expires_after_ttl():
     row = _session()
-    past = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
     row.session_state_json = {
         "pending_capability": {
             "capability_key": "cursor.key.bind",

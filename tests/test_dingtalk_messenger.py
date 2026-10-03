@@ -1,11 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from pulse.channels.dingtalk.files import (
     extract_file_attachment,
     extract_incoming_text,
@@ -173,6 +172,7 @@ def test_picture_with_text_skips_assistant_mirror(bot_env):
         patch("pulse.channels.dingtalk.mirror.mirror_dingtalk_message") as mirror,
         patch.object(handler, "_handle_picture", new=AsyncMock()) as handle_picture,
     ):
+
         async def run():
             await handler._handle_message(incoming, raw)
 
@@ -283,9 +283,10 @@ def test_send_group_text_at_all_prefix(messenger):
 
 
 def test_download_message_file(messenger, tmp_path):
-    with patch("pulse.channels.dingtalk.messenger.requests.post") as post, patch(
-        "pulse.channels.dingtalk.messenger.requests.get"
-    ) as get:
+    with (
+        patch("pulse.channels.dingtalk.messenger.requests.post") as post,
+        patch("pulse.channels.dingtalk.messenger.requests.get") as get,
+    ):
         post.return_value.raise_for_status = MagicMock()
         post.return_value.json.return_value = {"downloadUrl": "https://example.com/f.csv"}
         get.return_value.raise_for_status = MagicMock()

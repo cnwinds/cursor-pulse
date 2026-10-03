@@ -16,20 +16,28 @@ defineProps<{
 
 <style scoped>
 .stat-card {
-  margin-bottom: 16px;
+  margin-bottom: var(--pulse-space-section);
+  border-top: 3px solid var(--el-color-primary) !important;
+  transition:
+    transform var(--pulse-transition),
+    box-shadow var(--pulse-transition);
 }
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08) !important;
+}
+
 .stat-label {
-  color: #64748b;
-  font-size: 13px;
+  margin-bottom: 0;
 }
+
 .stat-value {
-  font-size: 28px;
-  font-weight: 600;
   margin-top: 8px;
 }
+
 .stat-sub {
-  font-size: 12px;
-  color: #94a3b8;
   margin-top: 6px;
+  line-height: var(--pulse-leading-normal);
 }
 </style>

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from sqlalchemy import select
 
-from assistant_platform.contracts.provider import CapabilityInvokeRequest, CapabilityInvokeResult
 from pulse.channels.admin_gate import is_channel_admin as _is_channel_admin
 from pulse.storage.models import Member
 from pulse.storage.repository import Repository

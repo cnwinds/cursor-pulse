@@ -2,7 +2,6 @@
   <div class="my-loans-page" v-loading="loading">
     <header class="page-header">
       <div>
-        <h2>我的借用</h2>
         <p class="desc">
           额度不足时可自助申请临时 Key（代理别名）。进行中 {{ activeCount }} 条。
         </p>
@@ -16,15 +15,26 @@
     </header>
 
     <el-table :data="loans" stripe>
-      <el-table-column label="借出账号" min-width="220" prop="source_account_identifier" />
+      <el-table-column label="借出账号" min-width="220">
+        <template #default="{ row }">
+          {{ row.routing_mode === 'pool' ? '账号池（使用中轮换）' : row.source_account_identifier }}
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="loanStatusType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="交付模式" width="120">
+      <el-table-column label="分配方式" width="108" align="center">
         <template #default="{ row }">
-          {{ row.delivery_mode === 'proxy_alias' ? '代理别名' : 'Cursor Key' }}
+          <el-tag :type="loanAssignmentTagType(row)" size="small">
+            {{ loanAssignmentLabel(row) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="用量限制" width="108" align="center">
+        <template #default="{ row }">
+          <UsageCapStatus :rules="row.usage_caps" />
         </template>
       </el-table-column>
       <el-table-column label="创建时间" width="180">
@@ -54,7 +64,9 @@
         已下发代理别名 Key（pka_）。请立即复制；关闭后可用「复制命令」再次获取。须配置 HTTPS_PROXY。
       </el-alert>
       <div class="key-reveal">
-        <div class="muted">借出账号：{{ revealedKey?.source_account_identifier }}</div>
+        <div class="muted">
+          借出账号：{{ revealedKey?.routing_mode === 'pool' ? '账号池（使用中轮换）' : revealedKey?.source_account_identifier }}
+        </div>
         <el-input :model-value="revealedKey?.api_key" readonly>
           <template #append>
             <el-button @click="copyKey">复制 Key</el-button>
@@ -80,15 +92,21 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '@/api/client'
 import CopyCommandDropdown from '@/components/CopyCommandDropdown.vue'
+import UsageCapStatus, { type UsageCapSnapshot } from '@/components/borrow/UsageCapStatus.vue'
 import { copyText } from '@/utils/clipboard'
 import { formatChinaTime } from '@/utils/time'
+import { loanAssignmentLabel, loanAssignmentTagType } from '@/utils/loanAssignment'
 
 interface LoanRow {
   id: string
   source_account_identifier: string
+  routing_mode?: string | null
   delivery_mode: string | null
+  assignment_label?: string | null
+  lender_mode?: string | null
   status: string
   created_at: string
+  usage_caps?: UsageCapSnapshot[]
 }
 
 const loading = ref(false)
@@ -100,6 +118,7 @@ const revealedKey = ref<{
   loan_id: string
   api_key: string
   source_account_identifier: string
+  routing_mode?: string
 } | null>(null)
 
 function loanStatusType(status: string) {
@@ -184,7 +203,7 @@ onMounted(loadLoans)
 .desc {
   margin: 4px 0 0;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
 }
 .header-actions {
   display: flex;
@@ -196,7 +215,7 @@ onMounted(loadLoans)
 }
 .key-reveal .muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--pulse-text-base);
   margin-bottom: 6px;
 }
 .reveal-actions {
