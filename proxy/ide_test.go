@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -891,6 +893,93 @@ func TestIDETTLReauthorizeUsesSeatFlow(t *testing.T) {
 	}
 	if authCalls.Load() <= before {
 		t.Fatalf("TTL expiry should re-authorize via the seat flow, calls %d -> %d", before, authCalls.Load())
+	}
+}
+
+func TestIDEPortReleaseLifecycle(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+
+	getPort := func(key string) (int, int) {
+		resp, err := http.Get("http://" + proxyAddr + "/ide-port?key=" + key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var pr struct {
+			Port string `json:"port"`
+		}
+		if resp.StatusCode != http.StatusOK {
+			return 0, resp.StatusCode
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&pr)
+		n, _ := strconv.Atoi(pr.Port)
+		return n, resp.StatusCode
+	}
+
+	port1, code := getPort("pk_ide")
+	if code != http.StatusOK || port1 == 0 {
+		t.Fatalf("allocate: port=%d code=%d", port1, code)
+	}
+	// DELETE with the wrong key leaves the listener alone.
+	req, _ := http.NewRequest(http.MethodDelete, "http://"+proxyAddr+"/ide-port?key=pk_other", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("release unknown key: %d want 404", resp.StatusCode)
+	}
+	if p, _ := getPort("pk_ide"); p != port1 {
+		t.Fatalf("allocation changed after foreign release: %d -> %d", port1, p)
+	}
+
+	// DELETE with the right key releases: 204, port closes, next allocate
+	// may reuse the same port, persistence shrinks.
+	req, _ = http.NewRequest(http.MethodDelete, "http://"+proxyAddr+"/ide-port?key=pk_ide", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("release: %d want 204", resp.StatusCode)
+	}
+	// The released listener is closed: dialing it must fail quickly.
+	dialCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port1)))
+	if err == nil {
+		conn.Close()
+		t.Fatalf("listener on :%d should be closed after release", port1)
+	}
+	// Re-allocating the same key yields a working port again.
+	port2, code := getPort("pk_ide")
+	if code != http.StatusOK || port2 == 0 {
+		t.Fatalf("re-allocate: port=%d code=%d", port2, code)
+	}
+}
+
+func TestUninstallScriptEndpoint(t *testing.T) {
+	fu := newFakeUpstreamIDE(t)
+	pulse, _ := newFakePulseCounted(t)
+	proxyAddr, _, _ := newIDETestProxy(t, fu.URL, pulse.URL, "")
+
+	resp, err := http.Get("http://" + proxyAddr + "/uninstall-cursor.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	script := string(b)
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(script, "http://"+proxyAddr) ||
+		!strings.Contains(script, "PSObject.Properties.Remove($name)") ||
+		!strings.Contains(script, "'http.proxy', 'cursor.general.disableHttp2', 'http.systemCertificates'") ||
+		!strings.Contains(script, "delstore Root") {
+		t.Fatalf("uninstall script malformed: status %d head %q", resp.StatusCode, script[:min(200, len(script))])
 	}
 }
 

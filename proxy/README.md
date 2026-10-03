@@ -62,6 +62,16 @@ $env:PULSE_INTERNAL_SERVICE_TOKEN = "pulse-internal-dev"
 
 也可以无 key 使用服务器级兜底：代理加 `-ide-pulse-key pk_...`（或 `PROXY_IDE_PULSE_KEY` / 配置 `ide_pulse_key`），主端口上的 IDE 未绑定会话统一归因到该 key；两者并存时专属端口优先。CA 也可单独取：`http://<代理地址>:8317/ca.pem`。
 
+**卸载（同样一条命令）**：
+
+```powershell
+irm http://<代理地址>:8317/uninstall-cursor.ps1 | iex        # 不带 -Key
+# 或带 -Key 同时释放该 key 的专属端口：
+& ([scriptblock]::Create((irm http://<代理地址>:8317/uninstall-cursor.ps1))) -Key "pk_..."
+```
+
+脚本幂等，且在代理不可达时仍完成本地清理：移除 settings.json 的 `http.proxy` / `cursor.general.disableHttp2` / `http.systemCertificates` 三项（安装前备份保留不动）、按指纹删除代理 CA、带 `-Key` 时调 `DELETE /ide-port` 让代理关闭该 key 的专属监听并清持久化（对已吊销 key 也生效——卸载不应依赖 key 仍有效）。卸载后完全退出并重启 Cursor 即恢复直连。
+
 管理台「共享池代理 / 借用」的复制命令下拉中已有 **「Cursor IDE」** 项（`GET /api/v2/proxy-keys/{id}/client-setup?kind=ide` 或 `GET /api/v2/loans/{id}/client-setup?kind=ide`），生成的就是上面这条带 key 的一键接入命令。可选开启 `PROXY_IDE_LOCK_SUB=1` 把每把代理密钥锁定到首次使用的登录身份，防 key 外借（解析 JWT `sub`，拒绝 `alg=none`；**不校验签名**，与可达专属口上的 TOFU 信任边界一致；锁在代理内存中，重启后重新认领）。
 
 IDE 接入的行为与限制：

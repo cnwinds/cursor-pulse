@@ -232,6 +232,32 @@ func (r *idePortRegistry) portForKey(w http.ResponseWriter, key string) (int, bo
 	return port, true
 }
 
+// release closes the listener and forgets the key's port allocation (DELETE
+// /ide-port — the uninstall path). No Pulse validation on purpose: uninstall
+// must also work for keys that were revoked after allocation. Returns the
+// released port, or 0 when the key had none.
+func (r *idePortRegistry) release(key string) int {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	port, ok := r.byKey[key]
+	if !ok {
+		return 0
+	}
+	if ln, ok := r.listeners[port]; ok {
+		ln.Close()
+		delete(r.listeners, port)
+	}
+	delete(r.byKey, key)
+	delete(r.byPort, port)
+	r.saveLocked()
+	log.Printf("[ide] released port %d for proxy key %s", port, maskClientToken(key))
+	return port
+}
+
 // Close releases every per-key listener (used by tests; production listeners
 // live for the process lifetime).
 func (r *idePortRegistry) Close() {
@@ -244,10 +270,24 @@ func (r *idePortRegistry) Close() {
 	r.byPort = map[int]string{}
 }
 
-// serveIDEPort answers GET /ide-port?key=... with {"port": N, "proxy_host": H}.
+// serveIDEPort answers GET /ide-port?key=... with {"port": N, "proxy_host": H}
+// and DELETE /ide-port?key=... (uninstall) with 204 once the listener closes.
 func (s *Server) serveIDEPort(w http.ResponseWriter, r *http.Request) {
 	if s.idePorts == nil {
 		http.Error(w, "ide ports disabled (requires Pulse mode)", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		key := r.URL.Query().Get("key")
+		if strings.TrimSpace(key) == "" {
+			http.Error(w, "missing key", http.StatusBadRequest)
+			return
+		}
+		if port := s.idePorts.release(key); port > 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "no port allocated for key", http.StatusNotFound)
 		return
 	}
 	port, ok := s.idePorts.portForKey(w, r.URL.Query().Get("key"))

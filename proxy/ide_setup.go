@@ -50,6 +50,101 @@ func (s *Server) serveSetupScript(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(script))
 }
 
+// serveUninstallScript emits the offboarding counterpart of serveSetupScript:
+// removes the settings.json keys the installer added, removes the proxy CA
+// from the current-user trusted roots, and (with -Key) releases the dedicated
+// IDE port on the proxy via DELETE /ide-port.
+func (s *Server) serveUninstallScript(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.Host)
+	host := ""
+	switch {
+	case raw == "":
+		host = "127.0.0.1:8317"
+	case isSafeProxyHost(raw):
+		host = raw
+	default:
+		http.Error(w, "invalid Host header", http.StatusBadRequest)
+		return
+	}
+	script := strings.ReplaceAll(cursorIDEUninstallScriptTemplate, "__PROXY_ADDR__", "http://"+host)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(script))
+}
+
+// cursorIDEUninstallScriptTemplate is emitted at GET /uninstall-cursor.ps1.
+// Same constraints as the setup template: PS 5.1 compatible, no backticks,
+// idempotent. Local cleanup (settings + CA) must proceed even when the proxy
+// is unreachable.
+const cursorIDEUninstallScriptTemplate = `param(
+    [string]$Key = '',
+    [string]$Proxy = '__PROXY_ADDR__'
+)
+# cursor-pulse IDE offboarding - reverses setup-cursor.ps1:
+# removes the three settings.json keys, removes the proxy CA from the
+# current-user trusted roots, and (with -Key) releases the dedicated IDE port.
+# Idempotent: safe to re-run. The pre-install backup is kept untouched.
+$ErrorActionPreference = 'Stop'
+$addr = $Proxy
+
+if ($Key -ne '') {
+    Write-Host '[1/4] Releasing dedicated IDE port...'
+    try {
+        $scheme = 'http'
+        if ($addr -like 'https://*') { $scheme = 'https' }
+        $mainHost = ($addr -replace '^https?://', '')
+        $rel = Invoke-WebRequest -UseBasicParsing -Method Delete -Uri ($scheme + '://' + $mainHost + '/ide-port?key=' + [System.Uri]::EscapeDataString($Key))
+        Write-Host ("  released (HTTP {0})." -f $rel.StatusCode)
+    } catch {
+        $code = $null
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        if ($code -eq 404) { Write-Host '  no port was allocated for this key.' }
+        else { Write-Host '  proxy unreachable - continuing with local cleanup.' }
+    }
+} else {
+    Write-Host '[1/4] No -Key given - skipping port release.'
+}
+
+Write-Host '[2/4] Removing Cursor IDE proxy settings...'
+$settingsPath = Join-Path $env:APPDATA 'Cursor\User\settings.json'
+if (Test-Path $settingsPath) {
+    $raw = Get-Content $settingsPath -Raw -Encoding UTF8
+    try {
+        $cfg = $raw | ConvertFrom-Json
+    } catch {
+        throw ('settings.json is not strict JSON - remove http.proxy / cursor.general.disableHttp2 / http.systemCertificates manually: ' + $settingsPath)
+    }
+    $removed = @()
+    foreach ($name in @('http.proxy', 'cursor.general.disableHttp2', 'http.systemCertificates')) {
+        if ($cfg.PSObject.Properties[$name]) {
+            $cfg.PSObject.Properties.Remove($name)
+            $removed += $name
+        }
+    }
+    $json = $cfg | ConvertTo-Json -Depth 100
+    [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+    if ($removed.Count) { Write-Host ("  removed: {0}" -f ($removed -join ', ')) }
+    else { Write-Host '  nothing to remove (already clean).' }
+    Write-Host "  pre-install backup kept at $settingsPath.bak-cursor-pulse"
+} else {
+    Write-Host '  settings.json not found - skipping.'
+}
+
+Write-Host '[3/4] Removing proxy CA from current-user trusted roots...'
+$certs = Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue |
+    Where-Object { $_.Subject -like '*cursor-quota-proxy*' }
+if ($certs) {
+    foreach ($c in $certs) {
+        $null = certutil -user -delstore Root $c.Thumbprint
+        Write-Host ("  removed CA {0}" -f $c.Thumbprint)
+    }
+} else {
+    Write-Host '  CA not present - skipping.'
+}
+
+Write-Host '[4/4] Done. Fully quit Cursor (all windows) and start it again;'
+Write-Host '      it now talks to Cursor directly, outside the team proxy.'
+`
+
 // cursorIDESetupScriptTemplate is emitted at GET /setup-cursor.ps1. It must run
 // on Windows PowerShell 5.1 (no PS7-only features, no backticks so it survives
 // being embedded in a Go raw string). Keep it idempotent and always back up

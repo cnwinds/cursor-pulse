@@ -182,6 +182,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Plain-HTTP bootstrap endpoints so a member machine can onboard from the
 	// proxy address alone (no file distribution): trust the CA, then run the
 	// Cursor IDE setup script. Everything else stays CONNECT-only.
+	if r.URL.Path == "/ide-port" && r.Method == http.MethodDelete {
+		// Uninstall path: release a per-key listener (no dedicated-listener
+		// restriction — releasing is as safe as allocating on the main port).
+		s.serveIDEPort(w, r)
+		return
+	}
 	if r.Method == http.MethodGet {
 		switch r.URL.Path {
 		case "/ca.pem":
@@ -189,6 +195,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "/setup-cursor.ps1":
 			s.serveSetupScript(w, r)
+			return
+		case "/uninstall-cursor.ps1":
+			s.serveUninstallScript(w, r)
 			return
 		case "/ide-port":
 			// Allocation is a main-listener bootstrap concern; dedicated ports
@@ -201,7 +210,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "/", "/health":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /ide-port?key=... - dedicated IDE port for a Proxy Key\n")
+			fmt.Fprintf(w, "cursor-quota-proxy\n\nGET /ca.pem            - MITM root CA (install into trusted roots)\nGET /setup-cursor.ps1 - one-line Cursor IDE onboarding (PowerShell)\nGET /uninstall-cursor.ps1 - one-line Cursor IDE offboarding\nGET /ide-port?key=... - dedicated IDE port for a Proxy Key (DELETE releases)\n")
 			return
 		}
 	}
