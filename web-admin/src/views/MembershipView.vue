@@ -19,23 +19,21 @@
             style="width: 200px"
             @keyup.enter="loadMembers"
           />
-          <el-select
-            v-model="hasMembershipFilter"
-            clearable
-            placeholder="会员状态"
-            style="width: 140px"
-            @change="loadMembers"
-          >
-            <el-option label="已开通" :value="true" />
-            <el-option label="未开通" :value="false" />
+          <el-select v-model="memberScope" style="width: 140px" @change="loadMembers">
+            <el-option label="全部" value="managed" />
+            <el-option label="会员中" value="active" />
+            <el-option label="已取消" value="lapsed" />
           </el-select>
           <el-button @click="loadMembers">搜索</el-button>
+          <el-button v-if="canWrite" type="primary" @click="openMembershipDialog()">
+            开通会员
+          </el-button>
         </div>
         <el-table :data="memberRows" stripe>
           <el-table-column prop="member_name" label="成员" min-width="120" />
           <el-table-column label="套餐" min-width="120">
             <template #default="{ row }">
-              <el-tag v-if="!row.membership" size="small" type="info">未开通</el-tag>
+              <el-tag v-if="!row.membership" size="small" type="info">已取消</el-tag>
               <el-tag v-else-if="!row.membership.plan_id" size="small" type="warning">自定义</el-tag>
               <span v-else>{{ row.membership.plan_name }}</span>
             </template>
@@ -68,7 +66,7 @@
           <el-table-column v-if="canWrite" label="操作" width="280" fixed="right" align="center">
             <template #default="{ row }">
               <el-button link type="primary" @click="openMembershipDialog(row)">
-                {{ row.membership ? '更换' : '开通' }}
+                {{ row.membership ? '更换' : '重新开通' }}
               </el-button>
               <el-button
                 v-if="row.membership"
@@ -203,8 +201,23 @@
 
     <el-dialog v-model="membershipDialogVisible" title="开通 / 更换会员" width="520px">
       <el-form label-width="110px">
-        <el-form-item label="成员">
-          <span>{{ membershipTarget?.member_name }}</span>
+        <el-form-item label="成员" :required="!membershipTarget">
+          <span v-if="membershipTarget">{{ membershipTarget.member_name }}</span>
+          <el-select
+            v-else
+            v-model="membershipNewMemberId"
+            filterable
+            placeholder="选择当前无会员的成员"
+            style="width: 100%"
+            :loading="candidatesLoading"
+          >
+            <el-option
+              v-for="c in memberCandidates"
+              :key="c.member_id"
+              :label="c.member_name"
+              :value="c.member_id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="套餐" required>
           <el-select
@@ -370,7 +383,7 @@ const plans = ref<PlanOut[]>([])
 const includeArchived = ref(false)
 const memberRows = ref<MemberMembershipRow[]>([])
 const memberQuery = ref('')
-const hasMembershipFilter = ref<boolean | undefined>(undefined)
+const memberScope = ref<'managed' | 'active' | 'lapsed'>('managed')
 const membershipRequired = ref(false)
 
 const planDialogVisible = ref(false)
@@ -386,6 +399,9 @@ const planForm = ref({
 const membershipDialogVisible = ref(false)
 const membershipTarget = ref<MemberMembershipRow | null>(null)
 const membershipSaving = ref(false)
+const membershipNewMemberId = ref('')
+const memberCandidates = ref<MemberMembershipRow[]>([])
+const candidatesLoading = ref(false)
 const membershipForm = ref({
   planMode: 'custom' as string,
   rules_override: [] as UsageCapRule[],
@@ -436,7 +452,7 @@ function creditModeLabel(mode: CreditMode): string {
 
 function showBalance(row: MemberMembershipRow): boolean {
   if (!row.has_account) return false
-  if (row.membership?.credit_mode === 'prepaid') return true
+  if (!row.membership || row.membership.credit_mode === 'prepaid') return true
   return row.balance_cents !== 0
 }
 
@@ -512,11 +528,8 @@ async function loadPlans() {
 async function loadMembers() {
   loading.value = true
   try {
-    const params: Record<string, string | boolean> = {}
+    const params: Record<string, string> = { scope: memberScope.value }
     if (memberQuery.value.trim()) params.q = memberQuery.value.trim()
-    if (hasMembershipFilter.value !== undefined) {
-      params.has_membership = hasMembershipFilter.value
-    }
     const res = await client.get('/api/v2/memberships', { params })
     memberRows.value = res.data.items
     membershipRequired.value = res.data.membership_required ?? membershipRequired.value
@@ -622,9 +635,25 @@ function resolveCreditModeOverride(
   return override
 }
 
-function openMembershipDialog(row: MemberMembershipRow) {
-  membershipTarget.value = row
-  const m = row.membership
+async function loadMemberCandidates() {
+  candidatesLoading.value = true
+  try {
+    const res = await client.get('/api/v2/memberships', { params: { scope: 'candidates' } })
+    memberCandidates.value = res.data.items
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '加载成员失败')
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+function openMembershipDialog(row?: MemberMembershipRow) {
+  membershipTarget.value = row ?? null
+  if (!row) {
+    membershipNewMemberId.value = ''
+    void loadMemberCandidates()
+  }
+  const m = row?.membership
   const planMode = m?.plan_id ?? 'custom'
   lastPlanMode = planMode
   membershipForm.value = {
@@ -636,7 +665,11 @@ function openMembershipDialog(row: MemberMembershipRow) {
 }
 
 async function saveMembership() {
-  if (!membershipTarget.value) return
+  const memberId = membershipTarget.value?.member_id || membershipNewMemberId.value
+  if (!memberId) {
+    ElMessage.warning('请选择成员')
+    return
+  }
   const form = membershipForm.value
   const body: Record<string, unknown> = {
     plan_id: form.planMode === 'custom' ? null : form.planMode,
@@ -653,7 +686,7 @@ async function saveMembership() {
   }
   membershipSaving.value = true
   try {
-    await client.put(`/api/v2/members/${membershipTarget.value.member_id}/membership`, body)
+    await client.put(`/api/v2/members/${memberId}/membership`, body)
     ElMessage.success('已保存')
     membershipDialogVisible.value = false
     await loadMembers()

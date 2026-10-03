@@ -12,7 +12,7 @@ pytest.importorskip("fastapi")
 from pulse.config import AppConfig, CredentialConfig, TenantConfig, WebConfig
 from pulse.proxy import service as proxy_service
 from pulse.proxy.credit import charge_usage, grant
-from pulse.proxy.membership import active_membership, open_membership
+from pulse.proxy.membership import active_membership, cancel_membership, open_membership
 from pulse.proxy.team_membership import membership_required_for_team, set_membership_required
 from pulse.storage.models import (
     AdminAuditLog,
@@ -600,6 +600,45 @@ def test_opening_credit_zero_stores_null(env):
         json={"name": "负赠送", "rules": [], "credit_mode": "unlimited", "opening_credit_usd": -1},
     )
     assert bad.status_code == 400
+
+
+def _listed_ids(env, scope: str) -> set[str]:
+    resp = env["client"].get("/api/v2/memberships", headers=_admin(env), params={"scope": scope})
+    assert resp.status_code == 200
+    return {row["member_id"] for row in resp.json()["items"]}
+
+
+def test_list_scope_keeps_members_with_history(env):
+    s = env["sf"]()
+    cancel_membership(s, open_membership(s, member_id=env["member"].id, plan_id=None, created_by_member_id=None))
+    s.commit()
+    s.close()
+
+    member_id = env["member"].id
+    owner_id = env["owner"].id
+    assert member_id in _listed_ids(env, "managed")
+    assert member_id in _listed_ids(env, "lapsed")
+    assert member_id not in _listed_ids(env, "active")
+    assert member_id in _listed_ids(env, "candidates")
+    assert owner_id not in _listed_ids(env, "managed")
+
+    s = env["sf"]()
+    grant(s, owner_id, 100, note="g")
+    adjust_txn = CreditTransaction(
+        member_id=owner_id, kind="adjust", amount_cents=-100, balance_after_cents=0, note="清零"
+    )
+    s.add(adjust_txn)
+    s.commit()
+    s.close()
+    assert owner_id in _listed_ids(env, "lapsed")
+
+    s = env["sf"]()
+    open_membership(s, member_id=member_id, plan_id=None, created_by_member_id=None)
+    s.commit()
+    s.close()
+    assert member_id in _listed_ids(env, "active")
+    assert member_id not in _listed_ids(env, "lapsed")
+    assert member_id not in _listed_ids(env, "candidates")
 
 
 def test_foreign_member_returns_404(env):

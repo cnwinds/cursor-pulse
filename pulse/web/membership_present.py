@@ -138,7 +138,7 @@ def membership_out(
 
 def preload_member_membership_context(session: Session, member_ids: list[str]) -> dict:
     if not member_ids:
-        return {"memberships": {}, "plans": {}, "accounts": {}}
+        return {"memberships": {}, "plans": {}, "accounts": {}, "lapsed": set()}
     memberships = {
         row.member_id: row
         for row in session.scalars(
@@ -159,7 +159,11 @@ def preload_member_membership_context(session: Session, member_ids: list[str]) -
         row.member_id: row
         for row in session.scalars(select(CreditAccount).where(CreditAccount.member_id.in_(member_ids))).all()
     }
-    return {"memberships": memberships, "plans": plans, "accounts": accounts}
+    with_history = set(
+        session.scalars(select(Membership.member_id).where(Membership.member_id.in_(member_ids)).distinct()).all()
+    )
+    lapsed = (with_history | set(accounts)) - set(memberships)
+    return {"memberships": memberships, "plans": plans, "accounts": accounts, "lapsed": lapsed}
 
 
 def member_membership_row(

@@ -112,7 +112,7 @@ flowchart LR
 | 端点 | 用途 |
 | --- | --- |
 | `GET/POST/PATCH /api/v2/membership-plans` | 套餐列表、创建、更新（含 `status=archived` 归档；无物理删除） |
-| `GET /api/v2/memberships` | 成员会员与余额列表 |
+| `GET /api/v2/memberships` | 成员会员与余额列表；`scope`：`all` / `managed`（会员中 ∪ 已取消）/ `active` / `lapsed`（无有效会员但有过会员或余额账户，余额为 0 也保留）/ `candidates`（当前无会员） |
 | `PUT /api/v2/members/{id}/membership` | 开通或更换会员（含覆盖项；首次开通可触发 opening credit） |
 | `POST /api/v2/members/{id}/membership/cancel` | 取消会员（余额保留） |
 | `POST .../credit/grants` | 充值 |

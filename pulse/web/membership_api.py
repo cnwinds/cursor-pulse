@@ -290,9 +290,11 @@ def register_membership_routes(app, get_db, require_capability, team_repo_fn) ->
     )
     def list_member_memberships(
         q: str | None = Query(default=None),
-        has_membership: bool | None = Query(default=None),
+        scope: Literal["all", "managed", "active", "lapsed", "candidates"] = Query(default="all"),
         session: Session = Depends(get_db),
     ):
+        """scope: managed = active ∪ lapsed（有过会员或余额流水的成员不会从管理列表消失）；
+        candidates = 当前无会员，可开通。"""
         team, _ = team_repo_fn(session)
         base = select(Member).where(Member.team_id == team.id, Member.status == "active")
         if q and q.strip():
@@ -303,10 +305,15 @@ def register_membership_routes(app, get_db, require_capability, team_repo_fn) ->
         items = []
         for member in members:
             membership = ctx["memberships"].get(member.id)
-            has = membership is not None
-            if has_membership is True and not has:
+            is_active = membership is not None
+            is_lapsed = member.id in ctx["lapsed"]
+            if scope == "active" and not is_active:
                 continue
-            if has_membership is False and has:
+            if scope == "lapsed" and not is_lapsed:
+                continue
+            if scope == "managed" and not (is_active or is_lapsed):
+                continue
+            if scope == "candidates" and is_active:
                 continue
             items.append(
                 member_membership_row(
